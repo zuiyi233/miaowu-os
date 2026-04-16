@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Command,
   CommandDialog,
@@ -20,10 +21,10 @@ import { useDebounce } from "../hooks/useDebounce";
  * 增强支持全文搜索功能
  */
 export const CommandPalette = () => {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebounce(query, 300);
-  const [searchResults, setSearchResults] = useState<{chapters: any[], characters: any[]}>({ chapters: [], characters: [] });
   
   const { data: novel } = useNovelQuery();
   const { setActiveChapterId } = useUiStore();
@@ -40,30 +41,30 @@ export const CommandPalette = () => {
   }, []);
 
   // 基于 debouncedQuery 进行搜索
-  useEffect(() => {
+  const searchResults = useMemo(() => {
     if (!novel || !debouncedQuery.trim()) {
-      setSearchResults({ chapters: [], characters: [] });
-      return;
+      return { chapters: [], characters: [] };
     }
 
     const lowerQuery = debouncedQuery.toLowerCase();
 
     // 搜索章节 (标题 或 内容)
     const matchedChapters = (novel.chapters || [])
-      .filter(ch =>
-        ch.title.toLowerCase().includes(lowerQuery) ||
-        // 限制内容搜索长度，避免卡顿，且仅在 query 长度 > 1 时搜索内容
-        (lowerQuery.length > 1 && ch.content?.toLowerCase().includes(lowerQuery))
+      .filter(
+        (ch) =>
+          ch.title.toLowerCase().includes(lowerQuery) ||
+          // 限制内容搜索长度，避免卡顿，且仅在 query 长度 > 1 时搜索内容
+          (lowerQuery.length > 1 &&
+            ch.content?.toLowerCase().includes(lowerQuery))
       )
       .slice(0, 5); // 限制结果数量
 
     // 搜索角色
     const matchedCharacters = (novel.characters || [])
-      .filter(c => c.name.toLowerCase().includes(lowerQuery))
+      .filter((c) => c.name.toLowerCase().includes(lowerQuery))
       .slice(0, 3);
 
-    setSearchResults({ chapters: matchedChapters, characters: matchedCharacters });
-
+    return { chapters: matchedChapters, characters: matchedCharacters };
   }, [debouncedQuery, novel]);
 
   const runCommand = (command: () => void) => {
@@ -74,16 +75,16 @@ export const CommandPalette = () => {
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
       <CommandInput
-        placeholder="搜索章节内容、角色..."
+        placeholder={t("commandPalette.placeholder")}
         value={query}
         onValueChange={setQuery}
       />
       <CommandList>
-        <CommandEmpty>未找到相关内容</CommandEmpty>
+        <CommandEmpty>{t("commandPalette.empty")}</CommandEmpty>
         
         {/* 渲染章节结果 */}
         {searchResults.chapters.length > 0 && (
-          <CommandGroup heading="章节">
+          <CommandGroup heading={t("commandPalette.groups.chapters")}>
             {searchResults.chapters.map((chapter) => (
               <CommandItem
                 key={chapter.id}
@@ -106,7 +107,7 @@ export const CommandPalette = () => {
         
         {/* 渲染角色结果 */}
         {searchResults.characters.length > 0 && (
-          <CommandGroup heading="角色">
+          <CommandGroup heading={t("commandPalette.groups.characters")}>
             {searchResults.characters.map((char) => (
               <CommandItem
                 key={char.id}

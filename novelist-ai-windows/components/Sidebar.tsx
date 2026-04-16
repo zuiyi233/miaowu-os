@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { useUiStore } from "../stores/useUiStore";
 import { useModalStore } from "../stores/useModalStore";
 import {
@@ -160,7 +161,7 @@ const VirtualizedChapterList: React.FC<{
 };
 
 export const Sidebar: React.FC = () => {
-  // ✅ 从 store 中同时获取 activeChapterId 和 setActiveChapterId
+  const { t } = useTranslation();
   const { activeChapterId, setActiveChapterId } = useUiStore();
   const { open } = useModalStore();
   const [expandedVolumes, setExpandedVolumes] = useState<Set<string>>(
@@ -218,17 +219,13 @@ export const Sidebar: React.FC = () => {
     });
   };
 
-  /**
-   * 打开设置对话框
-   * 遵循单一职责原则，专注于设置对话框的触发逻辑
-   */
   const handleOpenSettings = () => {
     open({
       type: "dialog",
-      title: "应用设置", // 添加 title
-      description: "在这里管理编辑器、AI 和数据相关的应用配置。", // 添加 description
+      title: t("settings_dialog.title"),
+      description: t("settings_dialog.api"),
       component: SettingsDialog,
-      props: {}, // SettingsDialog 会从 useModalStore 自动接收 onClose
+      props: {},
     });
   };
 
@@ -241,10 +238,10 @@ export const Sidebar: React.FC = () => {
       <div className="h-full flex flex-col bg-card border-r">
         <div className="p-4 border-b flex items-center gap-3">
           <Book className="w-6 h-6 text-primary flex-shrink-0" />
-          <h2 className="text-xl font-bold truncate">加载中...</h2>
+          <h2 className="text-xl font-bold truncate">{t("common.loading")}</h2>
         </div>
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-muted-foreground">正在加载数据...</div>
+          <div className="text-muted-foreground">{t("sidebar.loadingData")}</div>
         </div>
       </div>
     );
@@ -258,7 +255,6 @@ export const Sidebar: React.FC = () => {
           <h2 className="text-xl font-bold truncate">Mì Jìng</h2>
         </div>
 
-        {/* 插入小说切换器 */}
         <NovelSelector />
       </div>
       <ScrollArea className="flex-1 p-2">
@@ -267,7 +263,7 @@ export const Sidebar: React.FC = () => {
             <nav className="grid items-start gap-1">
               <SidebarSectionHeader
                 icon={<ChevronDown className="w-4 h-4" />}
-                title="章节目录"
+                title={t("sidebar.editor")}
               />
 
               {/* ✅ 将 DndContext 提升到所有卷的外部，避免无限渲染循环 */}
@@ -321,7 +317,7 @@ export const Sidebar: React.FC = () => {
                   onClick={() => openCreateVolume()}
                 >
                   <Folder className="w-4 h-4 mr-2" />
-                  创建新卷
+                  {t("volume.newVolume")}
                 </Button>
               </div>
 
@@ -334,7 +330,7 @@ export const Sidebar: React.FC = () => {
                   onClick={() => openCreateChapter()}
                 >
                   <PlusCircle className="w-4 h-4 mr-2" />
-                  添加新章节
+                  {t("chapter.newChapter")}
                 </Button>
               </div>
             </nav>
@@ -344,25 +340,25 @@ export const Sidebar: React.FC = () => {
           <CardContent className="p-2">
             <SidebarSectionHeader
               icon={<Users className="w-4 h-4" />}
-              title="世界观构建"
+              title={t("sidebar.aiAssistant")}
             />
             <Tabs defaultValue="characters" className="w-full">
               <TabsList className="grid w-full grid-cols-4">
                 <TabsTrigger value="characters">
                   <Users className="w-4 h-4 mr-1" />
-                  角色
+                  {t("entity.character")}
                 </TabsTrigger>
                 <TabsTrigger value="settings">
                   <MapPin className="w-4 h-4 mr-1" />
-                  场景
+                  {t("entity.setting")}
                 </TabsTrigger>
                 <TabsTrigger value="items">
                   <Gem className="w-4 h-4 mr-1" />
-                  物品
+                  {t("entity.item")}
                 </TabsTrigger>
                 <TabsTrigger value="factions">
                   <Shield className="w-4 h-4 mr-1" />
-                  势力
+                  {t("entity.faction")}
                 </TabsTrigger>
               </TabsList>
 
@@ -390,17 +386,17 @@ export const Sidebar: React.FC = () => {
             <div onClick={handleOpenSettings} className="cursor-pointer">
               <SidebarSectionHeader
                 icon={<Settings className="w-4 h-4" />}
-                title="Settings"
+                title={t("common.settings")}
               />
               <div className="px-4 py-2 text-sm text-muted-foreground italic hover:bg-accent rounded-md">
-                管理应用、编辑器和AI设置
+                {t("settings_dialog.api")}
               </div>
             </div>
           </CardContent>
         </Card>
       </ScrollArea>
       <div className="p-4 border-t text-xs text-center text-muted-foreground">
-        Mì Jìng Novelist AI
+        {t("sidebar.footerBrand")}
       </div>
     </div>
   );

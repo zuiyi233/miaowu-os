@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import {
   useNovelListQuery,
   useDashboardStatsQuery,
@@ -6,6 +7,7 @@ import {
   useTodayActivityQuery, // ✅ 新增
 } from "../lib/react-query/db-queries";
 import { useUiStore } from "../stores/useUiStore";
+import { useSettingsStore } from "../stores/useSettingsStore";
 import { useNovelCreationDialog } from "./NovelCreationDialog";
 import {
   Plus,
@@ -32,8 +34,8 @@ import { NovelBookCard } from "./dashboard/NovelBookCard";
 import { MarketingBanner } from "./dashboard/MarketingBanner";
 
 // 格式化数字
-const formatNumber = (num: number) => {
-  return new Intl.NumberFormat("zh-CN", {
+const formatNumber = (num: number, locale: "zh-CN" | "en-US") => {
+  return new Intl.NumberFormat(locale, {
     notation: "compact",
     compactDisplay: "short",
     maximumFractionDigits: 1,
@@ -42,6 +44,7 @@ const formatNumber = (num: number) => {
 
 // --- 每日目标组件 (接入真实数据) ---
 const DailyGoalWidget = ({ count }: { count: number }) => {
+  const { t } = useTranslation();
   // 假设每日目标是 20 次保存/更新 (可以做成可配置的)
   const target = 20;
   const percentage = Math.min(100, Math.round((count / target) * 100));
@@ -56,16 +59,18 @@ const DailyGoalWidget = ({ count }: { count: number }) => {
           <div className="flex items-center gap-2 text-violet-600 dark:text-violet-400 mb-1">
             <Target className="w-4 h-4" />
             <span className="text-xs font-bold uppercase tracking-wider">
-              今日活跃
+              {t("dashboard.dailyActive")}
             </span>
           </div>
           <div className="text-2xl font-bold font-['Plus_Jakarta_Sans']">
             {count}{" "}
             <span className="text-sm text-muted-foreground font-normal">
-              / {target} 提交
+              / {target} {t("dashboard.submissions")}
             </span>
           </div>
-          <div className="text-xs text-muted-foreground">今日保存/快照次数</div>
+          <div className="text-xs text-muted-foreground">
+            {t("dashboard.todaySaveSnapshotCount")}
+          </div>
         </div>
         <div className="space-y-2 mt-4">
           <div className="h-2 w-full bg-violet-100 dark:bg-violet-900/30 rounded-full overflow-hidden">
@@ -75,7 +80,7 @@ const DailyGoalWidget = ({ count }: { count: number }) => {
             />
           </div>
           <p className="text-[10px] text-right text-muted-foreground">
-            完成度 {percentage}%
+            {t("dashboard.completion", { percentage })}
           </p>
         </div>
       </CardContent>
@@ -84,27 +89,30 @@ const DailyGoalWidget = ({ count }: { count: number }) => {
 };
 
 // --- 灵感组件 (保持不变) ---
-const InspirationWidget = () => (
-  <Card className="border-none shadow-sm bg-gradient-to-br from-amber-500/10 to-orange-500/10 backdrop-blur-md h-full relative overflow-hidden group cursor-pointer hover:border-amber-500/30 transition-all">
-    <div className="absolute -right-4 -bottom-4 p-4 opacity-10 group-hover:opacity-20 transition-opacity rotate-12">
-      <Lightbulb className="w-20 h-20" />
-    </div>
-    <CardContent className="p-5 flex flex-col h-full">
-      <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 mb-3">
-        <Lightbulb className="w-4 h-4" />
-        <span className="text-xs font-bold uppercase tracking-wider">
-          写作灵感
-        </span>
+const InspirationWidget = () => {
+  const { t } = useTranslation();
+  return (
+    <Card className="border-none shadow-sm bg-gradient-to-br from-amber-500/10 to-orange-500/10 backdrop-blur-md h-full relative overflow-hidden group cursor-pointer hover:border-amber-500/30 transition-all">
+      <div className="absolute -right-4 -bottom-4 p-4 opacity-10 group-hover:opacity-20 transition-opacity rotate-12">
+        <Lightbulb className="w-20 h-20" />
       </div>
-      <p className="text-sm font-medium leading-relaxed line-clamp-3 flex-1">
-        "当一个从不说谎的角色被迫撒下一个弥天大谎来保护他最恨的人时，会发生什么？"
-      </p>
-      <div className="mt-3 flex items-center text-[10px] text-amber-600/70 font-medium group-hover:translate-x-1 transition-transform">
-        使用此灵感 <ChevronRight className="w-3 h-3 ml-1" />
-      </div>
-    </CardContent>
-  </Card>
-);
+      <CardContent className="p-5 flex flex-col h-full">
+        <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 mb-3">
+          <Lightbulb className="w-4 h-4" />
+          <span className="text-xs font-bold uppercase tracking-wider">
+            {t("dashboard.inspiration")}
+          </span>
+        </div>
+        <p className="text-sm font-medium leading-relaxed line-clamp-3 flex-1">
+          {t("dashboard.inspirationQuote")}
+        </p>
+        <div className="mt-3 flex items-center text-[10px] text-amber-600/70 font-medium group-hover:translate-x-1 transition-transform">
+          {t("dashboard.useInspiration")} <ChevronRight className="w-3 h-3 ml-1" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
 
 // ✅ 定义 Props 接口，接收 toggle 函数
 interface DashboardProps {
@@ -112,6 +120,8 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onOpenAiChat }) => {
+  const { t } = useTranslation();
+  const language = useSettingsStore((state) => state.language);
   const { setViewMode, setCurrentNovelTitle } = useUiStore();
   const { data: novels = [], isLoading: isListLoading } = useNovelListQuery();
   const { data: stats, isLoading: isStatsLoading } = useDashboardStatsQuery();
@@ -121,11 +131,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAiChat }) => {
 
   const [_, __, NovelCreationDialog] = useNovelCreationDialog();
   const [searchQuery, setSearchQuery] = useState("");
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   const handleOpenNovel = (title: string) => {
     setCurrentNovelTitle(title);
@@ -134,11 +139,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAiChat }) => {
 
   const getGreeting = () => {
     const hour = new Date().getHours();
-    if (hour < 6) return "夜深了，灵感还在游荡吗？";
-    if (hour < 11) return "早安，准备好开始创作了吗？";
-    if (hour < 14) return "午安，在此刻寻找片刻宁静。";
-    if (hour < 19) return "下午好，让故事继续流淌。";
-    return "晚上好，愿笔下生辉。";
+    if (hour < 6) return t("dashboard.greeting.night");
+    if (hour < 11) return t("dashboard.greeting.morning");
+    if (hour < 14) return t("dashboard.greeting.noon");
+    if (hour < 19) return t("dashboard.greeting.afternoon");
+    return t("dashboard.greeting.evening");
   };
 
   const filteredNovels = useMemo(() => {
@@ -146,8 +151,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAiChat }) => {
       n.title.toLowerCase().includes(searchQuery.toLowerCase())
     );
   }, [novels, searchQuery]);
-
-  if (!mounted) return null;
 
   return (
     <div className="h-full w-full overflow-y-auto bg-[#F9F7F3] dark:bg-[#0c0c0e] relative">
@@ -161,8 +164,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAiChat }) => {
             </h1>
             <p className="text-sm text-muted-foreground flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-amber-500" />
-              今天是{" "}
-              {new Date().toLocaleDateString("zh-CN", {
+              {t("dashboard.todayIs")}{" "}
+              {new Date().toLocaleDateString(language, {
                 month: "long",
                 day: "numeric",
                 weekday: "long",
@@ -174,7 +177,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAiChat }) => {
             <div className="relative group flex-1 md:flex-none">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
               <Input
-                placeholder="搜索作品..."
+                placeholder={t("dashboard.searchWorks")}
                 className="pl-9 bg-white/50 dark:bg-black/20 border-transparent hover:border-border/50 focus:bg-background w-full md:w-72 transition-all shadow-sm h-10"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -183,7 +186,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAiChat }) => {
             <NovelCreationDialog
               trigger={
                 <Button className="shadow-md hover:shadow-lg transition-all bg-primary text-primary-foreground h-10 px-6">
-                  <Plus className="w-4 h-4 mr-2" /> 新建作品
+                  <Plus className="w-4 h-4 mr-2" /> {t("dashboard.newWork")}
                 </Button>
               }
             />
@@ -196,14 +199,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAiChat }) => {
           <div className="grid grid-cols-2 md:grid-cols-1 gap-4 lg:col-span-1">
             {[
               {
-                label: "累计字数",
-                val: formatNumber(stats?.totalWordCount || 0),
+                label: t("dashboard.totalWordCount"),
+                val: formatNumber(stats?.totalWordCount || 0, language),
                 icon: PenTool,
                 color: "text-blue-500",
                 bg: "bg-blue-500/10",
               },
               {
-                label: "总章节",
+                label: t("dashboard.totalChaptersLabel"),
                 val: stats?.totalChapters || 0,
                 icon: FileText,
                 color: "text-orange-500",
@@ -238,11 +241,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAiChat }) => {
             <CardContent className="p-5 h-full flex flex-col justify-between">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-medium flex items-center gap-2">
-                  <Activity className="w-4 h-4 text-primary" /> 创作热力
+                  <Activity className="w-4 h-4 text-primary" />{" "}
+                  {t("dashboard.creationHeat")}
                 </h3>
                 <div className="text-xs text-muted-foreground">
                   {/* 这里可以后续根据真实数据计算连续天数 */}
-                  持续记录灵感
+                  {t("dashboard.keepRecording")}
                 </div>
               </div>
               <div className="w-full overflow-x-auto pb-1">
@@ -277,12 +281,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAiChat }) => {
         <div className="space-y-6 pb-20">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold font-['Lora'] flex items-center gap-3">
-              我的书房
+              {t("dashboard.bookshelf")}
               <Badge
                 variant="secondary"
                 className="rounded-full px-2.5 text-xs bg-muted/50 font-normal text-muted-foreground"
               >
-                {filteredNovels.length} 本
+                {t("dashboard.bookshelfCount", { count: filteredNovels.length })}
               </Badge>
             </h2>
           </div>
@@ -314,7 +318,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAiChat }) => {
                     <div className="w-16 h-16 rounded-full bg-muted/30 flex items-center justify-center group-hover:scale-110 transition-transform duration-300 group-hover:bg-primary/10">
                       <Plus className="w-8 h-8" />
                     </div>
-                    <span className="font-medium">开始新的旅程</span>
+                    <span className="font-medium">
+                      {t("dashboard.startNewJourney")}
+                    </span>
                   </div>
                 }
               />
@@ -326,13 +332,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAiChat }) => {
                 <PenTool className="w-10 h-10 text-muted-foreground/50" />
               </div>
               <h3 className="text-xl font-medium text-foreground/80 mb-2">
-                书架是空的
+                {t("dashboard.emptyBookshelfTitle")}
               </h3>
               <p className="text-muted-foreground mb-8">
-                创建一个新作品，开始书写你的世界。
+                {t("dashboard.emptyBookshelfDescription")}
               </p>
               <NovelCreationDialog
-                trigger={<Button size="lg">创建第一部小说</Button>}
+                trigger={<Button size="lg">{t("dashboard.createFirstNovel")}</Button>}
               />
             </div>
           )}
@@ -345,7 +351,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAiChat }) => {
           onClick={onOpenAiChat}
           className="fixed bottom-8 right-8 h-14 w-14 rounded-full shadow-xl bg-primary hover:bg-primary/90 text-primary-foreground z-50 transition-transform hover:scale-110 animate-in zoom-in duration-300"
           size="icon"
-          title="开启 AI 自由对话"
+          title={t("dashboard.openFreeAiChat")}
         >
           <MessageCircle className="h-7 w-7" />
         </Button>

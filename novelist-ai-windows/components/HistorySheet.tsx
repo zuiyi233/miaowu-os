@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   useChapterSnapshotsQuery,
   useRestoreFromSnapshotMutation,
@@ -33,6 +34,7 @@ export const HistorySheet: React.FC<HistorySheetProps> = ({
   chapterId,
   chapterTitle,
 }) => {
+  const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
 
   // 使用React Query获取版本历史数据
@@ -60,36 +62,40 @@ export const HistorySheet: React.FC<HistorySheetProps> = ({
       <SheetTrigger asChild>
         <Button variant="ghost" size="sm" className="gap-2">
           <History className="w-4 h-4" />
-          历史记录
+          {t("historySheet.trigger")}
         </Button>
       </SheetTrigger>
       <SheetContent className="w-[400px] sm:w-[540px]">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             <Clock className="w-5 h-5" />
-            版本历史
+            {t("historySheet.title")}
           </SheetTitle>
           <SheetDescription>
-            章节「{chapterTitle}」的版本历史记录
+            {t("historySheet.description", { chapterTitle })}
           </SheetDescription>
         </SheetHeader>
 
         <ScrollArea className="flex-1 px-1">
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
-              <div className="text-sm text-muted-foreground">加载中...</div>
+              <div className="text-sm text-muted-foreground">
+                {t("common.loading")}
+              </div>
             </div>
           ) : error ? (
             <div className="flex items-center justify-center py-8">
               <div className="text-sm text-destructive">
-                加载版本历史失败: {error.message}
+                {t("historySheet.loadError", {
+                  message: (error as Error).message,
+                })}
               </div>
             </div>
           ) : snapshots.length === 0 ? (
             <EmptyState
               icon={FileText}
-              title="暂无版本历史"
-              description="编辑章节内容后会自动创建版本快照"
+              title={t("historySheet.emptyTitle")}
+              description={t("historySheet.emptyDescription")}
             />
           ) : (
             <div className="space-y-3 py-4">
@@ -101,7 +107,9 @@ export const HistorySheet: React.FC<HistorySheetProps> = ({
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-sm font-medium">
-                        版本 #{snapshots.length - index}
+                        {t("historySheet.versionLabel", {
+                          number: snapshots.length - index,
+                        })}
                       </CardTitle>
                       <Button
                         variant="outline"
@@ -111,7 +119,7 @@ export const HistorySheet: React.FC<HistorySheetProps> = ({
                         className="gap-1"
                       >
                         <RotateCcw className="w-3 h-3" />
-                        恢复
+                        {t("historySheet.restore")}
                       </Button>
                     </div>
                   </CardHeader>
@@ -127,7 +135,9 @@ export const HistorySheet: React.FC<HistorySheetProps> = ({
                         </div>
                       )}
                       <div className="text-xs text-muted-foreground">
-                        内容长度: {snapshot.content.length} 字符
+                        {t("historySheet.contentLength", {
+                          count: snapshot.content.length,
+                        })}
                       </div>
                     </div>
                   </CardContent>
@@ -139,7 +149,7 @@ export const HistorySheet: React.FC<HistorySheetProps> = ({
 
         <div className="border-t p-4">
           <div className="text-xs text-muted-foreground text-center">
-            最多保留最近 50 个版本
+            {t("historySheet.keepRecent", { count: 50 })}
           </div>
         </div>
       </SheetContent>

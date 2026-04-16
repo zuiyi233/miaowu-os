@@ -13,8 +13,10 @@ import { Button } from '@/components/ui/button';
 import { Plus } from 'lucide-react';
 import { NovelCreationDialog } from './NovelCreationDialog';
 import { useState } from 'react';
+import { useI18n } from '@/core/i18n/hooks';
 
 export function NovelSelector() {
+  const { t } = useI18n();
   const { data: novels } = useAllNovelsQuery();
   const { currentNovelTitle, setCurrentNovelTitle } = useNovelStore();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -27,7 +29,7 @@ export function NovelSelector() {
           onValueChange={setCurrentNovelTitle}
         >
           <SelectTrigger className="w-[200px]">
-            <SelectValue placeholder="Select a novel..." />
+            <SelectValue placeholder={t.novel.selectNovel} />
           </SelectTrigger>
           <SelectContent>
             {novels?.map((novel) => (

@@ -46,12 +46,12 @@ export function NovelCreationDialog({ open, onOpenChange }: NovelCreationDialogP
         volumes: [
           {
             id: volId,
-            title: '第一卷',
+            title: t.novel.defaultVolumeName,
             description: '',
             chapters: [
               {
                 id: ch1Id,
-                title: '第一章',
+                title: t.novel.defaultChapterName,
                 content: '<p></p>',
                 order: 0,
               },
@@ -62,7 +62,7 @@ export function NovelCreationDialog({ open, onOpenChange }: NovelCreationDialogP
         chapters: [
           {
             id: ch1Id,
-            title: '第一章',
+            title: t.novel.defaultChapterName,
             content: '<p></p>',
             volumeId: volId,
             order: 0,

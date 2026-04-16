@@ -28,6 +28,7 @@ import {
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useTranslation } from "react-i18next";
 import { ChatHeader, ContextOptions } from "./ChatHeader"; // ✅ 引入 Header 和类型
 
 // 实体图标组件
@@ -50,12 +51,13 @@ const EntityIcon = ({ type }: { type: string }) => {
 const ContextIndicator: React.FC<{
   entities?: ChatMessage["contextEntities"];
 }> = ({ entities }) => {
+  const { t } = useTranslation();
   if (!entities || entities.length === 0) return null;
 
   return (
     <div className="flex flex-wrap gap-1.5 mb-2 mt-1 justify-end">
       <span className="text-[10px] text-muted-foreground flex items-center mr-1">
-        <Sparkles className="w-3 h-3 mr-1" /> 已引用:
+        <Sparkles className="w-3 h-3 mr-1" /> {t("chat.referenced")}
       </span>
       {entities.map((e, i) => (
         <div
@@ -75,6 +77,7 @@ const ThinkingProcess: React.FC<{ content: string; isThinking?: boolean }> = ({
   content,
   isThinking,
 }) => {
+  const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(true);
 
   // 如果没有思考内容且不在思考中，不渲染
@@ -90,7 +93,7 @@ const ThinkingProcess: React.FC<{ content: string; isThinking?: boolean }> = ({
       >
         <div className="flex items-center gap-2">
           <Brain className="w-3 h-3" />
-          <span>{isThinking ? "深度思考中..." : "思考过程"}</span>
+          <span>{isThinking ? t("chat.deepThinking") : t("chat.thinkingProcess")}</span>
         </div>
         {isOpen ? (
           <ChevronDown className="w-3 h-3" />
@@ -179,6 +182,7 @@ interface ChatInterfaceProps {
 }
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({ session }) => {
+  const { t } = useTranslation();
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   // ✅ 修改：使用对象管理上下文选项，默认开启世界观
@@ -320,7 +324,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ session }) => {
           setIsLoading(false);
         },
         onError: (err) => {
-          toast.error("回复失败");
+          toast.error(t("chat.replyFailed"));
           setIsLoading(false);
         },
       });
@@ -387,7 +391,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ session }) => {
               <div className="bg-card border rounded-2xl px-5 py-3 flex items-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 <span className="text-sm text-muted-foreground">
-                  正在思考...
+                  {t("chat.thinking")}
                 </span>
               </div>
             </div>
@@ -403,7 +407,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ session }) => {
             <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="输入消息... (Shift+Enter 换行)"
+              placeholder={t("chat.placeholder2")}
               className="min-h-[60px] max-h-[200px] w-full resize-none border-0 bg-transparent p-3 focus-visible:ring-0 text-sm"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
@@ -414,7 +418,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ session }) => {
             />
             <div className="flex justify-between items-center p-2 border-t bg-muted/20 rounded-b-xl">
               <div className="text-[10px] text-muted-foreground px-2">
-                {input.length > 0 && `${estimateInputTokens(input)} tokens`}
+                {input.length > 0 &&
+                  t("chat.tokenEstimate", { count: estimateInputTokens(input) })}
               </div>
               <Button
                 size="sm"
@@ -422,12 +427,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ session }) => {
                 onClick={handleSend}
                 disabled={isLoading || !input.trim()}
               >
-                发送 <Send className="w-3.5 h-3.5" />
+                {t("chat.send")} <Send className="w-3.5 h-3.5" />
               </Button>
             </div>
           </div>
           <div className="text-[10px] text-center text-muted-foreground mt-2">
-            AI 生成的内容可能不准确，请核实重要信息。
+            {t("chat.disclaimer")}
           </div>
         </div>
       </div>

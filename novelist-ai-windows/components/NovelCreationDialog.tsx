@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { NovelForm } from "./NovelForm";
 import { useModalStore } from "../stores/useModalStore";
 import { useQueryClient } from "@tanstack/react-query";
@@ -34,11 +35,15 @@ interface NovelCreationDialogProps {
  */
 export const NovelCreationDialog: React.FC<NovelCreationDialogProps> = ({
   trigger,
-  title = "创建新小说",
+  title,
   description,
 }) => {
+  const { t } = useTranslation();
   const { open } = useModalStore();
   const queryClient = useQueryClient();
+
+  const resolvedTitle = title ?? t("novel.createTitle", { defaultValue: t("novel.newNovel") });
+  const resolvedDescription = description ?? t("novel.createDescription", { defaultValue: "" });
 
   // 处理小说创建
   const handleCreateNovel = () => {
@@ -46,9 +51,9 @@ export const NovelCreationDialog: React.FC<NovelCreationDialogProps> = ({
       type: "dialog",
       component: () => (
         <div>
-          <h2 className="text-lg font-semibold mb-4">{title}</h2>
-          {description && (
-            <p className="text-sm text-muted-foreground mb-4">{description}</p>
+          <h2 className="text-lg font-semibold mb-4">{resolvedTitle}</h2>
+          {resolvedDescription && (
+            <p className="text-sm text-muted-foreground mb-4">{resolvedDescription}</p>
           )}
           <NovelForm
             onSubmitSuccess={() => {
@@ -80,6 +85,7 @@ export const NovelCreationDialog: React.FC<NovelCreationDialogProps> = ({
  * 遵循单一职责原则，专注于状态管理逻辑
  */
 export const useNovelCreationDialog = () => {
+  const { t } = useTranslation();
   const { open } = useModalStore();
   const queryClient = useQueryClient();
 
@@ -95,20 +101,23 @@ export const useNovelCreationDialog = () => {
   const NovelCreationDialog = React.memo(
     ({
       trigger,
-      title = "创建新小说",
+      title,
       description,
     }: Omit<NovelCreationDialogProps, "trigger"> & {
       trigger: React.ReactNode;
     }) => {
+      const resolvedTitle = title ?? t("novel.createTitle", { defaultValue: t("novel.newNovel") });
+      const resolvedDescription = description ?? t("novel.createDescription", { defaultValue: "" });
+
       const handleCreateNovel = () => {
         open({
           type: "dialog",
           component: () => (
             <div>
-              <h2 className="text-lg font-semibold mb-4">{title}</h2>
-              {description && (
+              <h2 className="text-lg font-semibold mb-4">{resolvedTitle}</h2>
+              {resolvedDescription && (
                 <p className="text-sm text-muted-foreground mb-4">
-                  {description}
+                  {resolvedDescription}
                 </p>
               )}
               <NovelForm onSubmitSuccess={handleSuccess} />

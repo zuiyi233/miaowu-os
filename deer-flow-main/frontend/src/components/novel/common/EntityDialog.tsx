@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -20,18 +20,31 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { Character, Faction, Setting, Item } from '@/core/novel/schemas';
+import { useI18n } from '@/core/i18n/hooks';
+import type { Character, Faction, Item, Setting } from '@/core/novel/schemas';
+
+type EntityType = 'character' | 'faction' | 'setting' | 'item';
 
 interface EntityDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (data: any) => void;
-  entityType: 'character' | 'faction' | 'setting' | 'item';
+  entityType: EntityType;
   initialData?: Character | Faction | Setting | Item | null;
   novelId: string;
 }
 
-export function EntityDialog({ open, onOpenChange, onSubmit, entityType, initialData, novelId }: EntityDialogProps) {
+const DEFAULT_ENTITY_TYPE_VALUE = '其他';
+
+export function EntityDialog({
+  open,
+  onOpenChange,
+  onSubmit,
+  entityType,
+  initialData,
+  novelId,
+}: EntityDialogProps) {
+  const { t } = useI18n();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [type, setType] = useState('');
@@ -41,11 +54,7 @@ export function EntityDialog({ open, onOpenChange, onSubmit, entityType, initial
   const [extra4, setExtra4] = useState('');
 
   useEffect(() => {
-    if (initialData) {
-      setName(initialData.name || '');
-      setDescription(initialData.description || '');
-      setType('type' in initialData ? (initialData as any).type : '');
-    } else {
+    if (!initialData || !open) {
       setName('');
       setDescription('');
       setType('');
@@ -53,11 +62,94 @@ export function EntityDialog({ open, onOpenChange, onSubmit, entityType, initial
       setExtra2('');
       setExtra3('');
       setExtra4('');
+      return;
     }
-  }, [initialData, open]);
+
+    setName(initialData.name || '');
+    setDescription(initialData.description || '');
+    setType('type' in initialData ? (initialData as any).type || '' : '');
+
+    switch (entityType) {
+      case 'character':
+        setExtra1((initialData as Character).age || '');
+        setExtra2((initialData as Character).gender || '');
+        setExtra3((initialData as Character).appearance || '');
+        setExtra4((initialData as Character).personality || '');
+        break;
+      case 'faction':
+        setExtra1((initialData as Faction).ideology || '');
+        setExtra2((initialData as Faction).goals || '');
+        setExtra3((initialData as Faction).structure || '');
+        setExtra4((initialData as Faction).resources || '');
+        break;
+      case 'setting':
+        setExtra1((initialData as Setting).atmosphere || '');
+        setExtra2((initialData as Setting).history || '');
+        setExtra3((initialData as Setting).keyFeatures || '');
+        setExtra4('');
+        break;
+      case 'item':
+        setExtra1((initialData as Item).appearance || '');
+        setExtra2((initialData as Item).history || '');
+        setExtra3((initialData as Item).abilities || '');
+        setExtra4('');
+        break;
+    }
+  }, [entityType, initialData, open]);
+
+  const entityLabels: Record<EntityType, string> = {
+    character: t.novel.characterSingular,
+    faction: t.novel.factionSingular,
+    setting: t.novel.settingSingular,
+    item: t.novel.itemSingular,
+  };
+
+  const extraLabels: Record<EntityType, string[]> = {
+    character: [
+      t.novel.fieldAge,
+      t.novel.fieldGender,
+      t.novel.fieldAppearance,
+      t.novel.fieldPersonality,
+    ],
+    faction: [
+      t.novel.fieldIdeology,
+      t.novel.fieldGoals,
+      t.novel.fieldStructure,
+      t.novel.fieldResources,
+    ],
+    setting: [
+      t.novel.fieldAtmosphere,
+      t.novel.fieldHistory,
+      t.novel.fieldKeyFeatures,
+    ],
+    item: [
+      t.novel.fieldAppearance,
+      t.novel.fieldHistory,
+      t.novel.fieldAbilities,
+    ],
+  };
+
+  const settingTypeOptions = [
+    { value: '城市', label: t.novel.settingTypeCity },
+    { value: '建筑', label: t.novel.settingTypeBuilding },
+    { value: '自然景观', label: t.novel.settingTypeNaturalLandscape },
+    { value: '地区', label: t.novel.settingTypeRegion },
+    { value: DEFAULT_ENTITY_TYPE_VALUE, label: t.novel.settingTypeOther },
+  ];
+
+  const itemTypeOptions = [
+    { value: '关键物品', label: t.novel.itemTypeKeyItem },
+    { value: '武器', label: t.novel.itemTypeWeapon },
+    { value: '科技装置', label: t.novel.itemTypeTechDevice },
+    { value: '普通物品', label: t.novel.itemTypeCommonItem },
+    { value: DEFAULT_ENTITY_TYPE_VALUE, label: t.novel.itemTypeOther },
+  ];
+
+  const currentEntityLabel = entityLabels[entityType];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
     const base = {
       id: initialData?.id || crypto.randomUUID(),
       name,
@@ -81,13 +173,13 @@ export function EntityDialog({ open, onOpenChange, onSubmit, entityType, initial
         entityData.resources = extra4;
         break;
       case 'setting':
-        entityData.type = (type || '其他') as any;
+        entityData.type = (type || DEFAULT_ENTITY_TYPE_VALUE) as any;
         entityData.atmosphere = extra1;
         entityData.history = extra2;
         entityData.keyFeatures = extra3;
         break;
       case 'item':
-        entityData.type = (type || '其他') as any;
+        entityData.type = (type || DEFAULT_ENTITY_TYPE_VALUE) as any;
         entityData.appearance = extra1;
         entityData.history = extra2;
         entityData.abilities = extra3;
@@ -98,112 +190,92 @@ export function EntityDialog({ open, onOpenChange, onSubmit, entityType, initial
     onOpenChange(false);
   };
 
-  const getTitle = () => {
-    switch (entityType) {
-      case 'character': return initialData ? 'Edit Character' : 'Create Character';
-      case 'faction': return initialData ? 'Edit Faction' : 'Create Faction';
-      case 'setting': return initialData ? 'Edit Setting' : 'Create Setting';
-      case 'item': return initialData ? 'Edit Item' : 'Create Item';
-    }
-  };
-
-  const getExtraLabels = () => {
-    switch (entityType) {
-      case 'character':
-        return ['Age', 'Gender', 'Appearance', 'Personality'];
-      case 'faction':
-        return ['Ideology', 'Goals', 'Structure', 'Resources'];
-      case 'setting':
-        return ['Atmosphere', 'History', 'Key Features', ''];
-      case 'item':
-        return ['Appearance', 'History', 'Abilities', ''];
-    }
-  };
-
-  const labels = getExtraLabels();
+  const fieldValues = [extra1, extra2, extra3, extra4];
+  const fieldSetters = [setExtra1, setExtra2, setExtra3, setExtra4];
+  const currentExtraLabels = extraLabels[entityType];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>{getTitle()}</DialogTitle>
+            <DialogTitle>
+              {initialData
+                ? `${t.novel.edit} ${currentEntityLabel}`
+                : `${t.novel.create} ${currentEntityLabel}`}
+            </DialogTitle>
             <DialogDescription>
-              {initialData ? 'Update the information' : 'Add new'} {entityType}.
+              {initialData
+                ? `${t.novel.update} ${currentEntityLabel}`
+                : `${t.novel.add} ${currentEntityLabel}`}
             </DialogDescription>
           </DialogHeader>
+
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label>Name *</Label>
+              <Label>{t.novel.name} *</Label>
               <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder={`Enter ${entityType} name...`}
+                placeholder={t.novel.namePlaceholder(currentEntityLabel)}
                 required
               />
             </div>
 
             {(entityType === 'setting' || entityType === 'item') && (
               <div className="space-y-2">
-                <Label>Type</Label>
+                <Label>{t.novel.type}</Label>
                 <Select value={type} onValueChange={setType}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select type..." />
+                    <SelectValue placeholder={t.novel.selectType} />
                   </SelectTrigger>
                   <SelectContent>
-                    {entityType === 'setting' ? (
-                      <>
-                        <SelectItem value="城市">城市</SelectItem>
-                        <SelectItem value="建筑">建筑</SelectItem>
-                        <SelectItem value="自然景观">自然景观</SelectItem>
-                        <SelectItem value="地区">地区</SelectItem>
-                        <SelectItem value="其他">其他</SelectItem>
-                      </>
-                    ) : (
-                      <>
-                        <SelectItem value="关键物品">关键物品</SelectItem>
-                        <SelectItem value="武器">武器</SelectItem>
-                        <SelectItem value="科技装置">科技装置</SelectItem>
-                        <SelectItem value="普通物品">普通物品</SelectItem>
-                        <SelectItem value="其他">其他</SelectItem>
-                      </>
-                    )}
+                    {(entityType === 'setting'
+                      ? settingTypeOptions
+                      : itemTypeOptions
+                    ).map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
             )}
 
             <div className="space-y-2">
-              <Label>Description</Label>
+              <Label>{t.novel.entityDescription}</Label>
               <Textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder={`Describe the ${entityType}...`}
+                placeholder={t.novel.descriptionPlaceholder(currentEntityLabel)}
                 rows={3}
               />
             </div>
 
-            {labels.map((label, i) => {
-              const value = [extra1, extra2, extra3, extra4][i];
-              const setter = [setExtra1, setExtra2, setExtra3, setExtra4][i];
-              return label && setter && (
-                <div key={i} className="space-y-2">
+            {currentExtraLabels.map((label, index) => {
+              const value = fieldValues[index];
+              const setter = fieldSetters[index];
+
+              return (
+                <div key={label} className="space-y-2">
                   <Label>{label}</Label>
                   <Input
                     value={value}
                     onChange={(e) => setter(e.target.value)}
-                    placeholder={`Enter ${label.toLowerCase()}...`}
+                    placeholder={t.novel.fieldPlaceholder(label)}
                   />
                 </div>
               );
             })}
           </div>
+
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
+              {t.novel.cancel}
             </Button>
             <Button type="submit" disabled={!name.trim()}>
-              {initialData ? 'Update' : 'Create'}
+              {initialData ? t.novel.update : t.novel.create}
             </Button>
           </DialogFooter>
         </form>

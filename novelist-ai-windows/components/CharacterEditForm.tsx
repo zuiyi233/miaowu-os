@@ -1,11 +1,11 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useUpdateCharacterMutation } from "../lib/react-query/db-queries";
 import { useMentionOptions } from "../hooks/useMentionOptions"; // ✅ 引入统一的提及选项 Hook
 import { createCharacterSchema } from "../lib/schemas";
 import type { Character, CreateCharacter } from "../types";
-import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 // ❌ 移除 Textarea
 // import { Textarea } from "./ui/textarea";
@@ -54,6 +54,8 @@ export const CharacterEditForm: React.FC<CharacterEditFormProps> = ({
   character,
   onSubmitSuccess,
 }): React.ReactElement => {
+  const { t } = useTranslation();
+
   // ✅ 使用统一 Hook 获取所有实体类型的提及数据，排除当前编辑的角色
   const mentionOptions = useMentionOptions(character.id);
 
@@ -131,9 +133,9 @@ export const CharacterEditForm: React.FC<CharacterEditFormProps> = ({
           name="name"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>角色名</FormLabel>
+              <FormLabel>{t("character.name")}</FormLabel>
               <FormControl>
-                <Input placeholder="例如：艾拉" {...field} />
+                <Input placeholder={t("character.namePlaceholder")} {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -146,7 +148,7 @@ export const CharacterEditForm: React.FC<CharacterEditFormProps> = ({
           name="avatar"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>角色头像</FormLabel>
+              <FormLabel>{t("character.avatar")}</FormLabel>
               <FormControl>
                 <ImageUpload value={field.value} onChange={field.onChange} />
               </FormControl>
@@ -162,9 +164,9 @@ export const CharacterEditForm: React.FC<CharacterEditFormProps> = ({
             name="age"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>年龄</FormLabel>
+                <FormLabel>{t("character.age")}</FormLabel>
                 <FormControl>
-                  <Input placeholder="例如：青年" {...field} />
+                  <Input placeholder={t("character.agePlaceholder")} {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -175,9 +177,9 @@ export const CharacterEditForm: React.FC<CharacterEditFormProps> = ({
             name="gender"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>性别</FormLabel>
+                <FormLabel>{t("character.gender")}</FormLabel>
                 <FormControl>
-                  <Input placeholder="例如：男" {...field} />
+                  <Input placeholder={t("character.genderPlaceholder")} {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -191,15 +193,15 @@ export const CharacterEditForm: React.FC<CharacterEditFormProps> = ({
           name="factionId"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>所属势力</FormLabel>
+              <FormLabel>{t("character.faction")}</FormLabel>
               <Select onValueChange={field.onChange} defaultValue={field.value}>
                 <FormControl>
                   <SelectTrigger>
-                    <SelectValue placeholder="选择所属势力" />
+                    <SelectValue placeholder={t("character.selectFaction")} />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value="none">无</SelectItem>
+                  <SelectItem value="none">{t("common.none")}</SelectItem>
                   {factions.data?.map((faction) => (
                     <SelectItem key={faction.id} value={faction.id}>
                       {faction.name}
@@ -217,7 +219,7 @@ export const CharacterEditForm: React.FC<CharacterEditFormProps> = ({
           name="description"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>角色简介</FormLabel>
+              <FormLabel>{t("character.description")}</FormLabel>
               <FormControl>
                 {/* ✅ 添加 key 属性，当提及选项数量变化时（例如添加了新势力），强制重新渲染编辑器 */}
                 <MiniEditor
@@ -238,7 +240,7 @@ export const CharacterEditForm: React.FC<CharacterEditFormProps> = ({
           name="appearance"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>外貌描述</FormLabel>
+              <FormLabel>{t("character.appearance")}</FormLabel>
               <FormControl>
                 <MiniEditor
                   key={`mini-editor-appearance-${mentionOptions.length}`}
@@ -258,7 +260,7 @@ export const CharacterEditForm: React.FC<CharacterEditFormProps> = ({
           name="personality"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>性格特点</FormLabel>
+              <FormLabel>{t("character.personality")}</FormLabel>
               <FormControl>
                 <MiniEditor
                   key={`mini-editor-personality-${mentionOptions.length}`}
@@ -278,7 +280,7 @@ export const CharacterEditForm: React.FC<CharacterEditFormProps> = ({
           name="motivation"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>动机与目标</FormLabel>
+              <FormLabel>{t("character.motivation")}</FormLabel>
               <FormControl>
                 <MiniEditor
                   key={`mini-editor-motivation-${mentionOptions.length}`}
@@ -298,7 +300,7 @@ export const CharacterEditForm: React.FC<CharacterEditFormProps> = ({
           name="backstory"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>背景故事</FormLabel>
+              <FormLabel>{t("character.backstory")}</FormLabel>
               <FormControl>
                 <MiniEditor
                   key={`mini-editor-backstory-${mentionOptions.length}`}
@@ -314,7 +316,7 @@ export const CharacterEditForm: React.FC<CharacterEditFormProps> = ({
 
         {/* 全局错误信息 */}
         {updateCharacterMutation.error && (
-          <p className="text-sm text-destructive">更新失败，请重试</p>
+          <p className="text-sm text-destructive">{t("common.updateFailed")}</p>
         )}
 
         {/* 提交按钮 */}
@@ -322,9 +324,9 @@ export const CharacterEditForm: React.FC<CharacterEditFormProps> = ({
           type="submit"
           className="w-full"
           isLoading={updateCharacterMutation.isPending}
-          loadingText="保存中..."
+          loadingText={t("common.saving")}
         >
-          保存更改
+          {t("common.saveChanges")}
         </LoadingButton>
       </form>
     </Form>

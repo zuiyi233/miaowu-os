@@ -25,6 +25,9 @@ export interface ApiConfig {
  * 遵循开放封闭原则，支持扩展而无需修改现有代码
  */
 export interface AppSettings {
+  // 语言设置
+  language: "zh-CN" | "en-US";
+
   // 编辑器设置 (保持不变)
   autoSaveEnabled: boolean;
   autoSaveDelay: number; // 毫秒
@@ -105,6 +108,9 @@ interface SettingsState extends AppSettings {
   // ✅ 新增：设置上下文窗口大小
   setContextWindowSize: (size: number) => void;
 
+  // ✅ 新增：设置语言
+  setLanguage: (language: "zh-CN" | "en-US") => void;
+
   // ✅ 新增：更新 RAG 配置
   setRagOptions: (options: Partial<AppSettings["ragOptions"]>) => void;
 }
@@ -115,6 +121,9 @@ interface SettingsState extends AppSettings {
  * 重构为支持多服务商配置和分任务模型精细化配置
  */
 const defaultSettings: AppSettings = {
+  // 语言默认设置
+  language: "zh-CN",
+
   // 编辑器默认设置
   autoSaveEnabled: true,
   autoSaveDelay: 5 * 60 * 1000, // 5分钟（300000毫秒）
@@ -430,6 +439,15 @@ export const useSettingsStore = create<SettingsState>()(
           ragOptions: { ...state.ragOptions, ...options },
         }));
       },
+
+      /**
+       * ✅ 新增：设置语言
+       * 遵循单一职责原则，专注语言设置管理
+       */
+      setLanguage: (language) => {
+        logger.info(STORE_CONTEXT, "Updating language", { language });
+        set({ language });
+      },
     }),
     {
       name: "mi-jing-novelist-settings", // 持久化存储的键名
@@ -438,7 +456,7 @@ export const useSettingsStore = create<SettingsState>()(
        * 版本管理
        * 当设置结构发生变化时，可以在这里进行迁移
        */
-      version: 8, // ✅ 升级版本号到 8，支持 condense/rewrite 任务
+      version: 9, // ✅ 升级版本号到 9，支持 language 设置
       /**
        * 迁移函数
        * 用于处理设置结构的向后兼容性
@@ -615,6 +633,18 @@ export const useSettingsStore = create<SettingsState>()(
               ...defaultSettings.modelSettings,
               ...(state.modelSettings || {}),
             },
+          };
+        }
+
+        // Version 8 -> 9: 添加 language 设置
+        if (version < 9) {
+          logger.info(
+            STORE_CONTEXT,
+            "Migrating settings to version 9 (Add language setting)"
+          );
+          state = {
+            ...state,
+            language: state.language || defaultSettings.language,
           };
         }
 

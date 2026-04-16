@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { useNovelDataSelector } from "../lib/react-query/db-queries";
 import { useUiStore } from "../stores/useUiStore";
 import { ThemeToggle } from "./ThemeToggle";
@@ -31,6 +32,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   onToggleSidebar,
   onToggleAiPanel,
 }) => {
+  const { t } = useTranslation();
   const { data: novelTitle, isLoading } = useNovelDataSelector(
     (novel) => novel?.title
   );
@@ -40,10 +42,10 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   // ✅ 逻辑修正：根据视图模式决定标题显示
   const displayTitle =
     viewMode === "home"
-      ? "Mì Jìng · 秘境"
+      ? t("appHeader.homeTitle")
       : isLoading
-      ? "加载中..."
-      : novelTitle || "未命名作品";
+      ? t("common.loading")
+      : novelTitle || t("appHeader.untitledNovel");
 
   // ✅ 逻辑修正：Icon 也随之变化
   const TitleIcon = viewMode === "home" ? BookOpen : PenTool;
@@ -57,7 +59,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
             variant="ghost"
             size="icon"
             onClick={onToggleSidebar}
-            aria-label="Toggle Sidebar"
+            aria-label={t("appHeader.aria.toggleSidebar")}
             className="text-muted-foreground hover:text-foreground"
           >
             <Menu className="w-5 h-5" />
@@ -74,7 +76,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
               ? "bg-accent/50 text-accent-foreground"
               : "text-muted-foreground hover:text-foreground"
           }
-          title="回到首页"
+          title={t("appHeader.goHome")}
         >
           <Home className="w-5 h-5" />
         </Button>
@@ -111,31 +113,36 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                 value="editor"
                 className="text-xs px-3 h-7 data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all"
               >
-                <PenTool className="w-3 h-3 mr-1.5 opacity-70" /> 写作
+                <PenTool className="w-3 h-3 mr-1.5 opacity-70" />{" "}
+                {t("appHeader.tabs.editor")}
               </TabsTrigger>
               <TabsTrigger
                 value="graph"
                 className="text-xs px-3 h-7 data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all"
               >
-                <Network className="w-3 h-3 mr-1.5 opacity-70" /> 关系网
+                <Network className="w-3 h-3 mr-1.5 opacity-70" />{" "}
+                {t("appHeader.tabs.graph")}
               </TabsTrigger>
               <TabsTrigger
                 value="timeline"
                 className="text-xs px-3 h-7 data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all"
               >
-                <Clock className="w-3 h-3 mr-1.5 opacity-70" /> 时间线
+                <Clock className="w-3 h-3 mr-1.5 opacity-70" />{" "}
+                {t("appHeader.tabs.timeline")}
               </TabsTrigger>
               <TabsTrigger
                 value="chat"
                 className="text-xs px-3 h-7 data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all"
               >
-                <MessageSquare className="w-3 h-3 mr-1.5 opacity-70" /> 对话
+                <MessageSquare className="w-3 h-3 mr-1.5 opacity-70" />{" "}
+                {t("appHeader.tabs.chat")}
               </TabsTrigger>
               <TabsTrigger
                 value="outline"
                 className="text-xs px-3 h-7 data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all"
               >
-                <ListTree className="w-3 h-3 mr-1.5 opacity-70" /> 大纲规划中心
+                <ListTree className="w-3 h-3 mr-1.5 opacity-70" />{" "}
+                {t("appHeader.tabs.outline")}
               </TabsTrigger>
             </TabsList>
           </Tabs>
@@ -150,7 +157,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
           variant={viewMode === "home" ? "outline" : "ghost"}
           size={viewMode === "home" ? "sm" : "icon"}
           onClick={onToggleAiPanel}
-          aria-label="Toggle AI Panel"
+          aria-label={t("appHeader.aria.toggleAiPanel")}
           className={
             viewMode === "home"
               ? "gap-2 text-primary border-primary/20 bg-primary/5 hover:bg-primary/10"
@@ -160,7 +167,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
           <Sparkles className="w-5 h-5" />
           {/* 在首页显示文字，更显眼 */}
           {viewMode === "home" && (
-            <span className="hidden sm:inline">AI 助手</span>
+            <span className="hidden sm:inline">{t("aiPanel.title")}</span>
           )}
         </Button>
       </div>

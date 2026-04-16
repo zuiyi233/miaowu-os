@@ -1,11 +1,11 @@
 import React from "react";
 import { useFormWithLogging } from "../lib/logging";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useTranslation } from "react-i18next";
 import { useCreateChapterMutation } from "../lib/react-query/db-queries";
 import { createChapterSchema } from "../lib/schemas";
 import type { CreateChapter } from "../types";
 import { useNovelQuery } from "../lib/react-query/db-queries";
-import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
   Select,
@@ -38,6 +38,8 @@ interface ChapterFormProps {
 export const ChapterForm: React.FC<ChapterFormProps> = ({
   onSubmitSuccess,
 }): React.ReactElement => {
+  const { t } = useTranslation();
+
   // 使用整合的React Query获取数据 - 性能优化：单次查询获取所有数据
   const { data: novelData } = useNovelQuery();
 
@@ -80,9 +82,9 @@ export const ChapterForm: React.FC<ChapterFormProps> = ({
           name="title"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>章节标题</FormLabel>
+              <FormLabel>{t("chapter.title_field")}</FormLabel>
               <FormControl>
-                <Input placeholder="例如：第一章：开端" {...field} />
+                <Input placeholder={t("chapter.titlePlaceholder")} {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -94,15 +96,21 @@ export const ChapterForm: React.FC<ChapterFormProps> = ({
           name="volumeId"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>所属卷（可选）</FormLabel>
+              <FormLabel>{t("chapter.volume", { defaultValue: t("novel.volumes") })}</FormLabel>
               <Select onValueChange={field.onChange} defaultValue={field.value}>
                 <FormControl>
                   <SelectTrigger>
-                    <SelectValue placeholder="选择卷（可选）" />
+                    <SelectValue
+                      placeholder={t("chapter.volumePlaceholder", {
+                        defaultValue: t("novel.volumes"),
+                      })}
+                    />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value="none">不选择卷</SelectItem>
+                  <SelectItem value="none">
+                    {t("chapter.noVolume", { defaultValue: t("common.none") })}
+                  </SelectItem>
                   {volumes.map((volume) => (
                     <SelectItem key={volume.id} value={volume.id}>
                       {volume.title}
@@ -119,9 +127,9 @@ export const ChapterForm: React.FC<ChapterFormProps> = ({
           type="submit"
           className="w-full"
           isLoading={createChapterMutation.isPending}
-          loadingText="创建中..."
+          loadingText={t("common.creating", { defaultValue: t("common.loading") })}
         >
-          创建章节
+          {t("chapter.createChapter", { defaultValue: t("chapter.newChapter") })}
         </LoadingButton>
       </form>
     </Form>

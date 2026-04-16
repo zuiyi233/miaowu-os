@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Send } from 'lucide-react';
 import { useAiPanelStore } from '@/core/novel';
+import { useI18n } from '@/core/i18n/hooks';
 
 interface Message {
   id: string;
@@ -17,6 +18,7 @@ interface Message {
 export function AiChatView() {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
+  const { t } = useI18n();
   const aiStream = useAiPanelStore((s) => s.aiStream);
   const selectedText = useAiPanelStore((s) => s.selectedText);
 
@@ -38,13 +40,13 @@ export function AiChatView() {
     <div className="flex h-full flex-col">
       {selectedText && (
         <div className="border-b p-2 text-xs text-muted-foreground">
-          Selected: {selectedText.slice(0, 100)}...
+          {t.novel.selectedText}: {selectedText.slice(0, 100)}...
         </div>
       )}
       <ScrollArea className="flex-1 p-4">
         {messages.length === 0 && aiStream.isStreaming ? (
           <div className="flex items-center justify-center h-full text-muted-foreground">
-            AI is thinking...
+            {t.novel.aiThinking}
           </div>
         ) : (
           <div className="space-y-4">
@@ -79,7 +81,7 @@ export function AiChatView() {
           <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Type your message..."
+            placeholder={t.novel.typeMessage}
             className="min-h-[40px] resize-none"
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {

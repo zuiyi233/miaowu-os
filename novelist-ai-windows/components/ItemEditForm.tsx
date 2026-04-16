@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useUpdateItemMutation } from "../lib/react-query/world-building.queries";
@@ -58,6 +59,8 @@ export const ItemEditForm: React.FC<ItemEditFormProps> = ({
   onSubmitSuccess,
   onClose,
 }): React.ReactElement => {
+  const { t } = useTranslation();
+
   // ✅ 使用统一 Hook 获取所有实体提及数据
   const mentionOptions = useMentionOptions();
 
@@ -111,9 +114,9 @@ export const ItemEditForm: React.FC<ItemEditFormProps> = ({
           name="name"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>物品名称</FormLabel>
+              <FormLabel>{t("item.name")}</FormLabel>
               <FormControl>
-                <Input placeholder="例如：魔法剑" {...field} />
+                <Input placeholder={t("item.namePlaceholder")} {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -126,19 +129,19 @@ export const ItemEditForm: React.FC<ItemEditFormProps> = ({
           name="type"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>物品类型</FormLabel>
+              <FormLabel>{t("item.type")}</FormLabel>
               <Select onValueChange={field.onChange} defaultValue={field.value}>
                 <FormControl>
                   <SelectTrigger>
-                    <SelectValue placeholder="选择物品类型" />
+                    <SelectValue placeholder={t("item.typePlaceholder")} />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value="关键物品">关键物品</SelectItem>
-                  <SelectItem value="武器">武器</SelectItem>
-                  <SelectItem value="科技装置">科技装置</SelectItem>
-                  <SelectItem value="普通物品">普通物品</SelectItem>
-                  <SelectItem value="其他">其他</SelectItem>
+                  <SelectItem value="关键物品">{t("item.typeKeyItem")}</SelectItem>
+                  <SelectItem value="武器">{t("item.typeWeapon")}</SelectItem>
+                  <SelectItem value="科技装置">{t("item.typeTechDevice")}</SelectItem>
+                  <SelectItem value="普通物品">{t("item.typeNormal")}</SelectItem>
+                  <SelectItem value="其他">{t("item.typeOther")}</SelectItem>
                 </SelectContent>
               </Select>
               <FormMessage />
@@ -152,7 +155,7 @@ export const ItemEditForm: React.FC<ItemEditFormProps> = ({
           name="description"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>物品简介</FormLabel>
+              <FormLabel>{t("item.description")}</FormLabel>
               <FormControl>
                 {/* ✅ 添加 key 属性，当提及选项数量变化时（例如添加了新势力），强制重新渲染编辑器 */}
                 <MiniEditor
@@ -173,7 +176,7 @@ export const ItemEditForm: React.FC<ItemEditFormProps> = ({
           name="appearance"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>外观描述</FormLabel>
+              <FormLabel>{t("item.appearance")}</FormLabel>
               <FormControl>
                 <MiniEditor
                     key={`mini-editor-appearance-${mentionOptions.length}`}
@@ -193,7 +196,7 @@ export const ItemEditForm: React.FC<ItemEditFormProps> = ({
           name="history"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>历史来源</FormLabel>
+              <FormLabel>{t("item.history")}</FormLabel>
               <FormControl>
                 <MiniEditor
                     key={`mini-editor-history-${mentionOptions.length}`}
@@ -213,7 +216,7 @@ export const ItemEditForm: React.FC<ItemEditFormProps> = ({
           name="abilities"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>功能或能力</FormLabel>
+              <FormLabel>{t("item.abilities")}</FormLabel>
               <FormControl>
                 <MiniEditor
                     key={`mini-editor-abilities-${mentionOptions.length}`}
@@ -233,15 +236,15 @@ export const ItemEditForm: React.FC<ItemEditFormProps> = ({
           name="ownerId"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>当前持有者</FormLabel>
+              <FormLabel>{t("item.owner")}</FormLabel>
               <Select onValueChange={field.onChange} defaultValue={field.value}>
                 <FormControl>
                   <SelectTrigger>
-                    <SelectValue placeholder="选择物品持有者（可选）" />
+                    <SelectValue placeholder={t("item.ownerPlaceholder")} />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value="none">无持有者</SelectItem>
+                  <SelectItem value="none">{t("item.noOwner")}</SelectItem>
                   {characters.data?.map((character) => (
                     <SelectItem key={character.id} value={character.id}>
                       {character.name}
@@ -256,7 +259,7 @@ export const ItemEditForm: React.FC<ItemEditFormProps> = ({
 
         {/* 全局错误信息 */}
         {updateItemMutation.error && (
-          <p className="text-sm text-destructive">更新失败，请重试</p>
+          <p className="text-sm text-destructive">{t("common.updateFailed")}</p>
         )}
 
         {/* 提交按钮 */}
@@ -264,9 +267,9 @@ export const ItemEditForm: React.FC<ItemEditFormProps> = ({
           type="submit"
           className="w-full"
           isLoading={updateItemMutation.isPending}
-          loadingText="保存中..."
+          loadingText={t("common.saving")}
         >
-          保存更改
+          {t("common.saveChanges")}
         </LoadingButton>
       </form>
     </Form>

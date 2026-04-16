@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useUpdateFactionMutation } from "../lib/react-query/world-building.queries";
@@ -52,6 +53,8 @@ export const FactionEditForm: React.FC<FactionEditFormProps> = ({
   onSubmitSuccess,
   onClose,
 }): React.ReactElement => {
+  const { t } = useTranslation();
+
   // ✅ 使用统一 Hook 获取所有实体提及数据
   const mentionOptions = useMentionOptions();
 
@@ -106,9 +109,9 @@ export const FactionEditForm: React.FC<FactionEditFormProps> = ({
           name="name"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>势力名称</FormLabel>
+              <FormLabel>{t("faction.name")}</FormLabel>
               <FormControl>
-                <Input placeholder="例如：铁锤兄弟会" {...field} />
+                <Input placeholder={t("faction.namePlaceholder")} {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -121,7 +124,7 @@ export const FactionEditForm: React.FC<FactionEditFormProps> = ({
           name="ideology"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>势力理念</FormLabel>
+              <FormLabel>{t("faction.ideology")}</FormLabel>
               <FormControl>
                 {/* ✅ 添加 key 属性，当提及选项数量变化时（例如添加了新势力），强制重新渲染编辑器 */}
                 <MiniEditor
@@ -142,7 +145,7 @@ export const FactionEditForm: React.FC<FactionEditFormProps> = ({
           name="description"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>势力简介</FormLabel>
+              <FormLabel>{t("faction.description")}</FormLabel>
               <FormControl>
                 {/* ✅ 添加 key 属性，当提及选项数量变化时（例如添加了新势力），强制重新渲染编辑器 */}
                 <MiniEditor
@@ -163,15 +166,15 @@ export const FactionEditForm: React.FC<FactionEditFormProps> = ({
           name="leaderId"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>领导者</FormLabel>
+              <FormLabel>{t("faction.leader")}</FormLabel>
               <Select onValueChange={field.onChange} defaultValue={field.value}>
                 <FormControl>
                   <SelectTrigger>
-                    <SelectValue placeholder="选择势力领导者（可选）" />
+                    <SelectValue placeholder={t("faction.leaderPlaceholder")} />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value="none">无领导者</SelectItem>
+                  <SelectItem value="none">{t("faction.noLeader")}</SelectItem>
                   {characters.data?.map((character) => (
                     <SelectItem key={character.id} value={character.id}>
                       {character.name}
@@ -190,7 +193,7 @@ export const FactionEditForm: React.FC<FactionEditFormProps> = ({
           name="goals"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>目标与追求</FormLabel>
+              <FormLabel>{t("faction.goals")}</FormLabel>
               <FormControl>
                 <MiniEditor
                     key={`mini-editor-goals-${mentionOptions.length}`}
@@ -210,7 +213,7 @@ export const FactionEditForm: React.FC<FactionEditFormProps> = ({
           name="structure"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>组织结构</FormLabel>
+              <FormLabel>{t("faction.structure")}</FormLabel>
               <FormControl>
                 <MiniEditor
                     key={`mini-editor-structure-${mentionOptions.length}`}
@@ -230,7 +233,7 @@ export const FactionEditForm: React.FC<FactionEditFormProps> = ({
           name="resources"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>资源与实力</FormLabel>
+              <FormLabel>{t("faction.resources")}</FormLabel>
               <FormControl>
                 <MiniEditor
                     key={`mini-editor-resources-${mentionOptions.length}`}
@@ -250,7 +253,7 @@ export const FactionEditForm: React.FC<FactionEditFormProps> = ({
           name="relationships"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>对外关系（盟友/敌人）</FormLabel>
+              <FormLabel>{t("faction.relationships")}</FormLabel>
               <FormControl>
                 <MiniEditor
                     key={`mini-editor-relationships-${mentionOptions.length}`}
@@ -266,7 +269,7 @@ export const FactionEditForm: React.FC<FactionEditFormProps> = ({
 
         {/* 全局错误信息 */}
         {updateFactionMutation.error && (
-          <p className="text-sm text-destructive">更新失败，请重试</p>
+          <p className="text-sm text-destructive">{t("common.updateFailed")}</p>
         )}
 
         {/* 提交按钮 */}
@@ -274,9 +277,9 @@ export const FactionEditForm: React.FC<FactionEditFormProps> = ({
           type="submit"
           className="w-full"
           isLoading={updateFactionMutation.isPending}
-          loadingText="保存中..."
+          loadingText={t("common.saving")}
         >
-          保存更改
+          {t("common.saveChanges")}
         </LoadingButton>
       </form>
     </Form>

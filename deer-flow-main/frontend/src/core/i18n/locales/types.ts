@@ -139,6 +139,10 @@ export interface Translations {
     factions: string;
     settings_entity: string;
     items: string;
+    characterSingular: string;
+    factionSingular: string;
+    settingSingular: string;
+    itemSingular: string;
     add: string;
     edit: string;
     delete: string;
@@ -148,10 +152,33 @@ export interface Translations {
     update: string;
     name: string;
     namePlaceholder: (entity: string) => string;
+    fieldPlaceholder: (field: string) => string;
     entityDescription: string;
     descriptionPlaceholder: (entity: string) => string;
     type: string;
     selectType: string;
+    settingTypeCity: string;
+    settingTypeBuilding: string;
+    settingTypeNaturalLandscape: string;
+    settingTypeRegion: string;
+    settingTypeOther: string;
+    fieldAge: string;
+    fieldGender: string;
+    fieldAppearance: string;
+    fieldPersonality: string;
+    fieldIdeology: string;
+    fieldGoals: string;
+    fieldStructure: string;
+    fieldResources: string;
+    fieldAtmosphere: string;
+    fieldHistory: string;
+    fieldKeyFeatures: string;
+    fieldAbilities: string;
+    itemTypeKeyItem: string;
+    itemTypeWeapon: string;
+    itemTypeTechDevice: string;
+    itemTypeCommonItem: string;
+    itemTypeOther: string;
     noEntities: (label: string) => string;
     noEntitiesClickAdd: string;
     deleteConfirm: (entity: string) => string;
@@ -171,6 +198,7 @@ export interface Translations {
     chapterOutline: string;
     writingTarget: string;
     noNovelSelected: string;
+    noNovelData: string;
     promptTemplates: string;
     dataManagement: string;
     exportData: string;
@@ -257,6 +285,8 @@ export interface Translations {
     novelTitlePlaceholder: string;
     novelOutline: string;
     novelOutlinePlaceholder: string;
+    defaultVolumeName: string;
+    defaultChapterName: string;
   };
 
   // Agents

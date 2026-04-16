@@ -9,7 +9,6 @@ import {
   ChevronDown,
   Plus,
   Trash2,
-  Edit,
   GripVertical,
   BookOpen,
   Layers,
@@ -17,6 +16,7 @@ import {
 import { useNovelQuery, useDeleteVolumeMutation, useDeleteChapterMutation, useAddChapterMutation, useAddVolumeMutation } from '@/core/novel/queries';
 import { useNovelStore } from '@/core/novel';
 import type { Volume, Chapter } from '@/core/novel/schemas';
+import { useI18n } from '@/core/i18n/hooks';
 
 interface OutlineViewProps {
   novelTitle: string;
@@ -24,8 +24,7 @@ interface OutlineViewProps {
 
 export function OutlineView({ novelTitle }: OutlineViewProps) {
   const { data: novel } = useNovelQuery(novelTitle);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState('');
+  const { t } = useI18n();
   const [addingChapterTo, setAddingChapterTo] = useState<string | null>(null);
   const [newChapterTitle, setNewChapterTitle] = useState('');
   const [addingVolume, setAddingVolume] = useState(false);
@@ -72,13 +71,13 @@ export function OutlineView({ novelTitle }: OutlineViewProps) {
   };
 
   const handleDeleteVolume = async (volumeId: string) => {
-    if (confirm('Delete this volume and all its chapters?')) {
+    if (confirm(t.novel.deleteVolumeConfirm)) {
       await deleteVolumeMutation.mutateAsync(volumeId);
     }
   };
 
   const handleDeleteChapter = async (chapterId: string) => {
-    if (confirm('Delete this chapter?')) {
+    if (confirm(t.novel.deleteChapterConfirm)) {
       await deleteChapterMutation.mutateAsync(chapterId);
     }
   };
@@ -94,7 +93,7 @@ export function OutlineView({ novelTitle }: OutlineViewProps) {
   if (!novel) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
-        No novel data available
+        {t.novel.noNovelData}
       </div>
     );
   }
@@ -104,7 +103,7 @@ export function OutlineView({ novelTitle }: OutlineViewProps) {
       <div className="border-b p-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold flex items-center gap-2">
           <Layers className="h-5 w-5" />
-          Outline
+          {t.novel.outline}
         </h2>
         <Button
           variant="outline"
@@ -113,7 +112,7 @@ export function OutlineView({ novelTitle }: OutlineViewProps) {
           onClick={() => setAddingVolume(true)}
         >
           <Plus className="h-3 w-3" />
-          Add Volume
+          {t.novel.addVolume}
         </Button>
       </div>
 
@@ -121,7 +120,7 @@ export function OutlineView({ novelTitle }: OutlineViewProps) {
         <div className="p-4 space-y-2">
           {volumes.length === 0 && !addingVolume && (
             <div className="text-center py-8 text-muted-foreground">
-              No volumes yet. Click &quot;Add Volume&quot; to start.
+              {t.novel.noVolumesYet}
             </div>
           )}
 
@@ -129,10 +128,6 @@ export function OutlineView({ novelTitle }: OutlineViewProps) {
             <VolumeItem
               key={volume.id}
               volume={volume}
-              editingId={editingId}
-              editTitle={editTitle}
-              setEditingId={setEditingId}
-              setEditTitle={setEditTitle}
               addingChapterTo={addingChapterTo}
               setAddingChapterTo={setAddingChapterTo}
               newChapterTitle={newChapterTitle}
@@ -142,27 +137,28 @@ export function OutlineView({ novelTitle }: OutlineViewProps) {
               onDeleteChapter={handleDeleteChapter}
               onChapterClick={handleChapterClick}
               flatChapters={flatChapters}
+              t={t}
             />
           ))}
 
           {addingVolume && (
             <div className="flex gap-2 p-2 bg-accent rounded-lg">
               <Input
-                placeholder="Volume title..."
+                placeholder={t.novel.volumePlaceholder}
                 value={newVolumeTitle}
                 onChange={(e) => setNewVolumeTitle(e.target.value)}
                 autoFocus
                 onKeyDown={(e) => e.key === 'Enter' && handleAddVolume()}
               />
               <Button size="sm" onClick={handleAddVolume}>
-                Add
+                {t.novel.add}
               </Button>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setAddingVolume(false)}
               >
-                Cancel
+                {t.novel.cancel}
               </Button>
             </div>
           )}
@@ -174,10 +170,6 @@ export function OutlineView({ novelTitle }: OutlineViewProps) {
 
 function VolumeItem({
   volume,
-  editingId,
-  editTitle,
-  setEditingId,
-  setEditTitle,
   addingChapterTo,
   setAddingChapterTo,
   newChapterTitle,
@@ -187,6 +179,7 @@ function VolumeItem({
   onDeleteChapter,
   onChapterClick,
   flatChapters,
+  t,
 }: any) {
   const [isExpanded, setIsExpanded] = useState(true);
   const volumeChapters =
@@ -208,7 +201,7 @@ function VolumeItem({
         <BookOpen className="h-4 w-4" />
         <span className="font-medium text-sm flex-1">{volume.title}</span>
         <span className="text-xs text-muted-foreground">
-          {volumeChapters?.length || 0} chapters
+          {volumeChapters?.length || 0} {t.novel.chapters}
         </span>
         <Button
           variant="ghost"
@@ -257,7 +250,7 @@ function VolumeItem({
           {addingChapterTo === volume.id && (
             <div className="flex gap-2 p-2 border-t bg-accent/30">
               <Input
-                placeholder="Chapter title..."
+                placeholder={t.novel.chapterPlaceholder}
                 value={newChapterTitle}
                 onChange={(e) => setNewChapterTitle(e.target.value)}
                 autoFocus
@@ -269,7 +262,7 @@ function VolumeItem({
                 className="h-8"
                 onClick={() => onAddChapter(volume.id)}
               >
-                Add
+                {t.novel.add}
               </Button>
             </div>
           )}

@@ -1,0 +1,23 @@
+name: i18n Hardcoded Text Check
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  hardcoded-i18n-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check hardcoded UI copy in TSX
+        run: node scripts/check-hardcoded-i18n.cjs

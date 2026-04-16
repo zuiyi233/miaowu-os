@@ -1,10 +1,10 @@
 import React from "react";
 import { useForm, SubmitHandler } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useTranslation } from "react-i18next";
 import { useCreateNovelMutation } from "../lib/react-query/db-queries";
 import { createNovelFormSchema } from "../lib/schemas";
 import type { CreateNovelForm } from "../types";
-import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import {
@@ -36,6 +36,8 @@ interface NovelFormProps {
 export const NovelForm: React.FC<NovelFormProps> = ({
   onSubmitSuccess,
 }): React.ReactElement => {
+  const { t } = useTranslation();
+
   // 使用React Hook Form管理表单状态，集成Zod验证
   const form = useForm<CreateNovelForm>({
     resolver: zodResolver(createNovelFormSchema),
@@ -71,9 +73,9 @@ export const NovelForm: React.FC<NovelFormProps> = ({
           name="title"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>小说标题</FormLabel>
+              <FormLabel>{t("novel.name")}</FormLabel>
               <FormControl>
-                <Input placeholder="输入小说标题" {...field} />
+                <Input placeholder={t("novel.namePlaceholder")} {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -86,10 +88,12 @@ export const NovelForm: React.FC<NovelFormProps> = ({
           name="outline"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>小说大纲（可选）</FormLabel>
+              <FormLabel>{t("novel.outline", { defaultValue: t("novel.description") })}</FormLabel>
               <FormControl>
                 <Textarea
-                  placeholder="输入小说大纲..."
+                  placeholder={t("novel.outlinePlaceholder", {
+                    defaultValue: t("novel.descriptionPlaceholder"),
+                  })}
                   className="resize-none"
                   rows={4}
                   {...field}
@@ -102,7 +106,9 @@ export const NovelForm: React.FC<NovelFormProps> = ({
 
         {/* 全局错误信息 */}
         {createNovelMutation.error && (
-          <p className="text-sm text-destructive">创建失败，请重试</p>
+          <p className="text-sm text-destructive">
+            {t("novel.createFailed", { defaultValue: t("common.error") })}
+          </p>
         )}
 
         {/* 提交按钮 */}
@@ -110,9 +116,9 @@ export const NovelForm: React.FC<NovelFormProps> = ({
           type="submit"
           className="w-full"
           isLoading={createNovelMutation.isPending}
-          loadingText="创建中..."
+          loadingText={t("common.creating", { defaultValue: t("common.loading") })}
         >
-          创建小说
+          {t("novel.createNovel", { defaultValue: t("novel.newNovel") })}
         </LoadingButton>
       </form>
     </Form>

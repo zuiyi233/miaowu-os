@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import type { Editor } from "@tiptap/react";
 import { Toggle } from "./ui/toggle";
 import { Button } from "./ui/button";
@@ -26,6 +27,7 @@ import { cn } from "../lib/utils";
 import { HistorySheet } from "./HistorySheet";
 import { useNovelQuery } from "../lib/react-query/db-queries";
 import { useUiStore } from "../stores/useUiStore";
+import { useSettingsStore } from "../stores/useSettingsStore";
 import {
   usePolishTextMutation,
   useExpandTextMutation,
@@ -57,6 +59,8 @@ interface EntityAnalysisResult {
 }
 
 const AiToolbarButtons: React.FC<{ editor: Editor }> = ({ editor }) => {
+  const { t } = useTranslation();
+  const language = useSettingsStore((state) => state.language);
   const polishMutation = usePolishTextMutation();
   const expandMutation = useExpandTextMutation();
   const condenseMutation = useCondenseTextMutation();
@@ -140,9 +144,13 @@ const AiToolbarButtons: React.FC<{ editor: Editor }> = ({ editor }) => {
         outline: activeChapter.description || "",
         content: textOnly,
       };
+      const continuePromptFallback =
+        language === "zh-CN"
+          ? "继续写作：{{selection}}\n\n上文：{{content}}\n\n细纲：{{outline}}"
+          : "Continue writing: {{selection}}\n\nContext: {{content}}\n\nOutline: {{outline}}";
 
       const hydrated = await contextEngineService.hydratePrompt(
-        continuePromptTemplate?.content || "Continue: {{selection}}\n\n上文：{{content}}\n\n细纲：{{outline}}",
+        continuePromptTemplate?.content || continuePromptFallback,
         templateVariables
       );
 
@@ -198,7 +206,7 @@ const AiToolbarButtons: React.FC<{ editor: Editor }> = ({ editor }) => {
         <h4 className="font-medium flex items-center gap-2">
           <span>{icon}</span>
           <span className="capitalize">
-            {entityType === "character" ? "角色" : entityType === "setting" ? "场景" : entityType === "faction" ? "势力" : "物品"}
+            {entityType === "character" ? t("entity.character") : entityType === "setting" ? t("entity.setting") : entityType === "faction" ? t("entity.faction") : t("entity.item")}
           </span>
           <Badge variant="secondary" className="text-xs">
             {entities.length}
@@ -216,7 +224,13 @@ const AiToolbarButtons: React.FC<{ editor: Editor }> = ({ editor }) => {
                   )}
                 </div>
                 <Badge variant="outline" className={color}>
-                  {entityType === "character" ? "角色" : entityType === "setting" ? "场景" : entityType === "faction" ? "势力" : "物品"}
+                  {entityType === "character"
+                    ? t("entity.character")
+                    : entityType === "setting"
+                    ? t("entity.setting")
+                    : entityType === "faction"
+                    ? t("entity.faction")
+                    : t("entity.item")}
                 </Badge>
               </div>
             );
@@ -236,14 +250,14 @@ const AiToolbarButtons: React.FC<{ editor: Editor }> = ({ editor }) => {
           disabled={!activeChapterId || isAnyMutationPending}
           className="flex items-center gap-1 h-7 px-2 text-primary text-xs"
         >
-          <MessageSquare className="w-3.5 h-3.5" /> 续写
+          <MessageSquare className="w-3.5 h-3.5" /> {t("editor.continueWriting")}
         </Button>
         {continueWritingMutation.isPending && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => continueWritingMutation.reset()}
-            title="取消续写"
+            title={t("common.cancel")}
             className="h-7 w-6 p-0"
           >
             <X className="w-3 h-3" />
@@ -259,14 +273,14 @@ const AiToolbarButtons: React.FC<{ editor: Editor }> = ({ editor }) => {
           disabled={isAnyMutationPending}
           className="flex items-center gap-1 h-7 px-2 text-xs"
         >
-          <Sparkles className="w-3.5 h-3.5" /> 润色
+          <Sparkles className="w-3.5 h-3.5" /> {t("editor.polish")}
         </Button>
         {polishMutation.isPending && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => polishMutation.reset()}
-            title="取消润色"
+            title={t("common.cancel")}
             className="h-7 w-6 p-0"
           >
             <X className="w-3 h-3" />
@@ -280,14 +294,14 @@ const AiToolbarButtons: React.FC<{ editor: Editor }> = ({ editor }) => {
           disabled={isAnyMutationPending}
           className="flex items-center gap-1 h-7 px-2 text-xs"
         >
-          <PenLine className="w-3.5 h-3.5" /> 扩写
+          <PenLine className="w-3.5 h-3.5" /> {t("editor.expand")}
         </Button>
         {expandMutation.isPending && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => expandMutation.reset()}
-            title="取消扩写"
+            title={t("common.cancel")}
             className="h-7 w-6 p-0"
           >
             <X className="w-3 h-3" />
@@ -301,14 +315,14 @@ const AiToolbarButtons: React.FC<{ editor: Editor }> = ({ editor }) => {
           disabled={isAnyMutationPending}
           className="flex items-center gap-1 h-7 px-2 text-xs"
         >
-          <Languages className="w-3.5 h-3.5" /> 简写
+          <Languages className="w-3.5 h-3.5" /> {t("editor.condense")}
         </Button>
         {condenseMutation.isPending && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => condenseMutation.reset()}
-            title="取消简写"
+            title={t("common.cancel")}
             className="h-7 w-6 p-0"
           >
             <X className="w-3 h-3" />
@@ -322,14 +336,14 @@ const AiToolbarButtons: React.FC<{ editor: Editor }> = ({ editor }) => {
           disabled={isAnyMutationPending}
           className="flex items-center gap-1 h-7 px-2 text-xs"
         >
-          <Sparkles className="w-3.5 h-3.5" /> 改写
+          <Sparkles className="w-3.5 h-3.5" /> {t("editor.rewrite")}
         </Button>
         {rewriteMutation.isPending && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => rewriteMutation.reset()}
-            title="取消改写"
+            title={t("common.cancel")}
             className="h-7 w-6 p-0"
           >
             <X className="w-3 h-3" />
@@ -345,14 +359,14 @@ const AiToolbarButtons: React.FC<{ editor: Editor }> = ({ editor }) => {
           disabled={isAnyMutationPending}
           className="flex items-center gap-1 h-7 px-2 text-xs"
         >
-          <Search className="w-3.5 h-3.5" /> 分析
+          <Search className="w-3.5 h-3.5" /> {t("entity.entityAnalysis")}
         </Button>
         {isAnalyzing && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setIsAnalyzing(false)}
-            title="取消分析"
+            title={t("common.cancel")}
             className="h-7 w-6 p-0"
           >
             <X className="w-3 h-3" />
@@ -363,8 +377,10 @@ const AiToolbarButtons: React.FC<{ editor: Editor }> = ({ editor }) => {
       <Dialog open={isAnalysisDialogOpen} onOpenChange={setIsAnalysisDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>实体关系分析</DialogTitle>
-            <DialogDescription>这段文字中涉及以下世界观实体和关系</DialogDescription>
+            <DialogTitle>{t("editorToolbar.analysis.title")}</DialogTitle>
+            <DialogDescription>
+              {t("editorToolbar.analysis.description")}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             {analysisResult && (
@@ -382,8 +398,10 @@ const AiToolbarButtons: React.FC<{ editor: Editor }> = ({ editor }) => {
                 analysisResult.items.length === 0)) && (
               <div className="text-center py-8 text-muted-foreground">
                 <Search className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                <p>未检测到任何实体</p>
-                <p className="text-sm">尝试使用 @角色名、#场景名、~势力名~ 或 $物品名$ 语法来提及实体</p>
+                <p>{t("editorToolbar.analysis.noEntities")}</p>
+                <p className="text-sm">
+                  {t("editorToolbar.analysis.syntaxHint")}
+                </p>
               </div>
             )}
           </div>
@@ -401,6 +419,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
   editor,
   className,
 }) => {
+  const { t } = useTranslation();
   const { data: novel } = useNovelQuery();
   const { activeChapterId } = useUiStore();
   const activeChapter = novel?.chapters?.find(
@@ -423,8 +442,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           pressed={false}
           onPressedChange={() => editor.chain().focus().undo().run()}
           disabled={!editor.can().undo()}
-          aria-label="Undo"
-          title="撤销 (Ctrl+Z)"
+          aria-label={t("editorToolbar.undo")}
+          title={t("editorToolbar.undoWithShortcut")}
         >
           <Undo className="h-4 w-4" />
         </Toggle>
@@ -433,8 +452,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           pressed={false}
           onPressedChange={() => editor.chain().focus().redo().run()}
           disabled={!editor.can().redo()}
-          aria-label="Redo"
-          title="重做 (Ctrl+Y)"
+          aria-label={t("editorToolbar.redo")}
+          title={t("editorToolbar.redoWithShortcut")}
         >
           <Redo className="h-4 w-4" />
         </Toggle>
@@ -448,8 +467,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           size="sm"
           pressed={editor.isActive("bold")}
           onPressedChange={() => editor.chain().focus().toggleBold().run()}
-          aria-label="Bold"
-          title="加粗 (Ctrl+B)"
+          aria-label={t("editorToolbar.bold")}
+          title={t("editorToolbar.boldWithShortcut")}
         >
           <Bold className="h-4 w-4" />
         </Toggle>
@@ -457,8 +476,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           size="sm"
           pressed={editor.isActive("italic")}
           onPressedChange={() => editor.chain().focus().toggleItalic().run()}
-          aria-label="Italic"
-          title="斜体 (Ctrl+I)"
+          aria-label={t("editorToolbar.italic")}
+          title={t("editorToolbar.italicWithShortcut")}
         >
           <Italic className="h-4 w-4" />
         </Toggle>
@@ -466,8 +485,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           size="sm"
           pressed={editor.isActive("strike")}
           onPressedChange={() => editor.chain().focus().toggleStrike().run()}
-          aria-label="Strikethrough"
-          title="删除线"
+          aria-label={t("editorToolbar.strikethrough")}
+          title={t("editorToolbar.strikethrough")}
         >
           <Strikethrough className="h-4 w-4" />
         </Toggle>
@@ -483,8 +502,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           onPressedChange={() =>
             editor.chain().focus().toggleHeading({ level: 1 }).run()
           }
-          aria-label="H1"
-          title="一级标题"
+          aria-label={t("editorToolbar.heading1")}
+          title={t("editorToolbar.heading1")}
         >
           <Heading1 className="h-4 w-4" />
         </Toggle>
@@ -494,8 +513,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           onPressedChange={() =>
             editor.chain().focus().toggleHeading({ level: 2 }).run()
           }
-          aria-label="H2"
-          title="二级标题"
+          aria-label={t("editorToolbar.heading2")}
+          title={t("editorToolbar.heading2")}
         >
           <Heading2 className="h-4 w-4" />
         </Toggle>
@@ -505,8 +524,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           onPressedChange={() =>
             editor.chain().focus().toggleHeading({ level: 3 }).run()
           }
-          aria-label="H3"
-          title="三级标题"
+          aria-label={t("editorToolbar.heading3")}
+          title={t("editorToolbar.heading3")}
         >
           <Heading3 className="h-4 w-4" />
         </Toggle>
@@ -520,8 +539,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           size="sm"
           pressed={editor.isActive("bulletList")}
           onPressedChange={() => editor.chain().focus().toggleBulletList().run()}
-          aria-label="Bullet List"
-          title="无序列表"
+          aria-label={t("editorToolbar.bulletList")}
+          title={t("editorToolbar.bulletList")}
         >
           <List className="h-4 w-4" />
         </Toggle>
@@ -529,8 +548,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           size="sm"
           pressed={editor.isActive("orderedList")}
           onPressedChange={() => editor.chain().focus().toggleOrderedList().run()}
-          aria-label="Ordered List"
-          title="有序列表"
+          aria-label={t("editorToolbar.orderedList")}
+          title={t("editorToolbar.orderedList")}
         >
           <ListOrdered className="h-4 w-4" />
         </Toggle>
@@ -538,8 +557,8 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           size="sm"
           pressed={editor.isActive("blockquote")}
           onPressedChange={() => editor.chain().focus().toggleBlockquote().run()}
-          aria-label="Blockquote"
-          title="引用段落"
+          aria-label={t("editorToolbar.blockquote")}
+          title={t("editorToolbar.blockquote")}
         >
           <Quote className="h-4 w-4" />
         </Toggle>

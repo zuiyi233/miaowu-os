@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { ChapterForm } from "./ChapterForm";
 import { useModalStore } from "../stores/useModalStore";
 import { useQueryClient } from "@tanstack/react-query";
@@ -34,11 +35,15 @@ interface ChapterCreationDialogProps {
  */
 export const ChapterCreationDialog: React.FC<ChapterCreationDialogProps> = ({
   trigger,
-  title = "创建新章节",
+  title,
   description,
 }) => {
+  const { t } = useTranslation();
   const { open } = useModalStore();
   const queryClient = useQueryClient();
+
+  const resolvedTitle = title ?? t("chapter.createTitle", { defaultValue: t("chapter.newChapter") });
+  const resolvedDescription = description ?? t("chapter.createDescription", { defaultValue: "" });
 
   // 处理章节创建
   const handleCreateChapter = () => {
@@ -46,9 +51,9 @@ export const ChapterCreationDialog: React.FC<ChapterCreationDialogProps> = ({
       type: "dialog",
       component: () => (
         <div>
-          <h2 className="text-lg font-semibold mb-4">{title}</h2>
-          {description && (
-            <p className="text-sm text-muted-foreground mb-4">{description}</p>
+          <h2 className="text-lg font-semibold mb-4">{resolvedTitle}</h2>
+          {resolvedDescription && (
+            <p className="text-sm text-muted-foreground mb-4">{resolvedDescription}</p>
           )}
           <ChapterForm
             onSubmitSuccess={() => {
@@ -77,6 +82,7 @@ export const ChapterCreationDialog: React.FC<ChapterCreationDialogProps> = ({
  * 遵循单一职责原则，专注于状态管理逻辑
  */
 export const useChapterCreationDialog = () => {
+  const { t } = useTranslation();
   const { open } = useModalStore();
   const queryClient = useQueryClient();
 
@@ -91,20 +97,23 @@ export const useChapterCreationDialog = () => {
   const ChapterCreationDialog = React.memo(
     ({
       trigger,
-      title = "创建新章节",
+      title,
       description,
     }: Omit<ChapterCreationDialogProps, "trigger"> & {
       trigger: React.ReactNode;
     }) => {
+      const resolvedTitle = title ?? t("chapter.createTitle", { defaultValue: t("chapter.newChapter") });
+      const resolvedDescription = description ?? t("chapter.createDescription", { defaultValue: "" });
+
       const handleCreateChapter = () => {
         open({
           type: "dialog",
           component: () => (
             <div>
-              <h2 className="text-lg font-semibold mb-4">{title}</h2>
-              {description && (
+              <h2 className="text-lg font-semibold mb-4">{resolvedTitle}</h2>
+              {resolvedDescription && (
                 <p className="text-sm text-muted-foreground mb-4">
-                  {description}
+                  {resolvedDescription}
                 </p>
               )}
               <ChapterForm onSubmitSuccess={handleSuccess} />

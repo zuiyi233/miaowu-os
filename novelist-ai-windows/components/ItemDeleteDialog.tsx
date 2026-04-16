@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { useModalStore } from "../stores/useModalStore";
 import { useDeleteItemMutation } from "../lib/react-query/world-building.queries";
 import { LoadingButton } from "./common/LoadingButton";
@@ -17,6 +18,8 @@ export const ItemDeleteDialog: React.FC<ItemDeleteDialogProps> = ({
   item,
   onClose,
 }) => {
+  const { t } = useTranslation();
+
   // 使用 React Query Mutation
   const deleteItemMutation = useDeleteItemMutation();
 
@@ -31,15 +34,15 @@ export const ItemDeleteDialog: React.FC<ItemDeleteDialogProps> = ({
   return (
     <div className="p-6">
       <div className="mb-4">
-        <h2 className="text-lg font-semibold">确认删除物品</h2>
+        <h2 className="text-lg font-semibold">{t("item.confirmDeleteTitle")}</h2>
         <p className="text-sm text-muted-foreground mt-2">
-          您确定要删除物品 <strong>{item.name}</strong> 吗？此操作无法撤销。
+          {t("item.confirmDeleteWithName", { name: item.name })}
         </p>
       </div>
 
       {/* 错误提示 */}
       {deleteItemMutation.error && (
-        <p className="text-sm text-destructive mb-4">删除失败，请重试</p>
+        <p className="text-sm text-destructive mb-4">{t("common.deleteFailed")}</p>
       )}
 
       <div className="flex justify-end space-x-2">
@@ -47,15 +50,15 @@ export const ItemDeleteDialog: React.FC<ItemDeleteDialogProps> = ({
           onClick={onClose}
           className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
         >
-          取消
+          {t("common.cancel")}
         </button>
         <LoadingButton
           onClick={handleDelete}
           isLoading={deleteItemMutation.isPending}
-          loadingText="删除中..."
+          loadingText={t("common.deleting")}
           className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
         >
-          删除
+          {t("common.delete")}
         </LoadingButton>
       </div>
     </div>
@@ -68,12 +71,13 @@ export const ItemDeleteDialog: React.FC<ItemDeleteDialogProps> = ({
  */
 export const useItemDeleteDialog = () => {
   const { open } = useModalStore();
+  const { t } = useTranslation();
 
   const openItemDeleteDialog = (item: Item) => {
     open({
       type: "dialog",
-      title: "确认删除物品",
-      description: `您确定要删除物品 "${item.name}" 吗？此操作无法撤销。`,
+      title: t("item.confirmDeleteTitle"),
+      description: t("item.confirmDeleteWithName", { name: item.name }),
       component: ItemDeleteDialog,
       props: {
         item,

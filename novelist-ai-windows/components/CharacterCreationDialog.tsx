@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { useModalStore } from "../stores/useModalStore";
 import { CharacterForm } from "./CharacterForm";
 import { useRefreshCharacters } from "../lib/react-query/db-queries";
@@ -21,6 +22,7 @@ import { useRefreshCharacters } from "../lib/react-query/db-queries";
 export const CharacterCreationDialog: React.FC<{
   trigger: React.ReactNode;
 }> = ({ trigger }) => {
+  const { t } = useTranslation();
   const { open } = useModalStore();
   const refreshCharacters = useRefreshCharacters();
 
@@ -29,8 +31,8 @@ export const CharacterCreationDialog: React.FC<{
     // 修复：传递 title 和原始组件，而不是包装器
     open({
       type: "dialog",
-      title: "创建新角色",
-      description: "填写角色的详细信息，为你的世界增添新的生命。",
+      title: t("character.createTitle"),
+      description: t("character.createDescription"),
       component: CharacterForm,
       props: {
         onSubmitSuccess: () => {

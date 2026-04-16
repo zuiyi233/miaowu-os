@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { useAddFactionMutation } from "../lib/react-query/db-queries";
 import { useMutationForm } from "../hooks/useMutationForm";
 import { useMentionOptions } from "../hooks/useMentionOptions"; // ✅ 引入统一的提及选项 Hook
@@ -48,6 +49,8 @@ export const FactionForm: React.FC<FactionFormProps> = ({
   onClose,
   characters
 }): React.ReactElement => {
+  const { t } = useTranslation();
+
   // ✅ 使用统一 Hook 获取所有实体类型的提及数据
   const mentionOptions = useMentionOptions();
 
@@ -87,9 +90,9 @@ export const FactionForm: React.FC<FactionFormProps> = ({
           name="name"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>势力名称</FormLabel>
+              <FormLabel>{t("faction.name")}</FormLabel>
               <FormControl>
-                <Input placeholder="例如：铁锤兄弟会" {...field} />
+                <Input placeholder={t("faction.namePlaceholder")} {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -101,7 +104,7 @@ export const FactionForm: React.FC<FactionFormProps> = ({
           name="ideology"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>势力理念</FormLabel>
+              <FormLabel>{t("faction.ideology")}</FormLabel>
               <FormControl>
                 {/* ✅ 2. 传递统一的提及选项 */}
                 <MiniEditor
@@ -120,7 +123,7 @@ export const FactionForm: React.FC<FactionFormProps> = ({
           name="description"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>势力简介</FormLabel>
+              <FormLabel>{t("faction.description")}</FormLabel>
               <FormControl>
                 {/* ✅ 3. 传递统一的提及选项 */}
                 <MiniEditor
@@ -139,15 +142,15 @@ export const FactionForm: React.FC<FactionFormProps> = ({
           name="leaderId"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>领导者</FormLabel>
+              <FormLabel>{t("faction.leader")}</FormLabel>
               <Select onValueChange={field.onChange} defaultValue={field.value}>
                 <FormControl>
                   <SelectTrigger>
-                    <SelectValue placeholder="选择势力领导者（可选）" />
+                    <SelectValue placeholder={t("faction.leaderPlaceholder")} />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value="none">无领导者</SelectItem>
+                  <SelectItem value="none">{t("faction.noLeader")}</SelectItem>
                   {characters.map((character) => (
                     <SelectItem key={character.id} value={character.id}>
                       {character.name}
@@ -166,7 +169,7 @@ export const FactionForm: React.FC<FactionFormProps> = ({
           name="goals"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>目标与追求</FormLabel>
+              <FormLabel>{t("faction.goals")}</FormLabel>
               <FormControl>
                 <MiniEditor
                     content={field.value || ""}
@@ -185,7 +188,7 @@ export const FactionForm: React.FC<FactionFormProps> = ({
           name="structure"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>组织结构</FormLabel>
+              <FormLabel>{t("faction.structure")}</FormLabel>
               <FormControl>
                 <MiniEditor
                     content={field.value || ""}
@@ -204,7 +207,7 @@ export const FactionForm: React.FC<FactionFormProps> = ({
           name="resources"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>资源与实力</FormLabel>
+              <FormLabel>{t("faction.resources")}</FormLabel>
               <FormControl>
                 <MiniEditor
                     content={field.value || ""}
@@ -223,7 +226,7 @@ export const FactionForm: React.FC<FactionFormProps> = ({
           name="relationships"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>对外关系（盟友/敌人）</FormLabel>
+              <FormLabel>{t("faction.relationships")}</FormLabel>
               <FormControl>
                 <MiniEditor
                     content={field.value || ""}
@@ -237,7 +240,7 @@ export const FactionForm: React.FC<FactionFormProps> = ({
         />
 
         <LoadingButton type="submit" className="w-full" isLoading={isPending}>
-          保存势力
+          {t("faction.saveFaction")}
         </LoadingButton>
       </form>
     </Form>

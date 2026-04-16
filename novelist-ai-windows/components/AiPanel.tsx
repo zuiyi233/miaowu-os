@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { findRelevantCharacters } from "../services/embeddingService";
 import {
   contextEngineService,
@@ -67,10 +68,10 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "./ui/resizable";
-import { formatDistanceToNow } from "date-fns";
-import { zhCN } from "date-fns/locale";
+import { formatDateFromNow } from "../lib/utils/date";
 
 export const AiPanel: React.FC = () => {
+  const { t } = useTranslation();
   const { activeChapterId, currentNovelTitle } = useUiStore();
   const { open } = useModalStore();
 
@@ -100,6 +101,7 @@ export const AiPanel: React.FC = () => {
   const contextWindowSize = useSettingsStore(
     (state) => state.contextWindowSize
   );
+  const language = useSettingsStore((state) => state.language);
 
   // 获取所有续写模板和当前激活的模板
   const { data: templates } = usePromptTemplatesQuery("continue");
@@ -141,10 +143,9 @@ export const AiPanel: React.FC = () => {
   // 处理新建会话
   const handleCreateSession = async () => {
     const newSession = await createSessionMutation.mutateAsync({
-      title: "新的一天",
+      title: t("aiPanel.newSessionTitle"),
       novelId: currentNovelTitle,
-      initialMessage:
-        "你好，我是你的专属写作助手。针对当前章节，你有什么想法？",
+      initialMessage: t("aiPanel.newSessionMessage"),
     });
     setActiveSessionId(newSession.id);
   };
@@ -208,10 +209,14 @@ export const AiPanel: React.FC = () => {
         outline: activeChapter.description || "", // ✅ 新增：直接从 description 字段获取细纲
         content: textContent, // ✅ 新增：提供完整正文内容
       };
+      const continuePromptFallback =
+        language === "zh-CN"
+          ? "继续写作：{{selection}}\n\n上文：{{content}}\n\n细纲：{{outline}}"
+          : "Continue writing: {{selection}}\n\nContext: {{content}}\n\nOutline: {{outline}}";
 
       // 使用提示词模板渲染引擎
       const hydrated = await contextEngineService.hydratePrompt(
-        currentTemplate.content,
+        currentTemplate.content || continuePromptFallback,
         templateVariables
       );
 
@@ -275,7 +280,7 @@ export const AiPanel: React.FC = () => {
     try {
       // 🔥 关键修复：直接调用 analyzeContextWithOptions 并启用前情提要逻辑
       // 获取用户意图
-      const userIntent = customPrompt.trim() || "请继续推进剧情。";
+      const userIntent = customPrompt.trim() || t("aiPanel.defaultIntent");
 
       // 🔥 让 ContextEngine 负责所有上下文组装 (包含前情提要、大纲、实体、文风)
       const result = await contextEngineService.analyzeContextWithOptions(
@@ -307,7 +312,7 @@ export const AiPanel: React.FC = () => {
       <div className="p-3 border-b flex items-center justify-between bg-muted/30">
         <h2 className="font-semibold flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-primary" />
-          {isGlobalMode ? "Mì Jìng AI" : "写作助手"}
+          {isGlobalMode ? t("aiPanel.globalTitle") : t("aiPanel.title")}
         </h2>
         <Button
           variant="ghost"
@@ -318,11 +323,11 @@ export const AiPanel: React.FC = () => {
               type: "dialog",
               component: SettingsDialog,
               props: {},
-              title: "应用设置",
-              description: "在这里管理编辑器、AI 和数据相关的应用配置。",
+              title: t("settings_dialog.title"),
+              description: t("aiPanel.settingsDescription"),
             })
           }
-          title="设置"
+          title={t("common.settings")}
         >
           <Settings className="w-4 h-4" />
         </Button>
@@ -343,13 +348,13 @@ export const AiPanel: React.FC = () => {
               className="text-xs"
               disabled={isGlobalMode}
             >
-              <PenTool className="w-3 h-3 mr-1" /> 创作
+              <PenTool className="w-3 h-3 mr-1" /> {t("aiPanel.tabs.writing")}
             </TabsTrigger>
             <TabsTrigger value="outline" className="text-xs">
-              <ListTree className="w-3 h-3 mr-1" /> 大纲
+              <ListTree className="w-3 h-3 mr-1" /> {t("aiPanel.tabs.outline")}
             </TabsTrigger>
             <TabsTrigger value="chat" className="text-xs">
-              <MessageCircle className="w-3 h-3 mr-1" /> 对话
+              <MessageCircle className="w-3 h-3 mr-1" /> {t("aiPanel.tabs.chat")}
             </TabsTrigger>
             {/* 新增的雷达 Tab */}
             <TabsTrigger
@@ -357,7 +362,7 @@ export const AiPanel: React.FC = () => {
               className="text-xs"
               disabled={isGlobalMode}
             >
-              <Radar className="w-3 h-3 mr-1" /> 雷达
+              <Radar className="w-3 h-3 mr-1" /> {t("aiPanel.tabs.radar")}
             </TabsTrigger>
           </TabsList>
         </div>
@@ -370,8 +375,8 @@ export const AiPanel: React.FC = () => {
           <div className="h-full flex flex-col overflow-hidden border-t border-transparent">
             {isGlobalMode ? (
               <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2">
-                <p>请先打开一本小说</p>
-                <p className="text-xs">创作模式需要小说上下文</p>
+                <p>{t("aiPanel.openNovelFirst")}</p>
+                <p className="text-xs">{t("aiPanel.writingNeedNovel")}</p>
               </div>
             ) : (
               // 使用 ResizablePanelGroup 进行垂直布局
@@ -390,7 +395,7 @@ export const AiPanel: React.FC = () => {
                       <CardHeader className="pb-2 pt-4">
                         <CardTitle className="text-sm font-medium flex items-center gap-2">
                           <Wand className="w-4 h-4 text-primary" />
-                          AI续写
+                          {t("aiPanel.continueSectionTitle")}
                         </CardTitle>
                       </CardHeader>
                       <CardContent className="flex flex-col gap-3 text-sm">
@@ -401,19 +406,26 @@ export const AiPanel: React.FC = () => {
                               htmlFor="template-select"
                               className="text-xs"
                             >
-                              模式:
+                              {t("aiPanel.modeLabel")}
                             </Label>
                             <Select
                               value={selectedTemplateId}
                               onValueChange={setSelectedTemplateId}
                             >
                               <SelectTrigger className="h-7 text-xs flex-1">
-                                <SelectValue placeholder="选择模式" />
+                                <SelectValue
+                                  placeholder={t("aiPanel.selectMode")}
+                                />
                               </SelectTrigger>
                               <SelectContent>
-                                {templates.map((t) => (
-                                  <SelectItem key={t.id} value={t.id}>
-                                    {t.name} {t.isActive && "(默认)"}
+                                {templates.map((template) => (
+                                  <SelectItem
+                                    key={template.id}
+                                    value={template.id}
+                                  >
+                                    {template.name}{" "}
+                                    {template.isActive &&
+                                      t("aiPanel.defaultTag")}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
@@ -424,7 +436,9 @@ export const AiPanel: React.FC = () => {
                         {/* 当前模板信息 */}
                         {currentTemplate && (
                           <div className="text-xs text-muted-foreground">
-                            当前使用: {currentTemplate.name}
+                            {t("aiPanel.currentTemplate", {
+                              name: currentTemplate.name,
+                            })}
                             {currentTemplate.description &&
                               ` - ${currentTemplate.description}`}
                           </div>
@@ -445,12 +459,12 @@ export const AiPanel: React.FC = () => {
                             {continueWritingMutation.isPending ? (
                               <>
                                 <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                                写作中
+                                {t("aiPanel.writingInProgress")}
                               </>
                             ) : (
                               <>
                                 <Wand className="w-3 h-3 mr-2" />
-                                智能续写
+                                {t("aiPanel.smartContinue")}
                               </>
                             )}
                           </Button>
@@ -464,9 +478,9 @@ export const AiPanel: React.FC = () => {
                               continueWritingMutation.isPending
                             }
                             size="sm"
-                            title="使用传统续写模式"
+                            title={t("aiPanel.legacyModeTitle")}
                           >
-                            传统
+                            {t("aiPanel.legacyMode")}
                           </Button>
 
                           {continueWritingMutation.isPending && (
@@ -474,7 +488,7 @@ export const AiPanel: React.FC = () => {
                               variant="outline"
                               size="sm"
                               onClick={() => continueWritingMutation.reset()}
-                              title="取消写作"
+                              title={t("common.cancel")}
                             >
                               <X className="h-3 w-3" />
                             </Button>
@@ -487,7 +501,7 @@ export const AiPanel: React.FC = () => {
                       <CardHeader className="pb-2 pt-4">
                         <CardTitle className="text-sm font-medium flex items-center gap-2">
                           <Sparkles className="w-4 h-4 text-primary" />
-                          智能写作
+                          {t("aiPanel.smartWritingTitle")}
                         </CardTitle>
                       </CardHeader>
                       <CardContent className="flex flex-col gap-3 text-sm">
@@ -499,9 +513,9 @@ export const AiPanel: React.FC = () => {
 
                         <div className="grid w-full items-center gap-1.5">
                           <Label htmlFor="custom-prompt" className="text-xs">
-                            写作指令
+                            {t("aiPanel.writingInstruction")}
                             <span className="text-xs text-muted-foreground ml-2">
-                              支持 @角色 #场景 ~势力~ 语法
+                              {t("aiPanel.syntaxHint")}
                             </span>
                           </Label>
                           <Textarea
@@ -509,7 +523,7 @@ export const AiPanel: React.FC = () => {
                             value={customPrompt}
                             onChange={(e) => setCustomPrompt(e.target.value)}
                             rows={3}
-                            placeholder="例如：写一段 @艾拉 在 #黄昏酒馆 遇到 ~铁锤兄弟会~ 的冲突场景"
+                            placeholder={t("aiPanel.promptPlaceholder")}
                             className="bg-background resize-none text-xs"
                           />
                         </div>
@@ -527,12 +541,12 @@ export const AiPanel: React.FC = () => {
                             {continueWritingMutation.isPending ? (
                               <>
                                 <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                                写作中
+                                {t("aiPanel.writingInProgress")}
                               </>
                             ) : (
                               <>
                                 <Sparkles className="w-3 h-3 mr-2" />
-                                智能写作
+                                {t("aiPanel.smartWriting")}
                               </>
                             )}
                           </Button>
@@ -541,7 +555,7 @@ export const AiPanel: React.FC = () => {
                               variant="outline"
                               size="sm"
                               onClick={() => continueWritingMutation.reset()}
-                              title="取消写作"
+                              title={t("common.cancel")}
                             >
                               <X className="h-3 w-3" />
                             </Button>
@@ -566,7 +580,7 @@ export const AiPanel: React.FC = () => {
                     variant="ghost"
                     size="icon"
                     className="absolute top-1 right-1 z-10 h-6 w-6"
-                    title="展开视图"
+                    title={t("aiPanel.expandView")}
                     onClick={() => setActiveTab("radar")} // 点击时切换到 'radar' Tab
                   >
                     <ExternalLink className="h-4 w-4" />
@@ -594,7 +608,7 @@ export const AiPanel: React.FC = () => {
                 onValueChange={setActiveSessionId}
               >
                 <SelectTrigger className="h-8 text-xs flex-1">
-                  <SelectValue placeholder="选择历史对话" />
+                  <SelectValue placeholder={t("aiPanel.selectHistory")} />
                 </SelectTrigger>
                 <SelectContent>
                   {chatSessions.map((session) => (
@@ -607,10 +621,7 @@ export const AiPanel: React.FC = () => {
                         {session.title}
                       </span>
                       <span className="ml-2 text-[10px] text-muted-foreground">
-                        {formatDistanceToNow(session.updatedAt, {
-                          locale: zhCN,
-                          addSuffix: true,
-                        })}
+                        {formatDateFromNow(new Date(session.updatedAt))}
                       </span>
                     </SelectItem>
                   ))}
@@ -621,7 +632,7 @@ export const AiPanel: React.FC = () => {
                 variant="ghost"
                 className="h-8 w-8"
                 onClick={handleCreateSession}
-                title="新对话"
+                title={t("chat.newChat")}
               >
                 <Plus className="w-4 h-4" />
               </Button>
@@ -634,13 +645,13 @@ export const AiPanel: React.FC = () => {
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-muted-foreground p-4 text-center">
                   <History className="w-12 h-12 mb-3 opacity-20" />
-                  <p className="text-sm">暂无历史对话</p>
+                  <p className="text-sm">{t("aiPanel.noHistoryChats")}</p>
                   <Button
                     variant="link"
                     onClick={handleCreateSession}
                     className="text-xs"
                   >
-                    点击开始新的讨论
+                    {t("aiPanel.startNewDiscussion")}
                   </Button>
                 </div>
               )}
@@ -674,9 +685,9 @@ export const AiPanel: React.FC = () => {
       <Dialog open={isPreviewDialogOpen} onOpenChange={setIsPreviewDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>提示词预览</DialogTitle>
+            <DialogTitle>{t("aiPanel.promptPreviewTitle")}</DialogTitle>
             <DialogDescription>
-              这是 AI 实际接收到的完整提示词内容
+              {t("aiPanel.promptPreviewDescription")}
             </DialogDescription>
           </DialogHeader>
           <div className="bg-muted p-4 rounded-md">
@@ -689,7 +700,7 @@ export const AiPanel: React.FC = () => {
               variant="outline"
               onClick={() => setIsPreviewDialogOpen(false)}
             >
-              关闭
+              {t("common.close")}
             </Button>
             <Button
               onClick={() => {
@@ -697,7 +708,7 @@ export const AiPanel: React.FC = () => {
                 handleContinueWritingWithTemplate();
               }}
             >
-              确认并发送
+              {t("aiPanel.confirmAndSend")}
             </Button>
           </div>
         </DialogContent>

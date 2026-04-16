@@ -1,7 +1,9 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { useSettingsStore, AppSettings } from "../stores/useSettingsStore";
 import { useQueryClient } from "@tanstack/react-query";
 import { databaseService } from "../lib/storage/db";
@@ -72,6 +74,7 @@ import { logger } from "../lib/logging"; // ✅ 引入 logger
 import { PromptManager } from "./settings/PromptManager";
 import { ProviderSettings } from "./settings/ProviderSettings";
 import { ModelConfigField } from "./settings/ModelConfigField";
+import { LanguageSelector } from "./LanguageSelector";
 
 interface SettingsDialogProps {
   onClose: () => void;
@@ -92,58 +95,64 @@ const preprocessNumber = (value: unknown) => {
   return isNaN(num) ? undefined : num;
 };
 
-// 1. 定义通用的生成配置 schema
-const generationConfigSchema = z.object({
-  providerId: z.string().min(1, "请选择服务商"),
-  model: z.string().min(1, "请输入模型ID"),
-  temperature: z.preprocess(
-    preprocessNumber,
-    z.number().min(0).max(2).default(0.7)
-  ),
-  maxTokens: z.preprocess(
-    preprocessNumber,
-    z.number().int().min(1).default(4096)
-  ),
-  topP: z.preprocess(preprocessNumber, z.number().min(0).max(1).optional()),
-  topK: z.preprocess(preprocessNumber, z.number().int().optional()),
-  presencePenalty: z.preprocess(
-    preprocessNumber,
-    z.number().min(-2).max(2).optional()
-  ),
-  frequencyPenalty: z.preprocess(
-    preprocessNumber,
-    z.number().min(-2).max(2).optional()
-  ),
-});
+const createGenerationConfigSchema = (t: TFunction) =>
+  z.object({
+    providerId: z.string().min(1, t("settings_dialog.providerRequired")),
+    model: z.string().min(1, t("settings_dialog.modelRequired")),
+    temperature: z.preprocess(
+      preprocessNumber,
+      z.number().min(0).max(2).default(0.7)
+    ),
+    maxTokens: z.preprocess(
+      preprocessNumber,
+      z.number().int().min(1).default(4096)
+    ),
+    topP: z.preprocess(preprocessNumber, z.number().min(0).max(1).optional()),
+    topK: z.preprocess(preprocessNumber, z.number().int().optional()),
+    presencePenalty: z.preprocess(
+      preprocessNumber,
+      z.number().min(-2).max(2).optional()
+    ),
+    frequencyPenalty: z.preprocess(
+      preprocessNumber,
+      z.number().min(-2).max(2).optional()
+    ),
+  });
 
-// 2. 定义 Embedding 专用 schema (不需要温度等)
-const embeddingConfigSchema = z.object({
-  providerId: z.string().min(1, "请选择服务商").default(""), // 允许空字符串以便后续处理，或者必填
-  model: z.string().min(1, "请输入模型ID").default(""),
-  // 允许这些字段存在但不校验，或者直接忽略
-});
+const createEmbeddingConfigSchema = (t: TFunction) =>
+  z.object({
+    providerId: z
+      .string()
+      .min(1, t("settings_dialog.providerRequired"))
+      .default(""),
+    model: z.string().min(1, t("settings_dialog.modelRequired")).default(""),
+  });
 
-// 3. 更新主 schema
-const refinedFormSchema = z.object({
-  autoSaveEnabled: z.boolean(),
-  autoSaveDelay: z.number(),
-  autoSnapshotEnabled: z.boolean(),
-  editorFont: z.string(),
-  editorFontSize: z.number(),
-  contextTokenLimit: z.number(),
-  contextWindowSize: z.number(),
-  modelSettings: z.object({
-    outline: generationConfigSchema,
-    continue: generationConfigSchema,
-    polish: generationConfigSchema,
-    expand: generationConfigSchema,
-    chat: generationConfigSchema,
-    extraction: generationConfigSchema,
-    embedding: embeddingConfigSchema, // ✅ 使用专用 Schema
-  }),
-});
+const createRefinedFormSchema = (t: TFunction) => {
+  const generationConfigSchema = createGenerationConfigSchema(t);
+  const embeddingConfigSchema = createEmbeddingConfigSchema(t);
 
-type FormValues = z.infer<typeof refinedFormSchema>;
+  return z.object({
+    autoSaveEnabled: z.boolean(),
+    autoSaveDelay: z.number(),
+    autoSnapshotEnabled: z.boolean(),
+    editorFont: z.string(),
+    editorFontSize: z.number(),
+    contextTokenLimit: z.number(),
+    contextWindowSize: z.number(),
+    modelSettings: z.object({
+      outline: generationConfigSchema,
+      continue: generationConfigSchema,
+      polish: generationConfigSchema,
+      expand: generationConfigSchema,
+      chat: generationConfigSchema,
+      extraction: generationConfigSchema,
+      embedding: embeddingConfigSchema,
+    }),
+  });
+};
+
+type FormValues = z.infer<ReturnType<typeof createRefinedFormSchema>>;
 
 // --- 辅助组件 ---
 const SectionHeader = ({
@@ -188,6 +197,7 @@ const SettingBlock = ({
 // ✅ 新增：批量配置组件 (BatchConfigurator)
 // ----------------------------------------------------------------
 const BatchConfigurator = ({ form }: { form: any }) => {
+  const { t } = useTranslation();
   const { providers, providerModels } = useSettingsStore();
   const [selectedProviderId, setSelectedProviderId] = useState<string>("");
   const [selectedModel, setSelectedModel] = useState<string>("");
@@ -206,7 +216,7 @@ const BatchConfigurator = ({ form }: { form: any }) => {
   // 执行批量应用
   const handleApplyToAll = () => {
     if (!selectedProviderId || !selectedModel) {
-      toast.error("请先选择服务商和模型");
+      toast.error(t("settings_dialog.selectProviderFirst"));
       return;
     }
 
@@ -228,27 +238,27 @@ const BatchConfigurator = ({ form }: { form: any }) => {
       });
     });
 
-    toast.success(`已将 ${selectedModel} 应用于所有生成任务`);
+    toast.success(t("settings_dialog.appliedToAll", { model: selectedModel }));
   };
 
   return (
     <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 mb-6">
       <div className="flex items-center gap-2 mb-3">
         <Zap className="w-4 h-4 text-primary" />
-        <h3 className="text-sm font-medium">一键全局配置</h3>
+        <h3 className="text-sm font-medium">{t("settings_dialog.batchConfig")}</h3>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 items-end">
         <div className="w-full sm:w-1/3 space-y-1.5">
           <div className="text-xs text-muted-foreground font-medium">
-            选择服务商
+            {t("settings_dialog.selectProvider")}
           </div>
           <Select
             value={selectedProviderId}
             onValueChange={handleProviderChange}
           >
             <SelectTrigger className="h-8 text-xs bg-background">
-              <SelectValue placeholder="选择服务商..." />
+              <SelectValue placeholder={t("settings_dialog.selectProviderPlaceholder")} />
             </SelectTrigger>
             <SelectContent>
               {providers.map((p) => (
@@ -262,12 +272,12 @@ const BatchConfigurator = ({ form }: { form: any }) => {
 
         <div className="w-full sm:w-1/3 space-y-1.5">
           <div className="text-xs text-muted-foreground font-medium">
-            选择模型
+            {t("settings_dialog.selectModel")}
           </div>
           <Input
             value={selectedModel}
             onChange={(e) => setSelectedModel(e.target.value)}
-            placeholder="输入或选择模型ID"
+            placeholder={t("settings_dialog.selectModelPlaceholder")}
             className="h-8 text-xs bg-background font-mono"
           />
         </div>
@@ -279,12 +289,11 @@ const BatchConfigurator = ({ form }: { form: any }) => {
           className="w-full sm:w-auto h-8 text-xs bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Copy className="w-3 h-3 mr-2" />
-          应用到所有任务
+          {t("settings_dialog.applyToAll")}
         </Button>
       </div>
       <p className="text-[10px] text-muted-foreground mt-2">
-        * 将自动覆盖 大纲、续写、润色、扩写、对话、提取 的模型配置（Embedding
-        除外）。
+        {t("settings_dialog.batchConfigNote")}
       </p>
     </div>
   );
@@ -294,6 +303,7 @@ const BatchConfigurator = ({ form }: { form: any }) => {
 // ✅ 新增：RAG 参数配置组件
 // ----------------------------------------------------------------
 const RagSettingsCard = () => {
+  const { t } = useTranslation();
   const { ragOptions, setRagOptions } = useSettingsStore();
 
   return (
@@ -303,9 +313,9 @@ const RagSettingsCard = () => {
           <Sliders className="w-4 h-4 text-amber-600" />
         </div>
         <div>
-          <h3 className="text-sm font-medium">知识库检索参数 (RAG)</h3>
+          <h3 className="text-sm font-medium">{t("settings_dialog.ragSettings")}</h3>
           <p className="text-[10px] text-muted-foreground">
-            控制 AI 读取世界观设定的灵敏度
+            {t("settings_dialog.ragSettingsDesc")}
           </p>
         </div>
       </div>
@@ -313,7 +323,7 @@ const RagSettingsCard = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="space-y-3">
           <div className="flex justify-between items-center">
-            <div className="text-xs font-medium">相似度阈值 (Threshold)</div>
+            <div className="text-xs font-medium">{t("settings_dialog.ragThreshold")}</div>
             <span className="text-xs font-mono bg-muted px-1.5 rounded">
               {ragOptions.threshold}
             </span>
@@ -326,14 +336,13 @@ const RagSettingsCard = () => {
             onValueChange={([val]) => setRagOptions({ threshold: val })}
           />
           <p className="text-[10px] text-muted-foreground">
-            值越低，召回的资料越多但越不相关；值越高，越精准但可能漏掉关联信息。推荐
-            0.45-0.6。
+            {t("settings_dialog.ragThresholdDesc")}
           </p>
         </div>
 
         <div className="space-y-3">
           <div className="flex justify-between items-center">
-            <div className="text-xs font-medium">最大引用数量 (Top K)</div>
+            <div className="text-xs font-medium">{t("settings_dialog.ragTopK")}</div>
             <span className="text-xs font-mono bg-muted px-1.5 rounded">
               {ragOptions.limit}
             </span>
@@ -346,17 +355,16 @@ const RagSettingsCard = () => {
             onValueChange={([val]) => setRagOptions({ limit: val })}
           />
           <p className="text-[10px] text-muted-foreground">
-            单次发送给 AI 的最大实体数量。数量过多会消耗大量 Token。推荐 5-10。
+            {t("settings_dialog.ragTopKDesc")}
           </p>
         </div>
 
-        {/* ✅ 新增：重排序开关 */}
         <div className="space-y-3 md:col-span-2 border-t pt-4 mt-2">
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
-              <div className="text-xs font-medium">启用重排序 (Rerank)</div>
+              <div className="text-xs font-medium">{t("settings_dialog.enableRerank")}</div>
               <p className="text-[10px] text-muted-foreground">
-                使用专门的模型对检索结果进行二次排序，显著提高相关性，但会增加延迟。
+                {t("settings_dialog.enableRerankDesc")}
               </p>
             </div>
             <Switch
@@ -373,7 +381,9 @@ const RagSettingsCard = () => {
 };
 
 export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
+  const { t } = useTranslation();
   const settings = useSettingsStore();
+  const refinedFormSchema = useMemo(() => createRefinedFormSchema(t), [t]);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(refinedFormSchema) as any,
@@ -494,10 +504,10 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
       logger.info("SettingsDialog", "Saving Settings Payload", settingsToSave);
 
       settings.setSettings(settingsToSave);
-      toast.success("设置已保存！");
+      toast.success(t("settings_dialog.saveSuccess"));
       onClose();
     },
-    [settings, onClose]
+    [settings, onClose, t]
   );
 
   // ✅ 新增：错误处理函数
@@ -505,20 +515,22 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
     // ✅ 详细记录验证错误，方便排查哪个字段挂了
     logger.error("SettingsDialog", "Validation Failed", errors);
 
-    toast.error("设置保存失败", {
-      description: "请检查表单中的错误项 (查看控制台详情)",
+    toast.error(t("settings_dialog.saveFailed"), {
+      description: t("settings_dialog.saveFailedDesc"),
     });
-  }, []);
+  }, [t]);
 
   const handleClearAllData = useCallback(async () => {
     try {
-      toast.info("正在清除所有小说数据...");
+      toast.info(t("settings_dialog.clearingData"));
       await databaseService.clearAllData();
       await queryClient.invalidateQueries();
-      toast.success("所有小说数据已清除！");
+      toast.success(t("settings_dialog.dataCleared"));
       setTimeout(() => window.location.reload(), 1500);
     } catch (error) {
-      toast.error("清除数据失败", { description: (error as Error).message });
+      toast.error(t("settings_dialog.clearDataFailed"), {
+        description: (error as Error).message,
+      });
     }
     setIsClearDataAlertOpen(false);
   }, [queryClient]);
@@ -526,7 +538,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
   const handleExportData = useCallback(async () => {
     setIsExporting(true);
     try {
-      toast.info("正在导出数据...");
+      toast.info(t("settings_dialog.exportingData"));
       const allNovels = await databaseService.getAllNovels();
       const exportData = JSON.stringify(
         { version: 1, novels: allNovels },
@@ -544,9 +556,9 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      toast.success("数据已成功导出！");
+      toast.success(t("settings_dialog.dataExported"));
     } catch (error) {
-      toast.error("数据导出失败", { description: (error as Error).message });
+      toast.error(t("settings_dialog.exportFailed"), { description: (error as Error).message });
     } finally {
       setIsExporting(false);
     }
@@ -561,18 +573,20 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
       reader.onload = async (e) => {
         try {
           const result = e.target?.result;
-          if (typeof result !== "string") throw new Error("无法读取文件内容");
+          if (typeof result !== "string") {
+            throw new Error(t("settings_dialog.cannotReadFile"));
+          }
           const data = JSON.parse(result);
           if (data.version !== 1 || !Array.isArray(data.novels))
-            throw new Error("文件格式无效");
-          toast.info("正在导入数据...");
+            throw new Error(t("settings_dialog.invalidFileFormat"));
+          toast.info(t("settings_dialog.importingData"));
           for (const novel of data.novels)
             await databaseService.saveNovel(novel);
           await queryClient.invalidateQueries();
-          toast.success("数据导入成功！");
+          toast.success(t("settings_dialog.dataImported"));
           setTimeout(() => window.location.reload(), 1500);
         } catch (error) {
-          toast.error("数据导入失败", {
+          toast.error(t("settings_dialog.importFailed"), {
             description: (error as Error).message,
           });
         } finally {
@@ -581,17 +595,17 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
       };
       reader.readAsText(file);
     },
-    [queryClient]
+    [queryClient, t]
   );
 
   const handleResetApplication = useCallback(async () => {
     try {
       settings.resetSettings();
       await queryClient.invalidateQueries();
-      toast.success("应用已重置！");
+      toast.success(t("settings_dialog.appReset"));
       setTimeout(() => window.location.reload(), 1500);
     } catch (error) {
-      toast.error("重置失败", { description: (error as Error).message });
+      toast.error(t("settings_dialog.resetFailed"), { description: (error as Error).message });
     }
     setIsResetAlertOpen(false);
   }, [settings, queryClient]);
@@ -609,21 +623,26 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
             <DialogHeader className="px-6 py-4 border-b bg-muted/10 shrink-0">
               <div className="flex items-center justify-between">
                 <div>
-                  <DialogTitle className="text-xl">应用设置</DialogTitle>
+                  <DialogTitle className="text-xl">
+                    {t("settings_dialog.title")}
+                  </DialogTitle>
                   <DialogDescription className="mt-1">
-                    管理编辑器、AI 模型、服务商及数据备份。
+                    {t("settings_dialog.description")}
                   </DialogDescription>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="text-muted-foreground hover:text-destructive"
-                  onClick={() => setIsResetAlertOpen(true)}
-                >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  恢复默认
-                </Button>
+                <div className="flex items-center gap-3">
+                  <LanguageSelector />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground hover:text-destructive"
+                    onClick={() => setIsResetAlertOpen(true)}
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    {t("settings_dialog.resetDefault")}
+                  </Button>
+                </div>
               </div>
             </DialogHeader>
 
@@ -634,19 +653,19 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                 <div className="px-6 pt-4 shrink-0">
                   <TabsList className="grid w-full grid-cols-5 h-10 bg-muted/50 p-1">
                     <TabsTrigger value="editor" className="gap-2">
-                      <LayoutTemplate className="w-4 h-4" /> 编辑器
+                      <LayoutTemplate className="w-4 h-4" /> {t("settings_dialog.tabEditor")}
                     </TabsTrigger>
                     <TabsTrigger value="providers" className="gap-2">
-                      <Server className="w-4 h-4" /> 服务商
+                      <Server className="w-4 h-4" /> {t("settings_dialog.tabProvider")}
                     </TabsTrigger>
                     <TabsTrigger value="ai" className="gap-2">
-                      <Sparkles className="w-4 h-4" /> AI 模型
+                      <Sparkles className="w-4 h-4" /> {t("settings_dialog.tabModel")}
                     </TabsTrigger>
                     <TabsTrigger value="prompts" className="gap-2">
-                      <PenTool className="w-4 h-4" /> 提示词
+                      <PenTool className="w-4 h-4" /> {t("settings_dialog.tabPrompt")}
                     </TabsTrigger>
                     <TabsTrigger value="data" className="gap-2">
-                      <Database className="w-4 h-4" /> 数据
+                      <Database className="w-4 h-4" /> {t("settings_dialog.tabData")}
                     </TabsTrigger>
                   </TabsList>
                 </div>
@@ -658,8 +677,8 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                     <div>
                       <SectionHeader
                         icon={Type}
-                        title="阅读与外观"
-                        description="自定义编辑器的视觉体验"
+                        title={t("settings_dialog.readingAndAppearance")}
+                        description={t("settings_dialog.readingAndAppearanceDesc")}
                       />
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <SettingBlock>
@@ -668,7 +687,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                             name="editorFont"
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel>字体系列</FormLabel>
+                                <FormLabel>{t("settings_dialog.fontFamily")}</FormLabel>
                                 <Select
                                   onValueChange={field.onChange}
                                   defaultValue={field.value}
@@ -680,7 +699,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                                   </FormControl>
                                   <SelectContent>
                                     <SelectItem value="Lora">
-                                      Lora (衬线体)
+                                      {t("settings_dialog.loraSerif")}
                                     </SelectItem>
                                     <SelectItem value="Plus Jakarta Sans">
                                       Plus Jakarta Sans
@@ -701,7 +720,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                             render={({ field }) => (
                               <FormItem>
                                 <div className="flex justify-between">
-                                  <FormLabel>字号大小</FormLabel>
+                                  <FormLabel>{t("settings_dialog.fontSize")}</FormLabel>
                                   <span className="text-xs text-muted-foreground">
                                     {field.value}px
                                   </span>
@@ -725,8 +744,8 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                     <div>
                       <SectionHeader
                         icon={Save}
-                        title="保存策略"
-                        description="配置自动保存和版本快照"
+                        title={t("settings_dialog.saveStrategy")}
+                        description={t("settings_dialog.saveStrategyDesc")}
                       />
                       <SettingBlock className="space-y-4">
                         <div className="flex flex-row items-center justify-between">
@@ -742,9 +761,9 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                                   />
                                 </FormControl>
                                 <div className="space-y-0.5">
-                                  <FormLabel>自动保存</FormLabel>
+                                  <FormLabel>{t("settings_dialog.autoSave")}</FormLabel>
                                   <FormDescription>
-                                    停止输入后自动保存草稿
+                                    {t("settings_dialog.autoSaveDesc")}
                                   </FormDescription>
                                 </div>
                               </FormItem>
@@ -759,10 +778,10 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                                   <FormItem>
                                     <div className="flex justify-between mb-2">
                                       <FormLabel className="text-xs">
-                                        延迟时间
+                                        {t("settings_dialog.autoSaveDelay")}
                                       </FormLabel>
                                       <span className="text-xs text-muted-foreground">
-                                        {field.value} 分钟
+                                        {field.value} {t("common.minutes")}
                                       </span>
                                     </div>
                                     <FormControl>
@@ -795,9 +814,9 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                                 />
                               </FormControl>
                               <div className="space-y-0.5">
-                                <FormLabel>智能快照</FormLabel>
+                                <FormLabel>{t("settings_dialog.autoSnapshot")}</FormLabel>
                                 <FormDescription>
-                                  当内容发生重大变化时，自动创建历史版本。
+                                  {t("settings_dialog.autoSnapshotDesc")}
                                 </FormDescription>
                               </div>
                             </FormItem>
@@ -821,10 +840,10 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                       <div className="flex items-center justify-between p-4 border rounded-xl bg-card shadow-sm">
                         <div className="space-y-0.5">
                           <h3 className="text-sm font-medium">
-                            RAG 上下文限制
+                            {t("settings_dialog.ragContextLimit")}
                           </h3>
                           <p className="text-xs text-muted-foreground">
-                            控制发送给 AI 的最大历史记录长度
+                            {t("settings_dialog.ragContextLimitDesc")}
                           </p>
                         </div>
                         <FormField
@@ -845,16 +864,16 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                                 </FormControl>
                                 <SelectContent>
                                   <SelectItem value="16000">
-                                    16K (标准)
+                                    {t("settings_dialog.contextStandard")}
                                   </SelectItem>
                                   <SelectItem value="32000">
-                                    32K (中等)
+                                    {t("settings_dialog.contextMedium")}
                                   </SelectItem>
                                   <SelectItem value="64000">
-                                    64K (长文本)
+                                    {t("settings_dialog.contextLong")}
                                   </SelectItem>
                                   <SelectItem value="128000">
-                                    128K (超长)
+                                    {t("settings_dialog.contextUltraLong")}
                                   </SelectItem>
                                 </SelectContent>
                               </Select>
@@ -868,18 +887,14 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                           <div className="flex justify-between items-center">
                             <div className="space-y-0.5">
                               <h3 className="text-sm font-medium">
-                                🧠 中期记忆窗口 (原文回溯量)
+                                {t("settings_dialog.midTermMemory")}
                               </h3>
                               <p className="text-xs text-muted-foreground">
-                                决定了 AI 能"看"到最近多少章的完整原文
+                                {t("settings_dialog.midTermMemoryDesc")}
                               </p>
                             </div>
                             <span className="text-sm text-muted-foreground">
-                              {form.watch("contextWindowSize")} 字符 (约{" "}
-                              {(form.watch("contextWindowSize") / 1.5).toFixed(
-                                0
-                              )}{" "}
-                              Tokens)
+                              {t("settings_dialog.charTokens", { tokens: (form.watch("contextWindowSize") / 1.5).toFixed(0) })}
                             </span>
                           </div>
                           <FormField
@@ -900,9 +915,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                                   />
                                 </FormControl>
                                 <FormDescription className="text-xs">
-                                  调大可提高连贯性，但会消耗更多 Token
-                                  并可能降低响应速度。 建议：默认
-                                  5000。如需强连贯性可设为 10000+。
+                                  {t("settings_dialog.midTermMemoryHint")}
                                 </FormDescription>
                               </FormItem>
                             )}
@@ -920,7 +933,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                     <BatchConfigurator form={form} />
 
                     <div>
-                      <SectionHeader icon={PenTool} title="核心创作能力" />
+                      <SectionHeader icon={PenTool} title={t("settings_dialog.coreCreation")} />
                       <Accordion
                         type="single"
                         collapsible
@@ -928,29 +941,29 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                       >
                         <ModelConfigField
                           task="outline"
-                          label="大纲生成"
-                          description="生成章节结构和剧情大纲"
+                          label={t("modelConfig.outlineGeneration")}
+                          description={t("modelConfig.outlineGenerationDesc")}
                           form={form}
                           recommendedModel="gemini-2.0-flash-exp"
                         />
                         <ModelConfigField
                           task="continue"
-                          label="智能续写"
-                          description="根据上文风格自动续写"
+                          label={t("modelConfig.smartContinue")}
+                          description={t("modelConfig.smartContinueDesc")}
                           form={form}
                           recommendedModel="claude-3-5-sonnet-20241022"
                         />
                         <ModelConfigField
                           task="expand"
-                          label="剧情扩写"
-                          description="将简短句子扩展为丰富段落"
+                          label={t("modelConfig.plotExpand")}
+                          description={t("modelConfig.plotExpandDesc")}
                           form={form}
                           recommendedModel="deepseek-reasoner"
                         />
                         <ModelConfigField
                           task="polish"
-                          label="润色优化"
-                          description="优化文笔和修正语病"
+                          label={t("modelConfig.polishOptimize")}
+                          description={t("modelConfig.polishOptimizeDesc")}
                           form={form}
                           recommendedModel="deepseek-chat"
                         />
@@ -958,7 +971,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                     </div>
 
                     <div>
-                      <SectionHeader icon={Sparkles} title="辅助与分析工具" />
+                      <SectionHeader icon={Sparkles} title={t("settings_dialog.auxiliaryTools")} />
                       <Accordion
                         type="single"
                         collapsible
@@ -966,23 +979,23 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                       >
                         <ModelConfigField
                           task="chat"
-                          label="自由对话助手"
-                          description="侧边栏聊天机器人"
+                          label={t("modelConfig.chatAssistant")}
+                          description={t("modelConfig.chatAssistantDesc")}
                           form={form}
                           recommendedModel="gpt-4o"
                         />
                         <ModelConfigField
                           task="extraction"
-                          label="信息提取"
-                          description="提取角色关系和时间线"
+                          label={t("modelConfig.infoExtraction")}
+                          description={t("modelConfig.infoExtractionDesc")}
                           form={form}
                           recommendedModel="gpt-4o-mini"
                         />
                         <div className="lg:col-span-2">
                           <ModelConfigField
                             task="embedding"
-                            label="向量检索 (Embedding)"
-                            description="构建本地知识库 (RAG)"
+                            label={t("modelConfig.embeddingSearch")}
+                            description={t("modelConfig.embeddingSearchDesc")}
                             form={form}
                             recommendedModel="text-embedding-3-small"
                           />
@@ -1001,17 +1014,17 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                     <div>
                       <SectionHeader
                         icon={FileText}
-                        title="备份与迁移"
-                        description="导出数据以防止丢失，或迁移到新设备"
+                        title={t("settings_dialog.backupAndMigration")}
+                        description={t("settings_dialog.backupAndMigrationDesc")}
                       />
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <SettingBlock className="flex flex-col justify-between gap-4">
                           <div>
                             <h4 className="font-medium text-sm mb-1">
-                              导出数据
+                              {t("settings_dialog.exportData")}
                             </h4>
                             <p className="text-xs text-muted-foreground">
-                              导出为 JSON 文件。
+                              {t("settings_dialog.exportDataDesc")}
                             </p>
                           </div>
                           <Button
@@ -1021,16 +1034,16 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                             disabled={isExporting}
                             className="w-full"
                           >
-                            <Download className="w-4 h-4 mr-2" /> 导出备份
+                            <Download className="w-4 h-4 mr-2" /> {t("settings_dialog.exportBackup")}
                           </Button>
                         </SettingBlock>
                         <SettingBlock className="flex flex-col justify-between gap-4">
                           <div>
                             <h4 className="font-medium text-sm mb-1">
-                              导入数据
+                              {t("settings_dialog.importData")}
                             </h4>
                             <p className="text-xs text-muted-foreground">
-                              从备份文件恢复。
+                              {t("settings_dialog.importDataDesc")}
                             </p>
                           </div>
                           <div className="relative">
@@ -1041,7 +1054,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                               disabled={isImporting}
                               className="w-full"
                             >
-                              <Upload className="w-4 h-4 mr-2" /> 导入数据
+                              <Upload className="w-4 h-4 mr-2" /> {t("settings_dialog.importDataButton")}
                             </Button>
                             <input
                               type="file"
@@ -1056,16 +1069,16 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                     </div>
 
                     <div>
-                      <SectionHeader icon={Database} title="维护与重置" />
+                      <SectionHeader icon={Database} title={t("settings_dialog.maintenanceAndReset")} />
                       <div className="space-y-4">
                         <SettingBlock>
                           <div className="flex items-center justify-between">
                             <div>
                               <h4 className="font-medium text-sm">
-                                数据库健康检查
+                                {t("settings_dialog.dbHealthCheck")}
                               </h4>
                               <p className="text-xs text-muted-foreground mt-1">
-                                修复孤儿数据。
+                                {t("settings_dialog.dbHealthCheckDesc")}
                               </p>
                             </div>
                             <Button
@@ -1073,15 +1086,15 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                               variant="secondary"
                               size="sm"
                               onClick={async () => {
-                                toast.info("正在检查...");
+                                toast.info(t("settings_dialog.checking"));
                                 const res =
                                   await databaseService.performHealthCheck();
                                 toast.success(
-                                  `修复了 ${res.fixedCount} 个问题`
+                                  t("settings_dialog.fixedCount", { count: res.fixedCount })
                                 );
                               }}
                             >
-                              开始检查
+                              {t("settings_dialog.startCheck")}
                             </Button>
                           </div>
                         </SettingBlock>
@@ -1091,10 +1104,10 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                           </div>
                           <div className="flex-1">
                             <h4 className="font-medium text-sm text-destructive">
-                              危险区域
+                              {t("settings_dialog.dangerZone")}
                             </h4>
                             <p className="text-xs text-muted-foreground mt-1 mb-3">
-                              永久删除所有本地数据。
+                              {t("settings_dialog.dangerZoneDesc")}
                             </p>
                             <Button
                               type="button"
@@ -1102,7 +1115,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
                               size="sm"
                               onClick={() => setIsClearDataAlertOpen(true)}
                             >
-                              清除所有数据
+                              {t("settings_dialog.clearAllData")}
                             </Button>
                           </div>
                         </div>
@@ -1116,9 +1129,9 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
             {/* 3. 固定页脚 */}
             <div className="px-6 py-4 border-t bg-muted/10 shrink-0 flex justify-end gap-3">
               <Button type="button" variant="ghost" onClick={onClose}>
-                取消
+                {t("common.cancel")}
               </Button>
-              <Button type="submit">保存更改</Button>
+              <Button type="submit">{t("common.saveChanges")}</Button>
             </div>
           </form>
         </Form>
@@ -1127,15 +1140,15 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
         <AlertDialog open={isResetAlertOpen} onOpenChange={setIsResetAlertOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>确定重置？</AlertDialogTitle>
+              <AlertDialogTitle>{t("settings_dialog.confirmResetTitle")}</AlertDialogTitle>
               <AlertDialogDescription>
-                重置所有设置为默认值。
+                {t("settings_dialog.confirmResetDesc")}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
               <AlertDialogAction onClick={handleResetApplication}>
-                重置
+                {t("common.reset")}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -1146,18 +1159,18 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
         >
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>确定清除数据？</AlertDialogTitle>
+              <AlertDialogTitle>{t("settings_dialog.confirmClearTitle")}</AlertDialogTitle>
               <AlertDialogDescription>
-                这将永久删除所有小说。
+                {t("settings_dialog.confirmClearDesc")}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
               <AlertDialogAction
                 onClick={handleClearAllData}
                 className="bg-destructive"
               >
-                清除
+                {t("common.delete")}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

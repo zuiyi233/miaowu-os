@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -11,7 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Badge } from '@/components/ui/badge';
 import {
   Download,
   Upload,
@@ -24,9 +23,11 @@ import {
 } from 'lucide-react';
 import { useExportDataMutation, useImportDataMutation } from '@/core/novel/queries';
 import { databaseService } from '@/core/novel/database';
+import { useI18n } from '@/core/i18n/hooks';
 import { toast } from 'sonner';
 
 export function DataManagement() {
+  const { t } = useI18n();
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [importStatus, setImportStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [importMessage, setImportMessage] = useState('');
@@ -41,20 +42,23 @@ export function DataManagement() {
       const filename = `novel-export-${timestamp}.${format}`;
 
       if (format === 'json') {
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const blob = new Blob([JSON.stringify(data, null, 2)], {
+          type: 'application/json',
+        });
         downloadBlob(blob, filename);
-        toast.success('Data exported successfully');
       } else {
         exportAsCsv(data, filename);
-        toast.success('Data exported as CSV');
       }
+
+      toast.success(t.novel.exportSuccess);
     } catch (error) {
-      toast.error('Failed to export data');
+      toast.error(t.novel.exportFailed);
       console.error('Export error:', error);
     }
   };
 
   const handleImport = async (file: File) => {
+    setShowImportDialog(true);
     setImportStatus('loading');
     setImportMessage('');
 
@@ -63,30 +67,30 @@ export function DataManagement() {
       const data = JSON.parse(content);
 
       if (!data.version || !data.novels) {
-        throw new Error('Invalid export file format');
+        throw new Error(t.novel.importFailed);
       }
 
-      if (!confirm(`This will import ${data.novels.length} novels and associated data. Continue?`)) {
+      if (!confirm(t.novel.importDataDescription)) {
         setImportStatus('idle');
         return;
       }
 
       await importMutation.mutateAsync(data);
       setImportStatus('success');
-      setImportMessage(`Successfully imported ${data.novels.length} novels`);
-      toast.success('Data imported successfully');
+      setImportMessage(`${t.novel.importSuccess} (${data.novels.length})`);
+      toast.success(t.novel.importSuccess);
       setTimeout(() => setShowImportDialog(false), 2000);
     } catch (error) {
       setImportStatus('error');
-      setImportMessage(error instanceof Error ? error.message : 'Import failed');
-      toast.error('Failed to import data');
+      setImportMessage(error instanceof Error ? error.message : t.novel.importFailed);
+      toast.error(t.novel.importFailed);
     }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      handleImport(file);
+      void handleImport(file);
     }
   };
 
@@ -94,19 +98,21 @@ export function DataManagement() {
     try {
       const data = await exportMutation.mutateAsync();
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: 'application/json',
+      });
       downloadBlob(blob, `novel-full-backup-${timestamp}.json`);
-      toast.success('Full backup exported');
+      toast.success(t.novel.exportSuccess);
     } catch {
-      toast.error('Failed to create backup');
+      toast.error(t.novel.exportFailed);
     }
   };
 
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h2 className="text-2xl font-bold tracking-tight">Data Management</h2>
-        <p className="text-muted-foreground mt-1">Export and import your novel data</p>
+        <h2 className="text-2xl font-bold tracking-tight">{t.novel.dataManagement}</h2>
+        <p className="text-muted-foreground mt-1">{t.novel.exportDataDescription}</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -114,22 +120,26 @@ export function DataManagement() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Download className="h-5 w-5" />
-              Export Data
+              {t.novel.exportData}
             </CardTitle>
-            <CardDescription>Export your novels, characters, and settings</CardDescription>
+            <CardDescription>{t.novel.exportDataDescription}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <Button className="w-full gap-2" onClick={() => handleExport('json')}>
+            <Button className="w-full gap-2" onClick={() => void handleExport('json')}>
               <FileJson className="h-4 w-4" />
-              Export as JSON
+              {t.novel.exportJson}
             </Button>
-            <Button variant="outline" className="w-full gap-2" onClick={() => handleExport('csv')}>
+            <Button
+              variant="outline"
+              className="w-full gap-2"
+              onClick={() => void handleExport('csv')}
+            >
               <FileSpreadsheet className="h-4 w-4" />
-              Export as CSV
+              {t.novel.exportCsv}
             </Button>
-            <Button variant="secondary" className="w-full gap-2" onClick={handleExportAll}>
+            <Button variant="secondary" className="w-full gap-2" onClick={() => void handleExportAll()}>
               <Database className="h-4 w-4" />
-              Full Backup
+              {t.novel.fullBackup}
             </Button>
           </CardContent>
         </Card>
@@ -138,9 +148,9 @@ export function DataManagement() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Upload className="h-5 w-5" />
-              Import Data
+              {t.novel.importData}
             </CardTitle>
-            <CardDescription>Import previously exported data</CardDescription>
+            <CardDescription>{t.novel.importDataDescription}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <input
@@ -156,21 +166,21 @@ export function DataManagement() {
               onClick={() => fileInputRef.current?.click()}
             >
               <Upload className="h-4 w-4" />
-              Import JSON File
+              {t.novel.importJsonFile}
             </Button>
             <Button
               variant="destructive"
               className="w-full gap-2"
               onClick={async () => {
-                if (confirm('Are you sure? This will delete ALL data.')) {
+                if (confirm(t.novel.clearAllDataConfirm)) {
                   await databaseService.clearAllData();
-                  toast.success('All data cleared');
+                  toast.success(t.novel.clearAllDataSuccess);
                   window.location.reload();
                 }
               }}
             >
               <AlertCircle className="h-4 w-4" />
-              Clear All Data
+              {t.novel.clearAllData}
             </Button>
           </CardContent>
         </Card>
@@ -179,32 +189,32 @@ export function DataManagement() {
       <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Import Status</DialogTitle>
-            <DialogDescription>Processing your import request...</DialogDescription>
+            <DialogTitle>{t.novel.importStatusTitle}</DialogTitle>
+            <DialogDescription>{t.novel.importStatusDescription}</DialogDescription>
           </DialogHeader>
           <div className="py-4 text-center">
             {importStatus === 'loading' && (
               <div className="space-y-2">
-                <Loader2 className="h-8 w-8 animate-spin mx-auto text-primary" />
-                <p className="text-sm text-muted-foreground">Importing data...</p>
+                <Loader2 className="text-primary mx-auto h-8 w-8 animate-spin" />
+                <p className="text-muted-foreground text-sm">{t.novel.importProcessing}</p>
               </div>
             )}
             {importStatus === 'success' && (
               <div className="space-y-2">
-                <CheckCircle2 className="h-8 w-8 mx-auto text-green-500" />
+                <CheckCircle2 className="mx-auto h-8 w-8 text-green-500" />
                 <p className="text-sm font-medium">{importMessage}</p>
               </div>
             )}
             {importStatus === 'error' && (
               <div className="space-y-2">
-                <AlertCircle className="h-8 w-8 mx-auto text-red-500" />
+                <AlertCircle className="mx-auto h-8 w-8 text-red-500" />
                 <p className="text-sm font-medium text-red-500">{importMessage}</p>
               </div>
             )}
           </div>
           <DialogFooter>
             {importStatus !== 'loading' && (
-              <Button onClick={() => setShowImportDialog(false)}>Close</Button>
+              <Button onClick={() => setShowImportDialog(false)}>{t.common.close}</Button>
             )}
           </DialogFooter>
         </DialogContent>
@@ -215,12 +225,12 @@ export function DataManagement() {
 
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
   URL.revokeObjectURL(url);
 }
 
@@ -232,14 +242,14 @@ function exportAsCsv(data: any, filename: string) {
     for (const ch of novel.characters || []) {
       rows.push(`"${novel.title}",character,${ch.id},"${ch.name}","${ch.description || ''}"`);
     }
-    for (const s of novel.settings || []) {
-      rows.push(`"${novel.title}",setting,${s.id},"${s.name}","${s.description || ''}"`);
+    for (const setting of novel.settings || []) {
+      rows.push(`"${novel.title}",setting,${setting.id},"${setting.name}","${setting.description || ''}"`);
     }
-    for (const f of novel.factions || []) {
-      rows.push(`"${novel.title}",faction,${f.id},"${f.name}","${f.description || ''}"`);
+    for (const faction of novel.factions || []) {
+      rows.push(`"${novel.title}",faction,${faction.id},"${faction.name}","${faction.description || ''}"`);
     }
-    for (const i of novel.items || []) {
-      rows.push(`"${novel.title}",item,${i.id},"${i.name}","${i.description || ''}"`);
+    for (const item of novel.items || []) {
+      rows.push(`"${novel.title}",item,${item.id},"${item.name}","${item.description || ''}"`);
     }
   }
 

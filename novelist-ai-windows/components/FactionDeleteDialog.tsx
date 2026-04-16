@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { useModalStore } from "../stores/useModalStore";
 import { useDeleteFactionMutation } from "../lib/react-query/world-building.queries";
 import { LoadingButton } from "./common/LoadingButton";
@@ -33,6 +34,8 @@ export const FactionDeleteDialog: React.FC<FactionDeleteDialogProps> = ({
   faction,
   onClose,
 }) => {
+  const { t } = useTranslation();
+
   // 使用React Query Mutation处理删除操作
   const deleteFactionMutation = useDeleteFactionMutation();
 
@@ -49,16 +52,15 @@ export const FactionDeleteDialog: React.FC<FactionDeleteDialogProps> = ({
   return (
     <div className="p-6">
       <div className="mb-4">
-        <h2 className="text-lg font-semibold">确认删除势力</h2>
+        <h2 className="text-lg font-semibold">{t("faction.confirmDeleteTitle")}</h2>
         <p className="text-sm text-muted-foreground mt-2">
-          您确定要删除势力 <strong>{faction.name}</strong>{" "}
-          吗？此操作无法撤销。
+          {t("faction.confirmDeleteWithName", { name: faction.name })}
         </p>
       </div>
 
       {/* 全局错误信息 */}
       {deleteFactionMutation.error && (
-        <p className="text-sm text-destructive mb-4">删除失败，请重试</p>
+        <p className="text-sm text-destructive mb-4">{t("common.deleteFailed")}</p>
       )}
 
       <div className="flex justify-end space-x-2">
@@ -66,15 +68,15 @@ export const FactionDeleteDialog: React.FC<FactionDeleteDialogProps> = ({
           onClick={onClose}
           className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
         >
-          取消
+          {t("common.cancel")}
         </button>
         <LoadingButton
           onClick={handleDelete}
           isLoading={deleteFactionMutation.isPending}
-          loadingText="删除中..."
+          loadingText={t("common.deleting")}
           className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
         >
-          删除
+          {t("common.delete")}
         </LoadingButton>
       </div>
     </div>
@@ -90,6 +92,7 @@ export const FactionDeleteDialog: React.FC<FactionDeleteDialogProps> = ({
  */
 export const useFactionDeleteDialog = () => {
   const { open } = useModalStore();
+  const { t } = useTranslation();
 
   /**
    * 打开势力删除模态框
@@ -98,8 +101,8 @@ export const useFactionDeleteDialog = () => {
   const openFactionDeleteDialog = (faction: Faction) => {
     open({
       type: "dialog",
-      title: "确认删除势力", // 添加 title
-      description: `您确定要删除势力 "${faction.name}" 吗？此操作无法撤销。`, // 添加 description
+      title: t("faction.confirmDeleteTitle"),
+      description: t("faction.confirmDeleteWithName", { name: faction.name }),
       component: FactionDeleteDialog,
       props: {
         faction,

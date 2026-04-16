@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { useAddItemMutation } from "../lib/react-query/world-building.queries";
 import { useMutationForm } from "../hooks/useMutationForm";
 import { useMentionOptions } from "../hooks/useMentionOptions"; // ✅ 引入统一的提及选项 Hook
@@ -45,6 +46,8 @@ export const ItemForm: React.FC<ItemFormProps> = ({
   onClose,
   characters
 }): React.ReactElement => {
+  const { t } = useTranslation();
+
   // ✅ 使用统一 Hook 获取所有实体类型的提及数据
   const mentionOptions = useMentionOptions();
 
@@ -83,9 +86,9 @@ export const ItemForm: React.FC<ItemFormProps> = ({
           name="name"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>物品名称</FormLabel>
+              <FormLabel>{t("item.name")}</FormLabel>
               <FormControl>
-                <Input placeholder="例如：魔法剑" {...field} />
+                <Input placeholder={t("item.namePlaceholder")} {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -98,19 +101,19 @@ export const ItemForm: React.FC<ItemFormProps> = ({
           name="type"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>物品类型</FormLabel>
+              <FormLabel>{t("item.type")}</FormLabel>
               <Select onValueChange={field.onChange} defaultValue={field.value}>
                 <FormControl>
                   <SelectTrigger>
-                    <SelectValue placeholder="选择物品类型" />
+                    <SelectValue placeholder={t("item.typePlaceholder")} />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value="关键物品">关键物品</SelectItem>
-                  <SelectItem value="武器">武器</SelectItem>
-                  <SelectItem value="科技装置">科技装置</SelectItem>
-                  <SelectItem value="普通物品">普通物品</SelectItem>
-                  <SelectItem value="其他">其他</SelectItem>
+                  <SelectItem value="关键物品">{t("item.typeKeyItem")}</SelectItem>
+                  <SelectItem value="武器">{t("item.typeWeapon")}</SelectItem>
+                  <SelectItem value="科技装置">{t("item.typeTechDevice")}</SelectItem>
+                  <SelectItem value="普通物品">{t("item.typeNormal")}</SelectItem>
+                  <SelectItem value="其他">{t("item.typeOther")}</SelectItem>
                 </SelectContent>
               </Select>
               <FormMessage />
@@ -123,7 +126,7 @@ export const ItemForm: React.FC<ItemFormProps> = ({
           name="description"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>物品简介</FormLabel>
+              <FormLabel>{t("item.description")}</FormLabel>
               <FormControl>
                 {/* ✅ 2. 传递统一的提及选项 */}
                 <MiniEditor
@@ -143,7 +146,7 @@ export const ItemForm: React.FC<ItemFormProps> = ({
           name="appearance"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>外观描述</FormLabel>
+              <FormLabel>{t("item.appearance")}</FormLabel>
               <FormControl>
                 <MiniEditor
                     content={field.value || ""}
@@ -162,7 +165,7 @@ export const ItemForm: React.FC<ItemFormProps> = ({
           name="history"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>历史来源</FormLabel>
+              <FormLabel>{t("item.history")}</FormLabel>
               <FormControl>
                 <MiniEditor
                     content={field.value || ""}
@@ -181,7 +184,7 @@ export const ItemForm: React.FC<ItemFormProps> = ({
           name="abilities"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>功能或能力</FormLabel>
+              <FormLabel>{t("item.abilities")}</FormLabel>
               <FormControl>
                 <MiniEditor
                     content={field.value || ""}
@@ -200,15 +203,15 @@ export const ItemForm: React.FC<ItemFormProps> = ({
           name="ownerId"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>当前持有者</FormLabel>
+              <FormLabel>{t("item.owner")}</FormLabel>
               <Select onValueChange={field.onChange} defaultValue={field.value}>
                 <FormControl>
                   <SelectTrigger>
-                    <SelectValue placeholder="选择物品持有者（可选）" />
+                    <SelectValue placeholder={t("item.ownerPlaceholder")} />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value="none">无持有者</SelectItem>
+                  <SelectItem value="none">{t("item.noOwner")}</SelectItem>
                   {characters.map((character) => (
                     <SelectItem key={character.id} value={character.id}>
                       {character.name}
@@ -225,9 +228,9 @@ export const ItemForm: React.FC<ItemFormProps> = ({
           type="submit"
           className="w-full"
           isLoading={isPending}
-          loadingText="保存中..."
+          loadingText={t("common.saving")}
         >
-          保存物品
+          {t("item.saveItem")}
         </LoadingButton>
       </form>
     </Form>

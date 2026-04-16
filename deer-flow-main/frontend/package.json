@@ -10,6 +10,7 @@
     "dev": "next dev --turbo",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
+    "i18n:hardcoded-check": "node scripts/check-hardcoded-i18n.cjs",
     "lint": "eslint . --ext .ts,.tsx",
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
     "preview": "next build && next start",

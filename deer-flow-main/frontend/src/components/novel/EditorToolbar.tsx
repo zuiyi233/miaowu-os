@@ -35,16 +35,17 @@ interface EditorToolbarProps {
 
 export function EditorToolbar({ editor, className }: EditorToolbarProps) {
   const { t } = useI18n();
-  if (!editor) return null;
-
   const { data: novelData } = useNovelQuery('');
   const { activeChapterId } = useNovelStore();
-  const activeChapter = novelData?.chapters?.find((ch) => ch.id === activeChapterId);
   const updateChapterMutation = useUpdateChapterMutation();
   const { startStreaming, stopStreaming, aiStream } = useAiPanelStore();
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+
+  if (!editor) return null;
+
+  const activeChapter = novelData?.chapters?.find((ch) => ch.id === activeChapterId);
 
   const isAnyPending = aiStream.isStreaming || isAnalyzing;
 

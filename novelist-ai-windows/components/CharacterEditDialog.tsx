@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { useModalStore } from "../stores/useModalStore";
 import { CharacterEditForm } from "./CharacterEditForm";
 import { useQueryClient } from "@tanstack/react-query";
@@ -36,11 +37,13 @@ interface CharacterEditDialogProps {
  */
 export const CharacterEditDialog: React.FC<CharacterEditDialogProps> = ({
   character,
-  title = "编辑角色",
+  title,
   description,
   onClose,
 }) => {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const resolvedTitle = title ?? t("character.editTitle");
 
   // 表单提交成功处理
   const handleSuccess = () => {
@@ -54,7 +57,7 @@ export const CharacterEditDialog: React.FC<CharacterEditDialogProps> = ({
   return (
     <div className="max-w-2xl p-6">
       <div className="mb-4">
-        <h2 className="text-lg font-semibold">{title}</h2>
+        <h2 className="text-lg font-semibold">{resolvedTitle}</h2>
         {description && (
           <p className="text-sm text-muted-foreground mt-1">{description}</p>
         )}
@@ -75,6 +78,7 @@ export const CharacterEditDialog: React.FC<CharacterEditDialogProps> = ({
  * @returns 打开角色编辑模态框的函数
  */
 export const useCharacterEditDialog = () => {
+  const { t } = useTranslation();
   const { open } = useModalStore();
 
   /**
@@ -85,7 +89,7 @@ export const useCharacterEditDialog = () => {
    */
   const openCharacterEditDialog = (
     character: Character,
-    title = "编辑角色",
+    title = t("character.editTitle"),
     description?: string
   ) => {
     open({

@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { ItemEditForm } from "./ItemEditForm";
 import type { Item } from "../types";
 
@@ -18,9 +19,11 @@ export const ItemEditDialog: React.FC<ItemEditDialogProps> = ({
   onSubmitSuccess,
   onClose,
 }) => {
+  const { t } = useTranslation();
+
   return (
     <div className="p-6">
-      <h2 className="text-lg font-semibold mb-4">编辑物品</h2>
+      <h2 className="text-lg font-semibold mb-4">{t("item.editItem")}</h2>
       <ItemEditForm
         item={item}
         onSubmitSuccess={onSubmitSuccess}
