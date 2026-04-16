@@ -179,11 +179,13 @@ export type CreateFaction = Omit<Faction, 'id'>;
 export type CreateItem = Omit<Item, 'id'>;
 export type CreateTimelineEvent = Omit<TimelineEvent, 'id'>;
 
-export interface OutlineNode {
-  id: string;
-  title: string;
-  desc?: string;
-  type: 'volume' | 'chapter';
-  isSelected: boolean;
-  children?: OutlineNode[];
-}
+export const outlineNodeSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  desc: z.string().optional(),
+  type: z.enum(['volume', 'chapter']),
+  isSelected: z.boolean(),
+  children: z.array(z.lazy(() => outlineNodeSchema)).optional(),
+});
+
+export type OutlineNode = z.infer<typeof outlineNodeSchema>;

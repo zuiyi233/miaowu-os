@@ -1,0 +1,116 @@
+'use client';
+
+import React from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { useAddItemMutation } from '@/core/novel/queries';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
+
+const itemFormSchema = z.object({
+  name: z.string().min(1, '物品名不能为空'),
+  description: z.string().optional(),
+  type: z.enum(['关键物品', '武器', '科技装置', '普通物品', '其他']).default('其他'),
+  appearance: z.string().optional(),
+  history: z.string().optional(),
+  abilities: z.string().optional(),
+  ownerId: z.string().optional(),
+});
+
+type ItemFormData = z.infer<typeof itemFormSchema>;
+
+interface ItemFormProps {
+  novelId: string;
+  onSubmitSuccess?: () => void;
+}
+
+export const ItemForm: React.FC<ItemFormProps> = ({ novelId, onSubmitSuccess }) => {
+  const addItem = useAddItemMutation(novelId);
+  const form = useForm<ItemFormData>({
+    resolver: zodResolver(itemFormSchema),
+    defaultValues: {
+      name: '',
+      description: '',
+      type: '其他',
+      appearance: '',
+      history: '',
+      abilities: '',
+      ownerId: '',
+    },
+  });
+
+  const onSubmit = (data: ItemFormData) => {
+    const item = {
+      id: crypto.randomUUID(),
+      ...data,
+      ownerId: data.ownerId === 'none' ? '' : data.ownerId,
+      novelId,
+    };
+    addItem.mutate(item as any, {
+      onSuccess: () => {
+        form.reset();
+        onSubmitSuccess?.();
+      },
+    });
+  };
+
+  return (
+    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+      <div>
+        <Label htmlFor="name">物品名</Label>
+        <Input id="name" placeholder="请输入物品名称" {...form.register('name')} />
+        {form.formState.errors.name && (
+          <p className="text-sm text-red-500">{form.formState.errors.name.message}</p>
+        )}
+      </div>
+
+      <div>
+        <Label htmlFor="type">物品类型</Label>
+        <Select onValueChange={(v) => form.setValue('type', v as any)} defaultValue="其他">
+          <SelectTrigger><SelectValue placeholder="选择类型" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="关键物品">关键物品</SelectItem>
+            <SelectItem value="武器">武器</SelectItem>
+            <SelectItem value="科技装置">科技装置</SelectItem>
+            <SelectItem value="普通物品">普通物品</SelectItem>
+            <SelectItem value="其他">其他</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div>
+        <Label htmlFor="description">描述</Label>
+        <Textarea id="description" placeholder="物品描述" className="resize-none" rows={2} {...form.register('description')} />
+      </div>
+
+      <div>
+        <Label htmlFor="appearance">外观描述</Label>
+        <Textarea id="appearance" placeholder="外观描述" className="resize-none" rows={2} {...form.register('appearance')} />
+      </div>
+
+      <div>
+        <Label htmlFor="history">历史来源</Label>
+        <Textarea id="history" placeholder="历史来源" className="resize-none" rows={2} {...form.register('history')} />
+      </div>
+
+      <div>
+        <Label htmlFor="abilities">功能或能力</Label>
+        <Textarea id="abilities" placeholder="功能或能力" className="resize-none" rows={2} {...form.register('abilities')} />
+      </div>
+
+      <Button type="submit" className="w-full" disabled={addItem.isPending}>
+        {addItem.isPending ? '保存中...' : '保存物品'}
+      </Button>
+    </form>
+  );
+};

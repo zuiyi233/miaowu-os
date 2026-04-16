@@ -923,6 +923,9 @@ dist-ssr
 # Documentation directory
 # docs/
 
+# Reference/Archived projects (no longer tracked)
+参考项目/
+
 # Backup / Distribution
 dist_release_v5.0/
 1.28-novel-agent-os (5)/
