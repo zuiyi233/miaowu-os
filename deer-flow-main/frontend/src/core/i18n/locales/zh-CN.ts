@@ -579,6 +579,9 @@ export const zhCN: Translations = {
     tools: {
       title: "工具",
       description: "管理 MCP 工具的配置和启用状态。",
+      emptyTitle: "还没有配置 MCP 工具",
+      emptyDescription:
+        "可在项目根目录创建 extensions_config.json（可复制 extensions_config.example.json）后重启服务。",
     },
     skills: {
       title: "技能",

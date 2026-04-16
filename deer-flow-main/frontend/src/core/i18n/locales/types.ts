@@ -519,6 +519,8 @@ export interface Translations {
     tools: {
       title: string;
       description: string;
+      emptyTitle: string;
+      emptyDescription: string;
     };
     skills: {
       title: string;

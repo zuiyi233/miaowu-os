@@ -597,6 +597,9 @@ export const enUS: Translations = {
     tools: {
       title: "Tools",
       description: "Manage the configuration and enabled status of MCP tools.",
+      emptyTitle: "No MCP tools configured",
+      emptyDescription:
+        "Create extensions_config.json in the project root (you can copy extensions_config.example.json), then restart services.",
     },
     skills: {
       title: "Agent Skills",

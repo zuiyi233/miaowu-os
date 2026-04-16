@@ -18,6 +18,7 @@ import { SettingsSection } from "./settings-section";
 export function ToolSettingsPage() {
   const { t } = useI18n();
   const { config, isLoading, error } = useMCPConfig();
+  const servers = config?.mcp_servers ?? {};
   return (
     <SettingsSection
       title={t.settings.tools.title}
@@ -28,7 +29,7 @@ export function ToolSettingsPage() {
       ) : error ? (
         <div>Error: {error.message}</div>
       ) : (
-        config && <MCPServerList servers={config.mcp_servers} />
+        <MCPServerList servers={servers} />
       )}
     </SettingsSection>
   );
@@ -39,10 +40,24 @@ function MCPServerList({
 }: {
   servers: Record<string, MCPServerConfig>;
 }) {
+  const { t } = useI18n();
   const { mutate: enableMCPServer } = useEnableMCPServer();
+  const serverEntries = Object.entries(servers ?? {});
+
+  if (serverEntries.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed p-4 text-sm">
+        <div className="font-medium">{t.settings.tools.emptyTitle}</div>
+        <div className="text-muted-foreground mt-1">
+          {t.settings.tools.emptyDescription}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex w-full flex-col gap-4">
-      {Object.entries(servers).map(([name, config]) => (
+      {serverEntries.map(([name, config]) => (
         <Item className="w-full" variant="outline" key={name}>
           <ItemContent>
             <ItemTitle>

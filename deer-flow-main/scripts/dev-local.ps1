@@ -383,6 +383,13 @@ function Start-AllServices {
         throw "Backend directory not found: $BackendDir"
     }
 
+    $extensionsConfig = Join-Path $RepoRoot "extensions_config.json"
+    $extensionsExample = Join-Path $RepoRoot "extensions_config.example.json"
+    if (-not (Test-Path -LiteralPath $extensionsConfig) -and (Test-Path -LiteralPath $extensionsExample)) {
+        Copy-Item -LiteralPath $extensionsExample -Destination $extensionsConfig -Force
+        Write-Info "Initialized extensions_config.json from extensions_config.example.json"
+    }
+
     Ensure-Directory -Path $RunDir
     Ensure-Directory -Path $LogDir
     Assert-PortsFree
@@ -391,6 +398,13 @@ function Start-AllServices {
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $backendLog = Join-Path $LogDir "backend-$timestamp.log"
     $frontendLog = Join-Path $LogDir "frontend-$timestamp.log"
+    $backendUvicornExe = Join-Path $BackendDir ".venv/Scripts/uvicorn.exe"
+    $backendCommandLine = if (Test-Path -LiteralPath $backendUvicornExe) {
+        # Prefer the pre-created venv executable so startup does not trigger uv sync/install paths.
+        "& '.venv/Scripts/uvicorn.exe' app.gateway.app:app --host 0.0.0.0 --port 8551 --reload --reload-include '*.yaml' --reload-include '.env'"
+    } else {
+        "& uv run uvicorn app.gateway.app:app --host 0.0.0.0 --port 8551 --reload --reload-include '*.yaml' --reload-include '.env'"
+    }
 
     Write-Info "Starting backend (Gateway API) on port $BackendPort ..."
     $backendRunner = New-RunnerScript `
@@ -401,7 +415,7 @@ function Start-AllServices {
             '$env:GATEWAY_PORT = "8551"',
             '$env:CORS_ORIGINS = "http://localhost:4560,http://127.0.0.1:4560"'
         ) `
-        -CommandLine "& uv run uvicorn app.gateway.app:app --host 0.0.0.0 --port 8551 --reload --reload-include '*.yaml' --reload-include '.env'" `
+        -CommandLine $backendCommandLine `
         -LogFile $backendLog `
         -UseTee $splitWindow
     $backendProc = Start-RunnerProcess -RunnerPath $backendRunner -SplitWindow $splitWindow
@@ -417,8 +431,10 @@ function Start-AllServices {
         -Name "frontend" `
         -WorkingDirectory $FrontendDir `
         -SetupLines @(
-            '$env:NEXT_PUBLIC_BACKEND_BASE_URL = "http://localhost:8551"',
-            '$env:DEER_FLOW_INTERNAL_GATEWAY_BASE_URL = "http://127.0.0.1:8551"'
+            '$env:NEXT_PUBLIC_BACKEND_BASE_URL = "http://127.0.0.1:8551"',
+            '$env:NEXT_PUBLIC_LANGGRAPH_BASE_URL = "http://127.0.0.1:8551/api"',
+            '$env:DEER_FLOW_INTERNAL_GATEWAY_BASE_URL = "http://127.0.0.1:8551"',
+            '$env:DEER_FLOW_INTERNAL_LANGGRAPH_BASE_URL = "http://127.0.0.1:8551/api"'
         ) `
         -CommandLine "& pnpm run dev -- --port 4560" `
         -LogFile $frontendLog `
