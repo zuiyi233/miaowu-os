@@ -1,0 +1,297 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ShadCN UI 标准颜色变量 */
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+    --radius: 0.5rem;
+
+    /* 项目自定义主题颜色变量 */
+    --theme-paper: #f9f7f3;
+    --theme-ink: #3a352f;
+    --theme-canvas: #fdfbf8;
+    --theme-line: #eae6e1;
+    --theme-accent: #2a9d8f;
+    --theme-accent-soft: #2a9d8f1a;
+    --theme-secondary: #e9c46a;
+  }
+
+  .dark {
+    /* ShadCN UI 深色主题变量 */
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+
+    /* 项目自定义深色主题变量 */
+    --theme-paper: #1e2022;
+    --theme-ink: #d8d4cf;
+    --theme-canvas: #282a2d;
+    --theme-line: #3a3d40;
+    --theme-accent: #a78bfa;
+    --theme-accent-soft: #a78bfa1a;
+    --theme-secondary: #f4a261;
+  }
+}
+
+@layer base {
+  body {
+    /* ✅ 移除对 'Plus Jakarta Sans' 的强依赖，增加系统字体回退 */
+    @apply bg-background text-foreground;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+      Roboto, "Helvetica Neue", "PingFang SC", "Hiragino Sans GB",
+      "Microsoft YaHei", Arial, sans-serif;
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+
+  /* 自定义滚动条样式 */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 20px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--primary);
+  }
+}
+
+@layer utilities {
+  /* 纸张纹理背景 */
+  .bg-paper-texture {
+    background-color: var(--theme-paper);
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E");
+  }
+
+  /* 玻璃拟态增强 */
+  .glass-panel {
+    @apply bg-white/70 dark:bg-zinc-900/70 backdrop-blur-md border border-white/20 dark:border-white/5 shadow-sm;
+  }
+
+  /* 精致的卡片悬浮效果 */
+  .hover-card-effect {
+    @apply transition-all duration-300 hover:shadow-lg hover:-translate-y-1 hover:border-primary/30;
+  }
+
+  /* 隐藏滚动条但保持滚动功能 */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* 覆盖 body 背景 */
+body {
+  @apply bg-paper-texture text-foreground font-ui antialiased;
+}
+
+/* 提及功能样式 */
+@layer components {
+  .mention {
+    @apply bg-primary/20 text-primary font-medium rounded px-1 py-0.5;
+    @apply hover:bg-primary/30 transition-colors cursor-pointer;
+  }
+
+  .ProseMirror .mention {
+    @apply no-underline;
+  }
+}
+
+/* 确保 Mention 列表在模态框之上显示 */
+[data-tippy-root] {
+  z-index: 9999 !important; /* 必须极高，超过 Dialog/Drawer 的 z-index */
+}
+
+/* 覆盖 tailwind.config.js 中的 font-family 定义，或者直接在 config 中改 */
+/* 这里我们通过 CSS 类来强化 */
+.font-ui {
+  font-family: system-ui, -apple-system, sans-serif !important;
+}
+
+.font-body {
+  /* 衬线体回退 */
+  font-family: "Songti SC", "SimSun", "Times New Roman", Times, serif !important;
+}
+
+/* 流光动画效果 */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite;
+}
+
+/* Step 5: 侧边栏MiniOutline联动 - 高亮动画效果 */
+@keyframes highlight-pulse {
+  0% {
+    background-color: rgba(59, 130, 246, 0.1);
+    transform: scale(1);
+  }
+  50% {
+    background-color: rgba(59, 130, 246, 0.3);
+    transform: scale(1.02);
+  }
+  100% {
+    background-color: transparent;
+    transform: scale(1);
+  }
+}
+
+.highlight-outline-block {
+  animation: highlight-pulse 1.5s ease-in-out;
+  border-left: 4px solid #3b82f6 !important; /* 强制显示蓝色左边框 */
+  transition: all 0.3s ease;
+}
+
+/* 垂直拖拽分割线样式 */
+.split-divider {
+  position: relative;
+  transition: background-color 0.2s ease;
+}
+
+.split-divider:hover {
+  background-color: hsl(var(--primary) / 0.1);
+}
+
+.split-divider.dragging {
+  background-color: hsl(var(--primary) / 0.2);
+}
+
+.split-divider::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    hsl(var(--primary) / 0.1) 45%,
+    hsl(var(--primary) / 0.2) 50%,
+    hsl(var(--primary) / 0.1) 55%,
+    transparent 100%
+  );
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.split-divider:hover::before,
+.split-divider.dragging::before {
+  opacity: 1;
+}
+
+/* 拖拽时的遮罩层 */
+.dragging-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.1);
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.dragging-mask.active {
+  opacity: 1;
+}
+
+/* React Resizable Panels 样式优化 */
+.PanelResizeHandle {
+  position: relative;
+  transition: background-color 0.2s ease;
+}
+
+.PanelResizeHandle:hover {
+  background-color: hsl(var(--primary) / 0.1);
+}
+
+.PanelResizeHandle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    hsl(var(--primary) / 0.05) 45%,
+    hsl(var(--primary) / 0.1) 50%,
+    hsl(var(--primary) / 0.05) 55%,
+    transparent 100%
+  );
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.PanelResizeHandle:hover::before {
+  opacity: 1;
+}
+
+/* 移动端响应式样式 */
+@media (max-width: 768px) {
+  .PanelGroup {
+    flex-direction: column !important;
+  }
+
+  .PanelResizeHandle {
+    width: 100% !important;
+    height: 8px !important;
+    cursor: row-resize !important;
+  }
+}
