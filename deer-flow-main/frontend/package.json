@@ -89,7 +89,13 @@
     "unist-util-visit": "^5.0.0",
     "use-stick-to-bottom": "^1.1.1",
     "uuid": "^13.0.0",
-    "zod": "^3.24.2"
+    "zod": "^3.24.2",
+    "dexie": "^4.0.11",
+    "zustand": "^5.0.8",
+    "@tiptap/react": "^3.7.0",
+    "@tiptap/starter-kit": "^3.7.0",
+    "@tiptap/extension-character-count": "^3.7.0",
+    "@radix-ui/react-label": "^2.1.8"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.1",

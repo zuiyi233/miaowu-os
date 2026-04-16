@@ -8,6 +8,7 @@ import {
   MailIcon,
   Settings2Icon,
   SettingsIcon,
+  BookOpenIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -88,6 +89,15 @@ export function WorkspaceNavMenu() {
                 sideOffset={4}
               >
                 <DropdownMenuGroup>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      window.location.href = "/workspace/novel";
+                    }}
+                  >
+                    <BookOpenIcon />
+                    Novel Studio
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem
                     onClick={() => {
                       setSettingsDefaultSection("appearance");
