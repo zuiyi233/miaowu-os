@@ -498,6 +498,48 @@ export async function expandText(text: string, signal?: AbortSignal) {
   return result;
 }
 
+export async function condenseText(text: string, signal?: AbortSignal) {
+  let result = "";
+  const { contextEngineService } = await import("./contextEngineService");
+  const prompt = await contextEngineService.hydratePrompt(
+    "Condense: {{selection}}",
+    { selection: text }
+  );
+
+  await fetchChatCompletion(
+    [{ role: "user", content: prompt }],
+    "condense",
+    {
+      onMessage: (chunk) => {
+        result += chunk;
+      },
+    },
+    signal
+  );
+  return result;
+}
+
+export async function rewriteText(text: string, signal?: AbortSignal) {
+  let result = "";
+  const { contextEngineService } = await import("./contextEngineService");
+  const prompt = await contextEngineService.hydratePrompt(
+    "Rewrite: {{selection}}",
+    { selection: text }
+  );
+
+  await fetchChatCompletion(
+    [{ role: "user", content: prompt }],
+    "rewrite",
+    {
+      onMessage: (chunk) => {
+        result += chunk;
+      },
+    },
+    signal
+  );
+  return result;
+}
+
 export async function generateOutline(prompt: string, signal?: AbortSignal) {
   let result = "";
   const { contextEngineService } = await import("./contextEngineService");

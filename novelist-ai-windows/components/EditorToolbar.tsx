@@ -1,7 +1,8 @@
 import React from "react";
 import type { Editor } from "@tiptap/react";
 import { Toggle } from "./ui/toggle";
-import { Separator } from "./ui/separator"; // ✅ 引入分隔线
+import { Button } from "./ui/button";
+import { Separator } from "./ui/separator";
 import {
   Bold,
   Italic,
@@ -13,17 +14,384 @@ import {
   Quote,
   Undo,
   Redo,
-  Strikethrough // 可选：增加删除线
+  Strikethrough,
+  Sparkles,
+  PenLine,
+  Languages,
+  Search,
+  MessageSquare,
+  X,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { HistorySheet } from "./HistorySheet";
 import { useNovelQuery } from "../lib/react-query/db-queries";
 import { useUiStore } from "../stores/useUiStore";
+import {
+  usePolishTextMutation,
+  useExpandTextMutation,
+  useCondenseTextMutation,
+  useRewriteTextMutation,
+  useContinueWritingMutation,
+} from "../lib/react-query/queries";
+import { useActivePromptTemplateQuery } from "../lib/react-query/prompt.queries";
+import { contextEngineService } from "../services/contextEngineService";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
+import { Badge } from "./ui/badge";
 
 interface EditorToolbarProps {
   editor: Editor | null;
   className?: string;
 }
+
+interface EntityAnalysisResult {
+  characters: string[];
+  settings: string[];
+  factions: string[];
+  items: string[];
+}
+
+const AiToolbarButtons: React.FC<{ editor: Editor }> = ({ editor }) => {
+  const polishMutation = usePolishTextMutation();
+  const expandMutation = useExpandTextMutation();
+  const condenseMutation = useCondenseTextMutation();
+  const rewriteMutation = useRewriteTextMutation();
+  const continueWritingMutation = useContinueWritingMutation();
+
+  const { data: novelData } = useNovelQuery();
+  const activeChapterId = useUiStore((state) => state.activeChapterId);
+  const activeChapter = novelData?.chapters?.find((ch: any) => ch.id === activeChapterId);
+  const { data: continuePromptTemplate } = useActivePromptTemplateQuery("continue");
+
+  const [isAnalysisDialogOpen, setIsAnalysisDialogOpen] = React.useState(false);
+  const [analysisResult, setAnalysisResult] = React.useState<EntityAnalysisResult | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = React.useState(false);
+
+  const getSelectedText = () => {
+    const { from, to } = editor.state.selection;
+    return editor.state.doc.textBetween(from, to);
+  };
+
+  const getTextBeforeCursor = () => {
+    const { from } = editor.state.selection;
+    const start = Math.max(0, from - 1000);
+    return editor.state.doc.textBetween(start, from);
+  };
+
+  const isAnyMutationPending =
+    polishMutation.isPending ||
+    expandMutation.isPending ||
+    condenseMutation.isPending ||
+    rewriteMutation.isPending ||
+    continueWritingMutation.isPending ||
+    isAnalyzing;
+
+  const handleReplaceText = async (action: "polish" | "expand" | "condense" | "rewrite") => {
+    const selectedText = getSelectedText();
+    if (!selectedText) return;
+
+    const { from, to } = editor.state.selection;
+
+    try {
+      let result: string | undefined;
+      switch (action) {
+        case "polish":
+          result = await polishMutation.mutateAsync({ text: selectedText });
+          break;
+        case "expand":
+          result = await expandMutation.mutateAsync({ text: selectedText });
+          break;
+        case "condense":
+          result = await condenseMutation.mutateAsync({ text: selectedText });
+          break;
+        case "rewrite":
+          result = await rewriteMutation.mutateAsync({ text: selectedText });
+          break;
+      }
+      if (result) {
+        editor.chain().focus().insertContentAt({ from, to }, result).run();
+      }
+    } catch (error) {
+      console.error(`${action} 操作失败:`, error);
+    }
+  };
+
+  const handleContinueWriting = async () => {
+    if (!activeChapter || !activeChapterId) return;
+
+    const selectedText = getSelectedText();
+    const textBeforeCursor = getTextBeforeCursor();
+    const contextText = selectedText || textBeforeCursor;
+
+    if (!contextText.trim()) return;
+
+    try {
+      const fullContent = activeChapter.content || "";
+      const textOnly = fullContent.replace(/<[^>]*>/g, "");
+
+      const templateVariables = {
+        selection: selectedText || contextText.slice(-500),
+        input: "",
+        outline: activeChapter.description || "",
+        content: textOnly,
+      };
+
+      const hydrated = await contextEngineService.hydratePrompt(
+        continuePromptTemplate?.content || "Continue: {{selection}}\n\n上文：{{content}}\n\n细纲：{{outline}}",
+        templateVariables
+      );
+
+      await continueWritingMutation.mutateAsync({
+        prompt: hydrated,
+        chapterId: activeChapterId,
+      });
+
+      if (!selectedText) {
+        editor.commands.focus("end");
+      }
+    } catch (error) {
+      console.error("续写失败:", error);
+    }
+  };
+
+  const handleEntityAnalysis = async () => {
+    const selectedText = getSelectedText();
+    if (!selectedText) return;
+
+    setIsAnalyzing(true);
+    try {
+      const entities = await contextEngineService.intelligentEntityParsing(selectedText);
+      setAnalysisResult(entities);
+      setIsAnalysisDialogOpen(true);
+    } catch (error) {
+      console.error("实体分析失败:", error);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const getEntityDetails = (entityName: string, entityType: string) => {
+    if (!novelData) return null;
+    switch (entityType) {
+      case "character":
+        return novelData.characters?.find((c: any) => c.name === entityName);
+      case "setting":
+        return novelData.settings?.find((s: any) => s.name === entityName);
+      case "faction":
+        return novelData.factions?.find((f: any) => f.name === entityName);
+      case "item":
+        return novelData.items?.find((i: any) => i.name === entityName);
+      default:
+        return null;
+    }
+  };
+
+  const renderEntityList = (entities: string[], entityType: string, icon: string, color: string) => {
+    if (entities.length === 0) return null;
+    return (
+      <div className="space-y-2">
+        <h4 className="font-medium flex items-center gap-2">
+          <span>{icon}</span>
+          <span className="capitalize">
+            {entityType === "character" ? "角色" : entityType === "setting" ? "场景" : entityType === "faction" ? "势力" : "物品"}
+          </span>
+          <Badge variant="secondary" className="text-xs">
+            {entities.length}
+          </Badge>
+        </h4>
+        <div className="space-y-1">
+          {entities.map((entityName, index) => {
+            const entity = getEntityDetails(entityName, entityType);
+            return (
+              <div key={`${entityType}-${index}`} className="flex items-center justify-between p-2 bg-muted rounded-md">
+                <div>
+                  <span className="font-medium">{entityName}</span>
+                  {entity?.description && (
+                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{entity.description}</p>
+                  )}
+                </div>
+                <Badge variant="outline" className={color}>
+                  {entityType === "character" ? "角色" : entityType === "setting" ? "场景" : entityType === "faction" ? "势力" : "物品"}
+                </Badge>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <div className="flex items-center gap-0.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleContinueWriting}
+          disabled={!activeChapterId || isAnyMutationPending}
+          className="flex items-center gap-1 h-7 px-2 text-primary text-xs"
+        >
+          <MessageSquare className="w-3.5 h-3.5" /> 续写
+        </Button>
+        {continueWritingMutation.isPending && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => continueWritingMutation.reset()}
+            title="取消续写"
+            className="h-7 w-6 p-0"
+          >
+            <X className="w-3 h-3" />
+          </Button>
+        )}
+
+        <Separator orientation="vertical" className="h-4 mx-0.5" />
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => handleReplaceText("polish")}
+          disabled={isAnyMutationPending}
+          className="flex items-center gap-1 h-7 px-2 text-xs"
+        >
+          <Sparkles className="w-3.5 h-3.5" /> 润色
+        </Button>
+        {polishMutation.isPending && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => polishMutation.reset()}
+            title="取消润色"
+            className="h-7 w-6 p-0"
+          >
+            <X className="w-3 h-3" />
+          </Button>
+        )}
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => handleReplaceText("expand")}
+          disabled={isAnyMutationPending}
+          className="flex items-center gap-1 h-7 px-2 text-xs"
+        >
+          <PenLine className="w-3.5 h-3.5" /> 扩写
+        </Button>
+        {expandMutation.isPending && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => expandMutation.reset()}
+            title="取消扩写"
+            className="h-7 w-6 p-0"
+          >
+            <X className="w-3 h-3" />
+          </Button>
+        )}
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => handleReplaceText("condense")}
+          disabled={isAnyMutationPending}
+          className="flex items-center gap-1 h-7 px-2 text-xs"
+        >
+          <Languages className="w-3.5 h-3.5" /> 简写
+        </Button>
+        {condenseMutation.isPending && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => condenseMutation.reset()}
+            title="取消简写"
+            className="h-7 w-6 p-0"
+          >
+            <X className="w-3 h-3" />
+          </Button>
+        )}
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => handleReplaceText("rewrite")}
+          disabled={isAnyMutationPending}
+          className="flex items-center gap-1 h-7 px-2 text-xs"
+        >
+          <Sparkles className="w-3.5 h-3.5" /> 改写
+        </Button>
+        {rewriteMutation.isPending && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => rewriteMutation.reset()}
+            title="取消改写"
+            className="h-7 w-6 p-0"
+          >
+            <X className="w-3 h-3" />
+          </Button>
+        )}
+
+        <Separator orientation="vertical" className="h-4 mx-0.5" />
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleEntityAnalysis}
+          disabled={isAnyMutationPending}
+          className="flex items-center gap-1 h-7 px-2 text-xs"
+        >
+          <Search className="w-3.5 h-3.5" /> 分析
+        </Button>
+        {isAnalyzing && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setIsAnalyzing(false)}
+            title="取消分析"
+            className="h-7 w-6 p-0"
+          >
+            <X className="w-3 h-3" />
+          </Button>
+        )}
+      </div>
+
+      <Dialog open={isAnalysisDialogOpen} onOpenChange={setIsAnalysisDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>实体关系分析</DialogTitle>
+            <DialogDescription>这段文字中涉及以下世界观实体和关系</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {analysisResult && (
+              <>
+                {renderEntityList(analysisResult.characters, "character", "👤", "border-blue-200 text-blue-700")}
+                {renderEntityList(analysisResult.settings, "setting", "🏛️", "border-green-200 text-green-700")}
+                {renderEntityList(analysisResult.factions, "faction", "⚔️", "border-purple-200 text-purple-700")}
+                {renderEntityList(analysisResult.items, "item", "🔮", "border-orange-200 text-orange-700")}
+              </>
+            )}
+            {(!analysisResult ||
+              (analysisResult.characters.length === 0 &&
+                analysisResult.settings.length === 0 &&
+                analysisResult.factions.length === 0 &&
+                analysisResult.items.length === 0)) && (
+              <div className="text-center py-8 text-muted-foreground">
+                <Search className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                <p>未检测到任何实体</p>
+                <p className="text-sm">尝试使用 @角色名、#场景名、~势力名~ 或 $物品名$ 语法来提及实体</p>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+};
 
 /**
  * 编辑器工具栏组件 (升级版)
@@ -179,15 +547,20 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
 
       <Separator orientation="vertical" className="h-6 mx-1" />
 
-      {/* 组 5: 高级功能 (历史记录) */}
+      {/* 组 5: 历史记录 */}
       {activeChapter && (
-        <div className="ml-1">
+        <div className="flex items-center">
           <HistorySheet
             chapterId={activeChapter.id}
             chapterTitle={activeChapter.title}
           />
         </div>
       )}
+
+      <Separator orientation="vertical" className="h-6 mx-1" />
+
+      {/* 组 6: AI 工具栏 (常驻) */}
+      <AiToolbarButtons editor={editor} />
     </div>
   );
 };

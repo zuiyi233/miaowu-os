@@ -2,11 +2,10 @@ import React, { useEffect, useState, useRef } from "react";
 import {
   useEditor,
   EditorContent,
-  Editor as TiptapEditor,
 } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import CharacterCount from "@tiptap/extension-character-count";
-import Mention from "@tiptap/extension-mention"; // 引入 Mention 扩展
+import Mention from "@tiptap/extension-mention";
 import { useUiStore } from "../stores/useUiStore";
 import { useSettingsStore } from "../stores/useSettingsStore";
 import { useContextStore } from "../stores/useContextStore";
@@ -16,55 +15,13 @@ import {
 } from "../lib/react-query/db-queries";
 import { useContinueWritingMutation } from "../lib/react-query/queries";
 import { EditorToolbar } from "./EditorToolbar";
-import { AiActionToolbar } from "./AiActionToolbar"; // 引入 AI 工具栏
-import { ChapterInfoCard } from "./editor/ChapterInfoCard"; // ✅ 引入新的章节信息组件
-import { mentionSuggestion } from "../lib/tiptap/mention"; // 引入提及建议配置
-import { useMentionOptions } from "../hooks/useMentionOptions"; // 引入统一的提及选项 Hook
-import { User, MapPin, Shield, Gem } from "lucide-react"; // 引入图标
-import { SlashCommand } from "../lib/tiptap/slash-command"; // 引入斜杠命令扩展
+import { ChapterInfoCard } from "./editor/ChapterInfoCard";
+import { mentionSuggestion } from "../lib/tiptap/mention";
+import { useMentionOptions } from "../hooks/useMentionOptions";
+import { User, MapPin, Shield, Gem } from "lucide-react";
+import { SlashCommand } from "../lib/tiptap/slash-command";
 import { useDebouncedCallback } from "../hooks/useDebounce";
-import { useFloatingToolbar } from "../hooks/useFloatingToolbar";
 import { LoadingOverlay } from "./common/LoadingOverlay";
-
-// 浮动工具栏包装组件
-const FloatingToolbarWrapper: React.FC<{ editor: TiptapEditor }> = ({
-  editor,
-}) => {
-  const { isVisible, x, y, selectedText, from, to, hideToolbar } =
-    useFloatingToolbar(editor);
-
-  // 点击外部区域隐藏工具栏
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as HTMLElement;
-      if (!target.closest(".floating-toolbar")) {
-        hideToolbar();
-      }
-    };
-
-    if (isVisible) {
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => {
-        document.removeEventListener("mousedown", handleClickOutside);
-      };
-    }
-  }, [isVisible, hideToolbar]);
-
-  if (!isVisible) return null;
-
-  return (
-    <div
-      className="floating-toolbar fixed z-50"
-      style={{
-        left: `${x}px`,
-        top: `${y}px`,
-        transform: "translateX(-50%)",
-      }}
-    >
-      <AiActionToolbar editor={editor} />
-    </div>
-  );
-};
 
 export const Editor: React.FC = () => {
   const {
@@ -357,9 +314,6 @@ export const Editor: React.FC = () => {
 
           <EditorToolbar editor={editor} className="mb-8" />
           <EditorContent editor={editor} />
-
-          {/* AI 浮动工具栏 - 使用自定义 Hook 实现 */}
-          {editor && <FloatingToolbarWrapper editor={editor} />}
         </div>
       </div>
       {/* 使用 store 中的状态控制 loading */}

@@ -7,7 +7,6 @@ import CharacterCount from '@tiptap/extension-character-count';
 import { useNovelStore, useAiPanelStore } from '@/core/novel';
 import { useNovelQuery, useUpdateChapterMutation } from '@/core/novel/queries';
 import { EditorToolbar } from './EditorToolbar';
-import { AiActionToolbar } from './AiActionToolbar';
 import { ChapterInfoCard } from './editor/ChapterInfoCard';
 import { useDebounce } from '@/core/novel/useDebounce';
 import { cn } from '@/lib/utils';
@@ -139,7 +138,7 @@ export function NovelEditor({ novelTitle }: { novelTitle: string }) {
           <span>Words: {editor.storage.characterCount.words()} | Chars: {editor.storage.characterCount.characters()}</span>
         </div>
       )}
-      {editor && <AiActionToolbar editor={editor} />}
+
     </div>
   );
 }

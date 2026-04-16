@@ -63,6 +63,8 @@ export interface AppSettings {
     continue: ModelConfig; // 续写
     polish: ModelConfig; // 润色
     expand: ModelConfig; // 扩写
+    condense: ModelConfig; // 简写
+    rewrite: ModelConfig; // 改写
     chat: ModelConfig; // 自由对话
     extraction: ModelConfig; // 信息提取（关系、时间线）
     embedding: {
@@ -191,6 +193,18 @@ const defaultSettings: AppSettings = {
       model: "deepseek-reasoner",
       temperature: 0.7,
       maxTokens: 8192, // ✅ 提升默认值
+    },
+    condense: {
+      providerId: "default-newapi",
+      model: "gpt-4o-mini",
+      temperature: 0.3,
+      maxTokens: 8192,
+    },
+    rewrite: {
+      providerId: "default-newapi",
+      model: "deepseek-chat",
+      temperature: 0.7,
+      maxTokens: 8192,
     },
     chat: {
       providerId: "default-newapi",
@@ -424,7 +438,7 @@ export const useSettingsStore = create<SettingsState>()(
        * 版本管理
        * 当设置结构发生变化时，可以在这里进行迁移
        */
-      version: 7, // ✅ 升级版本号到 7，支持 RAG options
+      version: 8, // ✅ 升级版本号到 8，支持 condense/rewrite 任务
       /**
        * 迁移函数
        * 用于处理设置结构的向后兼容性
@@ -586,6 +600,21 @@ export const useSettingsStore = create<SettingsState>()(
           state = {
             ...state,
             ragOptions: defaultSettings.ragOptions,
+          };
+        }
+
+        // Version 7 -> 8: 添加 condense 和 rewrite 模型配置
+        if (version < 8) {
+          logger.info(
+            STORE_CONTEXT,
+            "Migrating settings to version 8 (Add condense/rewrite configs)"
+          );
+          state = {
+            ...state,
+            modelSettings: {
+              ...defaultSettings.modelSettings,
+              ...(state.modelSettings || {}),
+            },
           };
         }
 

@@ -19,6 +19,7 @@ export interface AiStreamCallbacks {
   onComplete?: (fullText: string) => void;
   onError?: (error: Error) => void;
   onAbort?: () => void;
+  abortSignal?: AbortSignal;
 }
 
 export class NovelAiService {
@@ -34,12 +35,16 @@ export class NovelAiService {
 
     this.abortController = new AbortController();
 
+    const signal = callbacks?.abortSignal
+      ? AbortSignal.any([this.abortController.signal, callbacks.abortSignal])
+      : this.abortController.signal;
+
     try {
       const response = await fetch(`${this.baseUrl}/api/novel/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages, stream }),
-        signal: this.abortController.signal,
+        signal,
       });
 
       if (!response.ok) {
@@ -125,7 +130,7 @@ export class NovelAiService {
     });
   }
 
-  async continueWriting(currentContent: string, context: Record<string, any>): Promise<string> {
+  async continueWriting(currentContent: string, context: Record<string, any>, signal?: AbortSignal): Promise<string> {
     return this.chat({
       messages: [
         {
@@ -138,6 +143,8 @@ export class NovelAiService {
           content: `请继续以下章节的内容：\n${currentContent}`,
         },
       ],
+    }, {
+      abortSignal: signal,
     });
   }
 
@@ -169,6 +176,42 @@ export class NovelAiService {
           content: `请扩写以下场景：\n${sceneDescription}`,
         },
       ],
+    });
+  }
+
+  async condenseText(text: string, signal?: AbortSignal): Promise<string> {
+    return this.chat({
+      messages: [
+        {
+          role: 'system',
+          content: '你是一个文字精简助手。请将以下段落精简压缩，保留核心情节和关键信息，去除冗余描写。不要改变原文的核心意思。',
+        },
+        {
+          role: 'user',
+          content: `请精简以下文字：\n${text}`,
+        },
+      ],
+      stream: true,
+    }, {
+      abortSignal: signal,
+    });
+  }
+
+  async rewriteText(text: string, signal?: AbortSignal): Promise<string> {
+    return this.chat({
+      messages: [
+        {
+          role: 'system',
+          content: '你是一个文字改写助手。请用更加生动、引人入胜的方式重写以下段落，保持原意不变但提升文学性和可读性。',
+        },
+        {
+          role: 'user',
+          content: `请重写以下文字：\n${text}`,
+        },
+      ],
+      stream: true,
+    }, {
+      abortSignal: signal,
     });
   }
 
