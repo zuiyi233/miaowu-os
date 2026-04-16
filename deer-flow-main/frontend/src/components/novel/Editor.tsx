@@ -1,65 +1,16 @@
 'use client';
 
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import CharacterCount from '@tiptap/extension-character-count';
-import { useNovelStore, useAiPanelStore, useEditorStore } from '@/core/novel';
+import { useNovelStore, useAiPanelStore } from '@/core/novel';
 import { useNovelQuery, useUpdateChapterMutation } from '@/core/novel/queries';
 import { EditorToolbar } from './EditorToolbar';
 import { AiActionToolbar } from './AiActionToolbar';
 import { ChapterInfoCard } from './editor/ChapterInfoCard';
 import { useDebounce } from '@/core/novel/useDebounce';
-
-const FloatingToolbarWrapper: React.FC<{ editor: ReturnType<typeof useEditor> }> = ({ editor }) => {
-  const { isVisible, x, y } = useFloatingToolbarLogic(editor);
-
-  if (!isVisible || !editor) return null;
-
-  return (
-    <div
-      className="fixed z-50 rounded-lg border bg-popover shadow-lg"
-      style={{ left: `${x}px`, top: `${y}px`, transform: 'translateX(-50%)' }}
-    >
-      <AiActionToolbar editor={editor} />
-    </div>
-  );
-};
-
-function useFloatingToolbarLogic(editor: ReturnType<typeof useEditor>) {
-  const [state, setState] = React.useState({ isVisible: false, x: 0, y: 0, selectedText: '' });
-
-  useEffect(() => {
-    if (!editor) return;
-
-    const handleSelectionUpdate = () => {
-      const { from, to } = editor.state.selection;
-      const selectedText = editor.state.doc.textBetween(from, to, ' ');
-
-      if (selectedText.length > 0) {
-        const view = editor.view;
-        const coords = view.coordsAtPos(from);
-        const domRect = view.dom.getBoundingClientRect();
-
-        setState({
-          isVisible: true,
-          x: coords.left - domRect.left + (coords.right - coords.left) / 2,
-          y: coords.top - domRect.top - 50,
-          selectedText,
-        });
-      } else {
-        setState((prev) => ({ ...prev, isVisible: false }));
-      }
-    };
-
-    editor.on('selectionUpdate', handleSelectionUpdate);
-    return () => {
-      editor.off('selectionUpdate', handleSelectionUpdate);
-    };
-  }, [editor]);
-
-  return state;
-}
+import { cn } from '@/lib/utils';
 
 export function NovelEditor({ novelTitle }: { novelTitle: string }) {
   const { activeChapterId, dirtyContent, setDirtyContent } = useNovelStore();
@@ -113,13 +64,17 @@ export function NovelEditor({ novelTitle }: { novelTitle: string }) {
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
-      StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
+      StarterKit.configure({
+        heading: { levels: [1, 2, 3] },
+        bulletList: { keepMarks: true, keepAttributes: false },
+        orderedList: { keepMarks: true, keepAttributes: false },
+      }),
       CharacterCount.configure({ limit: null }),
     ],
     content: activeChapter?.content || '',
     editorProps: {
       attributes: {
-        class: 'prose prose-lg dark:prose-invert focus:outline-none w-full leading-relaxed max-w-none prose-headings:font-bold prose-blockquote:border-l-4 prose-blockquote:border-primary prose-blockquote:pl-4 prose-blockquote:italic prose-ul:list-disc prose-ol:list-decimal',
+        class: 'prose prose-lg dark:prose-invert max-w-none focus:outline-none leading-relaxed',
       },
     },
     onUpdate: ({ editor }) => {
@@ -163,15 +118,13 @@ export function NovelEditor({ novelTitle }: { novelTitle: string }) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
-      <div className="flex w-full flex-1 justify-center overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6 lg:px-8">
-          <h1 className="mb-6 font-['Lora'] text-4xl font-bold tracking-tight">
-            {activeChapter?.title}
-          </h1>
+      <EditorToolbar editor={editor} />
+      <div className="flex-1 overflow-hidden">
+        <div className="w-full max-w-[95%] mx-auto px-4 sm:px-8 lg:px-12 py-6 sm:py-8 flex flex-col h-full">
           {activeChapter && <ChapterInfoCard chapter={activeChapter} />}
-          <EditorToolbar editor={editor} className="mb-8" />
-          <EditorContent editor={editor} />
-          {editor && <FloatingToolbarWrapper editor={editor} />}
+          <div className="editor-area rounded-lg border bg-card p-6 sm:p-8 flex-1 overflow-y-auto">
+            <EditorContent editor={editor} />
+          </div>
         </div>
       </div>
       {aiStream.isStreaming && (
@@ -182,11 +135,11 @@ export function NovelEditor({ novelTitle }: { novelTitle: string }) {
         </div>
       )}
       {editor && (
-        <div className="border-t p-2 text-right text-sm text-muted-foreground">
-          Words: {editor.storage.characterCount.words()} | Chars:{' '}
-          {editor.storage.characterCount.characters()}
+        <div className="flex items-center justify-between border-t px-4 py-2 text-sm text-muted-foreground">
+          <span>Words: {editor.storage.characterCount.words()} | Chars: {editor.storage.characterCount.characters()}</span>
         </div>
       )}
+      {editor && <AiActionToolbar editor={editor} />}
     </div>
   );
 }

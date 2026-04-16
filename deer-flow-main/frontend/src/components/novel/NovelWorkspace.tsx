@@ -1,15 +1,15 @@
 'use client';
 
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { Button } from '@/components/ui/button';
 import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from '@/components/ui/resizable';
-import { Sheet, SheetContent } from '@/components/ui/sheet';
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { NovelEditor } from './Editor';
 import { AiPanel } from './AiPanel';
-import { EntitySidebar } from './sidebar/EntitySidebar';
 import { NovelSelector } from './NovelSelector';
 import { OutlineView } from './outline/OutlineView';
 import { TimelineView } from './timeline/TimelineView';
@@ -18,92 +18,105 @@ import { NovelSettings } from './settings/NovelSettings';
 import { useNovelStore } from '@/core/novel';
 import { useMediaQuery } from '@/core/novel/useMediaQuery';
 import { useI18n } from '@/core/i18n/hooks';
+import {
+  PanelRight,
+  BookOpen,
+  Clock,
+  GitBranch,
+  Settings,
+} from 'lucide-react';
 
 export function NovelWorkspace({ novelTitle }: { novelTitle: string }) {
   const { t } = useI18n();
   const { viewMode, setViewMode } = useNovelStore();
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const isDesktop = useMediaQuery('(min-width: 768px)');
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [mobileAiOpen, setMobileAiOpen] = useState(false);
 
-  const toggleSidebar = () => {
-    if (!isDesktop) {
-      setIsMobileSidebarOpen(true);
-    }
-  };
+  const isTablet = useMediaQuery('(min-width: 768px)');
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
+
+  const viewModes = [
+    { mode: 'editor' as const, label: t.novel.editor, icon: <BookOpen className="h-4 w-4" /> },
+    { mode: 'outline' as const, label: t.novel.outline, icon: null },
+    { mode: 'timeline' as const, label: t.novel.timeline, icon: <Clock className="h-4 w-4" /> },
+    { mode: 'graph' as const, label: t.novel.graph, icon: <GitBranch className="h-4 w-4" /> },
+    { mode: 'settings' as const, label: t.novel.settings, icon: <Settings className="h-4 w-4" /> },
+  ];
 
   return (
-    <div className="h-screen w-full flex flex-col">
-      <div className="border-b px-4 py-2 flex items-center justify-between">
-        <NovelSelector />
-        <div className="flex gap-1">
-          {[
-            { mode: 'editor' as const, label: t.novel.editor },
-            { mode: 'outline' as const, label: t.novel.outline },
-            { mode: 'timeline' as const, label: t.novel.timeline },
-            { mode: 'graph' as const, label: t.novel.graph },
-            { mode: 'settings' as const, label: t.novel.settings },
-          ].map(({ mode, label }) => (
+    <div className="flex h-full w-full flex-col overflow-hidden">
+      <div className="flex flex-shrink-0 items-center justify-between border-b bg-muted/30 px-3 py-2 sm:px-4">
+        <div className="flex items-center gap-2">
+          <NovelSelector />
+        </div>
+        <div className="flex items-center gap-1">
+          {viewModes.map(({ mode, label, icon }) => (
             <button
               key={mode}
               onClick={() => setViewMode(mode)}
-              className={`text-sm px-3 py-1.5 rounded transition-colors ${
+              className={`flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm transition-colors ${
                 viewMode === mode
                   ? 'bg-primary text-primary-foreground'
-                  : 'hover:bg-accent'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
               }`}
             >
-              {label}
+              {icon && <span className="hidden sm:inline">{icon}</span>}
+              <span>{label}</span>
             </button>
           ))}
+          {isTablet && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className={`h-8 w-8 transition-colors ${rightPanelOpen ? 'bg-accent text-accent-foreground' : ''}`}
+              onClick={() => setRightPanelOpen(!rightPanelOpen)}
+              title={t.novel.chat}
+            >
+              <PanelRight className="h-4 w-4" />
+            </Button>
+          )}
+          {!isTablet && viewMode === 'editor' && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 sm:hidden"
+              onClick={() => setMobileAiOpen(true)}
+            >
+              <PanelRight className="h-4 w-4" />
+            </Button>
+          )}
         </div>
       </div>
 
-      <main className="flex-1 relative overflow-hidden">
-        {viewMode === 'editor' && (
+      <main className="relative flex-1 overflow-hidden">
+        {viewMode === 'editor' ? (
           <>
             {isDesktop ? (
-              <ResizablePanelGroup direction="horizontal" className="h-full">
-                <ResizablePanel
-                  defaultSize={20}
-                  minSize={15}
-                  maxSize={30}
-                  collapsible
-                  collapsedSize={0}
-                >
-                  <EntitySidebar novelTitle={novelTitle} />
-                </ResizablePanel>
-                <ResizableHandle withHandle />
-                <ResizablePanel defaultSize={55} minSize={30}>
+              <div className="flex h-full">
+                <div className="flex-1 overflow-hidden">
                   <NovelEditor novelTitle={novelTitle} />
-                </ResizablePanel>
-                <ResizableHandle withHandle />
-                <ResizablePanel
-                  defaultSize={25}
-                  minSize={20}
-                  maxSize={40}
-                  collapsible
-                  collapsedSize={0}
-                >
-                  <AiPanel />
-                </ResizablePanel>
-              </ResizablePanelGroup>
+                </div>
+                {rightPanelOpen && (
+                  <div className="w-80 flex-shrink-0 border-l bg-background transition-all duration-300">
+                    <AiPanel />
+                  </div>
+                )}
+              </div>
             ) : (
-              <div className="h-full w-full relative">
+              <>
                 <NovelEditor novelTitle={novelTitle} />
-                <Sheet open={isMobileSidebarOpen} onOpenChange={setIsMobileSidebarOpen}>
-                  <SheetContent side="left" className="p-0 w-[85%]">
-                    <EntitySidebar novelTitle={novelTitle} />
-                  </SheetContent>
-                </Sheet>
-                <Sheet>
-                  <SheetContent side="right" className="p-0 w-[90%] sm:w-[400px]">
+                <Sheet open={mobileAiOpen} onOpenChange={setMobileAiOpen}>
+                  <SheetContent side="right" className="w-[90vw] max-w-md p-0">
+                    <SheetHeader className="sr-only">
+                      <SheetTitle>{t.novel.chat}</SheetTitle>
+                    </SheetHeader>
                     <AiPanel />
                   </SheetContent>
                 </Sheet>
-              </div>
+              </>
             )}
           </>
-        )}
+        ) : null}
 
         {viewMode === 'outline' && (
           <div className="h-full w-full animate-in fade-in duration-300">

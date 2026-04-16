@@ -300,6 +300,55 @@
     @apply bg-background text-foreground;
   }
 
+  .editor-area .ProseMirror {
+    @apply outline-none;
+    min-height: 50vh;
+  }
+
+  .editor-area .ProseMirror p {
+    @apply mb-4 text-base leading-8;
+  }
+
+  .editor-area .ProseMirror h1 {
+    @apply text-3xl font-bold mb-6 mt-8 leading-tight;
+  }
+
+  .editor-area .ProseMirror h2 {
+    @apply text-2xl font-semibold mb-4 mt-6 leading-snug;
+  }
+
+  .editor-area .ProseMirror h3 {
+    @apply text-xl font-semibold mb-3 mt-5 leading-snug;
+  }
+
+  .editor-area .ProseMirror blockquote {
+    @apply border-l-4 border-primary pl-4 italic text-muted-foreground my-4;
+  }
+
+  .editor-area .ProseMirror ul {
+    @apply list-disc pl-6 my-4;
+  }
+
+  .editor-area .ProseMirror ol {
+    @apply list-decimal pl-6 my-4;
+  }
+
+  .editor-area .ProseMirror li {
+    @apply mb-1;
+  }
+
+  .editor-area .ProseMirror strong {
+    @apply font-bold;
+  }
+
+  .editor-area .ProseMirror em {
+    @apply italic;
+  }
+
+  .editor-area .ProseMirror hr {
+    @apply my-6 border-t border-border;
+  }
+
   .container-md {
     width: 100%;
     @media (width >= 40rem) {

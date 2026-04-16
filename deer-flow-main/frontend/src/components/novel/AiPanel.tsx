@@ -5,27 +5,40 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AiChatView } from './ai/AiChatView';
 import { ContextInspector } from './ai/ContextInspector';
 import { useAiPanelStore } from '@/core/novel';
+import { useI18n } from '@/core/i18n/hooks';
+import { MessageSquare, Sparkles, Network } from 'lucide-react';
 
 export function AiPanel() {
+  const { t } = useI18n();
   const { activeTab, setActiveTab } = useAiPanelStore();
 
   return (
     <div className="flex h-full flex-col">
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="flex h-full flex-col">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="chat">Chat</TabsTrigger>
-          <TabsTrigger value="generate">Generate</TabsTrigger>
-          <TabsTrigger value="context">Context</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-3 rounded-none border-b bg-muted/50">
+          <TabsTrigger value="chat" className="gap-1.5 data-[state=active]:bg-background">
+            <MessageSquare className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">{t.novel.chat}</span>
+          </TabsTrigger>
+          <TabsTrigger value="generate" className="gap-1.5 data-[state=active]:bg-background">
+            <Sparkles className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Generate</span>
+          </TabsTrigger>
+          <TabsTrigger value="context" className="gap-1.5 data-[state=active]:bg-background">
+            <Network className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">{t.novel.contextEntities}</span>
+          </TabsTrigger>
         </TabsList>
-        <TabsContent value="chat" className="flex-1 overflow-hidden">
+        <TabsContent value="chat" className="flex-1 overflow-hidden m-0">
           <AiChatView />
         </TabsContent>
-        <TabsContent value="generate" className="flex-1 overflow-hidden">
-          <div className="p-4 text-center text-muted-foreground">
-            AI Generation tools coming soon
+        <TabsContent value="generate" className="flex-1 overflow-hidden m-0">
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
+            <Sparkles className="h-10 w-10 opacity-30" />
+            <p className="text-sm">AI Generation tools coming soon</p>
           </div>
         </TabsContent>
-        <TabsContent value="context" className="flex-1 overflow-hidden">
+        <TabsContent value="context" className="flex-1 overflow-hidden m-0">
           <ContextInspector />
         </TabsContent>
       </Tabs>
