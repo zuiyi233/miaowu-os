@@ -7,6 +7,8 @@ import {
   Clock,
   GitBranch,
   Settings,
+  Trophy,
+  Flag,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -29,6 +31,8 @@ import { ReaderWorkspaceView } from './reader/ReaderWorkspaceView';
 import { RelationshipGraph } from './RelationshipGraph';
 import { NovelSettings } from './settings/NovelSettings';
 import { TimelineView } from './timeline/TimelineView';
+import { CareersView } from './CareersView';
+import { ForeshadowsView } from './ForeshadowsView';
 
 export function NovelWorkspace({ novelId }: { novelId: string }) {
   const { t } = useI18n();
@@ -45,6 +49,8 @@ export function NovelWorkspace({ novelId }: { novelId: string }) {
     { mode: 'outline' as const, label: t.novel.outline, icon: null },
     { mode: 'timeline' as const, label: t.novel.timeline, icon: <Clock className="h-4 w-4" /> },
     { mode: 'graph' as const, label: t.novel.graph, icon: <GitBranch className="h-4 w-4" /> },
+    { mode: 'careers' as const, label: '职业体系', icon: <Trophy className="h-4 w-4" /> },
+    { mode: 'foreshadows' as const, label: '伏笔管理', icon: <Flag className="h-4 w-4" /> },
     { mode: 'settings' as const, label: t.novel.settings, icon: <Settings className="h-4 w-4" /> },
   ];
 
@@ -144,6 +150,18 @@ export function NovelWorkspace({ novelId }: { novelId: string }) {
         {viewMode === 'graph' && (
           <div className="h-full w-full animate-in fade-in duration-300 bg-background">
             <RelationshipGraph novelId={novelId} />
+          </div>
+        )}
+
+        {viewMode === 'careers' && (
+          <div className="h-full w-full animate-in fade-in duration-300 bg-background">
+            <CareersView novelId={novelId} />
+          </div>
+        )}
+
+        {viewMode === 'foreshadows' && (
+          <div className="h-full w-full animate-in fade-in duration-300 bg-background">
+            <ForeshadowsView novelId={novelId} />
           </div>
         )}
 

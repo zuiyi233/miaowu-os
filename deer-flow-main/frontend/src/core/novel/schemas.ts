@@ -270,3 +270,162 @@ export const outlineNodeSchema = z.object({
 });
 
 export type OutlineNode = z.infer<typeof outlineNodeSchema>;
+
+export interface CareerStage {
+  level: number;
+  name: string;
+  description?: string;
+}
+
+export interface Career {
+  id: string;
+  projectId: string;
+  name: string;
+  type: 'main' | 'sub';
+  description?: string;
+  category?: string;
+  stages: CareerStage[];
+  maxStage: number;
+  requirements?: string;
+  specialAbilities?: string;
+  worldviewRules?: string;
+  attributeBonuses?: Record<string, string>;
+  source?: 'ai' | 'manual';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CharacterCareer {
+  id: string;
+  characterId: string;
+  careerId: string;
+  careerName: string;
+  careerType: 'main' | 'sub';
+  currentStage: number;
+  stageName: string;
+  stageDescription?: string;
+  stageProgress: number;
+  maxStage: number;
+  startedAt?: string;
+  reachedCurrentStageAt?: string;
+  notes?: string;
+}
+
+export type ForeshadowStatus = 'pending' | 'planted' | 'resolved' | 'partially_resolved' | 'abandoned';
+
+export interface Foreshadow {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string;
+  category?: string;
+  sourceChapter?: number;
+  targetChapter?: number;
+  isLongTerm: boolean;
+  importance: number;
+  status: ForeshadowStatus;
+  sourceType: 'manual' | 'analysis';
+  plantedChapter?: number;
+  plantedContext?: string;
+  resolvedChapter?: number;
+  resolvedContext?: string;
+  resolutionType?: 'full' | 'partial';
+  abandonReason?: string;
+  tags?: string[];
+  relatedCharacters?: string[];
+  hintText?: string;
+  notes?: string;
+  strength?: number;
+  subtlety?: number;
+  autoRemind?: boolean;
+  remindBeforeChapters?: number;
+  includeInContext?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ForeshadowStats {
+  total: number;
+  pending: number;
+  planted: number;
+  resolved: number;
+  partiallyResolved: number;
+  abandoned: number;
+  longTermCount: number;
+  overdueCount: number;
+}
+
+export type MemoryAnnotationType = 'hook' | 'foreshadow' | 'plot_point' | 'character_event';
+
+export interface MemoryAnnotation {
+  id: string;
+  type: MemoryAnnotationType;
+  title: string;
+  content: string;
+  importance: number;
+  tags?: string[];
+  metadata: {
+    strength?: number;
+    foreshadowType?: 'planted' | 'resolved';
+    [key: string]: unknown;
+  };
+}
+
+export interface InspirationOption {
+  prompt: string;
+  options: string[];
+  error?: string;
+}
+
+export interface InspirationWizardData {
+  title: string;
+  description: string;
+  theme: string;
+  genre: string[];
+  narrativePerspective: string;
+  outlineMode: 'one-to-one' | 'one-to-many';
+}
+
+export type BookImportTaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface BookImportTask {
+  taskId: string;
+  status: BookImportTaskStatus;
+  progress: number;
+  message: string;
+  error?: string;
+}
+
+export interface BookImportPreview {
+  projectSuggestion: {
+    title: string;
+    genre: string;
+    theme: string;
+    description: string;
+    narrativePerspective: string;
+    targetWords: number;
+  };
+  chapters: BookImportChapter[];
+  outlines: unknown[];
+  warnings: BookImportWarning[];
+}
+
+export interface BookImportChapter {
+  chapterNumber: number;
+  title: string;
+  summary: string;
+  content: string;
+}
+
+export interface BookImportWarning {
+  code: string;
+  level: string;
+  message: string;
+}
+
+export interface BookImportStepFailure {
+  stepName: string;
+  stepLabel: string;
+  error: string;
+  retryCount: number;
+}

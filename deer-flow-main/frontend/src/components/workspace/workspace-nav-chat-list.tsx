@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpenIcon, BotIcon, MessagesSquare } from "lucide-react";
+import { BookOpenIcon, BotIcon, MessagesSquare, Sparkles, Upload } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -39,12 +39,34 @@ export function WorkspaceNavChatList() {
         </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton
-            isActive={pathname.startsWith("/workspace/novel")}
+            isActive={pathname.startsWith("/workspace/novel") && !pathname.includes("/inspiration") && !pathname.includes("/book-import")}
             asChild
           >
             <Link className="text-muted-foreground" href="/workspace/novel">
               <BookOpenIcon />
               <span>{t.sidebar.novel}</span>
+            </Link>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            isActive={pathname === "/workspace/novel/inspiration"}
+            asChild
+          >
+            <Link className="text-muted-foreground" href="/workspace/novel/inspiration">
+              <Sparkles />
+              <span>灵感模式</span>
+            </Link>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            isActive={pathname === "/workspace/novel/book-import"}
+            asChild
+          >
+            <Link className="text-muted-foreground" href="/workspace/novel/book-import">
+              <Upload />
+              <span>拆书导入</span>
             </Link>
           </SidebarMenuButton>
         </SidebarMenuItem>

@@ -1,10 +1,16 @@
 import { getBackendBaseURL } from '@/core/config';
 
 import type {
+  BookImportPreview,
+  BookImportTask,
   Chapter,
   Character,
+  Career,
   Faction,
+  Foreshadow,
+  ForeshadowStats,
   GraphLayout,
+  InspirationOption,
   Item,
   Novel,
   Setting,
@@ -13,7 +19,7 @@ import type {
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
-type QueryValue = string | number | boolean | null | undefined;
+export type QueryValue = string | number | boolean | null | undefined;
 
 interface RequestOptions {
   method?: HttpMethod;
@@ -659,6 +665,194 @@ export class NovelApiService {
     return request(`/novels/${encodeURIComponent(novelId)}/ai/chat`, {
       method: 'POST',
       body: payload,
+    });
+  }
+
+  async getCareers(projectId: string): Promise<{ total: number; mainCareers: Career[]; subCareers: Career[] }> {
+    const raw = await request<unknown>('/careers', { query: { project_id: projectId } });
+    if (!isRecord(raw)) return { total: 0, mainCareers: [], subCareers: [] };
+    return {
+      total: Number(raw.total ?? 0),
+      mainCareers: Array.isArray(raw.main_careers) ? raw.main_careers as Career[] : [],
+      subCareers: Array.isArray(raw.sub_careers) ? raw.sub_careers as Career[] : [],
+    };
+  }
+
+  async createCareer(data: Record<string, unknown>): Promise<unknown> {
+    return request('/careers', { method: 'POST', body: data });
+  }
+
+  async updateCareer(careerId: string, data: Record<string, unknown>): Promise<unknown> {
+    return request(`/careers/${encodeURIComponent(careerId)}`, { method: 'PUT', body: data });
+  }
+
+  async deleteCareer(careerId: string): Promise<void> {
+    await request(`/careers/${encodeURIComponent(careerId)}`, { method: 'DELETE' });
+  }
+
+  async generateCareerSystem(projectId: string, params?: { mainCareerCount?: number; subCareerCount?: number; userRequirements?: string; enableMcp?: boolean }): Promise<Response> {
+    const query: Record<string, QueryValue> = { project_id: projectId };
+    if (params?.mainCareerCount) query.main_career_count = params.mainCareerCount;
+    if (params?.subCareerCount) query.sub_career_count = params.subCareerCount;
+    if (params?.userRequirements) query.user_requirements = params.userRequirements;
+    if (params?.enableMcp !== undefined) query.enable_mcp = params.enableMcp;
+    return fetch(buildUrl('/careers/generate-system', query));
+  }
+
+  async getForeshadows(projectId: string, params?: Record<string, QueryValue>): Promise<{ items: Foreshadow[]; total: number; stats?: ForeshadowStats }> {
+    const query: Record<string, QueryValue> = { ...params };
+    const raw = await request<unknown>(`/foreshadows/projects/${encodeURIComponent(projectId)}`, { query });
+    if (!isRecord(raw)) return { items: [], total: 0 };
+    return {
+      items: Array.isArray(raw.items) ? raw.items as Foreshadow[] : [],
+      total: Number(raw.total ?? 0),
+      stats: isRecord(raw.stats) ? raw.stats as unknown as ForeshadowStats : undefined,
+    };
+  }
+
+  async getForeshadowStats(projectId: string, currentChapter?: number): Promise<ForeshadowStats> {
+    const query: Record<string, QueryValue> = {};
+    if (currentChapter !== undefined) query.current_chapter = currentChapter;
+    return request<ForeshadowStats>(`/foreshadows/projects/${encodeURIComponent(projectId)}/stats`, { query });
+  }
+
+  async createForeshadow(data: Record<string, unknown>): Promise<unknown> {
+    return request('/foreshadows', { method: 'POST', body: data });
+  }
+
+  async updateForeshadow(foreshadowId: string, data: Record<string, unknown>): Promise<unknown> {
+    return request(`/foreshadows/${encodeURIComponent(foreshadowId)}`, { method: 'PUT', body: data });
+  }
+
+  async deleteForeshadow(foreshadowId: string): Promise<void> {
+    await request(`/foreshadows/${encodeURIComponent(foreshadowId)}`, { method: 'DELETE' });
+  }
+
+  async plantForeshadow(foreshadowId: string, data: Record<string, unknown>): Promise<unknown> {
+    return request(`/foreshadows/${encodeURIComponent(foreshadowId)}/plant`, { method: 'POST', body: data });
+  }
+
+  async resolveForeshadow(foreshadowId: string, data: Record<string, unknown>): Promise<unknown> {
+    return request(`/foreshadows/${encodeURIComponent(foreshadowId)}/resolve`, { method: 'POST', body: data });
+  }
+
+  async abandonForeshadow(foreshadowId: string, reason?: string): Promise<unknown> {
+    return request(`/foreshadows/${encodeURIComponent(foreshadowId)}/abandon`, {
+      method: 'POST',
+      body: reason ? { reason } : {},
+    });
+  }
+
+  async syncForeshadowsFromAnalysis(projectId: string, autoSetPlanted = true): Promise<unknown> {
+    return request(`/foreshadows/projects/${encodeURIComponent(projectId)}/sync-from-analysis`, {
+      method: 'POST',
+      body: { auto_set_planted: autoSetPlanted },
+    });
+  }
+
+  async generateInspirationOptions(step: string, context: Record<string, unknown>): Promise<InspirationOption> {
+    const raw = await request<unknown>('/inspiration/generate-options', {
+      method: 'POST',
+      body: { step, context },
+    });
+    if (!isRecord(raw)) return { prompt: '', options: [] };
+    return {
+      prompt: typeof raw.prompt === 'string' ? raw.prompt : '',
+      options: Array.isArray(raw.options) ? raw.options as string[] : [],
+      error: typeof raw.error === 'string' ? raw.error : undefined,
+    };
+  }
+
+  async refineInspirationOptions(step: string, context: Record<string, unknown>, feedback: string, previousOptions: string[]): Promise<InspirationOption> {
+    const raw = await request<unknown>('/inspiration/refine-options', {
+      method: 'POST',
+      body: { step, context, feedback, previous_options: previousOptions },
+    });
+    if (!isRecord(raw)) return { prompt: '', options: [] };
+    return {
+      prompt: typeof raw.prompt === 'string' ? raw.prompt : '',
+      options: Array.isArray(raw.options) ? raw.options as string[] : [],
+      error: typeof raw.error === 'string' ? raw.error : undefined,
+    };
+  }
+
+  async quickGenerateInspiration(params: Record<string, unknown>): Promise<InspirationOption> {
+    const raw = await request<unknown>('/inspiration/quick-generate', {
+      method: 'POST',
+      body: params,
+    });
+    if (!isRecord(raw)) return { prompt: '', options: [] };
+    return {
+      prompt: typeof raw.prompt === 'string' ? raw.prompt : '',
+      options: Array.isArray(raw.options) ? raw.options as string[] : [],
+      error: typeof raw.error === 'string' ? raw.error : undefined,
+    };
+  }
+
+  async createBookImportTask(file: File, params: { extractMode: string; tailChapterCount: number }): Promise<{ taskId: string }> {
+    const backendBase = getBackendBaseURL();
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('extract_mode', params.extractMode);
+    formData.append('tail_chapter_count', String(params.tailChapterCount));
+
+    const response = await fetch(`${backendBase}/book-import/tasks`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      throw new ApiError(`Book import task creation failed: ${response.status}`, response.status, errorText);
+    }
+
+    const result = await response.json();
+    const taskId = isRecord(result) && typeof result.task_id === 'string' ? result.task_id : '';
+    return { taskId };
+  }
+
+  async getBookImportTaskStatus(taskId: string): Promise<BookImportTask> {
+    const raw = await request<unknown>(`/book-import/tasks/${encodeURIComponent(taskId)}`);
+    if (!isRecord(raw)) return { taskId, status: 'pending', progress: 0, message: '' };
+    return {
+      taskId: typeof raw.task_id === 'string' ? raw.task_id : taskId,
+      status: (typeof raw.status === 'string' ? raw.status : 'pending') as BookImportTask['status'],
+      progress: Number(raw.progress ?? 0),
+      message: typeof raw.message === 'string' ? raw.message : '',
+      error: typeof raw.error === 'string' ? raw.error : undefined,
+    };
+  }
+
+  async getBookImportPreview(taskId: string): Promise<BookImportPreview> {
+    return request<BookImportPreview>(`/book-import/tasks/${encodeURIComponent(taskId)}/preview`);
+  }
+
+  async applyBookImport(taskId: string, payload: Record<string, unknown>): Promise<unknown> {
+    return request(`/book-import/tasks/${encodeURIComponent(taskId)}/apply`, {
+      method: 'POST',
+      body: payload,
+    });
+  }
+
+  async applyBookImportStream(taskId: string, payload: Record<string, unknown>): Promise<Response> {
+    const backendBase = getBackendBaseURL();
+    return fetch(`${backendBase}/book-import/tasks/${encodeURIComponent(taskId)}/apply-stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async cancelBookImportTask(taskId: string): Promise<void> {
+    await request(`/book-import/tasks/${encodeURIComponent(taskId)}`, { method: 'DELETE' });
+  }
+
+  async retryBookImportStepsStream(taskId: string, steps: string[]): Promise<Response> {
+    const backendBase = getBackendBaseURL();
+    return fetch(`${backendBase}/book-import/tasks/${encodeURIComponent(taskId)}/retry-stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ failed_steps: steps }),
     });
   }
 }

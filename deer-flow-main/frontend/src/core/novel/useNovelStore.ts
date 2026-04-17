@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 
 import type { Novel, Chapter } from './schemas';
 
-type ViewMode = 'home' | 'editor' | 'reader' | 'graph' | 'timeline' | 'chat' | 'outline' | 'settings';
+type ViewMode = 'home' | 'editor' | 'reader' | 'graph' | 'timeline' | 'chat' | 'outline' | 'careers' | 'foreshadows' | 'settings';
 
 interface NovelState {
   currentNovelTitle: string | null;

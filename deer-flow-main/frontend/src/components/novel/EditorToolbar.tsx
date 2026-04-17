@@ -39,14 +39,12 @@ export function EditorToolbar({ editor, novelId, className }: EditorToolbarProps
   const { activeChapterId } = useNovelStore();
   const { startStreaming, stopStreaming, addChunk, aiStream } = useAiPanelStore();
 
+  if (!editor) return null;
+
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  if (!editor) return null;
-
   const activeChapter = novelData?.chapters?.find((ch) => ch.id === activeChapterId);
-
-  const isAnyPending = aiStream.isStreaming || isAnalyzing;
 
   const getSelectedText = () => {
     const { from, to } = editor.state.selection;
@@ -59,59 +57,8 @@ export function EditorToolbar({ editor, novelId, className }: EditorToolbarProps
     return editor.state.doc.textBetween(start, from);
   };
 
-  const handleReplaceText = async (action: 'polish' | 'expand' | 'condense' | 'rewrite') => {
-    const selectedText = getSelectedText();
-    if (!selectedText) return;
-
-    const { from, to } = editor.state.selection;
-
-    abortRef.current = new AbortController();
-    startStreaming();
-
-    try {
-      await novelAiService.chat({
-        messages: [
-          {
-            role: 'system',
-            content: getSystemPrompt(action),
-          },
-          {
-            role: 'user',
-            content: getUserContent(action, selectedText),
-          },
-        ],
-        novelId,
-        stream: true,
-      }, {
-        onChunk: (chunk) => {
-          addChunk(chunk);
-        },
-        onComplete: (fullText) => {
-          if (fullText) {
-            editor.chain().focus().insertContentAt({ from, to }, fullText).run();
-          }
-          stopStreaming();
-        },
-        onError: (error) => {
-          toast.error(`${action} 操作失败`, { description: error.message });
-          stopStreaming();
-        },
-        onAbort: () => {
-          stopStreaming();
-        },
-      });
-    } catch (_error) {
-      if (_error instanceof DOMException && _error.name === 'AbortError') {
-        stopStreaming();
-      } else {
-        toast.error(`${action} 操作失败`, { description: '请稍后重试' });
-        stopStreaming();
-      }
-    }
-  };
-
   const handleContinueWriting = useCallback(async () => {
-    if (!activeChapter || !activeChapterId) return;
+    if (!activeChapter || !activeChapterId || !editor) return;
 
     const selectedText = getSelectedText();
     const textBeforeCursor = getTextBeforeCursor();
@@ -177,9 +124,62 @@ export function EditorToolbar({ editor, novelId, className }: EditorToolbarProps
     }
   }, [activeChapter, activeChapterId, editor, startStreaming, stopStreaming, addChunk]);
 
+  const isAnyPending = aiStream.isStreaming || isAnalyzing;
+
   const handleAbort = () => {
     abortRef.current?.abort();
     stopStreaming();
+  };
+
+  const handleReplaceText = async (action: 'polish' | 'expand' | 'condense' | 'rewrite') => {
+    const selectedText = getSelectedText();
+    if (!selectedText) return;
+
+    const { from, to } = editor.state.selection;
+
+    abortRef.current = new AbortController();
+    startStreaming();
+
+    try {
+      await novelAiService.chat({
+        messages: [
+          {
+            role: 'system',
+            content: getSystemPrompt(action),
+          },
+          {
+            role: 'user',
+            content: getUserContent(action, selectedText),
+          },
+        ],
+        novelId,
+        stream: true,
+      }, {
+        onChunk: (chunk) => {
+          addChunk(chunk);
+        },
+        onComplete: (fullText) => {
+          if (fullText) {
+            editor.chain().focus().insertContentAt({ from, to }, fullText).run();
+          }
+          stopStreaming();
+        },
+        onError: (error) => {
+          toast.error(`${action} 操作失败`, { description: error.message });
+          stopStreaming();
+        },
+        onAbort: () => {
+          stopStreaming();
+        },
+      });
+    } catch (_error) {
+      if (_error instanceof DOMException && _error.name === 'AbortError') {
+        stopStreaming();
+      } else {
+        toast.error(`${action} 操作失败`, { description: '请稍后重试' });
+        stopStreaming();
+      }
+    }
   };
 
   const handleEntityAnalysis = async () => {

@@ -4,8 +4,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { databaseService } from './database';
 import { executeRemoteFirst, novelApiService } from './novel-api';
+import type { QueryValue } from './novel-api';
 import { emitNovelEvent } from './observability';
-import type { Novel, Chapter, Character, Setting, Faction, Item, PromptTemplate, EntityRelationship, TimelineEvent, GraphLayout, Volume } from './schemas';
+import type { Novel, Chapter, Character, Setting, Faction, Item, PromptTemplate, EntityRelationship, TimelineEvent, GraphLayout, Volume, Career, Foreshadow, ForeshadowStats, BookImportTask, InspirationOption } from './schemas';
 
 export function useNovelQuery(novelTitle?: string) {
   return useQuery({
@@ -534,6 +535,158 @@ export function useSetActivePromptTemplateMutation() {
       databaseService.setActivePromptTemplate(templateId, type),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['active-prompt-template'] });
+    },
+  });
+}
+
+export function useCareersQuery(projectId: string) {
+  return useQuery({
+    queryKey: ['careers', projectId],
+    queryFn: () => novelApiService.getCareers(projectId),
+    enabled: !!projectId,
+  });
+}
+
+export function useCreateCareerMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) => novelApiService.createCareer(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['careers'] });
+    },
+  });
+}
+
+export function useUpdateCareerMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ careerId, data }: { careerId: string; data: Record<string, unknown> }) =>
+      novelApiService.updateCareer(careerId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['careers'] });
+    },
+  });
+}
+
+export function useDeleteCareerMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (careerId: string) => novelApiService.deleteCareer(careerId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['careers'] });
+    },
+  });
+}
+
+export function useForeshadowsQuery(projectId: string, params?: Record<string, unknown>) {
+  return useQuery({
+    queryKey: ['foreshadows', projectId, params],
+    queryFn: () => novelApiService.getForeshadows(projectId, params as Record<string, QueryValue>),
+    enabled: !!projectId,
+  });
+}
+
+export function useForeshadowStatsQuery(projectId: string, currentChapter?: number) {
+  return useQuery({
+    queryKey: ['foreshadow-stats', projectId, currentChapter],
+    queryFn: () => novelApiService.getForeshadowStats(projectId, currentChapter),
+    enabled: !!projectId,
+  });
+}
+
+export function useCreateForeshadowMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) => novelApiService.createForeshadow(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['foreshadows'] });
+      queryClient.invalidateQueries({ queryKey: ['foreshadow-stats'] });
+    },
+  });
+}
+
+export function useUpdateForeshadowMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ foreshadowId, data }: { foreshadowId: string; data: Record<string, unknown> }) =>
+      novelApiService.updateForeshadow(foreshadowId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['foreshadows'] });
+      queryClient.invalidateQueries({ queryKey: ['foreshadow-stats'] });
+    },
+  });
+}
+
+export function useDeleteForeshadowMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (foreshadowId: string) => novelApiService.deleteForeshadow(foreshadowId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['foreshadows'] });
+      queryClient.invalidateQueries({ queryKey: ['foreshadow-stats'] });
+    },
+  });
+}
+
+export function usePlantForeshadowMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ foreshadowId, data }: { foreshadowId: string; data: Record<string, unknown> }) =>
+      novelApiService.plantForeshadow(foreshadowId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['foreshadows'] });
+      queryClient.invalidateQueries({ queryKey: ['foreshadow-stats'] });
+    },
+  });
+}
+
+export function useResolveForeshadowMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ foreshadowId, data }: { foreshadowId: string; data: Record<string, unknown> }) =>
+      novelApiService.resolveForeshadow(foreshadowId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['foreshadows'] });
+      queryClient.invalidateQueries({ queryKey: ['foreshadow-stats'] });
+    },
+  });
+}
+
+export function useAbandonForeshadowMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ foreshadowId, reason }: { foreshadowId: string; reason?: string }) =>
+      novelApiService.abandonForeshadow(foreshadowId, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['foreshadows'] });
+      queryClient.invalidateQueries({ queryKey: ['foreshadow-stats'] });
+    },
+  });
+}
+
+export function useSyncForeshadowsMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ projectId, autoSetPlanted }: { projectId: string; autoSetPlanted?: boolean }) =>
+      novelApiService.syncForeshadowsFromAnalysis(projectId, autoSetPlanted),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['foreshadows'] });
+      queryClient.invalidateQueries({ queryKey: ['foreshadow-stats'] });
+    },
+  });
+}
+
+export function useBookImportTaskStatusQuery(taskId: string | null) {
+  return useQuery({
+    queryKey: ['book-import-task', taskId],
+    queryFn: () => novelApiService.getBookImportTaskStatus(taskId!),
+    enabled: !!taskId,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data && ['completed', 'failed', 'cancelled'].includes(data.status)) {
+        return false;
+      }
+      return 1500;
     },
   });
 }
