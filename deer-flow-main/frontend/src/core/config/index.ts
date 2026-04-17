@@ -38,3 +38,8 @@ export function getLangGraphBaseURL(isMock?: boolean) {
     return "http://localhost:2026/api/langgraph";
   }
 }
+
+export function getAuthHeaders(): Record<string, string> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}

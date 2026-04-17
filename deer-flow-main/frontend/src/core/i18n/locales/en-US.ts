@@ -376,6 +376,7 @@ export const enUS: Translations = {
     selectedText: "Selected text",
     typeMessage: "Type a message",
     contextEntities: "Context entities",
+    analysis: "Analysis",
     noEntities: (label: string) => `No ${label} yet`,
     deleteConfirm: (label: string) => `Are you sure you want to delete this ${label}?`,
   },

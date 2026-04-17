@@ -15,6 +15,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 
 import { novelApiService } from '@/core/novel/novel-api';
 import type { InspirationOption, InspirationWizardData } from '@/core/novel/schemas';
+import { AIProjectGenerator } from './AIProjectGenerator';
+import type { GenerationConfig } from './AIProjectGenerator';
 
 type Step = 'idea' | 'title' | 'description' | 'theme' | 'genre' | 'perspective' | 'outline_mode' | 'confirm';
 
@@ -42,6 +44,7 @@ export function InspirationMode() {
   const [showRefine, setShowRefine] = useState(false);
   const [refineText, setRefineText] = useState('');
   const [isMobile, setIsMobile] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -252,10 +255,24 @@ export function InspirationMode() {
   };
 
   const handleConfirmCreate = () => {
-    toast.success(`🎉 项目创建成功！《${wizardData.title}》`);
-    setMessages((prev) => [...prev, { type: 'ai', content: `✅ 项目《${wizardData.title}》已成功创建！\n\n你可以开始创作了。` }]);
-    setCurrentStep('confirm');
+    setIsGenerating(true);
+    setMessages((prev) => [...prev, { type: 'ai', content: `✅ 配置已确认！正在启动AI项目生成流程...\n\n《${wizardData.title}》即将诞生，请稍候。` }]);
     localStorage.removeItem('inspiration_conversation_cache');
+  };
+
+  const buildGenerationConfig = (): GenerationConfig | null => {
+    if (!wizardData.title) return null;
+    return {
+      title: wizardData.title,
+      description: wizardData.description,
+      theme: wizardData.theme,
+      genre: wizardData.genre,
+      narrative_perspective: wizardData.narrativePerspective,
+      target_words: 50000,
+      chapter_count: 30,
+      character_count: 5,
+      outline_mode: wizardData.outlineMode || 'one-to-many',
+    };
   };
 
   const handleRestart = () => {
@@ -266,6 +283,7 @@ export function InspirationMode() {
     setWizardData({ title: '', description: '', theme: '', genre: [], narrativePerspective: '', outlineMode: 'one-to-one' });
     setShowRefine(false);
     setRefineText('');
+    setIsGenerating(false);
     localStorage.removeItem('inspiration_conversation_cache');
   };
 
@@ -287,6 +305,24 @@ export function InspirationMode() {
   };
 
   const stepIndex = STEP_ORDER.indexOf(currentStep);
+
+  const generationConfig = buildGenerationConfig();
+
+  if (isGenerating && generationConfig) {
+    return (
+      <div className="flex h-full flex-col bg-background">
+        <AIProjectGenerator
+          config={generationConfig}
+          storagePrefix="inspiration"
+          onComplete={(projectId) => {
+            toast.success(`🎉 项目《${wizardData.title}》生成完成！`);
+          }}
+          onBack={() => setIsGenerating(false)}
+          isMobile={isMobile}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col bg-background">

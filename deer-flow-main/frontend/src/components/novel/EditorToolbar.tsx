@@ -46,16 +46,16 @@ export function EditorToolbar({ editor, novelId, className }: EditorToolbarProps
 
   const activeChapter = novelData?.chapters?.find((ch) => ch.id === activeChapterId);
 
-  const getSelectedText = () => {
+  const getSelectedText = useCallback(() => {
     const { from, to } = editor.state.selection;
     return editor.state.doc.textBetween(from, to);
-  };
+  }, [editor]);
 
-  const getTextBeforeCursor = () => {
+  const getTextBeforeCursor = useCallback(() => {
     const { from } = editor.state.selection;
     const start = Math.max(0, from - 1000);
     return editor.state.doc.textBetween(start, from);
-  };
+  }, [editor]);
 
   const handleContinueWriting = useCallback(async () => {
     if (!activeChapter || !activeChapterId || !editor) return;
@@ -122,7 +122,7 @@ export function EditorToolbar({ editor, novelId, className }: EditorToolbarProps
       }
       stopStreaming();
     }
-  }, [activeChapter, activeChapterId, editor, startStreaming, stopStreaming, addChunk]);
+  }, [activeChapter, activeChapterId, editor, startStreaming, stopStreaming, addChunk, getSelectedText, getTextBeforeCursor]);
 
   const isAnyPending = aiStream.isStreaming || isAnalyzing;
 

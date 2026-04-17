@@ -149,7 +149,7 @@ export function NovelWorkspace({ novelId }: { novelId: string }) {
 
         {viewMode === 'graph' && (
           <div className="h-full w-full animate-in fade-in duration-300 bg-background">
-            <RelationshipGraph novelId={novelId} />
+            <RelationshipGraph projectId={novelId} />
           </div>
         )}
 

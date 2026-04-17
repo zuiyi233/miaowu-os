@@ -10,7 +10,7 @@ interface AiStreamState {
 }
 
 interface AiPanelState {
-  activeTab: 'chat' | 'generate' | 'context';
+  activeTab: 'chat' | 'generate' | 'context' | 'analysis';
   aiStream: AiStreamState;
   selectedText: string | null;
   contextEntities: string[];

@@ -364,6 +364,7 @@ export const zhCN: Translations = {
     selectedText: "选中文本",
     typeMessage: "输入消息",
     contextEntities: "上下文实体",
+    analysis: "分析",
     noEntities: (label: string) => `还没有${label}`,
     deleteConfirm: (label: string) => `确定要删除这个${label}吗？`,
   },

@@ -126,6 +126,7 @@ interface NovelTranslations {
   selectedText: string;
   typeMessage: string;
   contextEntities: string;
+  analysis: string;
   noEntities: (label: string) => string;
   deleteConfirm: (label: string) => string;
 }

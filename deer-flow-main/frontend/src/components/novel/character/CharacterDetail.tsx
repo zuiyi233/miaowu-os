@@ -10,6 +10,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import type { Character } from '@/core/novel/schemas';
 
+import { CharacterCareerCard } from '../CharacterCareerCard';
+
 interface CharacterDetailProps {
   character: Character;
   onEdit?: () => void;
@@ -98,6 +100,14 @@ export const CharacterDetail: React.FC<CharacterDetailProps> = ({
             </CardContent>
           </Card>
         )}
+
+        <div className="mt-3">
+          <CharacterCareerCard
+            characterId={character.id}
+            projectId={character.novelId}
+            editable
+          />
+        </div>
       </ScrollArea>
 
       {character.factionId && (

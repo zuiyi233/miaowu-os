@@ -70,6 +70,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "codemirror": "^6.0.2",
+    "dagre": "^0.8.5",
     "date-fns": "^4.1.0",
     "dexie": "^4.0.11",
     "dotenv": "^17.2.3",
@@ -109,6 +110,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.1",
     "@tailwindcss/postcss": "^4.0.15",
+    "@types/dagre": "^0.7.54",
     "@types/gsap": "^3.0.0",
     "@types/node": "^20.14.10",
     "@types/react": "^19.0.0",
