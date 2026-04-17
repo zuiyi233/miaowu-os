@@ -31,6 +31,26 @@ router = APIRouter(prefix="/api/careers", tags=["职业管理"])
 logger = get_logger(__name__)
 
 
+def _safe_load_career_stages(career: Career):
+    if not career.stages:
+        return []
+    try:
+        return json.loads(career.stages)
+    except json.JSONDecodeError:
+        logger.warning("Invalid JSON for career %s field stages", career.id)
+        return []
+
+
+def _safe_load_career_attribute_bonuses(career: Career):
+    if not career.attribute_bonuses:
+        return None
+    try:
+        return json.loads(career.attribute_bonuses)
+    except json.JSONDecodeError:
+        logger.warning("Invalid JSON for career %s field attribute_bonuses", career.id)
+        return None
+
+
 @router.get("", response_model=CareerListResponse, summary="获取职业列表")
 async def get_careers(
     project_id: str,
@@ -61,8 +81,8 @@ async def get_careers(
     
     for career in careers:
         # 解析JSON字段
-        stages = json.loads(career.stages) if career.stages else []
-        attribute_bonuses = json.loads(career.attribute_bonuses) if career.attribute_bonuses else None
+        stages = _safe_load_career_stages(career)
+        attribute_bonuses = _safe_load_career_attribute_bonuses(career)
         
         career_dict = {
             "id": career.id,
@@ -489,8 +509,8 @@ async def update_career(
     logger.info(f"✅ 更新职业成功：{career.name} (ID: {career_id})")
     
     # 解析JSON返回
-    stages = json.loads(career.stages) if career.stages else []
-    attribute_bonuses = json.loads(career.attribute_bonuses) if career.attribute_bonuses else None
+    stages = _safe_load_career_stages(career)
+    attribute_bonuses = _safe_load_career_attribute_bonuses(career)
     
     return CareerResponse(
         id=career.id,
@@ -570,8 +590,8 @@ async def get_career(
     await verify_project_access(career.project_id, user_id, db)
     
     # 解析JSON字段
-    stages = json.loads(career.stages) if career.stages else []
-    attribute_bonuses = json.loads(career.attribute_bonuses) if career.attribute_bonuses else None
+    stages = _safe_load_career_stages(career)
+    attribute_bonuses = _safe_load_career_attribute_bonuses(career)
     
     return CareerResponse(
         id=career.id,
@@ -628,7 +648,7 @@ async def get_character_careers(
     
     for char_career, career in career_relations:
         # 解析职业的阶段信息
-        stages = json.loads(career.stages) if career.stages else []
+        stages = _safe_load_career_stages(career)
         
         # 找到当前阶段信息
         stage_name = "未知阶段"

@@ -66,6 +66,10 @@ async def create_book_import_task(
         tail_chapter_count=tail_chapter_count,
     )
 
+    file_size = getattr(file, "size", None)
+    if isinstance(file_size, int) and file_size > MAX_TXT_SIZE:
+        raise HTTPException(status_code=413, detail="文件大小超过 50MB 限制")
+
     content = await file.read()
     if len(content) > MAX_TXT_SIZE:
         raise HTTPException(status_code=413, detail="文件大小超过 50MB 限制")
