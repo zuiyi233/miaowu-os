@@ -6,7 +6,7 @@ const getLocale = (language?: string) => (language === "zh-CN" ? zhCN : enUS);
 export const formatDateFromNow = (timestamp: Date, language?: string): string =>
   formatDistanceToNow(timestamp, { addSuffix: true, locale: getLocale(language) });
 
-export const formatDateString = (date: Date): string => date.toISOString().split("T")[0];
+export const formatDateString = (date: Date): string => date.toISOString().slice(0, 10);
 
 export const formatDateTimeString = (date: Date): string => {
   const y = date.getFullYear(), mo = String(date.getMonth() + 1).padStart(2, "0"),

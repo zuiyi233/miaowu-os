@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { aiEventBus } from './ai-event-bus';
 
 interface AiStreamState {
   isStreaming: boolean;
@@ -18,6 +19,7 @@ interface AiPanelState {
   startStreaming: () => void;
   addChunk: (chunk: string) => void;
   stopStreaming: () => void;
+  setError: (error: string | null) => void;
   setSelectedText: (text: string | null) => void;
   setContextEntities: (entities: string[]) => void;
   addContextEntity: (entity: string) => void;
@@ -56,6 +58,9 @@ export const useAiPanelStore = create<AiPanelState>()((set) => ({
       latestChunk: null,
     },
   })),
+  setError: (error) => set((state) => ({
+    aiStream: { ...state.aiStream, error, isStreaming: false },
+  })),
   setSelectedText: (text) => set({ selectedText: text }),
   setContextEntities: (entities) => set({ contextEntities: entities }),
   addContextEntity: (entity) => set((state) => ({
@@ -67,3 +72,27 @@ export const useAiPanelStore = create<AiPanelState>()((set) => ({
     contextEntities: state.contextEntities.filter((e) => e !== entity),
   })),
 }));
+
+aiEventBus.on('stream_start', () => {
+  useAiPanelStore.getState().startStreaming();
+});
+
+aiEventBus.on('stream_chunk', (event) => {
+  const chunk = event.payload.chunk as string;
+  if (chunk) {
+    useAiPanelStore.getState().addChunk(chunk);
+  }
+});
+
+aiEventBus.on('stream_complete', () => {
+  useAiPanelStore.getState().stopStreaming();
+});
+
+aiEventBus.on('stream_error', (event) => {
+  const error = event.payload.error as string;
+  useAiPanelStore.getState().setError(error || 'AI 请求失败');
+});
+
+aiEventBus.on('stream_abort', () => {
+  useAiPanelStore.getState().stopStreaming();
+});

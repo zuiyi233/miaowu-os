@@ -1,4 +1,4 @@
-import { handleError, type StandardError, ErrorType } from "./errorHandler";
+import { handleError, type StandardError, ErrorType } from "./errorhandler";
 
 export interface RetryOptions {
   maxAttempts?: number;

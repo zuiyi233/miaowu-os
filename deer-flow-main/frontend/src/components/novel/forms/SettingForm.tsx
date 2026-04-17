@@ -26,7 +26,8 @@ const settingFormSchema = z.object({
   keyFeatures: z.string().optional(),
 });
 
-type SettingFormData = z.infer<typeof settingFormSchema>;
+type SettingFormInput = z.input<typeof settingFormSchema>;
+type SettingFormOutput = z.output<typeof settingFormSchema>;
 
 interface SettingFormProps {
   novelId: string;
@@ -35,7 +36,7 @@ interface SettingFormProps {
 
 export const SettingForm: React.FC<SettingFormProps> = ({ novelId, onSubmitSuccess }) => {
   const addSetting = useAddSettingMutation(novelId);
-  const form = useForm<SettingFormData>({
+  const form = useForm<SettingFormInput, unknown, SettingFormOutput>({
     resolver: zodResolver(settingFormSchema),
     defaultValues: {
       name: '',
@@ -47,7 +48,7 @@ export const SettingForm: React.FC<SettingFormProps> = ({ novelId, onSubmitSucce
     },
   });
 
-  const onSubmit = (data: SettingFormData) => {
+  const onSubmit = (data: SettingFormOutput) => {
     const setting = {
       id: crypto.randomUUID(),
       ...data,

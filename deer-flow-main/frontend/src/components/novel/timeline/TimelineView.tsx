@@ -28,21 +28,21 @@ import { useTimelineEventsQuery, useAddTimelineEventMutation, useDeleteTimelineE
 import type { TimelineEvent } from '@/core/novel/schemas';
 
 interface TimelineViewProps {
-  novelTitle: string;
+  novelId: string;
 }
 
-export function TimelineView({ novelTitle }: TimelineViewProps) {
-  const { data: events } = useTimelineEventsQuery(novelTitle);
+export function TimelineView({ novelId }: TimelineViewProps) {
+  const { data: events } = useTimelineEventsQuery(novelId);
   const [showCreate, setShowCreate] = useState(false);
   const [editingEvent, setEditingEvent] = useState<TimelineEvent | null>(null);
 
-  const addMutation = useAddTimelineEventMutation(novelTitle);
+  const addMutation = useAddTimelineEventMutation(novelId);
   const deleteMutation = useDeleteTimelineEventMutation();
 
   const handleCreate = async (data: any) => {
     await addMutation.mutateAsync({
       id: crypto.randomUUID(),
-      novelTitle,
+      novelId,
       ...data,
     });
     setShowCreate(false);

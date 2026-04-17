@@ -51,7 +51,7 @@ export function NovelHome() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {novels.map((novel) => (
-              <Link key={novel.title} href={`/workspace/novel/${encodeURIComponent(novel.title)}`}>
+              <Link key={novel.id} href={`/workspace/novel/${encodeURIComponent(novel.id)}`}>
                 <Card className="h-full cursor-pointer transition-all hover:shadow-md">
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-lg">

@@ -1,0 +1,68 @@
+{
+  "novels": {
+    "novel-1483b1229933": {
+      "id": "novel-1483b1229933",
+      "title": "Smoke Novel",
+      "outline": "",
+      "coverImage": null,
+      "metadata": {},
+      "syncStatus": "local",
+      "version": 1,
+      "createdAt": "2026-04-17T08:31:34.140105+00:00",
+      "updatedAt": "2026-04-17T08:31:34.140105+00:00"
+    }
+  },
+  "chapters": {
+    "chapter-a85048372d22": {
+      "id": "chapter-a85048372d22",
+      "novelId": "novel-1483b1229933",
+      "title": "ch1",
+      "content": "",
+      "volumeId": null,
+      "order": 0,
+      "description": null,
+      "summary": null,
+      "syncStatus": "local",
+      "version": 1,
+      "createdAt": "2026-04-17T08:31:34.157444+00:00",
+      "updatedAt": "2026-04-17T08:31:34.157444+00:00"
+    }
+  },
+  "characters": {},
+  "entities": {},
+  "timeline": {},
+  "graphs": {},
+  "recommendations": {},
+  "interactions": {},
+  "quality_reports": {},
+  "audits": {
+    "novel-1483b1229933": [
+      {
+        "id": "audit-55b0f97841ad",
+        "novelId": "novel-1483b1229933",
+        "action": "novel.create",
+        "entityType": "novel",
+        "entityId": "novel-1483b1229933",
+        "author": "system",
+        "details": {
+          "title": "Smoke Novel",
+          "version": 1
+        },
+        "createdAt": "2026-04-17T08:31:34.140176+00:00"
+      },
+      {
+        "id": "audit-1bee22ffc7cc",
+        "novelId": "novel-1483b1229933",
+        "action": "chapter.create",
+        "entityType": "chapter",
+        "entityId": "chapter-a85048372d22",
+        "author": "system",
+        "details": {
+          "title": "ch1",
+          "order": 0
+        },
+        "createdAt": "2026-04-17T08:31:34.157475+00:00"
+      }
+    ]
+  }
+}

@@ -1,0 +1,352 @@
+'use client';
+
+import { useCallback, useMemo, useState } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { AlertCircle, CheckCircle, Info, Loader2, Shield, TrendingUp, Users, FileText, Calendar } from 'lucide-react';
+import type { Chapter, Character, TimelineEvent } from '@/core/novel/schemas';
+import { novelApiService } from '@/core/novel/novel-api';
+
+interface QualityIssue {
+  type: string;
+  severity: 'warning' | 'error' | 'info' | 'success';
+  message: string;
+  details?: Record<string, any>;
+  relatedIds?: string[];
+}
+
+interface QualityReport {
+  novelId: string;
+  score: number;
+  metrics: {
+    wordCount: number;
+    chapterCount: number;
+    characterCount: number;
+    timelineEventCount: number;
+  };
+  issues: QualityIssue[];
+  generatedAt: string;
+}
+
+interface QualityReportPanelProps {
+  novelId: string;
+  chapters: Chapter[];
+  characters: Character[];
+  timelineEvents: TimelineEvent[];
+}
+
+async function fetchQualityReport(novelId: string): Promise<QualityReport> {
+  const remote = await novelApiService.getQualityReport(novelId) as Partial<QualityReport>;
+  return {
+    novelId,
+    score: typeof remote.score === 'number' ? remote.score : 0,
+    metrics: {
+      wordCount: remote.metrics?.wordCount ?? 0,
+      chapterCount: remote.metrics?.chapterCount ?? 0,
+      characterCount: remote.metrics?.characterCount ?? 0,
+      timelineEventCount: remote.metrics?.timelineEventCount ?? 0,
+    },
+    issues: Array.isArray(remote.issues) ? remote.issues : [],
+    generatedAt: typeof remote.generatedAt === 'string' ? remote.generatedAt : new Date().toISOString(),
+  };
+}
+
+const severityIcons: Record<string, React.ReactNode> = {
+  error: <AlertCircle className="h-4 w-4 text-red-500" />,
+  warning: <AlertCircle className="h-4 w-4 text-yellow-500" />,
+  info: <Info className="h-4 w-4 text-blue-500" />,
+  success: <CheckCircle className="h-4 w-4 text-green-500" />,
+};
+
+const severityColors: Record<string, string> = {
+  error: 'bg-red-100 text-red-800',
+  warning: 'bg-yellow-100 text-yellow-800',
+  info: 'bg-blue-100 text-blue-800',
+  success: 'bg-green-100 text-green-800',
+};
+
+const severityLabels: Record<string, string> = {
+  error: '错误',
+  warning: '警告',
+  info: '提示',
+  success: '通过',
+};
+
+export function QualityReportPanel({ novelId, chapters, characters, timelineEvents }: QualityReportPanelProps) {
+  const [activeTab, setActiveTab] = useState('overview');
+
+  const { data: report, isLoading, refetch } = useQuery({
+    queryKey: ['quality-report', novelId],
+    queryFn: () => fetchQualityReport(novelId),
+  });
+
+  const localReport = useMemo((): QualityReport => {
+    const totalWords = chapters.reduce((acc, ch) => {
+      const text = ch.content?.replace(/<[^>]*>/g, '') || '';
+      return acc + text.length;
+    }, 0);
+
+    const issues: QualityIssue[] = [];
+
+    if (totalWords < 1000) {
+      issues.push({
+        type: 'low_word_count',
+        severity: 'warning',
+        message: `当前总字数仅 ${totalWords} 字，建议继续丰富内容。`,
+        details: { wordCount: totalWords },
+      });
+    }
+
+    const charNames = characters.map((c) => c.name).filter(Boolean);
+    const contentText = chapters.map((c) => c.content?.replace(/<[^>]*>/g, '') || '').join(' ');
+    const unreferencedChars = charNames.filter((name) => !contentText.includes(name));
+    if (unreferencedChars.length > 0) {
+      issues.push({
+        type: 'unreferenced_characters',
+        severity: 'warning',
+        message: `${unreferencedChars.length} 个角色未在正文中出现: ${unreferencedChars.slice(0, 5).join(', ')}${unreferencedChars.length > 5 ? '...' : ''}`,
+        details: { unreferenced: unreferencedChars },
+      });
+    }
+
+    const chaptersWithoutSummary = chapters.filter((c) => !c.summary).length;
+    if (chaptersWithoutSummary > chapters.length * 0.5 && chapters.length > 3) {
+      issues.push({
+        type: 'missing_chapter_summaries',
+        severity: 'info',
+        message: `${chaptersWithoutSummary} 章缺少摘要，建议为章节添加摘要以便更好的结构管理。`,
+      });
+    }
+
+    const orphanTimelineEvents = timelineEvents.filter((e) => !e.relatedChapterId).length;
+    if (orphanTimelineEvents > timelineEvents.length * 0.3 && timelineEvents.length > 0) {
+      issues.push({
+        type: 'unlinked_timeline_events',
+        severity: 'info',
+        message: `${orphanTimelineEvents} 个时间线事件未关联到具体章节。`,
+      });
+    }
+
+    if (characters.length === 0) {
+      issues.push({
+        type: 'no_characters',
+        severity: 'error',
+        message: '小说暂无角色设定，建议先建立角色档案。',
+      });
+    }
+
+    const score = Math.min(100, Math.max(0, 60 + chapters.length * 5 + characters.length * 3 + (totalWords > 5000 ? 10 : 0) - issues.filter((i) => i.severity === 'error').length * 15 - issues.filter((i) => i.severity === 'warning').length * 5));
+
+    return {
+      novelId,
+      score,
+      metrics: {
+        wordCount: totalWords,
+        chapterCount: chapters.length,
+        characterCount: characters.length,
+        timelineEventCount: timelineEvents.length,
+      },
+      issues,
+      generatedAt: new Date().toISOString(),
+    };
+  }, [chapters, characters, timelineEvents, novelId]);
+
+  const displayReport = report || localReport;
+
+  const issueCounts = useMemo(() => ({
+    error: displayReport.issues.filter((i) => i.severity === 'error').length,
+    warning: displayReport.issues.filter((i) => i.severity === 'warning').length,
+    info: displayReport.issues.filter((i) => i.severity === 'info').length,
+    success: displayReport.issues.filter((i) => i.severity === 'success').length,
+  }), [displayReport]);
+
+  const getScoreColor = (score: number) => {
+    if (score >= 80) return 'text-green-600';
+    if (score >= 60) return 'text-yellow-600';
+    return 'text-red-600';
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Shield className="h-5 w-5" />
+            <CardTitle>质量评估</CardTitle>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            <Loader2 className={`mr-1 h-3 w-3 ${isLoading ? 'animate-spin' : ''}`} />
+            刷新
+          </Button>
+        </div>
+        <CardDescription>AI 自动检测内容质量和一致性问题</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {/* Score circle */}
+        <div className="flex items-center justify-center mb-6">
+          <div className="relative w-32 h-32">
+            <svg className="w-32 h-32 -rotate-90" viewBox="0 0 120 120">
+              <circle cx="60" cy="60" r="54" fill="none" stroke="#e5e7eb" strokeWidth="8" />
+              <circle
+                cx="60"
+                cy="60"
+                r="54"
+                fill="none"
+                stroke={displayReport.score >= 80 ? '#22c55e' : displayReport.score >= 60 ? '#eab308' : '#ef4444'}
+                strokeWidth="8"
+                strokeDasharray={`${displayReport.score * 3.39} 339`}
+                strokeLinecap="round"
+              />
+            </svg>
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <span className={`text-3xl font-bold ${getScoreColor(displayReport.score)}`}>
+                {displayReport.score}
+              </span>
+              <span className="text-xs text-muted-foreground">质量分</span>
+            </div>
+          </div>
+        </div>
+
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="w-full">
+            <TabsTrigger value="overview" className="flex-1">概览</TabsTrigger>
+            <TabsTrigger value="issues" className="flex-1">
+              问题 {issueCounts.error + issueCounts.warning > 0 && (
+                <Badge className="ml-1 bg-red-100 text-red-800 text-xs">
+                  {issueCounts.error + issueCounts.warning}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="metrics" className="flex-1">指标</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="overview" className="space-y-4 mt-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 bg-muted rounded-lg">
+                <div className="flex items-center gap-2 mb-1">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground">字数</span>
+                </div>
+                <p className="text-lg font-bold">{displayReport.metrics.wordCount.toLocaleString()}</p>
+              </div>
+              <div className="p-3 bg-muted rounded-lg">
+                <div className="flex items-center gap-2 mb-1">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground">章节</span>
+                </div>
+                <p className="text-lg font-bold">{displayReport.metrics.chapterCount}</p>
+              </div>
+              <div className="p-3 bg-muted rounded-lg">
+                <div className="flex items-center gap-2 mb-1">
+                  <Users className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground">角色</span>
+                </div>
+                <p className="text-lg font-bold">{displayReport.metrics.characterCount}</p>
+              </div>
+              <div className="p-3 bg-muted rounded-lg">
+                <div className="flex items-center gap-2 mb-1">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground">时间线</span>
+                </div>
+                <p className="text-lg font-bold">{displayReport.metrics.timelineEventCount}</p>
+              </div>
+            </div>
+
+            {/* Issue summary */}
+            <div className="flex flex-wrap gap-2">
+              {issueCounts.error > 0 && (
+                <Badge className={severityColors.error}>
+                  {issueCounts.error} 错误
+                </Badge>
+              )}
+              {issueCounts.warning > 0 && (
+                <Badge className={severityColors.warning}>
+                  {issueCounts.warning} 警告
+                </Badge>
+              )}
+              {issueCounts.info > 0 && (
+                <Badge className={severityColors.info}>
+                  {issueCounts.info} 提示
+                </Badge>
+              )}
+              {issueCounts.success > 0 && (
+                <Badge className={severityColors.success}>
+                  {issueCounts.success} 通过
+                </Badge>
+              )}
+              {displayReport.issues.length === 0 && (
+                <Badge className={severityColors.success}>全部通过</Badge>
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="issues" className="space-y-3 mt-4">
+            {displayReport.issues.length === 0 ? (
+              <div className="text-center py-8">
+                <CheckCircle className="mx-auto h-8 w-8 text-green-500 mb-2" />
+                <p className="text-sm text-muted-foreground">没有发现问题，内容质量良好！</p>
+              </div>
+            ) : (
+              displayReport.issues
+                .sort((a, b) => {
+                  const order = { error: 0, warning: 1, info: 2, success: 3 };
+                  return (order[a.severity] || 0) - (order[b.severity] || 0);
+                })
+                .map((issue, i) => (
+                  <div key={i} className="flex items-start gap-3 p-3 border rounded-lg">
+                    {severityIcons[issue.severity]}
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Badge className={`text-xs ${severityColors[issue.severity]}`}>
+                          {severityLabels[issue.severity]}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">{issue.type}</span>
+                      </div>
+                      <p className="text-sm">{issue.message}</p>
+                    </div>
+                  </div>
+                ))
+            )}
+          </TabsContent>
+
+          <TabsContent value="metrics" className="space-y-4 mt-4">
+            <div className="space-y-3">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-medium">字数进度</span>
+                  <span className="text-xs text-muted-foreground">{displayReport.metrics.wordCount.toLocaleString()} / 5000</span>
+                </div>
+                <Progress value={Math.min(100, (displayReport.metrics.wordCount / 5000) * 100)} />
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-medium">章节密度</span>
+                  <span className="text-xs text-muted-foreground">{displayReport.metrics.chapterCount} 章</span>
+                </div>
+                <Progress value={Math.min(100, displayReport.metrics.chapterCount * 10)} />
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-medium">角色丰富度</span>
+                  <span className="text-xs text-muted-foreground">{displayReport.metrics.characterCount} 角色</span>
+                </div>
+                <Progress value={Math.min(100, displayReport.metrics.characterCount * 20)} />
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-medium">时间线完整度</span>
+                  <span className="text-xs text-muted-foreground">{displayReport.metrics.timelineEventCount} 事件</span>
+                </div>
+                <Progress value={Math.min(100, displayReport.metrics.timelineEventCount * 15)} />
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
+  );
+}

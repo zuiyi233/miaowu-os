@@ -21,24 +21,22 @@ import {
   X,
   Search,
 } from 'lucide-react';
-import { useI18n } from '@/core/i18n/hooks';
 import { useAiPanelStore, useNovelStore } from '@/core/novel';
 import { novelAiService } from '@/core/novel/ai-service';
-import { useNovelQuery, useUpdateChapterMutation } from '@/core/novel/queries';
+import { useNovelQuery } from '@/core/novel/queries';
 import { useState, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 
 interface EditorToolbarProps {
   editor: Editor | null;
+  novelId: string;
   className?: string;
 }
 
-export function EditorToolbar({ editor, className }: EditorToolbarProps) {
-  const { t } = useI18n();
-  const { data: novelData } = useNovelQuery('');
+export function EditorToolbar({ editor, novelId, className }: EditorToolbarProps) {
+  const { data: novelData } = useNovelQuery(novelId);
   const { activeChapterId } = useNovelStore();
-  const updateChapterMutation = useUpdateChapterMutation();
-  const { startStreaming, stopStreaming, aiStream } = useAiPanelStore();
+  const { startStreaming, stopStreaming, addChunk, aiStream } = useAiPanelStore();
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -60,6 +58,11 @@ export function EditorToolbar({ editor, className }: EditorToolbarProps) {
     return editor.state.doc.textBetween(start, from);
   };
 
+  const insertAtCursor = (text: string) => {
+    const { from, to } = editor.state.selection;
+    editor.chain().focus().insertContentAt({ from, to }, text).run();
+  };
+
   const handleReplaceText = async (action: 'polish' | 'expand' | 'condense' | 'rewrite') => {
     const selectedText = getSelectedText();
     if (!selectedText) return;
@@ -70,28 +73,37 @@ export function EditorToolbar({ editor, className }: EditorToolbarProps) {
     startStreaming();
 
     try {
-      let result: string;
-      switch (action) {
-        case 'polish':
-          result = await novelAiService.polishText(selectedText);
-          break;
-        case 'expand':
-          result = await novelAiService.expandScene(selectedText, {});
-          break;
-        case 'condense':
-          result = await novelAiService.condenseText(selectedText);
-          break;
-        case 'rewrite':
-          result = await novelAiService.rewriteText(selectedText);
-          break;
-        default:
-          return;
-      }
-
-      if (result) {
-        editor.chain().focus().insertContentAt({ from, to }, result).run();
-      }
-      stopStreaming();
+      const result = await novelAiService.chat({
+        messages: [
+          {
+            role: 'system',
+            content: getSystemPrompt(action),
+          },
+          {
+            role: 'user',
+            content: getUserContent(action, selectedText),
+          },
+        ],
+        novelId,
+        stream: true,
+      }, {
+        onChunk: (chunk) => {
+          addChunk(chunk);
+        },
+        onComplete: (fullText) => {
+          if (fullText) {
+            editor.chain().focus().insertContentAt({ from, to }, fullText).run();
+          }
+          stopStreaming();
+        },
+        onError: (error) => {
+          toast.error(`${action} 操作失败`, { description: error.message });
+          stopStreaming();
+        },
+        onAbort: () => {
+          stopStreaming();
+        },
+      });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         stopStreaming();
@@ -122,22 +134,52 @@ export function EditorToolbar({ editor, className }: EditorToolbarProps) {
         ? contextText
         : `请继续以下章节的内容，保持情节连贯：\n\n${textOnly}`;
 
-      await novelAiService.continueWriting(prompt, {
-        outline: activeChapter.description || '',
-        content: textOnly,
-      }, abortRef.current.signal);
-
-      if (!selectedText) {
-        editor.commands.focus('end');
-      }
-      stopStreaming();
+      await novelAiService.chat({
+        messages: [
+          {
+            role: 'system',
+            content: `你是一个小说续写助手。基于以下上下文信息，继续写故事。保持角色性格一致，情节连贯。
+大纲：${activeChapter.description || ''}
+原文：${textOnly}`,
+          },
+          {
+            role: 'user',
+            content: `请继续以下章节的内容：\n${prompt}`,
+          },
+        ],
+        novelId,
+        stream: true,
+      }, {
+        onChunk: (chunk) => {
+          addChunk(chunk);
+        },
+        onComplete: (fullText) => {
+          if (fullText) {
+            if (!selectedText) {
+              editor.commands.insertContent(fullText);
+              editor.commands.focus('end');
+            } else {
+              editor.chain().focus().insertContent(fullText).run();
+            }
+          }
+          stopStreaming();
+        },
+        onError: (error) => {
+          toast.error('续写失败', { description: error.message });
+          stopStreaming();
+        },
+        onAbort: () => {
+          stopStreaming();
+        },
+        abortSignal: abortRef.current.signal,
+      });
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) {
         toast.error('续写失败', { description: '请稍后重试' });
       }
       stopStreaming();
     }
-  }, [activeChapter, activeChapterId, editor, startStreaming, stopStreaming]);
+  }, [activeChapter, activeChapterId, editor, startStreaming, stopStreaming, addChunk]);
 
   const handleAbort = () => {
     abortRef.current?.abort();
@@ -309,4 +351,34 @@ export function EditorToolbar({ editor, className }: EditorToolbarProps) {
       )}
     </div>
   );
+}
+
+function getSystemPrompt(action: 'polish' | 'expand' | 'condense' | 'rewrite'): string {
+  switch (action) {
+    case 'polish':
+      return '你是一个专业的文字润色助手。改进文字表达的流畅度、用词准确性和文学性，但不要改变原文的核心意思。';
+    case 'expand':
+      return '你是一个场景扩写助手。将简短的场景描述扩写成详细的叙述，增加细节和情感描写。';
+    case 'condense':
+      return '你是一个文字精简助手。请将段落精简压缩，保留核心情节和关键信息，去除冗余描写。不要改变原文的核心意思。';
+    case 'rewrite':
+      return '你是一个文字改写助手。请用更加生动、引人入胜的方式重写以下段落，保持原意不变但提升文学性和可读性。';
+    default:
+      return '';
+  }
+}
+
+function getUserContent(action: 'polish' | 'expand' | 'condense' | 'rewrite', text: string): string {
+  switch (action) {
+    case 'polish':
+      return `请润色以下文字：\n${text}`;
+    case 'expand':
+      return `请扩写以下场景：\n${text}`;
+    case 'condense':
+      return `请精简以下文字：\n${text}`;
+    case 'rewrite':
+      return `请重写以下文字：\n${text}`;
+    default:
+      return '';
+  }
 }

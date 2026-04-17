@@ -46,6 +46,17 @@ export const DEFAULT_STYLES: WritingStyle[] = [
   },
 ];
 
+const getFallbackStyle = (): WritingStyle => {
+  return (
+    DEFAULT_STYLES[0] ?? {
+      id: "default",
+      name: "默认文风",
+      description: "默认写作风格",
+      systemPrompt: "",
+    }
+  );
+};
+
 interface StyleState {
   styles: WritingStyle[];
   activeStyleId: string;
@@ -60,7 +71,7 @@ interface StyleState {
 
 export const useStyleStore = create<StyleState>()((set, get) => ({
   styles: DEFAULT_STYLES,
-  activeStyleId: DEFAULT_STYLES[0].id,
+  activeStyleId: getFallbackStyle().id,
 
   setActiveStyleId: (id) => set({ activeStyleId: id }),
 
@@ -95,7 +106,9 @@ export const useStyleStore = create<StyleState>()((set, get) => ({
     set((state) => {
       const newStyles = state.styles.filter((s) => s.id !== id);
       const nextActiveId =
-        state.activeStyleId === id ? newStyles[0].id : state.activeStyleId;
+        state.activeStyleId === id
+          ? (newStyles[0]?.id ?? getFallbackStyle().id)
+          : state.activeStyleId;
       return {
         styles: newStyles,
         activeStyleId: nextActiveId,
@@ -104,7 +117,7 @@ export const useStyleStore = create<StyleState>()((set, get) => ({
   },
 
   resetStyles: () => {
-    set({ styles: DEFAULT_STYLES, activeStyleId: DEFAULT_STYLES[0].id });
+    set({ styles: DEFAULT_STYLES, activeStyleId: getFallbackStyle().id });
   },
 
   isBuiltInStyle: (id) => {
@@ -113,6 +126,6 @@ export const useStyleStore = create<StyleState>()((set, get) => ({
 
   getActiveStyle: () => {
     const { styles, activeStyleId } = get();
-    return styles.find((s) => s.id === activeStyleId) || styles[0];
+    return styles.find((s) => s.id === activeStyleId) ?? styles[0] ?? getFallbackStyle();
   },
 }));

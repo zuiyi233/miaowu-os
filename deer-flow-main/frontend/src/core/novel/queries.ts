@@ -2,12 +2,32 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { databaseService } from './database';
+import { executeRemoteFirst, novelApiService } from './novel-api';
 import type { Novel, Chapter, Character, Setting, Faction, Item, PromptTemplate, EntityRelationship, TimelineEvent, GraphLayout, Volume } from './schemas';
+import { emitNovelEvent } from './observability';
 
 export function useNovelQuery(novelTitle?: string) {
   return useQuery({
     queryKey: ['novel', novelTitle],
-    queryFn: () => databaseService.loadNovel(novelTitle!),
+    queryFn: async () => {
+      const novel = await executeRemoteFirst(
+        () => novelApiService.getNovelByIdOrTitle(novelTitle!),
+        () => databaseService.loadNovel(novelTitle!),
+        'useNovelQuery',
+        async (novel) => {
+          if (novel) {
+            await databaseService.saveNovel(novel);
+          }
+        },
+      );
+      if (novel) {
+        emitNovelEvent('novel_open', {
+          novelId: novel.id,
+          novelTitle: novel.title,
+        });
+      }
+      return novel;
+    },
     enabled: !!novelTitle,
   });
 }
@@ -15,7 +35,12 @@ export function useNovelQuery(novelTitle?: string) {
 export function useAllNovelsQuery() {
   return useQuery({
     queryKey: ['novels'],
-    queryFn: () => databaseService.getAllNovels(),
+    queryFn: () =>
+      executeRemoteFirst(
+        () => novelApiService.getNovels(),
+        () => databaseService.getAllNovels(),
+        'useAllNovelsQuery',
+      ),
   });
 }
 
@@ -30,7 +55,12 @@ export function useUpdateNovelMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ novelId, updates }: { novelId: string | number; updates: Partial<Novel> }) =>
-      databaseService.updateNovel(novelId, updates),
+      executeRemoteFirst(
+        () => novelApiService.updateNovel(novelId, updates).then(() => undefined),
+        () => databaseService.updateNovel(novelId, updates),
+        'useUpdateNovelMutation',
+        () => databaseService.updateNovel(novelId, updates),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['novel'] });
       queryClient.invalidateQueries({ queryKey: ['novels'] });
@@ -43,7 +73,10 @@ export function useUpdateChapterMutation() {
   return useMutation({
     mutationFn: ({ chapterId, content }: { chapterId: string; content: string }) =>
       databaseService.updateChapterContent(chapterId, content),
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
+      emitNovelEvent('chapter_save', {
+        chapterId: variables.chapterId,
+      });
       queryClient.invalidateQueries({ queryKey: ['novel'] });
     },
   });
@@ -67,7 +100,13 @@ export function useChapterSnapshotsQuery(chapterId?: string) {
 export function useAddCharacterMutation(novelId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (character: Character) => databaseService.addCharacter(character, novelId),
+    mutationFn: (character: Character) =>
+      executeRemoteFirst(
+        () => novelApiService.createCharacter(novelId, character).then(() => undefined),
+        () => databaseService.addCharacter(character, novelId),
+        'useAddCharacterMutation',
+        () => databaseService.addCharacter(character, novelId),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['novel', novelId] });
     },
@@ -77,7 +116,13 @@ export function useAddCharacterMutation(novelId: string) {
 export function useUpdateCharacterMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (character: Character) => databaseService.updateCharacter(character),
+    mutationFn: (character: Character) =>
+      executeRemoteFirst(
+        () => novelApiService.updateCharacter(character).then(() => undefined),
+        () => databaseService.updateCharacter(character),
+        'useUpdateCharacterMutation',
+        () => databaseService.updateCharacter(character),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['novel'] });
     },
@@ -97,7 +142,13 @@ export function useDeleteCharacterMutation() {
 export function useAddFactionMutation(novelId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (faction: Faction) => databaseService.addFaction(faction, novelId),
+    mutationFn: (faction: Faction) =>
+      executeRemoteFirst(
+        () => novelApiService.createFaction(novelId, faction).then(() => undefined),
+        () => databaseService.addFaction(faction, novelId),
+        'useAddFactionMutation',
+        () => databaseService.addFaction(faction, novelId),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['novel', novelId] });
     },
@@ -107,7 +158,13 @@ export function useAddFactionMutation(novelId: string) {
 export function useUpdateFactionMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (faction: Faction) => databaseService.updateFaction(faction),
+    mutationFn: (faction: Faction) =>
+      executeRemoteFirst(
+        () => novelApiService.updateFaction(faction).then(() => undefined),
+        () => databaseService.updateFaction(faction),
+        'useUpdateFactionMutation',
+        () => databaseService.updateFaction(faction),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['novel'] });
     },
@@ -127,7 +184,13 @@ export function useDeleteFactionMutation() {
 export function useAddSettingMutation(novelId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (setting: Setting) => databaseService.addSetting(setting, novelId),
+    mutationFn: (setting: Setting) =>
+      executeRemoteFirst(
+        () => novelApiService.createSetting(novelId, setting).then(() => undefined),
+        () => databaseService.addSetting(setting, novelId),
+        'useAddSettingMutation',
+        () => databaseService.addSetting(setting, novelId),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['novel', novelId] });
     },
@@ -137,7 +200,13 @@ export function useAddSettingMutation(novelId: string) {
 export function useUpdateSettingMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (setting: Setting) => databaseService.updateSetting(setting),
+    mutationFn: (setting: Setting) =>
+      executeRemoteFirst(
+        () => novelApiService.updateSetting(setting).then(() => undefined),
+        () => databaseService.updateSetting(setting),
+        'useUpdateSettingMutation',
+        () => databaseService.updateSetting(setting),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['novel'] });
     },
@@ -157,7 +226,13 @@ export function useDeleteSettingMutation() {
 export function useAddItemMutation(novelId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (item: Item) => databaseService.addItem(item, novelId),
+    mutationFn: (item: Item) =>
+      executeRemoteFirst(
+        () => novelApiService.createItem(novelId, item).then(() => undefined),
+        () => databaseService.addItem(item, novelId),
+        'useAddItemMutation',
+        () => databaseService.addItem(item, novelId),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['novel', novelId] });
     },
@@ -167,7 +242,13 @@ export function useAddItemMutation(novelId: string) {
 export function useUpdateItemMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (item: Item) => databaseService.updateItem(item),
+    mutationFn: (item: Item) =>
+      executeRemoteFirst(
+        () => novelApiService.updateItem(item).then(() => undefined),
+        () => databaseService.updateItem(item),
+        'useUpdateItemMutation',
+        () => databaseService.updateItem(item),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['novel'] });
     },
@@ -208,7 +289,12 @@ export function useAddChapterMutation(novelId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ chapter, volumeId }: { chapter: Chapter; volumeId?: string }) =>
-      databaseService.addChapter(chapter, novelId, volumeId),
+      executeRemoteFirst(
+        () => novelApiService.createChapter(novelId, { ...chapter, volumeId }).then(() => undefined),
+        () => databaseService.addChapter(chapter, novelId, volumeId),
+        'useAddChapterMutation',
+        () => databaseService.addChapter(chapter, novelId, volumeId),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['novel', novelId] });
     },
@@ -253,7 +339,15 @@ export function useRelationshipsQuery(novelId?: string) {
 export function useTimelineEventsQuery(novelId: string) {
   return useQuery({
     queryKey: ['timeline-events', novelId],
-    queryFn: () => databaseService.getTimelineEvents(novelId),
+    queryFn: () =>
+      executeRemoteFirst(
+        () => novelApiService.getTimelineEvents(novelId),
+        () => databaseService.getTimelineEvents(novelId),
+        'useTimelineEventsQuery',
+        async (events) => {
+          await Promise.all(events.map((event) => databaseService.updateTimelineEvent(event)));
+        },
+      ),
     enabled: !!novelId,
   });
 }
@@ -261,7 +355,17 @@ export function useTimelineEventsQuery(novelId: string) {
 export function useGraphLayoutQuery(novelId: string) {
   return useQuery({
     queryKey: ['graph-layout', novelId],
-    queryFn: () => databaseService.getGraphLayout(novelId),
+    queryFn: () =>
+      executeRemoteFirst(
+        () => novelApiService.getGraphLayout(novelId),
+        () => databaseService.getGraphLayout(novelId),
+        'useGraphLayoutQuery',
+        (layout) => {
+          if (layout) {
+            return databaseService.saveGraphLayout(layout);
+          }
+        },
+      ),
     enabled: !!novelId,
   });
 }
@@ -269,7 +373,13 @@ export function useGraphLayoutQuery(novelId: string) {
 export function useSaveGraphLayoutMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (layout: GraphLayout) => databaseService.saveGraphLayout(layout),
+    mutationFn: (layout: GraphLayout) =>
+      executeRemoteFirst(
+        () => novelApiService.saveGraphLayout(layout).then(() => undefined),
+        () => databaseService.saveGraphLayout(layout),
+        'useSaveGraphLayoutMutation',
+        () => databaseService.saveGraphLayout(layout),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['graph-layout'] });
     },
@@ -279,7 +389,13 @@ export function useSaveGraphLayoutMutation() {
 export function useAddTimelineEventMutation(novelId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (event: TimelineEvent) => databaseService.addTimelineEvent(event, novelId),
+    mutationFn: (event: TimelineEvent) =>
+      executeRemoteFirst(
+        () => novelApiService.addTimelineEvent(novelId, event).then(() => undefined),
+        () => databaseService.addTimelineEvent(event, novelId),
+        'useAddTimelineEventMutation',
+        () => databaseService.addTimelineEvent(event, novelId),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['timeline-events', novelId] });
     },
@@ -289,7 +405,16 @@ export function useAddTimelineEventMutation(novelId: string) {
 export function useUpdateTimelineEventMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (event: TimelineEvent) => databaseService.updateTimelineEvent(event),
+    mutationFn: (event: TimelineEvent) =>
+      executeRemoteFirst(
+        () =>
+          novelApiService
+            .updateTimelineEvent(event.novelId, event.id, event)
+            .then(() => undefined),
+        () => databaseService.updateTimelineEvent(event),
+        'useUpdateTimelineEventMutation',
+        () => databaseService.updateTimelineEvent(event),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['timeline-events'] });
     },
@@ -330,7 +455,12 @@ export function useUpdateNodePositionsMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ novelId, positions }: { novelId: string; positions: Record<string, { x: number; y: number }> }) =>
-      databaseService.updateNodePositions(novelId, positions),
+      executeRemoteFirst(
+        () => novelApiService.updateNodePositions(novelId, positions).then(() => undefined),
+        () => databaseService.updateNodePositions(novelId, positions),
+        'useUpdateNodePositionsMutation',
+        () => databaseService.updateNodePositions(novelId, positions),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['graph-layout'] });
     },
@@ -349,6 +479,60 @@ export function useImportDataMutation() {
     mutationFn: (data: any) => databaseService.importData(data),
     onSuccess: () => {
       queryClient.invalidateQueries();
+    },
+  });
+}
+
+export function useUpdateVolumeMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (volume: Volume) => databaseService.updateVolume(volume),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['novel'] });
+    },
+  });
+}
+
+export function useAddPromptTemplateMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (template: PromptTemplate) => databaseService.addPromptTemplate(template),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['prompt-templates'] });
+      queryClient.invalidateQueries({ queryKey: ['active-prompt-template'] });
+    },
+  });
+}
+
+export function useUpdatePromptTemplateMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (template: PromptTemplate) => databaseService.updatePromptTemplate(template),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['prompt-templates'] });
+      queryClient.invalidateQueries({ queryKey: ['active-prompt-template'] });
+    },
+  });
+}
+
+export function useDeletePromptTemplateMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (templateId: string) => databaseService.deletePromptTemplate(templateId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['prompt-templates'] });
+      queryClient.invalidateQueries({ queryKey: ['active-prompt-template'] });
+    },
+  });
+}
+
+export function useSetActivePromptTemplateMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ templateId, type }: { templateId: string; type: string }) =>
+      databaseService.setActivePromptTemplate(templateId, type),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['active-prompt-template'] });
     },
   });
 }

@@ -45,6 +45,9 @@ dist-ssr
 **/.eggs/
 **/lib/
 **/lib64/
+!deer-flow-main/frontend/src/lib/
+!deer-flow-main/frontend/src/lib/utils.ts
+!deer-flow-main/frontend/src/lib/ime.ts
 **/parts/
 **/sdist/
 **/var/

@@ -1,5 +1,6 @@
 import React from "react";
-import { useModalStore, ModalConfig } from "./useModalStore";
+import { useModalStore } from "./useModalStore";
+import type { ModalConfig } from "./useModalStore";
 import { useQueryClient } from "@tanstack/react-query";
 
 export function useCreationModal(

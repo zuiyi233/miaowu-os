@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Send } from 'lucide-react';
 import { useAiPanelStore } from '@/core/novel';
+import { novelAiService } from '@/core/novel/ai-service';
 import { useI18n } from '@/core/i18n/hooks';
 
 interface Message {
@@ -15,25 +16,82 @@ interface Message {
   timestamp: Date;
 }
 
-export function AiChatView() {
+export function AiChatView({ novelId }: { novelId: string }) {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
+  const [isSending, setIsSending] = useState(false);
   const { t } = useI18n();
   const aiStream = useAiPanelStore((s) => s.aiStream);
   const selectedText = useAiPanelStore((s) => s.selectedText);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!input.trim()) return;
 
+    const userInput = input.trim();
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
-      content: input,
+      content: userInput,
       timestamp: new Date(),
     };
 
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
+
+    const assistantMessageId = crypto.randomUUID();
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        timestamp: new Date(),
+      },
+    ]);
+    setIsSending(true);
+
+    try {
+      await novelAiService.chat(
+        {
+          messages: [
+            {
+              role: 'system',
+              content: `你是小说创作助手。当前小说ID：${novelId}。请给出简洁、可执行建议。`,
+            },
+            {
+              role: 'user',
+              content: selectedText
+                ? `选中文本：${selectedText}\n\n用户问题：${userInput}`
+                : userInput,
+            },
+          ],
+          novelId,
+          stream: true,
+        },
+        {
+          onChunk: (chunk) => {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === assistantMessageId
+                  ? { ...msg, content: `${msg.content}${chunk}` }
+                  : msg
+              )
+            );
+          },
+          onError: () => {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === assistantMessageId
+                  ? { ...msg, content: 'AI 请求失败，请稍后重试。' }
+                  : msg
+              )
+            );
+          },
+        }
+      );
+    } finally {
+      setIsSending(false);
+    }
   };
 
   return (
@@ -66,13 +124,6 @@ export function AiChatView() {
                 </div>
               </div>
             ))}
-            {aiStream.isStreaming && aiStream.latestChunk && (
-              <div className="flex justify-start">
-                <div className="max-w-[80%] rounded-lg bg-muted px-3 py-2 text-sm">
-                  {aiStream.latestChunk}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </ScrollArea>
@@ -83,6 +134,7 @@ export function AiChatView() {
             onChange={(e) => setInput(e.target.value)}
             placeholder={t.novel.typeMessage}
             className="min-h-[40px] resize-none"
+            disabled={isSending}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -90,7 +142,7 @@ export function AiChatView() {
               }
             }}
           />
-          <Button size="icon" onClick={handleSend} disabled={!input.trim()}>
+          <Button size="icon" onClick={handleSend} disabled={!input.trim() || isSending}>
             <Send className="h-4 w-4" />
           </Button>
         </div>

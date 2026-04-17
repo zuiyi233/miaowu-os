@@ -27,7 +27,8 @@ const itemFormSchema = z.object({
   ownerId: z.string().optional(),
 });
 
-type ItemFormData = z.infer<typeof itemFormSchema>;
+type ItemFormInput = z.input<typeof itemFormSchema>;
+type ItemFormOutput = z.output<typeof itemFormSchema>;
 
 interface ItemFormProps {
   novelId: string;
@@ -36,7 +37,7 @@ interface ItemFormProps {
 
 export const ItemForm: React.FC<ItemFormProps> = ({ novelId, onSubmitSuccess }) => {
   const addItem = useAddItemMutation(novelId);
-  const form = useForm<ItemFormData>({
+  const form = useForm<ItemFormInput, unknown, ItemFormOutput>({
     resolver: zodResolver(itemFormSchema),
     defaultValues: {
       name: '',
@@ -49,7 +50,7 @@ export const ItemForm: React.FC<ItemFormProps> = ({ novelId, onSubmitSuccess }) 
     },
   });
 
-  const onSubmit = (data: ItemFormData) => {
+  const onSubmit = (data: ItemFormOutput) => {
     const item = {
       id: crypto.randomUUID(),
       ...data,

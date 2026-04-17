@@ -48,6 +48,7 @@ export const TimelineEventForm: React.FC<TimelineEventFormProps> = ({
       relatedChapters: initialData?.relatedChapters || '',
     },
   });
+  const selectedDate = form.watch('date');
 
   const handleSubmit = (data: TimelineEventData) => {
     onSubmit?.(data);
@@ -71,17 +72,17 @@ export const TimelineEventForm: React.FC<TimelineEventFormProps> = ({
               variant="outline"
               className={cn(
                 'w-full justify-start text-left font-normal',
-                !form.watch('date') && 'text-muted-foreground'
+                !selectedDate && 'text-muted-foreground'
               )}
             >
               <CalendarIcon className="mr-2 h-4 w-4" />
-              {form.watch('date') ? format(form.watch('date'), 'yyyy-MM-dd') : '选择日期'}
+              {selectedDate ? format(selectedDate, 'yyyy-MM-dd') : '选择日期'}
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-auto p-0">
             <Calendar
               mode="single"
-              selected={form.watch('date')}
+              selected={selectedDate}
               onSelect={(date) => form.setValue('date', date)}
               initialFocus
             />

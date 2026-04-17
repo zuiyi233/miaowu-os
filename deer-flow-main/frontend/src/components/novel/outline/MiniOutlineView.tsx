@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Maximize2, MapPin } from 'lucide-react';
 import { useOutlineStore } from '@/core/novel/useOutlineStore';
-import { useUiStore } from '@/core/novel/useUiStore';
+import { useNovelStore } from '@/core/novel/useNovelStore';
 import type { OutlineNode } from '@/core/novel/schemas';
 
 interface MiniNodeItemProps {
@@ -53,7 +53,7 @@ const MiniNodeItem: React.FC<MiniNodeItemProps> = ({ node, activeId, onJump }) =
 
 export const MiniOutlineView: React.FC = () => {
   const { tree } = useOutlineStore();
-  const { setViewMode, activeChapterId, setActiveChapterId } = useUiStore();
+  const { setViewMode, activeChapterId, setActiveChapterId } = useNovelStore();
 
   const switchToFullMode = () => setViewMode('outline');
 
@@ -97,7 +97,7 @@ export const MiniOutlineView: React.FC = () => {
 
       <ScrollArea className="flex-1 p-2">
         {tree.map((node) => (
-          <MiniNodeItem key={node.id} node={node} activeId={activeChapterId} onJump={handleJump} />
+          <MiniNodeItem key={node.id} node={node} activeId={activeChapterId ?? ''} onJump={handleJump} />
         ))}
       </ScrollArea>
 

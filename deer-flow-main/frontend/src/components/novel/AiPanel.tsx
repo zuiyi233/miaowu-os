@@ -8,7 +8,7 @@ import { useAiPanelStore } from '@/core/novel';
 import { useI18n } from '@/core/i18n/hooks';
 import { MessageSquare, Sparkles, Network } from 'lucide-react';
 
-export function AiPanel() {
+export function AiPanel({ novelId }: { novelId: string }) {
   const { t } = useI18n();
   const { activeTab, setActiveTab } = useAiPanelStore();
 
@@ -30,7 +30,7 @@ export function AiPanel() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="chat" className="flex-1 overflow-hidden m-0">
-          <AiChatView />
+          <AiChatView novelId={novelId} />
         </TabsContent>
         <TabsContent value="generate" className="flex-1 overflow-hidden m-0">
           <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">

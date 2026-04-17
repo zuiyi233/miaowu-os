@@ -11,10 +11,10 @@ import { ChapterInfoCard } from './editor/ChapterInfoCard';
 import { useDebounce } from '@/core/novel/useDebounce';
 import { cn } from '@/lib/utils';
 
-export function NovelEditor({ novelTitle }: { novelTitle: string }) {
+export function NovelEditor({ novelId }: { novelId: string }) {
   const { activeChapterId, dirtyContent, setDirtyContent } = useNovelStore();
   const aiStream = useAiPanelStore((s) => s.aiStream);
-  const { data: novelData, isLoading } = useNovelQuery(novelTitle);
+  const { data: novelData, isLoading } = useNovelQuery(novelId);
   const updateChapterMutation = useUpdateChapterMutation();
   const previousChapterRef = useRef<{ id: string; content: string | null }>({ id: '', content: null });
 
@@ -117,7 +117,7 @@ export function NovelEditor({ novelTitle }: { novelTitle: string }) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
-      <EditorToolbar editor={editor} />
+      <EditorToolbar editor={editor} novelId={novelId} />
       <div className="flex-1 overflow-hidden">
         <div className="w-full max-w-[95%] mx-auto px-4 sm:px-8 lg:px-12 py-6 sm:py-8 flex flex-col h-full">
           {activeChapter && <ChapterInfoCard chapter={activeChapter} />}

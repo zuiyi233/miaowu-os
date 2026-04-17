@@ -27,7 +27,8 @@ const settingEditSchema = z.object({
   keyFeatures: z.string().optional(),
 });
 
-type SettingEditData = z.infer<typeof settingEditSchema>;
+type SettingEditInput = z.input<typeof settingEditSchema>;
+type SettingEditOutput = z.output<typeof settingEditSchema>;
 
 interface SettingEditFormProps {
   setting: Setting;
@@ -42,19 +43,19 @@ export const SettingEditForm: React.FC<SettingEditFormProps> = ({
 }) => {
   const updateSetting = useUpdateSettingMutation();
   const deleteSetting = useDeleteSettingMutation();
-  const form = useForm<SettingEditData>({
+  const form = useForm<SettingEditInput, unknown, SettingEditOutput>({
     resolver: zodResolver(settingEditSchema),
     defaultValues: {
       name: setting.name,
       description: setting.description || '',
-      type: setting.type as any || '其他',
+      type: setting.type ?? '其他',
       atmosphere: (setting as any).atmosphere || '',
       history: (setting as any).history || '',
       keyFeatures: (setting as any).keyFeatures || '',
     },
   });
 
-  const onSubmit = (data: SettingEditData) => {
+  const onSubmit = (data: SettingEditOutput) => {
     updateSetting.mutate({ id: setting.id, ...data } as Setting, {
       onSuccess: () => onSubmitSuccess?.(),
     });

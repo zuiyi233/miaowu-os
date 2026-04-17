@@ -15,6 +15,7 @@ from app.gateway.routers import (
     mcp,
     memory,
     models,
+    novel,
     runs,
     skills,
     suggestions,
@@ -215,6 +216,9 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
 
     # Stateless Runs API (stream/wait without a pre-existing thread)
     app.include_router(runs.router)
+
+    # Novel AI chat API (creative writing assistant)
+    app.include_router(novel.router)
 
     @app.get("/health", tags=["health"])
     async def health_check() -> dict:

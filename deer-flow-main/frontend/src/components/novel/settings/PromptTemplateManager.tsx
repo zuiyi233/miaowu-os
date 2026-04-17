@@ -34,7 +34,7 @@ type PromptTypeOption = {
 };
 
 interface PromptTemplateManagerProps {
-  novelTitle: string;
+  novelId: string;
   onSave?: (template: PromptTemplate) => void;
   onDelete?: (id: string) => void;
   onActivate?: (id: string, type: string) => void;

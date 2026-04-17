@@ -27,7 +27,7 @@ export const ActivityHeatmap: React.FC<ActivityHeatmapProps> = ({
       weeks.push([...currentWeek]);
       currentWeek = [];
     }
-    currentWeek.push(date.toISOString().split('T')[0]);
+    currentWeek.push(date.toISOString().slice(0, 10));
     date.setDate(date.getDate() + 1);
   }
   if (currentWeek.length > 0) weeks.push(currentWeek);

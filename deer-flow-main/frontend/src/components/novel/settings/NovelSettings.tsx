@@ -8,10 +8,10 @@ import { FileText, Database } from 'lucide-react';
 import { useI18n } from '@/core/i18n/hooks';
 
 interface NovelSettingsProps {
-  novelTitle: string;
+  novelId: string;
 }
 
-export function NovelSettings({ novelTitle }: NovelSettingsProps) {
+export function NovelSettings({ novelId }: NovelSettingsProps) {
   const { t } = useI18n();
 
   return (
@@ -33,7 +33,7 @@ export function NovelSettings({ novelTitle }: NovelSettingsProps) {
           </TabsList>
         </div>
         <TabsContent value="templates" className="flex-1 overflow-hidden m-0">
-          <PromptTemplateManager novelTitle={novelTitle} />
+          <PromptTemplateManager novelId={novelId} />
         </TabsContent>
         <TabsContent value="data" className="flex-1 overflow-hidden m-0">
           <ScrollArea className="h-full">

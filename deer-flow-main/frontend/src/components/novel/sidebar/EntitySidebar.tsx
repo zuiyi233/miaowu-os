@@ -10,33 +10,35 @@ import type { Character, Faction, Setting, Item } from '@/core/novel/schemas';
 import { useI18n } from '@/core/i18n/hooks';
 
 interface EntitySidebarProps {
+  novelId?: string;
   novelTitle?: string;
   compact?: boolean;
 }
 
-export function EntitySidebar({ novelTitle = '', compact = false }: EntitySidebarProps) {
+export function EntitySidebar({ novelId, novelTitle, compact = false }: EntitySidebarProps) {
   const { t } = useI18n();
-  const { data: novel } = useNovelQuery(novelTitle);
+  const activeNovelId = novelId || novelTitle || '';
+  const { data: novel } = useNovelQuery(activeNovelId);
   const [activeTab, setActiveTab] = useState('characters');
 
-  const addCharacter = useAddCharacterMutation(novelTitle);
+  const addCharacter = useAddCharacterMutation(activeNovelId);
   const updateCharacter = useUpdateCharacterMutation();
   const deleteCharacter = useDeleteCharacterMutation();
 
-  const addFaction = useAddFactionMutation(novelTitle);
+  const addFaction = useAddFactionMutation(activeNovelId);
   const updateFaction = useUpdateFactionMutation();
   const deleteFaction = useDeleteFactionMutation();
 
-  const addSetting = useAddSettingMutation(novelTitle);
+  const addSetting = useAddSettingMutation(activeNovelId);
   const updateSetting = useUpdateSettingMutation();
   const deleteSetting = useDeleteSettingMutation();
 
-  const addItem = useAddItemMutation(novelTitle);
+  const addItem = useAddItemMutation(activeNovelId);
   const updateItem = useUpdateItemMutation();
   const deleteItem = useDeleteItemMutation();
 
-  if (!novel || !novelTitle) {
-    return <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground"><MapPin className="h-8 w-8 opacity-30" /><p className="text-sm">{novelTitle ? t.novel.loading : t.novel.noNovelSelected}</p></div>;
+  if (!novel || !activeNovelId) {
+    return <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground"><MapPin className="h-8 w-8 opacity-30" /><p className="text-sm">{activeNovelId ? t.novel.loading : t.novel.noNovelSelected}</p></div>;
   }
 
   const tabs = [
@@ -64,7 +66,7 @@ export function EntitySidebar({ novelTitle = '', compact = false }: EntitySideba
               onAdd={(data) => addCharacter.mutate(data as Character)}
               onUpdate={(data) => updateCharacter.mutate(data as Character)}
               onDelete={(id) => deleteCharacter.mutate(id)}
-              novelId={novelTitle}
+              novelId={activeNovelId}
               compact
             />
           </TabsContent>
@@ -75,7 +77,7 @@ export function EntitySidebar({ novelTitle = '', compact = false }: EntitySideba
               onAdd={(data) => addFaction.mutate(data as Faction)}
               onUpdate={(data) => updateFaction.mutate(data as Faction)}
               onDelete={(id) => deleteFaction.mutate(id)}
-              novelId={novelTitle}
+              novelId={activeNovelId}
               compact
             />
           </TabsContent>
@@ -86,7 +88,7 @@ export function EntitySidebar({ novelTitle = '', compact = false }: EntitySideba
               onAdd={(data) => addSetting.mutate(data as Setting)}
               onUpdate={(data) => updateSetting.mutate(data as Setting)}
               onDelete={(id) => deleteSetting.mutate(id)}
-              novelId={novelTitle}
+              novelId={activeNovelId}
               compact
             />
           </TabsContent>
@@ -97,7 +99,7 @@ export function EntitySidebar({ novelTitle = '', compact = false }: EntitySideba
               onAdd={(data) => addItem.mutate(data as Item)}
               onUpdate={(data) => updateItem.mutate(data as Item)}
               onDelete={(id) => deleteItem.mutate(id)}
-              novelId={novelTitle}
+              novelId={activeNovelId}
               compact
             />
           </TabsContent>
@@ -128,7 +130,7 @@ export function EntitySidebar({ novelTitle = '', compact = false }: EntitySideba
               onAdd={(data) => addCharacter.mutate(data as Character)}
               onUpdate={(data) => updateCharacter.mutate(data as Character)}
               onDelete={(id) => deleteCharacter.mutate(id)}
-              novelId={novelTitle}
+              novelId={activeNovelId}
             />
           </TabsContent>
           <TabsContent value="factions" className="flex-1 overflow-hidden m-0">
@@ -138,7 +140,7 @@ export function EntitySidebar({ novelTitle = '', compact = false }: EntitySideba
               onAdd={(data) => addFaction.mutate(data as Faction)}
               onUpdate={(data) => updateFaction.mutate(data as Faction)}
               onDelete={(id) => deleteFaction.mutate(id)}
-              novelId={novelTitle}
+              novelId={activeNovelId}
             />
           </TabsContent>
           <TabsContent value="settings" className="flex-1 overflow-hidden m-0">
@@ -148,7 +150,7 @@ export function EntitySidebar({ novelTitle = '', compact = false }: EntitySideba
               onAdd={(data) => addSetting.mutate(data as Setting)}
               onUpdate={(data) => updateSetting.mutate(data as Setting)}
               onDelete={(id) => deleteSetting.mutate(id)}
-              novelId={novelTitle}
+              novelId={activeNovelId}
             />
           </TabsContent>
           <TabsContent value="items" className="flex-1 overflow-hidden m-0">
@@ -158,7 +160,7 @@ export function EntitySidebar({ novelTitle = '', compact = false }: EntitySideba
               onAdd={(data) => addItem.mutate(data as Item)}
               onUpdate={(data) => updateItem.mutate(data as Item)}
               onDelete={(id) => deleteItem.mutate(id)}
-              novelId={novelTitle}
+              novelId={activeNovelId}
             />
           </TabsContent>
         </Tabs>

@@ -33,8 +33,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Plus, Save, Trash2, User, MapPin, Shield, Gem } from 'lucide-react';
-import { useNovelQuery, useRelationshipsQuery, useAddRelationshipMutation, useDeleteRelationshipMutation } from '@/core/novel/queries';
-import type { EntityRelationship } from '@/core/novel/schemas';
+import { useNovelQuery, useRelationshipsQuery, useAddRelationshipMutation, useDeleteRelationshipMutation, useGraphLayoutQuery, useSaveGraphLayoutMutation } from '@/core/novel/queries';
+import type { EntityRelationship, GraphLayout } from '@/core/novel/schemas';
 
 const ENTITY_COLORS: Record<string, string> = {
   character: '#3b82f6',
@@ -81,12 +81,14 @@ function CustomNode({ data }: { data: { label: string; type: string; description
 const nodeTypes = { custom: CustomNode };
 
 interface RelationshipGraphProps {
-  novelTitle: string;
+  novelId: string;
 }
 
-export function RelationshipGraph({ novelTitle }: RelationshipGraphProps) {
-  const { data: novel } = useNovelQuery(novelTitle);
-  const { data: relationships } = useRelationshipsQuery(novelTitle);
+export function RelationshipGraph({ novelId }: RelationshipGraphProps) {
+  const { data: novel } = useNovelQuery(novelId);
+  const { data: relationships } = useRelationshipsQuery(novelId);
+  const { data: savedLayout } = useGraphLayoutQuery(novelId);
+  const saveLayout = useSaveGraphLayoutMutation();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -94,9 +96,34 @@ export function RelationshipGraph({ novelTitle }: RelationshipGraphProps) {
   const [targetId, setTargetId] = useState('');
   const [relType, setRelType] = useState<EntityRelationship['type']>('friend');
   const [relDescription, setRelDescription] = useState('');
+  const [hasLayoutChanges, setHasLayoutChanges] = useState(false);
 
-  const addRelationship = useAddRelationshipMutation(novelTitle);
+  const addRelationship = useAddRelationshipMutation(novelId);
   const deleteRelationship = useDeleteRelationshipMutation();
+
+  const handleNodeDragStop = useCallback((_event: any, node: Node) => {
+    setNodes((nds) => nds.map((n) => (n.id === node.id ? { ...n, position: node.position } : n)));
+    setHasLayoutChanges(true);
+  }, [setNodes]);
+
+  const handleSaveLayout = useCallback(async () => {
+    if (!novelId || nodes.length === 0) return;
+    const positions: Record<string, { x: number; y: number }> = {};
+    nodes.forEach((n) => {
+      positions[n.id] = n.position;
+    });
+
+    const layout: GraphLayout = {
+      id: `layout-${novelId}`,
+      novelId,
+      nodePositions: positions,
+      isLocked: false,
+      lastUpdated: new Date(),
+    };
+
+    await saveLayout.mutateAsync(layout);
+    setHasLayoutChanges(false);
+  }, [novelId, nodes, saveLayout]);
 
   useEffect(() => {
     if (!novel) return;
@@ -108,7 +135,23 @@ export function RelationshipGraph({ novelTitle }: RelationshipGraphProps) {
       ...(novel.items || []).map((i) => ({ ...i, entityType: 'item' as const })),
     ];
 
+    const savedPositions = savedLayout?.nodePositions || {};
+
     const nodeData: Node[] = allEntities.map((entity, index) => {
+      const savedPos = savedPositions[entity.id];
+      if (savedPos) {
+        return {
+          id: entity.id,
+          type: 'custom',
+          position: savedPos,
+          data: {
+            label: entity.name,
+            type: entity.entityType,
+            description: entity.description,
+          },
+        };
+      }
+
       const angle = (index / allEntities.length) * 2 * Math.PI;
       const radius = 300;
       return {
@@ -135,7 +178,7 @@ export function RelationshipGraph({ novelTitle }: RelationshipGraphProps) {
     }));
 
     setEdges(edgeData);
-  }, [novel, relationships]);
+  }, [novel, relationships, savedLayout]);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
@@ -143,13 +186,14 @@ export function RelationshipGraph({ novelTitle }: RelationshipGraphProps) {
   );
 
   const handleAddRelationship = async () => {
-    if (!sourceId || !targetId) return;
+    if (!sourceId || !targetId || !novelId) return;
     await addRelationship.mutateAsync({
       id: crypto.randomUUID(),
       sourceId,
       targetId,
       type: relType,
       description: relDescription,
+      novelId,
     });
     setShowAddDialog(false);
     setSourceId('');
@@ -183,6 +227,7 @@ export function RelationshipGraph({ novelTitle }: RelationshipGraphProps) {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onNodeDragStop={handleNodeDragStop}
         nodeTypes={nodeTypes}
         fitView
         className="bg-muted/20"
@@ -198,6 +243,14 @@ export function RelationshipGraph({ novelTitle }: RelationshipGraphProps) {
             </Button>
           </div>
         </Panel>
+        {hasLayoutChanges && (
+          <Panel position="top-right">
+            <Button size="sm" className="gap-1" onClick={handleSaveLayout} disabled={saveLayout.isPending}>
+              <Save className="h-3 w-3" />
+              {saveLayout.isPending ? '保存中...' : '保存布局'}
+            </Button>
+          </Panel>
+        )}
         <Panel position="bottom-right">
           <div className="bg-background rounded-lg shadow-lg p-2 border text-xs space-y-1">
             {Object.entries(ENTITY_COLORS).map(([type, color]) => (

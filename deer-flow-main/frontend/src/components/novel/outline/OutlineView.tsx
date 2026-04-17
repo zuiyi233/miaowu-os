@@ -19,19 +19,19 @@ import type { Volume, Chapter } from '@/core/novel/schemas';
 import { useI18n } from '@/core/i18n/hooks';
 
 interface OutlineViewProps {
-  novelTitle: string;
+  novelId: string;
 }
 
-export function OutlineView({ novelTitle }: OutlineViewProps) {
-  const { data: novel } = useNovelQuery(novelTitle);
+export function OutlineView({ novelId }: OutlineViewProps) {
+  const { data: novel } = useNovelQuery(novelId);
   const { t } = useI18n();
   const [addingChapterTo, setAddingChapterTo] = useState<string | null>(null);
   const [newChapterTitle, setNewChapterTitle] = useState('');
   const [addingVolume, setAddingVolume] = useState(false);
   const [newVolumeTitle, setNewVolumeTitle] = useState('');
 
-  const addVolumeMutation = useAddVolumeMutation(novelTitle);
-  const addChapterMutation = useAddChapterMutation(novelTitle);
+  const addVolumeMutation = useAddVolumeMutation(novelId);
+  const addChapterMutation = useAddChapterMutation(novelId);
   const deleteVolumeMutation = useDeleteVolumeMutation();
   const deleteChapterMutation = useDeleteChapterMutation();
   const { setActiveChapterId, setViewMode } = useNovelStore();
@@ -45,6 +45,7 @@ export function OutlineView({ novelTitle }: OutlineViewProps) {
       id: crypto.randomUUID(),
       title: newVolumeTitle,
       description: '',
+      novelId,
       chapters: [],
       order: volumes.length,
     });
@@ -62,6 +63,7 @@ export function OutlineView({ novelTitle }: OutlineViewProps) {
         id: crypto.randomUUID(),
         title: newChapterTitle,
         content: '<p></p>',
+        novelId,
         order,
       },
       volumeId,

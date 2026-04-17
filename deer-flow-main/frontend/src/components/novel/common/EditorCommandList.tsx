@@ -3,11 +3,11 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { useUiStore } from '@/core/novel/useUiStore';
+import { useNovelStore } from '@/core/novel/useNovelStore';
 import { Sparkles, BookOpen, Users, MapPin, Shield, Package } from 'lucide-react';
 
 export const EditorCommandList: React.FC = () => {
-  const { setViewMode, setIsAiPanelCollapsed, setIsCommandPaletteOpen, setIsHistorySheetOpen } = useUiStore();
+  const { setViewMode, setIsAiPanelCollapsed, setIsCommandPaletteOpen, setIsHistorySheetOpen } = useNovelStore();
 
   const commands = [
     { icon: <BookOpen className="h-4 w-4" />, label: '切换到章节', action: () => setViewMode('editor') },

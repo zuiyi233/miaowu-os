@@ -256,6 +256,9 @@ export function EntityDialog({
             {currentExtraLabels.map((label, index) => {
               const value = fieldValues[index];
               const setter = fieldSetters[index];
+              if (!setter) {
+                return null;
+              }
 
               return (
                 <div key={label} className="space-y-2">

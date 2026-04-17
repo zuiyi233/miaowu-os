@@ -9,7 +9,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { useUiStore } from '@/core/novel/useUiStore';
+import { useNovelStore } from '@/core/novel/useNovelStore';
 import { Button } from '@/components/ui/button';
 import { Clock } from 'lucide-react';
 
@@ -24,7 +24,7 @@ export const HistorySheet: React.FC<HistorySheetProps> = ({
   onRestore,
   isLoading,
 }) => {
-  const { isHistorySheetOpen, setIsHistorySheetOpen } = useUiStore();
+  const { isHistorySheetOpen, setIsHistorySheetOpen } = useNovelStore();
 
   return (
     <Sheet open={isHistorySheetOpen} onOpenChange={setIsHistorySheetOpen}>

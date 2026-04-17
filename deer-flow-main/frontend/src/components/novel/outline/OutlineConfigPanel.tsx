@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useOutlineStore } from '@/core/novel/useOutlineStore';
-import { useUiStore } from '@/core/novel/useUiStore';
+import { useNovelStore } from '@/core/novel/useNovelStore';
 import { OutlineListPanel } from './OutlineListPanel';
 import { OutlineItem } from './OutlineItem';
 import { Button } from '@/components/ui/button';
@@ -45,7 +45,7 @@ export const OutlineConfigPanel: React.FC<OutlineConfigPanelProps> = ({
   onGenerateChapters,
 }) => {
   const { tree, setIsGenerating } = useOutlineStore();
-  const { isGeneratingOutline } = useUiStore();
+  const { isGeneratingOutline } = useNovelStore();
   const [showSettings, setShowSettings] = useState(false);
   const [useSmart, setUseSmart] = useState(true);
   const [targetWordCount, setTargetWordCount] = useState(3000);
@@ -122,7 +122,12 @@ export const OutlineConfigPanel: React.FC<OutlineConfigPanelProps> = ({
               min={1000}
               max={8000}
               step={500}
-              onValueChange={(v) => setTargetWordCount(v[0])}
+              onValueChange={(v) => {
+                const nextValue = v[0];
+                if (nextValue !== undefined) {
+                  setTargetWordCount(nextValue);
+                }
+              }}
             />
           </div>
 
@@ -136,7 +141,12 @@ export const OutlineConfigPanel: React.FC<OutlineConfigPanelProps> = ({
               min={1}
               max={15}
               step={1}
-              onValueChange={(v) => setBatchSize(v[0])}
+              onValueChange={(v) => {
+                const nextValue = v[0];
+                if (nextValue !== undefined) {
+                  setBatchSize(nextValue);
+                }
+              }}
             />
           </div>
         </div>

@@ -5,11 +5,20 @@ const embeddingMixin = {
   lastEmbedded: z.number().optional(),
 };
 
+const lifecycleMixin = {
+  syncStatus: z.enum(['local', 'syncing', 'synced', 'conflict', 'error']).optional(),
+  version: z.number().int().positive().optional(),
+  workflowState: z.enum(['draft', 'review', 'approved', 'archived']).optional(),
+  qualityScore: z.number().min(0).max(100).optional(),
+  createdAt: z.string().datetime().optional(),
+  updatedAt: z.string().datetime().optional(),
+};
+
 export const characterSchema = z.object({
-  id: z.string(),
+  id: z.string().uuid().or(z.string().startsWith('char-')),
   name: z.string().min(1, '角色名不能为空'),
   description: z.string().optional(),
-  novelId: z.string().optional(),
+  novelId: z.string(),
   avatar: z.string().optional(),
   age: z.string().optional(),
   gender: z.string().optional(),
@@ -19,74 +28,82 @@ export const characterSchema = z.object({
   backstory: z.string().optional(),
   factionId: z.string().optional(),
   ...embeddingMixin,
+  ...lifecycleMixin,
 });
 
 export const volumeSchema = z.object({
-  id: z.string(),
+  id: z.string().uuid().or(z.string().startsWith('volume-')),
   title: z.string().min(1, '卷标题不能为空'),
   description: z.string().optional(),
   chapters: z.array(z.any()).optional(),
-  novelId: z.string().optional(),
+  novelId: z.string(),
   order: z.number().optional().default(0),
+  ...lifecycleMixin,
 });
 
 export const chapterSchema = z.object({
-  id: z.string(),
+  id: z.string().uuid().or(z.string().startsWith('chapter-')),
   title: z.string().min(1, '章节标题不能为空'),
-  content: z.string().optional(),
+  content: z.string().optional().default(''),
   description: z.string().optional(),
   summary: z.string().optional(),
   volumeId: z.string().optional(),
-  novelId: z.string().optional(),
+  novelId: z.string(),
   order: z.number().optional().default(0),
+  wordCount: z.number().int().nonnegative().optional(),
+  ...lifecycleMixin,
 });
 
 export const settingSchema = z.object({
-  id: z.string(),
+  id: z.string().uuid().or(z.string().startsWith('setting-')),
   name: z.string().min(1, '场景名不能为空'),
   description: z.string().optional(),
-  novelId: z.string().optional(),
+  novelId: z.string(),
   type: z.enum(['城市', '建筑', '自然景观', '地区', '其他']).default('其他'),
   atmosphere: z.string().optional(),
   history: z.string().optional(),
   keyFeatures: z.string().optional(),
   ...embeddingMixin,
+  ...lifecycleMixin,
 });
 
 export const factionSchema = z.object({
-  id: z.string(),
+  id: z.string().uuid().or(z.string().startsWith('faction-')),
   name: z.string().min(1, '势力名称不能为空'),
   description: z.string().optional(),
   ideology: z.string().optional(),
   leaderId: z.string().optional(),
-  novelId: z.string().optional(),
+  novelId: z.string(),
   goals: z.string().optional(),
   structure: z.string().optional(),
   resources: z.string().optional(),
   relationships: z.string().optional(),
   ...embeddingMixin,
+  ...lifecycleMixin,
 });
 
 export const relationshipSchema = z.object({
-  id: z.string(),
+  id: z.string().uuid().or(z.string().startsWith('rel-')),
   sourceId: z.string().min(1, '源实体ID不能为空'),
   targetId: z.string().min(1, '目标实体ID不能为空'),
   type: z.enum(['friend', 'enemy', 'family', 'lover', 'custom']),
   description: z.string().optional(),
-  novelId: z.string().optional(),
+  novelId: z.string(),
+  ...lifecycleMixin,
 });
 
 export const itemSchema = z.object({
-  id: z.string(),
+  id: z.string().uuid().or(z.string().startsWith('item-')),
   name: z.string().min(1, '物品名称不能为空'),
   description: z.string().optional(),
-  novelId: z.string().optional(),
+  novelId: z.string(),
   type: z.enum(['关键物品', '武器', '科技装置', '普通物品', '其他']).default('其他'),
   appearance: z.string().optional(),
   history: z.string().optional(),
   abilities: z.string().optional(),
   ownerId: z.string().optional(),
   ...embeddingMixin,
+  ...lifecycleMixin,
 });
 
 export const novelMetadataSchema = z.object({
@@ -98,7 +115,9 @@ export const novelMetadataSchema = z.object({
 });
 
 export const novelSchema = z.object({
+  id: z.string().uuid().or(z.string().startsWith('novel-')),
   title: z.string().min(1, '小说标题不能为空'),
+  description: z.string().optional(),
   outline: z.string().optional(),
   coverImage: z.string().optional(),
   metadata: novelMetadataSchema.optional(),
@@ -109,20 +128,24 @@ export const novelSchema = z.object({
   factions: z.array(factionSchema).optional(),
   items: z.array(itemSchema).optional(),
   relationships: z.array(relationshipSchema).optional(),
+  ...lifecycleMixin,
 });
 
 export const promptTemplateSchema = z.object({
-  id: z.string(),
+  id: z.string().uuid().or(z.string().startsWith('template-')),
   name: z.string().min(1, '模板名称不能为空'),
   description: z.string().optional(),
   type: z.enum(['outline', 'continue', 'polish', 'expand', 'chat', 'extraction']),
   content: z.string().min(10, '提示词内容不能太短'),
-  isBuiltIn: z.boolean().default(false),
-  isActive: z.boolean().default(false),
+  isBuiltIn: z.boolean().optional(),
+  isActive: z.boolean().optional(),
+  scope: z.enum(['global', 'novel', 'chapter']).optional(),
+  novelId: z.string().optional(),
+  ...lifecycleMixin,
 });
 
 export const timelineEventSchema = z.object({
-  id: z.string(),
+  id: z.string().uuid().or(z.string().startsWith('timeline-')),
   novelId: z.string().min(1, '必须关联所属小说'),
   title: z.string().min(1, '事件标题不能为空'),
   description: z.string().optional(),
@@ -131,6 +154,7 @@ export const timelineEventSchema = z.object({
   relatedEntityIds: z.array(z.string()).optional(),
   relatedChapterId: z.string().optional(),
   type: z.enum(['backstory', 'plot', 'historical']).default('plot'),
+  ...lifecycleMixin,
 });
 
 export const graphLayoutSchema = z.object({
@@ -147,6 +171,7 @@ export const graphLayoutSchema = z.object({
   ),
   isLocked: z.boolean().default(false),
   lastUpdated: z.date().default(() => new Date()),
+  ...lifecycleMixin,
 });
 
 export const chatSessionSchema = z.object({
@@ -156,6 +181,56 @@ export const chatSessionSchema = z.object({
   messages: z.array(z.any()).optional(),
   createdAt: z.date().default(() => new Date()),
   updatedAt: z.date().default(() => new Date()),
+});
+
+export const chapterSnapshotSchema = z.object({
+  id: z.number().optional(),
+  chapterId: z.string(),
+  content: z.string(),
+  timestamp: z.date(),
+  description: z.string().optional(),
+  version: z.number().int().positive().optional(),
+  workflowState: z.enum(['draft', 'review', 'approved', 'archived']).optional(),
+  author: z.string().optional(),
+  changeReason: z.string().optional(),
+});
+
+export const annotationThreadSchema = z.object({
+  id: z.string().uuid().or(z.string().startsWith('annotation-')),
+  novelId: z.string(),
+  chapterId: z.string(),
+  anchorText: z.string().optional(),
+  rangeStart: z.number().optional(),
+  rangeEnd: z.number().optional(),
+  title: z.string(),
+  content: z.string(),
+  type: z.enum(['annotation', 'ai_task', 'discussion']).default('annotation'),
+  status: z.enum(['pending', 'in_progress', 'resolved', 'rejected', 'adopted']).default('pending'),
+  mentions: z.array(z.string()).optional(),
+  aiTask: z.object({
+    prompt: z.string(),
+    result: z.string().optional(),
+    status: z.enum(['pending', 'running', 'completed', 'failed']).optional(),
+  }).optional(),
+  parentId: z.string().optional(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const recommendationItemSchema = z.object({
+  id: z.string().uuid().or(z.string().startsWith('rec-')),
+  novelId: z.string(),
+  type: z.enum(['plot_progression', 'character_consistency', 'narrative_pacing', 'foreshadowing', 'world_building', 'dialogue_improvement']),
+  title: z.string(),
+  content: z.string(),
+  reason: z.string(),
+  targetType: z.enum(['chapter', 'character', 'setting', 'plot', 'global']),
+  targetId: z.string().optional(),
+  priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+  status: z.enum(['pending', 'accepted', 'rejected', 'ignored']).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  createdAt: z.string().datetime(),
+  acceptedAt: z.string().datetime().optional(),
 });
 
 export type Novel = z.infer<typeof novelSchema>;
@@ -170,6 +245,9 @@ export type EntityRelationship = z.infer<typeof relationshipSchema>;
 export type TimelineEvent = z.infer<typeof timelineEventSchema>;
 export type GraphLayout = z.infer<typeof graphLayoutSchema>;
 export type ChatSession = z.infer<typeof chatSessionSchema>;
+export type ChapterSnapshot = z.infer<typeof chapterSnapshotSchema>;
+export type AnnotationThread = z.infer<typeof annotationThreadSchema>;
+export type RecommendationItem = z.infer<typeof recommendationItemSchema>;
 
 export type CreateCharacter = Omit<Character, 'id'>;
 export type CreateVolume = Omit<Volume, 'id'>;
@@ -178,6 +256,8 @@ export type CreateSetting = Omit<Setting, 'id'>;
 export type CreateFaction = Omit<Faction, 'id'>;
 export type CreateItem = Omit<Item, 'id'>;
 export type CreateTimelineEvent = Omit<TimelineEvent, 'id'>;
+export type CreateAnnotationThread = Omit<AnnotationThread, 'id' | 'createdAt' | 'updatedAt'>;
+export type CreateRecommendationItem = Omit<RecommendationItem, 'id' | 'createdAt' | 'acceptedAt'>;
 
 export const outlineNodeSchema = z.object({
   id: z.string(),

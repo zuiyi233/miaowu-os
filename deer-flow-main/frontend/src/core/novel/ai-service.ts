@@ -1,4 +1,8 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { aiEventBus } from './ai-event-bus';
+import { getBackendBaseURL } from '@/core/config';
+import { emitNovelEvent } from './observability';
+
+const API_BASE_URL = getBackendBaseURL();
 
 export interface AiMessage {
   role: 'user' | 'assistant' | 'system';
@@ -7,6 +11,7 @@ export interface AiMessage {
 
 export interface AiRequestOptions {
   messages: AiMessage[];
+  novelId?: string;
   context?: Record<string, any>;
   stream?: boolean;
   temperature?: number;
@@ -22,6 +27,44 @@ export interface AiStreamCallbacks {
   abortSignal?: AbortSignal;
 }
 
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 1000;
+const REQUEST_TIMEOUT_MS = 120000;
+
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const signals = [controller.signal];
+    if (options.signal) signals.push(options.signal);
+    const response = await fetch(url, {
+      ...options,
+      signal: signals.length > 1 ? AbortSignal.any(signals) : controller.signal,
+    });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function fetchWithRetry(url: string, options: RequestInit, retries: number = MAX_RETRIES): Promise<Response> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await fetchWithTimeout(url, options);
+      if (response.ok) return response;
+      throw new Error(`API error: ${response.status} ${response.statusText}`);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError || new Error('Unknown error');
+}
+
 export class NovelAiService {
   private baseUrl: string;
   private abortController: AbortController | null = null;
@@ -31,30 +74,83 @@ export class NovelAiService {
   }
 
   async chat(options: AiRequestOptions, callbacks?: AiStreamCallbacks): Promise<string> {
-    const { messages, stream = true } = options;
+    const { messages, stream = true, novelId } = options;
 
     this.abortController = new AbortController();
 
-    const signal = callbacks?.abortSignal
-      ? AbortSignal.any([this.abortController.signal, callbacks.abortSignal])
-      : this.abortController.signal;
+    const signal = callbacks?.abortSignal || this.abortController.signal;
+
+    const correlationId = `novel-ai-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const busCallbacks = aiEventBus.toStreamCallbacks(correlationId);
+
+    const mergedCallbacks: AiStreamCallbacks = {
+      onChunk: (chunk: string) => {
+        callbacks?.onChunk?.(chunk);
+        busCallbacks.onChunk?.(chunk);
+      },
+      onComplete: (fullText: string) => {
+        callbacks?.onComplete?.(fullText);
+        busCallbacks.onComplete?.(fullText);
+      },
+      onError: (error: Error) => {
+        callbacks?.onError?.(error);
+        busCallbacks.onError?.(error);
+      },
+      onAbort: () => {
+        callbacks?.onAbort?.();
+        busCallbacks.onAbort?.();
+      },
+      abortSignal: signal,
+    };
+
+    aiEventBus.emit('ai_request_start', {
+      requestId: correlationId,
+      model: options.model,
+      stream,
+      novelId,
+      messageCount: messages.length,
+    });
+    aiEventBus.emit('stream_start', { requestId: correlationId, model: options.model, stream, novelId });
+    emitNovelEvent('ai_generate_start', {
+      requestId: correlationId,
+      novelId: novelId ?? '',
+      stream,
+      model: options.model ?? '',
+    });
 
     try {
-      const response = await fetch(`${this.baseUrl}/api/novel/chat`, {
+      const endpoint = novelId
+        ? `${this.baseUrl}/api/novels/${encodeURIComponent(novelId)}/ai/chat`
+        : `${this.baseUrl}/api/novel/chat`;
+
+      const response = await fetchWithRetry(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages, stream }),
+        body: JSON.stringify({
+          messages,
+          stream,
+          context: options.context,
+          model_name: options.model,
+          temperature: options.temperature,
+          max_tokens: options.maxTokens,
+        }),
         signal,
       });
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status} ${response.statusText}`);
-      }
 
       if (!stream) {
         const data = await response.json();
         const content = data.content || data.message?.content || '';
-        callbacks?.onComplete?.(content);
+        aiEventBus.emit('ai_request_complete', {
+          requestId: correlationId,
+          novelId,
+          outputLength: content.length,
+        });
+        emitNovelEvent('ai_generate_complete', {
+          requestId: correlationId,
+          novelId: novelId ?? '',
+          outputLength: content.length,
+        });
+        mergedCallbacks.onComplete?.(content);
         return content;
       }
 
@@ -83,27 +179,57 @@ export class NovelAiService {
               const content = parsed.content || parsed.delta?.content || parsed.choices?.[0]?.delta?.content || '';
               if (content) {
                 fullText += content;
-                callbacks?.onChunk?.(content);
+                mergedCallbacks.onChunk?.(content);
               }
             } catch {
               if (data.trim()) {
                 fullText += data;
-                callbacks?.onChunk?.(data);
+                mergedCallbacks.onChunk?.(data);
               }
             }
           }
         }
       }
 
-      callbacks?.onComplete?.(fullText);
+      mergedCallbacks.onComplete?.(fullText);
+      aiEventBus.emit('ai_request_complete', {
+        requestId: correlationId,
+        novelId,
+        outputLength: fullText.length,
+      });
+      emitNovelEvent('ai_generate_complete', {
+        requestId: correlationId,
+        novelId: novelId ?? '',
+        outputLength: fullText.length,
+      });
       return fullText;
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
-        callbacks?.onAbort?.();
+        mergedCallbacks.onAbort?.();
+        aiEventBus.emit('ai_request_error', {
+          requestId: correlationId,
+          novelId,
+          error: 'aborted',
+        });
+        emitNovelEvent('ai_generate_error', {
+          requestId: correlationId,
+          novelId: novelId ?? '',
+          error: 'aborted',
+        });
         return '';
       }
       const err = error instanceof Error ? error : new Error(String(error));
-      callbacks?.onError?.(err);
+      mergedCallbacks.onError?.(err);
+      aiEventBus.emit('ai_request_error', {
+        requestId: correlationId,
+        novelId,
+        error: err.message,
+      });
+      emitNovelEvent('ai_generate_error', {
+        requestId: correlationId,
+        novelId: novelId ?? '',
+        error: err.message,
+      });
       throw err;
     } finally {
       this.abortController = null;
@@ -130,7 +256,12 @@ export class NovelAiService {
     });
   }
 
-  async continueWriting(currentContent: string, context: Record<string, any>, signal?: AbortSignal): Promise<string> {
+  async continueWriting(
+    currentContent: string,
+    context: Record<string, any>,
+    signal?: AbortSignal,
+    novelId?: string,
+  ): Promise<string> {
     return this.chat({
       messages: [
         {
@@ -143,6 +274,7 @@ export class NovelAiService {
           content: `请继续以下章节的内容：\n${currentContent}`,
         },
       ],
+      novelId,
     }, {
       abortSignal: signal,
     });

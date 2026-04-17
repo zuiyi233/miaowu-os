@@ -12,7 +12,24 @@ import type {
   TimelineEvent,
   GraphLayout,
   ChatSession,
+  AnnotationThread,
+  RecommendationItem,
 } from './schemas';
+import { generateUniqueId } from './utils/id';
+
+export interface AuditEntry {
+  id: string;
+  timestamp: Date;
+  action: 'create' | 'update' | 'delete' | 'restore' | 'export' | 'import';
+  entityType: 'novel' | 'chapter' | 'character' | 'setting' | 'timeline' | 'relationship' | 'template';
+  entityId: string;
+  entityName: string;
+  details: string;
+  author: string;
+  reason?: string;
+  before?: Record<string, any>;
+  after?: Record<string, any>;
+}
 
 export interface ChapterSnapshot {
   id?: number;
@@ -20,6 +37,10 @@ export interface ChapterSnapshot {
   content: string;
   timestamp: Date;
   description?: string;
+  version?: number;
+  workflowState?: string;
+  author?: string;
+  changeReason?: string;
 }
 
 export class NovelDB extends Dexie {
@@ -36,6 +57,9 @@ export class NovelDB extends Dexie {
   graphLayouts!: Table<GraphLayout>;
   snapshots!: Table<ChapterSnapshot>;
   chatSessions!: Table<ChatSession>;
+  annotationThreads!: Table<AnnotationThread>;
+  recommendationItems!: Table<RecommendationItem>;
+  auditLog!: Table<AuditEntry>;
 
   constructor() {
     super('DeerFlowNovelistDB');
@@ -55,6 +79,60 @@ export class NovelDB extends Dexie {
       snapshots: '++id, chapterId, timestamp',
       chatSessions: 'id, novelId, updatedAt',
     });
+
+    this.version(2)
+      .stores({
+        novels: '++id, title, id, syncStatus, workflowState',
+        volumes: 'id, novelId, syncStatus, workflowState',
+        chapters: 'id, novelId, volumeId, syncStatus, workflowState',
+        characters: 'id, novelId, factionId, syncStatus, workflowState',
+        settings: 'id, novelId, syncStatus, workflowState',
+        factions: 'id, novelId, syncStatus, workflowState',
+        items: 'id, novelId, ownerId, syncStatus, workflowState',
+        promptTemplates: 'id, type, isActive, version, scope, novelId, syncStatus',
+        relationships: 'id, sourceId, targetId, type, novelId, syncStatus',
+        timelineEvents: 'id, novelId, sortValue, type, *relatedEntityIds, syncStatus, workflowState',
+        graphLayouts: 'id, novelId, lastUpdated, syncStatus',
+        snapshots: '++id, chapterId, timestamp, version, workflowState',
+        chatSessions: 'id, novelId, updatedAt',
+        annotationThreads: 'id, novelId, chapterId, type, status',
+        recommendationItems: 'id, novelId, type, priority, status',
+        auditLog: 'id, timestamp, action, entityType, entityId, author',
+      })
+      .upgrade(async (tx) => {
+        await tx.table('novels').toCollection().modify((novel: any) => {
+          if (!novel.id) novel.id = `novel-${crypto.randomUUID().slice(0, 12)}`;
+          if (!novel.syncStatus) novel.syncStatus = 'local';
+          if (!novel.version) novel.version = 1;
+          if (!novel.workflowState) novel.workflowState = 'draft';
+          if (!novel.createdAt) novel.createdAt = new Date().toISOString();
+          if (!novel.updatedAt) novel.updatedAt = new Date().toISOString();
+        });
+
+        const tablesToMigrate = ['volumes', 'chapters', 'characters', 'settings', 'factions', 'items', 'relationships', 'timelineEvents'];
+        for (const tableName of tablesToMigrate) {
+          await tx.table(tableName).toCollection().modify((item: any) => {
+            if (!item.syncStatus) item.syncStatus = 'local';
+            if (!item.version) item.version = 1;
+            if (!item.workflowState) item.workflowState = 'draft';
+            if (!item.createdAt) item.createdAt = new Date().toISOString();
+            if (!item.updatedAt) item.updatedAt = new Date().toISOString();
+          });
+        }
+
+        await tx.table('snapshots').toCollection().modify((snapshot: any) => {
+          if (!snapshot.version) snapshot.version = 1;
+          if (!snapshot.workflowState) snapshot.workflowState = 'draft';
+        });
+
+        await tx.table('promptTemplates').toCollection().modify((template: any) => {
+          if (!template.version) template.version = 1;
+          if (!template.scope) template.scope = 'global';
+          if (!template.syncStatus) template.syncStatus = 'local';
+          if (!template.createdAt) template.createdAt = new Date().toISOString();
+          if (!template.updatedAt) template.updatedAt = new Date().toISOString();
+        });
+      });
   }
 
   async createSnapshot(chapterId: string, content: string, description?: string): Promise<number> {
@@ -93,52 +171,61 @@ export class DatabaseService {
       'rw',
       [this.db.novels, this.db.volumes, this.db.chapters, this.db.characters, this.db.settings, this.db.factions, this.db.items],
       async () => {
-        const existingNovel = await this.db.novels.where('title').equals(novel.title).first();
+        const novelData: any = { ...novel };
+        if (!novelData.id) novelData.id = generateUniqueId('novel');
+
+        const existingNovel = await this.db.novels.where('id').equals(novelData.id).first()
+          || await this.db.novels.where('title').equals(novel.title).first();
         if (existingNovel) {
-          await this.db.novels.update(existingNovel.id!, novel);
+          await this.db.novels.update(existingNovel.id!, novelData);
         } else {
-          await this.db.novels.put(novel);
+          await this.db.novels.put(novelData);
         }
 
+        const novelKey = novelData.id;
+
         for (const volume of novel.volumes || []) {
-          await this.db.volumes.put({ ...volume, novelId: novel.title });
+          await this.db.volumes.put({ ...volume, novelId: novelKey } as any);
           for (const chapter of volume.chapters || []) {
-            await this.db.chapters.put({ ...chapter, novelId: novel.title, volumeId: volume.id });
+            await this.db.chapters.put({ ...chapter, novelId: novelKey, volumeId: volume.id } as any);
           }
         }
 
         for (const chapter of novel.chapters || []) {
-          await this.db.chapters.put({ ...chapter, novelId: novel.title });
+          await this.db.chapters.put({ ...chapter, novelId: novelKey } as any);
         }
 
         for (const character of novel.characters || []) {
-          await this.db.characters.put({ ...character, novelId: novel.title });
+          await this.db.characters.put({ ...character, novelId: novelKey } as any);
         }
 
         for (const setting of novel.settings || []) {
-          await this.db.settings.put({ ...setting, novelId: novel.title });
+          await this.db.settings.put({ ...setting, novelId: novelKey } as any);
         }
 
         for (const faction of novel.factions || []) {
-          await this.db.factions.put({ ...faction, novelId: novel.title });
+          await this.db.factions.put({ ...faction, novelId: novelKey } as any);
         }
 
         for (const item of novel.items || []) {
-          await this.db.items.put({ ...item, novelId: novel.title });
+          await this.db.items.put({ ...item, novelId: novelKey } as any);
         }
 
         for (const relationship of novel.relationships || []) {
-          await this.db.relationships.put({ ...relationship, novelId: novel.title });
+          await this.db.relationships.put({ ...relationship, novelId: novelKey } as any);
         }
       }
     );
   }
 
-  async loadNovel(novelTitle: string): Promise<Novel | null> {
-    const novel = await this.db.novels.where('title').equals(novelTitle).first();
+  async loadNovel(novelIdOrTitle: string): Promise<Novel | null> {
+    const novel = await this.db.novels.where('title').equals(novelIdOrTitle).first()
+      || await this.db.novels.where('id').equals(novelIdOrTitle).first();
     if (!novel) return null;
 
-    const volumes = await this.db.volumes.where('novelId').equals(novelTitle).toArray();
+    const resolvedNovelId = (novel as any).id || novel.title;
+
+    const volumes = await this.db.volumes.where('novelId').equals(resolvedNovelId).toArray();
     const volumesWithChapters = await Promise.all(
       volumes.map(async (volume) => {
         const chapters = await this.db.chapters.where('volumeId').equals(volume.id).toArray();
@@ -146,12 +233,12 @@ export class DatabaseService {
       })
     );
 
-    const chapters = await this.db.chapters.where('novelId').equals(novelTitle).toArray();
-    const characters = await this.db.characters.where('novelId').equals(novelTitle).toArray();
-    const settings = await this.db.settings.where('novelId').equals(novelTitle).toArray();
-    const factions = await this.db.factions.where('novelId').equals(novelTitle).toArray();
-    const items = await this.db.items.where('novelId').equals(novelTitle).toArray();
-    const relationships = await this.db.relationships.where('novelId').equals(novelTitle).toArray();
+    const chapters = await this.db.chapters.where('novelId').equals(resolvedNovelId).toArray();
+    const characters = await this.db.characters.where('novelId').equals(resolvedNovelId).toArray();
+    const settings = await this.db.settings.where('novelId').equals(resolvedNovelId).toArray();
+    const factions = await this.db.factions.where('novelId').equals(resolvedNovelId).toArray();
+    const items = await this.db.items.where('novelId').equals(resolvedNovelId).toArray();
+    const relationships = await this.db.relationships.where('novelId').equals(resolvedNovelId).toArray();
 
     return {
       ...novel,
@@ -166,11 +253,15 @@ export class DatabaseService {
   }
 
   async updateNovel(novelId: string | number, updates: Partial<Novel>): Promise<void> {
-    let key: string | number = novelId;
-    if (typeof novelId === 'string' && !isNaN(Number(novelId))) {
-      key = Number(novelId);
-    }
-    await this.db.novels.update(key as any, updates);
+    const key = typeof novelId === 'string' ? (novelId as any) : novelId;
+    const existingNovel = await this.db.novels.get(key as any);
+    if (!existingNovel) throw new Error(`Novel not found: ${novelId}`);
+    const updatePayload: any = {
+      ...updates,
+      updatedAt: new Date().toISOString(),
+      version: ((existingNovel as any)?.version || 0) + 1,
+    };
+    await this.db.novels.update(key as any, updatePayload);
   }
 
   async addCharacter(character: Character, novelId: string): Promise<void> {
@@ -281,7 +372,7 @@ export class DatabaseService {
   }
 
   async getActivePromptTemplate(type: string): Promise<PromptTemplate | null> {
-    const result = await this.db.promptTemplates.where('type').equals(type).filter((p) => p.isActive).first();
+    const result = await this.db.promptTemplates.where('type').equals(type).filter((p) => p.isActive === true).first();
     return result || null;
   }
 
@@ -365,8 +456,9 @@ export class DatabaseService {
     const novels = await this.db.novels.toArray();
     return await Promise.all(
       novels.map(async (novel) => {
-        const chapters = await this.db.chapters.where('novelId').equals(novel.title).toArray();
-        const volumesCount = await this.db.volumes.where('novelId').equals(novel.title).count();
+        const resolvedNovelId = (novel as any).id || novel.title;
+        const chapters = await this.db.chapters.where('novelId').equals(resolvedNovelId).toArray();
+        const volumesCount = await this.db.volumes.where('novelId').equals(resolvedNovelId).count();
         const wordCount = chapters.reduce((acc, ch) => {
           const text = ch.content?.replace(/<[^>]*>/g, '') || '';
           return acc + text.length;
@@ -404,6 +496,29 @@ export class DatabaseService {
       totalEntities: charCount + settingCount + factionCount + itemCount,
       novelCount: await this.db.novels.count(),
     };
+  }
+
+  async deleteNovel(novelTitle: string): Promise<void> {
+    await this.db.transaction(
+      'rw',
+      [this.db.novels, this.db.volumes, this.db.chapters, this.db.characters, this.db.settings, this.db.factions, this.db.items, this.db.relationships, this.db.timelineEvents, this.db.graphLayouts],
+      async () => {
+        const novel = await this.db.novels.where('title').equals(novelTitle).first()
+          || await this.db.novels.where('id').equals(novelTitle).first();
+        if (!novel) return;
+        const novelKey = (novel as any).id || novel.title;
+        await this.db.volumes.where('novelId').equals(novelKey).delete();
+        await this.db.chapters.where('novelId').equals(novelKey).delete();
+        await this.db.characters.where('novelId').equals(novelKey).delete();
+        await this.db.settings.where('novelId').equals(novelKey).delete();
+        await this.db.factions.where('novelId').equals(novelKey).delete();
+        await this.db.items.where('novelId').equals(novelKey).delete();
+        await this.db.relationships.where('novelId').equals(novelKey).delete();
+        await this.db.timelineEvents.where('novelId').equals(novelKey).delete();
+        await this.db.graphLayouts.where('novelId').equals(novelKey).delete();
+        await this.db.novels.where('title').equals(novel.title).delete();
+      }
+    );
   }
 
   async exportAllData(): Promise<{ version: number; novels: Novel[]; promptTemplates: PromptTemplate[]; timelineEvents: TimelineEvent[]; relationships: EntityRelationship[]; items: Item[]; graphLayouts: GraphLayout[] }> {
@@ -483,12 +598,122 @@ export class DatabaseService {
     return await this.db.createSnapshot(chapterId, content, description);
   }
 
+  async createVersionedSnapshot(
+    chapterId: string,
+    content: string,
+    options?: { description?: string; version?: number; workflowState?: string; author?: string; changeReason?: string }
+  ): Promise<number> {
+    const snapshots = await this.getChapterSnapshots(chapterId);
+    const nextVersion = options?.version ?? (snapshots.length > 0 ? Math.max(...snapshots.map((s) => s.version || 1)) + 1 : 1);
+
+    return await this.db.snapshots.add({
+      chapterId,
+      content,
+      timestamp: new Date(),
+      description: options?.description,
+      version: nextVersion,
+      workflowState: options?.workflowState || 'draft',
+      author: options?.author,
+      changeReason: options?.changeReason,
+    });
+  }
+
   async getChapterSnapshots(chapterId: string): Promise<ChapterSnapshot[]> {
     return await this.db.getChapterSnapshots(chapterId);
   }
 
   async getLatestSnapshot(chapterId: string): Promise<ChapterSnapshot | undefined> {
     return await this.db.getLatestSnapshot(chapterId);
+  }
+
+  async getSnapshotByVersion(chapterId: string, version: number): Promise<ChapterSnapshot | undefined> {
+    return await this.db.snapshots.where('chapterId').equals(chapterId).and((s) => s.version === version).first();
+  }
+
+  async getSnapshotsByWorkflowState(chapterId: string, workflowState: string): Promise<ChapterSnapshot[]> {
+    return await this.db.snapshots.where('chapterId').equals(chapterId).and((s) => s.workflowState === workflowState).toArray();
+  }
+
+  async addAnnotationThread(thread: AnnotationThread): Promise<void> {
+    await this.db.annotationThreads.put(thread);
+  }
+
+  async updateAnnotationThread(thread: AnnotationThread): Promise<void> {
+    await this.db.annotationThreads.put(thread);
+  }
+
+  async deleteAnnotationThread(id: string): Promise<void> {
+    await this.db.annotationThreads.delete(id);
+  }
+
+  async getAnnotationThreads(novelId: string, chapterId?: string): Promise<AnnotationThread[]> {
+    if (chapterId) {
+      return await this.db.annotationThreads.where('novelId').equals(novelId).and((t) => t.chapterId === chapterId).toArray();
+    }
+    return await this.db.annotationThreads.where('novelId').equals(novelId).toArray();
+  }
+
+  async getAnnotationThreadsByStatus(novelId: string, status: string): Promise<AnnotationThread[]> {
+    return await this.db.annotationThreads.where('novelId').equals(novelId).and((t) => t.status === status).toArray();
+  }
+
+  async addRecommendationItem(item: RecommendationItem): Promise<void> {
+    await this.db.recommendationItems.put(item);
+  }
+
+  async updateRecommendationItem(item: RecommendationItem): Promise<void> {
+    await this.db.recommendationItems.put(item);
+  }
+
+  async deleteRecommendationItem(id: string): Promise<void> {
+    await this.db.recommendationItems.delete(id);
+  }
+
+  async getRecommendationItems(novelId: string, status?: string): Promise<RecommendationItem[]> {
+    if (status) {
+      return await this.db.recommendationItems.where('novelId').equals(novelId).and((r) => r.status === status).toArray();
+    }
+    return await this.db.recommendationItems.where('novelId').equals(novelId).toArray();
+  }
+
+  async getRecommendationItemsByType(novelId: string, type: string): Promise<RecommendationItem[]> {
+    return await this.db.recommendationItems.where('novelId').equals(novelId).and((r) => r.type === type).toArray();
+  }
+
+  async addAuditEntry(entry: Omit<AuditEntry, 'id' | 'timestamp'>): Promise<void> {
+    await this.db.auditLog.add({
+      ...entry,
+      id: `audit-${crypto.randomUUID().slice(0, 12)}`,
+      timestamp: new Date(),
+    });
+  }
+
+  async getAuditEntries(limit?: number): Promise<AuditEntry[]> {
+    let query = this.db.auditLog.orderBy('timestamp').reverse();
+    if (limit) {
+      return await query.limit(limit).toArray();
+    }
+    return await query.toArray();
+  }
+
+  async getAuditEntriesByEntityType(entityType: string, limit?: number): Promise<AuditEntry[]> {
+    let query = this.db.auditLog.where('entityType').equals(entityType).reverse();
+    if (limit) {
+      return await query.limit(limit).toArray();
+    }
+    return await query.toArray();
+  }
+
+  async getAuditEntriesByEntityId(entityId: string): Promise<AuditEntry[]> {
+    return await this.db.auditLog.where('entityId').equals(entityId).reverse().toArray();
+  }
+
+  async getAuditEntriesByAuthor(author: string): Promise<AuditEntry[]> {
+    return await this.db.auditLog.where('author').equals(author).reverse().toArray();
+  }
+
+  async clearAuditLog(): Promise<void> {
+    await this.db.auditLog.clear();
   }
 }
 

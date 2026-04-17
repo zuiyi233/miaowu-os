@@ -27,6 +27,10 @@ interface SettingsState {
   llmProviders: LlmProviderConfig[];
   promptTemplates: PromptTemplate[];
   currentTemplateId: string;
+  readingTheme?: string;
+  readingFontSize?: number;
+  readingLineHeight?: number;
+  readingParagraphSpacing?: number;
   
   setLlmProvider: (provider: string) => void;
   setApiKey: (key: string) => void;
@@ -43,6 +47,7 @@ interface SettingsState {
   updatePromptTemplate: (id: string, template: Partial<PromptTemplate>) => void;
   addPromptTemplate: (template: PromptTemplate) => void;
   deletePromptTemplate: (id: string) => void;
+  updateSettings: (updates: Partial<Pick<SettingsState, 'readingTheme' | 'readingFontSize' | 'readingLineHeight' | 'readingParagraphSpacing'>>) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -94,6 +99,7 @@ export const useSettingsStore = create<SettingsState>()(
         set((state) => ({
           promptTemplates: state.promptTemplates.filter((t) => t.id !== id),
         })),
+      updateSettings: (updates) => set((state) => ({ ...state, ...updates })),
     }),
     {
       name: "novelist-settings-storage",

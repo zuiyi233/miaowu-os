@@ -4,7 +4,6 @@ import React from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { useOutlineStore } from '@/core/novel/useOutlineStore';
-import { useUiStore } from '@/core/novel/useUiStore';
 import type { OutlineNode } from '@/core/novel/schemas';
 
 interface OutlineListPanelProps {

@@ -3,7 +3,7 @@
 import React from 'react';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from '@/components/ui/command';
 import { Button } from '@/components/ui/button';
-import { useUiStore } from '@/core/novel/useUiStore';
+import { useNovelStore } from '@/core/novel/useNovelStore';
 import { useModalStore } from '@/core/novel/useModalStore';
 import { BookOpen, Users, MapPin, Shield, Package, ScrollText, LayoutDashboard, Settings, FileText } from 'lucide-react';
 
@@ -28,7 +28,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onCreateFaction,
   onCreateItem,
 }) => {
-  const { setViewMode } = useUiStore();
+  const { setViewMode } = useNovelStore();
   const { open: openModal } = useModalStore();
 
   return (

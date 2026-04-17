@@ -28,7 +28,8 @@ const itemEditSchema = z.object({
   ownerId: z.string().optional(),
 });
 
-type ItemEditData = z.infer<typeof itemEditSchema>;
+type ItemEditInput = z.input<typeof itemEditSchema>;
+type ItemEditOutput = z.output<typeof itemEditSchema>;
 
 interface ItemEditFormProps {
   item: Item;
@@ -39,12 +40,12 @@ interface ItemEditFormProps {
 export const ItemEditForm: React.FC<ItemEditFormProps> = ({ item, onSubmitSuccess, onDelete }) => {
   const updateItem = useUpdateItemMutation();
   const deleteItem = useDeleteItemMutation();
-  const form = useForm<ItemEditData>({
+  const form = useForm<ItemEditInput, unknown, ItemEditOutput>({
     resolver: zodResolver(itemEditSchema),
     defaultValues: {
       name: item.name,
       description: item.description || '',
-      type: item.type as any || '其他',
+      type: item.type ?? '其他',
       appearance: item.appearance || '',
       history: item.history || '',
       abilities: item.abilities || '',
@@ -52,7 +53,7 @@ export const ItemEditForm: React.FC<ItemEditFormProps> = ({ item, onSubmitSucces
     },
   });
 
-  const onSubmit = (data: ItemEditData) => {
+  const onSubmit = (data: ItemEditOutput) => {
     updateItem.mutate({ id: item.id, ...data } as Item, { onSuccess: () => onSubmitSuccess?.() });
   };
 

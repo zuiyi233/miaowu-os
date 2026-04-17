@@ -15,7 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useNovelStore } from '@/core/novel';
 import { databaseService } from '@/core/novel/database';
-import { generateUniqueId } from '@/lib/utils';
+import { generateUniqueId } from '@/core/novel/utils';
 import { useI18n } from '@/core/i18n/hooks';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -37,10 +37,12 @@ export function NovelCreationDialog({ open, onOpenChange }: NovelCreationDialogP
     setIsSubmitting(true);
 
     try {
+      const novelId = generateUniqueId('novel');
       const volId = generateUniqueId();
       const ch1Id = generateUniqueId();
 
       await databaseService.saveNovel({
+        id: novelId,
         title,
         outline,
         volumes: [
@@ -48,11 +50,13 @@ export function NovelCreationDialog({ open, onOpenChange }: NovelCreationDialogP
             id: volId,
             title: t.novel.defaultVolumeName,
             description: '',
+            novelId,
             chapters: [
               {
                 id: ch1Id,
                 title: t.novel.defaultChapterName,
                 content: '<p></p>',
+                novelId,
                 order: 0,
               },
             ],
@@ -65,6 +69,7 @@ export function NovelCreationDialog({ open, onOpenChange }: NovelCreationDialogP
             title: t.novel.defaultChapterName,
             content: '<p></p>',
             volumeId: volId,
+            novelId,
             order: 0,
           },
         ],

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Sheet,
@@ -15,18 +15,20 @@ import { OutlineView } from './outline/OutlineView';
 import { TimelineView } from './timeline/TimelineView';
 import { RelationshipGraph } from './RelationshipGraph';
 import { NovelSettings } from './settings/NovelSettings';
+import { ReaderWorkspaceView } from './reader/ReaderWorkspaceView';
 import { useNovelStore } from '@/core/novel';
 import { useMediaQuery } from '@/core/novel/useMediaQuery';
 import { useI18n } from '@/core/i18n/hooks';
 import {
   PanelRight,
   BookOpen,
+  BookText,
   Clock,
   GitBranch,
   Settings,
 } from 'lucide-react';
 
-export function NovelWorkspace({ novelTitle }: { novelTitle: string }) {
+export function NovelWorkspace({ novelId }: { novelId: string }) {
   const { t } = useI18n();
   const { viewMode, setViewMode } = useNovelStore();
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
@@ -37,6 +39,7 @@ export function NovelWorkspace({ novelTitle }: { novelTitle: string }) {
 
   const viewModes = [
     { mode: 'editor' as const, label: t.novel.editor, icon: <BookOpen className="h-4 w-4" /> },
+    { mode: 'reader' as const, label: '阅读', icon: <BookText className="h-4 w-4" /> },
     { mode: 'outline' as const, label: t.novel.outline, icon: null },
     { mode: 'timeline' as const, label: t.novel.timeline, icon: <Clock className="h-4 w-4" /> },
     { mode: 'graph' as const, label: t.novel.graph, icon: <GitBranch className="h-4 w-4" /> },
@@ -94,23 +97,23 @@ export function NovelWorkspace({ novelTitle }: { novelTitle: string }) {
             {isDesktop ? (
               <div className="flex h-full">
                 <div className="flex-1 overflow-hidden">
-                  <NovelEditor novelTitle={novelTitle} />
+                  <NovelEditor novelId={novelId} />
                 </div>
                 {rightPanelOpen && (
                   <div className="w-80 flex-shrink-0 border-l bg-background transition-all duration-300">
-                    <AiPanel />
+                    <AiPanel novelId={novelId} />
                   </div>
                 )}
               </div>
             ) : (
               <>
-                <NovelEditor novelTitle={novelTitle} />
+                <NovelEditor novelId={novelId} />
                 <Sheet open={mobileAiOpen} onOpenChange={setMobileAiOpen}>
                   <SheetContent side="right" className="w-[90vw] max-w-md p-0">
                     <SheetHeader className="sr-only">
                       <SheetTitle>{t.novel.chat}</SheetTitle>
                     </SheetHeader>
-                    <AiPanel />
+                    <AiPanel novelId={novelId} />
                   </SheetContent>
                 </Sheet>
               </>
@@ -118,27 +121,33 @@ export function NovelWorkspace({ novelTitle }: { novelTitle: string }) {
           </>
         ) : null}
 
+        {viewMode === 'reader' && (
+          <div className="h-full w-full animate-in fade-in duration-300 bg-background">
+            <ReaderWorkspaceView novelId={novelId} />
+          </div>
+        )}
+
         {viewMode === 'outline' && (
           <div className="h-full w-full animate-in fade-in duration-300">
-            <OutlineView novelTitle={novelTitle} />
+            <OutlineView novelId={novelId} />
           </div>
         )}
 
         {viewMode === 'timeline' && (
           <div className="h-full w-full animate-in fade-in duration-300 bg-background">
-            <TimelineView novelTitle={novelTitle} />
+            <TimelineView novelId={novelId} />
           </div>
         )}
 
         {viewMode === 'graph' && (
           <div className="h-full w-full animate-in fade-in duration-300 bg-background">
-            <RelationshipGraph novelTitle={novelTitle} />
+            <RelationshipGraph novelId={novelId} />
           </div>
         )}
 
         {viewMode === 'settings' && (
           <div className="h-full w-full animate-in fade-in duration-300 bg-background">
-            <NovelSettings novelTitle={novelTitle} />
+            <NovelSettings novelId={novelId} />
           </div>
         )}
       </main>
