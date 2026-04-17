@@ -4,9 +4,11 @@
 
 - 任务目录：`/mnt/d/miaowu-os/.trellis/tasks/04-17-novel-migration-1to1`
 - 计划日期：2026-04-17
-- 计划范围：Wave 1（已确认）
+- 计划范围：Wave 1 + Wave 2（已执行）
 - Wave 1 In-Scope：职业体系、伏笔状态机、记忆分析与向量检索、MCP 工具链
 - Wave 1 Out-of-Scope：`auth/users/admin` 与用户模型链
+- Wave 2 执行前提：单机单用户固定 `user_id` 回退层（仅 `novel_migrated`）
+- Wave 3 状态：延期（当前不做账号体系）
 
 ---
 
@@ -18,7 +20,7 @@
 - 已完成：基于现有事实文档与参考/主项目代码静态核验后制定计划。
 
 2. Incremental Development
-- 采用小步 PR（PR1~PR4），每个 PR 独立可验证、可回滚。
+- 采用小步 PR（Wave1: PR1~PR4；Wave2: W2-PR1~W2-PR5），每个 PR 独立可验证、可回滚。
 
 3. Cross-Layer Thinking
 - 本任务跨 3+ 层（Gateway Router -> Service -> Model/Vector Store -> Frontend 调用面），在每个 PR 里明确边界契约与验证点。
@@ -258,8 +260,98 @@
 
 ## 9. 完成定义（Wave 1）
 
-- [ ] PR1~PR4 合并完成。
-- [ ] Wave 1 四项能力可调用并有最小验证证据。
-- [ ] `auth/users/admin` 未进入 Wave 1（保持排除）。
-- [ ] 所有“未验证项/失败项”均在任务文档中明确记录。
+- [x] PR1~PR4 合并完成。
+- [x] Wave 1 四项能力可调用并有最小验证证据。
+- [x] `auth/users/admin` 未进入 Wave 1（保持排除）。
+- [x] 所有“未验证项/失败项”均在任务文档中明确记录。
 
+---
+
+## 11. Wave 2 执行记录（已完成）
+
+### 11.1 Wave 2 In-Scope（已落地）
+
+- Wave 1 已落地模块的“无账号化收口改造”（必须先做）
+  - `api/common.py`
+  - `api/settings.py`
+  - `api/careers.py`
+  - `api/foreshadows.py`
+  - `api/memories.py`
+- `api/book_import.py` + `services/book_import_service.py`
+- `api/project_covers.py` + `services/cover_generation_service.py`
+- `api/inspiration.py`
+
+### 11.2 Wave 2 前置任务（必须先做）
+
+- 在 `novel_migrated` 内新增“固定 `user_id` 回退层”：
+  - 仅作用于 `novel_migrated` 路由；
+  - 不修改全局网关鉴权链；
+  - 默认固定用户标识（例如 `local_single_user`），可通过配置覆盖。
+- 将 Wave 1 已落地接口全部切换到该回退层，移除对 `request.state.user_id` 的硬依赖。
+
+### 11.3 Wave 2 执行状态（W2-PR1 ~ W2-PR5）
+
+1. W2-PR1：`[已完成]` 单机单用户回退层 + Wave 1 无账号化收口（`careers/foreshadows/memories/settings/common`）。
+2. W2-PR2：`[已完成]` 灵感模块接入（`api/inspiration.py`）。
+3. W2-PR3：`[已完成]` 封面模块接入（`api/project_covers.py` + `services/cover_generation_service.py`）。
+4. W2-PR4：`[已完成]` 拆书导入模块接入（`api/book_import.py` + `services/book_import_service.py` + 依赖闭包）。
+5. W2-PR5：`[本次完成]` 路由聚合注册 + 文档收口（`README.md`、`CLAUDE.md`、本任务文档）。
+
+### 11.4 Wave 2 验收状态
+
+- [x] Wave 1 与 Wave 2 API 均可在 `novel_migrated` 路由下接入且不依赖账号登录链路（小说域内固定 `user_id` 回退）。
+- [x] 不影响现有 `/api/models`、`/api/mcp/config`、`/api/memory`、`/api/novel*` 路由边界。
+- [ ] 运行态联调与异常路径全量回归待 Windows 侧补验（见 14.2）。
+
+---
+
+## 12. Wave 3 计划（延期）
+
+### 12.1 延期范围
+
+- `auth.py`、`users.py`、`admin.py`
+- `models/user.py`
+- `services/oauth_service.py`、`services/email_service.py`
+- `user_manager.py`、`user_password.py`
+
+### 12.2 延期原因
+
+- 当前目标是单机单用户小说域能力落地，账号体系不在本期范围。
+- 若提前并入，会显著扩大跨层改动面和联调复杂度。
+
+## 13. Wave 1 实施状态（历史记录）
+
+- PR1：`[本次完成]` 已建立 `backend/app/gateway/novel_migrated/` 包结构，迁移 `core/logger`、`core/database`、`utils/sse_response`、`api/common`、`api/settings`，并补齐共享模型 `project/chapter/character/settings`。
+- PR2：`[本次完成]` 已完成 `careers.py`、`foreshadows.py` 及对应 `services/models/schemas` 迁移，导入路径已对齐 `app.gateway.novel_migrated.*`。
+- PR3：`[本次完成]` 已完成 `memories.py`、`memory_service.py`、`memory.py`、`mcp_tools_loader.py`、`plot_analyzer.py` 迁移与桥接，新增兼容 `ai_service.py`，并在 `backend/pyproject.toml` 补齐 `chromadb`、`sentence-transformers`、`sqlalchemy`、`aiosqlite` 依赖声明。
+- PR4：`[本次完成]` 已新增 `app.gateway.routers.novel_migrated` 聚合路由并接入 `CORE_ROUTER_MODULES`，同步更新 `backend/README.md`、`backend/CLAUDE.md`。
+
+### 13.1 本地验证结果（WSL）
+
+- 已通过：`python3 -m compileall app/gateway/novel_migrated app/gateway/routers/novel_migrated.py app/gateway/app.py`
+- 已通过：`.venv/bin/ruff check app/gateway/novel_migrated app/gateway/routers/novel_migrated.py app/gateway/app.py`
+- 未执行：`pytest`（当前 WSL 环境与 Windows 侧依赖安装不一致，按任务约束跳过）
+- 未执行：完整运行态联调（需在可用依赖环境执行 `uv sync` 后再做）
+
+## 14. Wave 2 收口状态（本次更新）
+
+### 14.1 代码与文档收口
+
+- 已完成 `app/gateway/routers/novel_migrated.py` 可选模块注册补齐：
+  - `app.gateway.novel_migrated.api.inspiration`
+  - `app.gateway.novel_migrated.api.project_covers`
+  - `app.gateway.novel_migrated.api.book_import`
+- 已保持原有“可选导入容错”机制（`ModuleNotFoundError` 仅跳过模块，不阻断网关启动）。
+- 已同步更新 `backend/README.md` 与 `backend/CLAUDE.md`，明确 Wave 2 模块覆盖与无账号化回退前提（`NOVEL_MIGRATED_DEFAULT_USER_ID`）。
+- 已回填本任务文档（`implementation-plan.md` + `prd.md`）中的 Wave 2 执行状态。
+
+### 14.2 验证与补验说明
+
+- WSL 本次仅执行最小静态验证（`compileall` + `ruff check`），不执行重型测试。
+- Windows 端补验建议：
+  - `cd deer-flow-main/backend && uv sync`
+  - `cd deer-flow-main/backend && uv run pytest -q`
+  - 对 Wave2 新接口做 smoke：
+    - `/api/inspiration/*`
+    - `/api/projects/{project_id}/cover/*`
+    - `/book-import/*`

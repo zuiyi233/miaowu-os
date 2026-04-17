@@ -56,7 +56,7 @@ deer-flow/
 │   ├── app/                   # Application layer (import: app.*)
 │   │   ├── gateway/           # FastAPI Gateway API
 │   │   │   ├── app.py         # FastAPI application
-│   │   │   └── routers/       # FastAPI route modules (models, mcp, memory, skills, uploads, threads, artifacts, agents, suggestions, channels)
+│   │   │   └── routers/       # FastAPI route modules (models, mcp, memory, skills, uploads, threads, artifacts, agents, suggestions, channels, novel_migrated)
 │   │   └── channels/          # IM platform integrations
 │   ├── tests/                 # Test suite
 │   └── docs/                  # Documentation
@@ -222,6 +222,10 @@ FastAPI application on port 8001 with health check at `GET /health`.
 | **Threads** (`/api/threads/{id}`) | `DELETE /` - remove DeerFlow-managed local thread data after LangGraph thread deletion; unexpected failures are logged server-side and return a generic 500 detail |
 | **Artifacts** (`/api/threads/{id}/artifacts`) | `GET /{path}` - serve artifacts; active content types (`text/html`, `application/xhtml+xml`, `image/svg+xml`) are always forced as download attachments to reduce XSS risk; `?download=true` still forces download for other file types |
 | **Suggestions** (`/api/threads/{id}/suggestions`) | `POST /` - generate follow-up questions; rich list/block model content is normalized before JSON parsing |
+
+Novel Migrated Wave1+Wave2 APIs are registered through `app.gateway.routers.novel_migrated`, which is added to `CORE_ROUTER_MODULES` in `app/gateway/app.py`. That aggregator conditionally includes `app.gateway.novel_migrated.api.careers`, `app.gateway.novel_migrated.api.foreshadows`, `app.gateway.novel_migrated.api.memories`, `app.gateway.novel_migrated.api.inspiration`, `app.gateway.novel_migrated.api.project_covers`, and `app.gateway.novel_migrated.api.book_import` when those modules exist.
+
+Novel routes under `app.gateway.novel_migrated.*` run in single-user fallback mode: if `request.state.user_id` is absent, they fallback to `local_single_user` (configurable via `NOVEL_MIGRATED_DEFAULT_USER_ID`). This fallback is scoped to `novel_migrated` only and does not alter the global gateway auth chain.
 
 Proxied through nginx: `/api/langgraph/*` → LangGraph, all other `/api/*` → Gateway.
 

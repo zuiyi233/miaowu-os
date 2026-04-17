@@ -33,6 +33,8 @@
 ## Open Questions
 
 - 已确认：Wave 1 不包含 `auth/users/admin`，先聚焦纯小说业务域核心链路（职业/伏笔/记忆/MCP）。
+- 已确认：当前阶段不做账号相关能力（`auth/users/admin`、OAuth、邮箱验证码、会话刷新等）。
+- 已确认：采用单机单用户模式，小说域统一固定 `user_id` 回退，不引入账号系统。
 
 ## Requirements (evolving)
 
@@ -51,6 +53,9 @@
   - 复用点与禁止重复点
   - 验收标准
 - Wave 1 范围固定为：职业体系、伏笔状态机、记忆分析与向量检索、MCP 工具链；明确排除 `auth/users/admin`。
+- Wave 2 前置要求：在 `novel_migrated` 内实现固定 `user_id` 回退层，仅小说域生效，不影响主项目其他路由。
+- Wave 2 必须包含对已落地 Wave 1 接口的无账号化收口改造（`careers/foreshadows/memories/settings/common`），确保整条链路可在单机单用户模式运行。
+- Wave 3（账号体系）改为延期，不进入当前实施窗口。
 
 ## Acceptance Criteria (evolving)
 
@@ -93,6 +98,7 @@
 - 不在本阶段引入与参考项目无关的新功能。
 - 不在本阶段对参考项目业务逻辑做“优化性重写”。
 - 不在 Wave 1 迁移 `auth/users/admin` 及用户模型链。
+- 当前实施窗口不迁移 `auth/users/admin`、`oauth_service`、`email_service`、`user_manager`、`user_password`。
 
 ## Technical Notes
 
@@ -107,3 +113,16 @@
 - 当前验证方式：本地静态核验（未运行联调，未做 E2E）。
 - 实施计划文档：
   - `/mnt/d/miaowu-os/.trellis/tasks/04-17-novel-migration-1to1/implementation-plan.md`
+
+## Implementation Status (2026-04-18)
+
+- 已完成 Wave 1 代码迁移落位：`backend/app/gateway/novel_migrated/{api,services,models,schemas,utils,core}`。
+- 已完成 Wave 2 全量执行（W2-PR1 ~ W2-PR5）：
+  - W2-PR1：固定 `user_id` 回退层与 Wave 1 无账号化收口（`common/settings/careers/foreshadows/memories`）。
+  - W2-PR2：灵感模块迁移（`api/inspiration.py`）。
+  - W2-PR3：封面模块迁移（`api/project_covers.py` + `services/cover_generation_service.py` + provider 闭包）。
+  - W2-PR4：拆书导入迁移（`api/book_import.py` + `services/book_import_service.py` + `schemas/models` 依赖闭包）。
+  - W2-PR5：路由聚合注册 + 文档收口（`README.md`、`CLAUDE.md`、任务文档状态回填）。
+- 已完成网关接入：`backend/app/gateway/routers/novel_migrated.py` 在保留可选导入容错机制前提下，聚合 Wave 1 + Wave 2 模块。
+- 已完成静态验证：`ruff check`（本次改动范围）与 `compileall`（本次改动范围）通过。
+- 尚未完成项（Windows 端补验）：`uv sync` 后的运行态联调、`uv run pytest -q` 回归、Wave2 新接口 smoke。

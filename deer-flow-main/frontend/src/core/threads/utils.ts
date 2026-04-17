@@ -49,3 +49,25 @@ export function textOfMessage(message: Message) {
 export function titleOfThread(thread: AgentThread) {
   return thread.values?.title ?? "Untitled";
 }
+
+/**
+ * Add optimistic messages without eagerly reading every enumerable property on
+ * the stream object (which may include getter properties that can throw).
+ */
+export function withOptimisticMessages<TThread extends { messages: Message[] }>(
+  thread: TThread,
+  optimisticMessages: Message[],
+): TThread {
+  if (optimisticMessages.length === 0) {
+    return thread;
+  }
+
+  const shadowThread = Object.create(thread) as TThread;
+  Object.defineProperty(shadowThread, "messages", {
+    configurable: true,
+    enumerable: true,
+    value: [...thread.messages, ...optimisticMessages],
+    writable: false,
+  });
+  return shadowThread;
+}

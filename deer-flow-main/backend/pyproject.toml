@@ -6,9 +6,13 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "deerflow-harness",
+    "chromadb>=0.5.0",
+    "sqlalchemy>=2.0.36",
+    "aiosqlite>=0.20.0",
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
     "python-multipart>=0.0.26",
+    "sentence-transformers>=3.0.0",
     "sse-starlette>=2.1.0",
     "uvicorn[standard]>=0.34.0",
     "lark-oapi>=1.4.0",

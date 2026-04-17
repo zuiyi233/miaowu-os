@@ -34,7 +34,10 @@ HARNESS_ROUTER_MODULES = (
     "app.gateway.routers.thread_runs",
     "app.gateway.routers.runs",
 )
-CORE_ROUTER_MODULES = ("app.gateway.routers.novel",)
+CORE_ROUTER_MODULES = (
+    "app.gateway.routers.novel",
+    "app.gateway.routers.novel_migrated",
+)
 
 
 def _has_deerflow_package() -> bool:

@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
+import type { Message } from "@langchain/langgraph-sdk";
 
-import { pathOfThread } from "@/core/threads/utils";
+import { pathOfThread, withOptimisticMessages } from "@/core/threads/utils";
 
 test("uses standard chat route when thread has no agent context", () => {
   expect(pathOfThread("thread-123")).toBe("/workspace/chats/thread-123");
@@ -43,4 +44,27 @@ test("prefers context.agent_name over metadata.agent_name", () => {
       metadata: { agent_name: "from-metadata" },
     }),
   ).toBe("/workspace/agents/from-context/chats/thread-789");
+});
+
+test("withOptimisticMessages keeps getter-backed fields lazy", () => {
+  const baseThread: {
+    messages: Message[];
+    stop: () => Promise<void>;
+    readonly history: unknown;
+  } = {
+    messages: [{ type: "human", content: "hello" }],
+    get history() {
+      throw new Error("history getter should not be evaluated while merging");
+    },
+    stop: () => Promise.resolve(),
+  };
+
+  const merged = withOptimisticMessages(baseThread, [
+    { type: "ai", content: "hi" },
+  ]);
+
+  expect(merged.messages).toHaveLength(2);
+  expect(merged.messages[0]?.type).toBe("human");
+  expect(merged.messages[1]?.type).toBe("ai");
+  expect(merged.stop).toBe(baseThread.stop);
 });

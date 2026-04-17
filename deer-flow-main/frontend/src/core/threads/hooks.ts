@@ -18,6 +18,7 @@ import type { UploadedFileInfo } from "../uploads";
 import { promptInputFilePartToFile, uploadFiles } from "../uploads";
 
 import type { AgentThread, AgentThreadState } from "./types";
+import { withOptimisticMessages } from "./utils";
 
 export type ToolEndEvent = {
   name: string;
@@ -212,7 +213,9 @@ export function useThreadStream({
     reconnectOnMount: runMetadataStorageRef.current
       ? () => runMetadataStorageRef.current!
       : false,
-    fetchStateHistory: isGatewayCompatRuntime ? false : { limit: 1 },
+    // Keep history enabled (same as upstream deer-flow-main) so any consumer
+    // touching `thread.history` won't crash with runtime getter errors.
+    fetchStateHistory: { limit: 1 },
     onCreated(meta) {
       handleStreamStart(meta.thread_id);
       setOnStreamThreadId(meta.thread_id);
@@ -559,14 +562,9 @@ export function useThreadStream({
     [thread, _handleOnStart, t.uploads.uploadingFiles, context, queryClient],
   );
 
-  // Merge thread with optimistic messages for display
-  const mergedThread =
-    optimisticMessages.length > 0
-      ? ({
-          ...thread,
-          messages: [...thread.messages, ...optimisticMessages],
-        } as typeof thread)
-      : thread;
+  // Merge optimistic messages without spreading `thread`, because `useStream`
+  // exposes getter properties (e.g. `history`) that can throw when disabled.
+  const mergedThread = withOptimisticMessages(thread, optimisticMessages);
 
   return [mergedThread, sendMessage, isUploading] as const;
 }
