@@ -1,11 +1,10 @@
 'use client';
 
-import React from 'react';
-import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from '@/components/ui/command';
-import { Button } from '@/components/ui/button';
-import { useNovelStore } from '@/core/novel/useNovelStore';
-import { useModalStore } from '@/core/novel/useModalStore';
 import { BookOpen, Users, MapPin, Shield, Package, ScrollText, LayoutDashboard, Settings, FileText } from 'lucide-react';
+import React from 'react';
+
+import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from '@/components/ui/command';
+import { useNovelStore } from '@/core/novel/useNovelStore';
 
 interface CommandPaletteProps {
   novelId: string;
@@ -19,7 +18,6 @@ interface CommandPaletteProps {
 }
 
 export const CommandPalette: React.FC<CommandPaletteProps> = ({
-  novelId,
   open,
   onOpenChange,
   onCreateChapter,
@@ -29,7 +27,6 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onCreateItem,
 }) => {
   const { setViewMode } = useNovelStore();
-  const { open: openModal } = useModalStore();
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>

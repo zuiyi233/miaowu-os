@@ -1,12 +1,10 @@
 'use client';
 
+import { Plus, Calendar, Clock, Trash2, Edit } from 'lucide-react';
 import { useState } from 'react';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
@@ -16,6 +14,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
   SelectContent,
@@ -23,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Calendar, Clock, Trash2, Edit } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
 import { useTimelineEventsQuery, useAddTimelineEventMutation, useDeleteTimelineEventMutation } from '@/core/novel/queries';
 import type { TimelineEvent } from '@/core/novel/schemas';
 
@@ -34,7 +35,7 @@ interface TimelineViewProps {
 export function TimelineView({ novelId }: TimelineViewProps) {
   const { data: events } = useTimelineEventsQuery(novelId);
   const [showCreate, setShowCreate] = useState(false);
-  const [editingEvent, setEditingEvent] = useState<TimelineEvent | null>(null);
+  const [, setEditingEvent] = useState<TimelineEvent | null>(null);
 
   const addMutation = useAddTimelineEventMutation(novelId);
   const deleteMutation = useDeleteTimelineEventMutation();

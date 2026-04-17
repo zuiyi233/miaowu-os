@@ -1,9 +1,10 @@
 'use client';
 
-import React from 'react';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
 import { Loader2, ImagePlus } from 'lucide-react';
+import React from 'react';
+
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 interface ImageUploadProps {
   value?: string;

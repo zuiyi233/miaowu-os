@@ -1,13 +1,13 @@
 'use client';
 
-import React from 'react';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Maximize2, MapPin } from 'lucide-react';
-import { useOutlineStore } from '@/core/novel/useOutlineStore';
-import { useNovelStore } from '@/core/novel/useNovelStore';
+import React from 'react';
+
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import type { OutlineNode } from '@/core/novel/schemas';
+import { useNovelStore } from '@/core/novel/useNovelStore';
+import { useOutlineStore } from '@/core/novel/useOutlineStore';
 
 interface MiniNodeItemProps {
   node: OutlineNode;

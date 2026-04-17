@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie';
+
 import type {
   Novel,
   Chapter,
@@ -177,7 +178,7 @@ export class DatabaseService {
         const existingNovel = await this.db.novels.where('id').equals(novelData.id).first()
           || await this.db.novels.where('title').equals(novel.title).first();
         if (existingNovel) {
-          await this.db.novels.update(existingNovel.id!, novelData);
+          await this.db.novels.update(existingNovel.id, novelData);
         } else {
           await this.db.novels.put(novelData);
         }
@@ -187,7 +188,7 @@ export class DatabaseService {
         for (const volume of novel.volumes || []) {
           await this.db.volumes.put({ ...volume, novelId: novelKey } as any);
           for (const chapter of volume.chapters || []) {
-            await this.db.chapters.put({ ...chapter, novelId: novelKey, volumeId: volume.id } as any);
+            await this.db.chapters.put({ ...chapter, novelId: novelKey, volumeId: volume.id });
           }
         }
 
@@ -254,14 +255,14 @@ export class DatabaseService {
 
   async updateNovel(novelId: string | number, updates: Partial<Novel>): Promise<void> {
     const key = typeof novelId === 'string' ? (novelId as any) : novelId;
-    const existingNovel = await this.db.novels.get(key as any);
+    const existingNovel = await this.db.novels.get(key);
     if (!existingNovel) throw new Error(`Novel not found: ${novelId}`);
     const updatePayload: any = {
       ...updates,
       updatedAt: new Date().toISOString(),
       version: ((existingNovel as any)?.version || 0) + 1,
     };
-    await this.db.novels.update(key as any, updatePayload);
+    await this.db.novels.update(key, updatePayload);
   }
 
   async addCharacter(character: Character, novelId: string): Promise<void> {
@@ -689,7 +690,7 @@ export class DatabaseService {
   }
 
   async getAuditEntries(limit?: number): Promise<AuditEntry[]> {
-    let query = this.db.auditLog.orderBy('timestamp').reverse();
+    const query = this.db.auditLog.orderBy('timestamp').reverse();
     if (limit) {
       return await query.limit(limit).toArray();
     }
@@ -697,7 +698,7 @@ export class DatabaseService {
   }
 
   async getAuditEntriesByEntityType(entityType: string, limit?: number): Promise<AuditEntry[]> {
-    let query = this.db.auditLog.where('entityType').equals(entityType).reverse();
+    const query = this.db.auditLog.where('entityType').equals(entityType).reverse();
     if (limit) {
       return await query.limit(limit).toArray();
     }

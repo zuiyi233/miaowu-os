@@ -1,16 +1,17 @@
 'use client';
 
-import { useCallback, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Check, Lightbulb, Loader2, MessageSquare, SkipForward, TrendingUp, Users, Clock } from 'lucide-react';
+import { useCallback, useState } from 'react';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Check, Lightbulb, Loader2, MessageSquare, SkipForward, TrendingUp, Users, Clock } from 'lucide-react';
-import type { RecommendationItem } from '@/core/novel/schemas';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { databaseService } from '@/core/novel/database';
 import { executeRemoteFirst, novelApiService } from '@/core/novel/novel-api';
 import { emitNovelEvent } from '@/core/novel/observability';
+import type { RecommendationItem } from '@/core/novel/schemas';
 
 const typeIcons: Record<string, React.ReactNode> = {
   plot_progression: <TrendingUp className="h-4 w-4" />,

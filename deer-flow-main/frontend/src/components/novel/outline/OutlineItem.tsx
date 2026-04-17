@@ -1,13 +1,5 @@
 'use client';
 
-import React from 'react';
-import { useOutlineStore } from '@/core/novel/useOutlineStore';
-import { Card, CardContent } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import {
   Trash2,
   Edit3,
@@ -17,7 +9,16 @@ import {
   Loader2,
   GripVertical,
 } from 'lucide-react';
+import React from 'react';
+
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import type { OutlineNode } from '@/core/novel/schemas';
+import { useOutlineStore } from '@/core/novel/useOutlineStore';
 
 interface OutlineItemProps {
   node: OutlineNode;

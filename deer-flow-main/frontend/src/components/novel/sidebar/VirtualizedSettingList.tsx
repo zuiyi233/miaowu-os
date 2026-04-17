@@ -1,10 +1,11 @@
 'use client';
 
-import React from 'react';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
 import { Search, Plus } from 'lucide-react';
+import React from 'react';
+
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import type { Setting } from '@/core/novel/schemas';
 
 interface VirtualizedSettingListProps {

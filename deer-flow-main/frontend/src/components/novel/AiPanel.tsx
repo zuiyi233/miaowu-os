@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { MessageSquare, Sparkles, Network } from 'lucide-react';
+
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useI18n } from '@/core/i18n/hooks';
+import { useAiPanelStore } from '@/core/novel';
+
 import { AiChatView } from './ai/AiChatView';
 import { ContextInspector } from './ai/ContextInspector';
-import { useAiPanelStore } from '@/core/novel';
-import { useI18n } from '@/core/i18n/hooks';
-import { MessageSquare, Sparkles, Network } from 'lucide-react';
 
 export function AiPanel({ novelId }: { novelId: string }) {
   const { t } = useI18n();

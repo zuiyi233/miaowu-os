@@ -1,7 +1,8 @@
-import React from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import type React from "react";
+
 import { useModalStore } from "./useModalStore";
 import type { ModalConfig } from "./useModalStore";
-import { useQueryClient } from "@tanstack/react-query";
 
 export function useCreationModal(
   FormComponent: React.ComponentType<any>,

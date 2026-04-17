@@ -1,15 +1,16 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import CharacterCount from '@tiptap/extension-character-count';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import CharacterCount from '@tiptap/extension-character-count';
+import React, { useEffect, useRef } from 'react';
+
 import { useNovelStore, useAiPanelStore } from '@/core/novel';
 import { useNovelQuery, useUpdateChapterMutation } from '@/core/novel/queries';
-import { EditorToolbar } from './EditorToolbar';
-import { ChapterInfoCard } from './editor/ChapterInfoCard';
 import { useDebounce } from '@/core/novel/useDebounce';
-import { cn } from '@/lib/utils';
+
+import { ChapterInfoCard } from './editor/ChapterInfoCard';
+import { EditorToolbar } from './EditorToolbar';
 
 export function NovelEditor({ novelId }: { novelId: string }) {
   const { activeChapterId, dirtyContent, setDirtyContent } = useNovelStore();

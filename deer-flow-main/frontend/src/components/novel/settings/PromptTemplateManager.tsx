@@ -1,13 +1,11 @@
 'use client';
 
+import { Plus, Edit, Trash2, Search, FileText, Star } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -16,6 +14,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
   SelectContent,
@@ -23,9 +24,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Edit, Trash2, Search, FileText, Star } from 'lucide-react';
-import { usePromptTemplatesQuery } from '@/core/novel/queries';
+import { Textarea } from '@/components/ui/textarea';
 import { useI18n } from '@/core/i18n/hooks';
+import { usePromptTemplatesQuery } from '@/core/novel/queries';
 import type { PromptTemplate } from '@/core/novel/schemas';
 
 type PromptTypeOption = {

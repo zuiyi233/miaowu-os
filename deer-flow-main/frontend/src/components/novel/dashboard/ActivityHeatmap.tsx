@@ -1,9 +1,6 @@
 'use client';
 
 import React from 'react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface ActivityHeatmapProps {
   data: Record<string, number>;
@@ -45,7 +42,7 @@ export const ActivityHeatmap: React.FC<ActivityHeatmapProps> = ({
       <div className="inline-flex flex-col gap-1">
         {weeks.map((week, wi) => (
           <div key={wi} className="flex gap-1">
-            {week.map((dateStr, di) => {
+            {week.map((dateStr, _di) => {
               const count = data[dateStr] || 0;
               return (
                 <div

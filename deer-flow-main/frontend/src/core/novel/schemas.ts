@@ -264,6 +264,7 @@ export const outlineNodeSchema = z.object({
   title: z.string(),
   desc: z.string().optional(),
   type: z.enum(['volume', 'chapter']),
+  status: z.enum(['idle', 'generating', 'error']).optional(),
   isSelected: z.boolean(),
   children: z.array(z.lazy(() => outlineNodeSchema)).optional(),
 });

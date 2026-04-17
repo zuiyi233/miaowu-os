@@ -24,11 +24,9 @@ export function WorkspaceSidebar({
         <SidebarHeader className="py-0">
           <WorkspaceHeader />
         </SidebarHeader>
-        <SidebarContent className="flex-1 min-h-0">
-          <div className="flex flex-col h-full min-h-0">
-            <WorkspaceNavChatList />
-            {isSidebarOpen && <RecentChatList />}
-          </div>
+        <SidebarContent>
+          <WorkspaceNavChatList />
+          {isSidebarOpen && <RecentChatList />}
         </SidebarContent>
         <SidebarFooter>
           <WorkspaceNavMenu />

@@ -1,14 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   MessageSquare,
   Plus,
@@ -18,15 +10,23 @@ import {
   Loader2,
   Bot,
   User,
-  AtSign,
   Reply,
   Sparkles,
 } from 'lucide-react';
-import type { AnnotationThread } from '@/core/novel/schemas';
-import { databaseService } from '@/core/novel/database';
+import { useCallback, useMemo, useState } from 'react';
+
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
 import { novelAiService } from '@/core/novel/ai-service';
+import { databaseService } from '@/core/novel/database';
 import { executeRemoteFirst, novelApiService } from '@/core/novel/novel-api';
 import { emitNovelEvent } from '@/core/novel/observability';
+import type { AnnotationThread } from '@/core/novel/schemas';
 
 const statusColors: Record<string, string> = {
   pending: 'bg-yellow-100 text-yellow-800',

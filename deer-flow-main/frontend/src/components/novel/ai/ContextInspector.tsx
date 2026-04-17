@@ -1,9 +1,10 @@
 'use client';
 
-import { useAiPanelStore } from '@/core/novel';
+import { X } from 'lucide-react';
+
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { X } from 'lucide-react';
+import { useAiPanelStore } from '@/core/novel';
 
 export function ContextInspector() {
   const { contextEntities, removeContextEntity } = useAiPanelStore();

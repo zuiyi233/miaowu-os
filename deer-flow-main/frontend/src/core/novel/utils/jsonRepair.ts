@@ -63,9 +63,9 @@ export function safeJsonParse<T = any>(
 }
 
 function extractJsonFromText(text: string): any {
-  const arrayMatch = text.match(/\[[\s\S]*\]/);
+  const arrayMatch = /\[[\s\S]*\]/.exec(text);
   if (arrayMatch) { try { return JSON.parse(arrayMatch[0]); } catch {} }
-  const objectMatch = text.match(/\{[\s\S]*\}/);
+  const objectMatch = /\{[\s\S]*\}/.exec(text);
   if (objectMatch) { try { return JSON.parse(objectMatch[0]); } catch {} }
   return parseSimpleKeyValuePairs(text);
 }

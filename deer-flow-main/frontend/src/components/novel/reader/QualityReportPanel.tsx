@@ -1,15 +1,16 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useQuery } from '@tanstack/react-query';
+import { AlertCircle, CheckCircle, Info, Loader2, Shield, Users, FileText, Calendar } from 'lucide-react';
+import { useMemo, useState } from 'react';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AlertCircle, CheckCircle, Info, Loader2, Shield, TrendingUp, Users, FileText, Calendar } from 'lucide-react';
-import type { Chapter, Character, TimelineEvent } from '@/core/novel/schemas';
 import { novelApiService } from '@/core/novel/novel-api';
+import type { Chapter, Character, TimelineEvent } from '@/core/novel/schemas';
 
 interface QualityIssue {
   type: string;

@@ -1,14 +1,13 @@
 'use client';
 
+import { ArrowLeft, ArrowRight, BookOpen, Settings, Eye, Sun, Type, Minus, Plus, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNovelStore } from '@/core/novel';
-import { useSettingsStore } from '@/core/novel';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
-import { ArrowLeft, ArrowRight, BookOpen, Settings, Eye, Moon, Sun, Type, Minus, Plus, X } from 'lucide-react';
+import { useSettingsStore } from '@/core/novel';
+import { useNovelStore } from '@/core/novel';
 
 const READING_THEMES = {
   light: { bg: '#ffffff', text: '#1a1a1a', accent: '#3b82f6', secondary: '#6b7280' },
@@ -26,10 +25,10 @@ interface ReadingModeProps {
   onExit?: () => void;
 }
 
-export function ReadingMode({ novelId, chapters, initialChapterIndex = 0, onExit }: ReadingModeProps) {
+export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex = 0, onExit }: ReadingModeProps) {
   const [currentChapterIndex, setCurrentChapterIndex] = useState(initialChapterIndex);
   const [showSettings, setShowSettings] = useState(false);
-  const [isImmersive, setIsImmersive] = useNovelStore((state) => [state.isImmersive, state.setIsImmersive]);
+  const isImmersive = useNovelStore((state) => state.isImmersive);
   const settingsStore = useSettingsStore();
   const settingsCompat =
     (settingsStore as unknown as { settings?: Record<string, unknown> }).settings || settingsStore;
@@ -40,7 +39,7 @@ export function ReadingMode({ novelId, chapters, initialChapterIndex = 0, onExit
   const [lineHeight, setLineHeight] = useState((settingsCompat.readingLineHeight as number) || 1.8);
   const [paragraphSpacing, setParagraphSpacing] = useState((settingsCompat.readingParagraphSpacing as number) || 16);
   const [focusMode, setFocusMode] = useState(false);
-  const [isPinned, setIsPinned] = useState(false);
+  const [isPinned] = useState(false);
 
   const themeColors = READING_THEMES[theme];
   const currentChapter = chapters[currentChapterIndex];

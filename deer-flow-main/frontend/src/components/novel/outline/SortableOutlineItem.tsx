@@ -1,22 +1,9 @@
 'use client';
 
-import React from 'react';
-import {
-  DndContext,
-  DragOverlay,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core';
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
+import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import React from 'react';
+
 import type { OutlineNode } from '@/core/novel/schemas';
 
 interface SortableOutlineItemProps {
@@ -25,7 +12,7 @@ interface SortableOutlineItemProps {
   children: React.ReactNode;
 }
 
-export const SortableOutlineItem: React.FC<SortableOutlineItemProps> = ({ id, node, children }) => {
+export const SortableOutlineItem: React.FC<SortableOutlineItemProps> = ({ id, node: _node, children }) => {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id });
 
   const style = {

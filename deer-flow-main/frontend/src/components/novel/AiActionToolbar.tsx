@@ -1,10 +1,11 @@
 'use client';
 
 import { type Editor } from '@tiptap/react';
-import { Button } from '@/components/ui/button';
 import { BookOpen, PenTool, Sparkles } from 'lucide-react';
-import { useAiPanelStore } from '@/core/novel';
+
+import { Button } from '@/components/ui/button';
 import { useI18n } from '@/core/i18n/hooks';
+import { useAiPanelStore } from '@/core/novel';
 
 interface AiActionToolbarProps {
   editor: Editor;

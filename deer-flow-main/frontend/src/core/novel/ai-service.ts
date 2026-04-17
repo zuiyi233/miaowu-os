@@ -1,5 +1,6 @@
-import { aiEventBus } from './ai-event-bus';
 import { getBackendBaseURL } from '@/core/config';
+
+import { aiEventBus } from './ai-event-bus';
 import { emitNovelEvent } from './observability';
 
 const API_BASE_URL = getBackendBaseURL();
@@ -31,16 +32,36 @@ const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 1000;
 const REQUEST_TIMEOUT_MS = 120000;
 
+function mergeAbortSignals(signals: ReadonlyArray<AbortSignal | null | undefined>): AbortSignal | undefined {
+  const validSignals = signals.filter((signal): signal is AbortSignal => Boolean(signal));
+  if (validSignals.length === 0) return undefined;
+  if (validSignals.length === 1) return validSignals[0];
+
+  if (typeof AbortSignal.any === 'function') {
+    return AbortSignal.any(validSignals);
+  }
+
+  const fallbackController = new AbortController();
+  const onAbort = () => fallbackController.abort();
+  for (const signal of validSignals) {
+    if (signal.aborted) {
+      fallbackController.abort();
+      break;
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+  }
+  return fallbackController.signal;
+}
+
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const signals = [controller.signal];
-    if (options.signal) signals.push(options.signal);
+    const signal = mergeAbortSignals([controller.signal, options.signal]);
     const response = await fetch(url, {
       ...options,
-      signal: signals.length > 1 ? AbortSignal.any(signals) : controller.signal,
+      signal,
     });
     return response;
   } finally {
@@ -78,7 +99,7 @@ export class NovelAiService {
 
     this.abortController = new AbortController();
 
-    const signal = callbacks?.abortSignal || this.abortController.signal;
+    const signal = mergeAbortSignals([this.abortController.signal, callbacks?.abortSignal]) ?? this.abortController.signal;
 
     const correlationId = `novel-ai-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     const busCallbacks = aiEventBus.toStreamCallbacks(correlationId);

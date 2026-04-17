@@ -1,6 +1,7 @@
 'use client';
 
 import { useParams } from 'next/navigation';
+
 import { NovelWorkspace } from '@/components/novel/NovelWorkspace';
 
 export default function NovelDetailRoute() {

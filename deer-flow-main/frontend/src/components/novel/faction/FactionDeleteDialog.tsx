@@ -1,6 +1,9 @@
 'use client';
 
+import { AlertTriangle } from 'lucide-react';
 import React from 'react';
+
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -9,9 +12,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
 import { useDeleteFactionMutation } from '@/core/novel/queries';
-import { AlertTriangle } from 'lucide-react';
 
 interface FactionDeleteDialogProps {
   factionId: string;

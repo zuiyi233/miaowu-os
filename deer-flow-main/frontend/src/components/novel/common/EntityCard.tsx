@@ -1,12 +1,12 @@
 'use client';
 
+import { Pencil, Trash2, ChevronRight } from 'lucide-react';
 import React from 'react';
-import { Card, CardContent } from '@/components/ui/card';
+
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Pencil, Trash2, ChevronRight } from 'lucide-react';
-import type { Character } from '@/core/novel/schemas';
+import { Card, CardContent } from '@/components/ui/card';
 
 interface EntityCardProps {
   title: string;

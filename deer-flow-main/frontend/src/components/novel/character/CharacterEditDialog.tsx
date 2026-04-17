@@ -1,14 +1,16 @@
 'use client';
 
 import React from 'react';
+
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { CharacterEditForm } from '../forms/CharacterEditForm';
 import type { Character } from '@/core/novel/schemas';
+
+import { CharacterEditForm } from '../forms/CharacterEditForm';
 
 interface CharacterEditDialogProps {
   character: Character;

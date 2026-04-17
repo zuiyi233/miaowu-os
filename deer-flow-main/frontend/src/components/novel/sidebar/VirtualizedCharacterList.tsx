@@ -1,11 +1,12 @@
 'use client';
 
-import React from 'react';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Input } from '@/components/ui/input';
 import { Search, Plus } from 'lucide-react';
+import React from 'react';
+
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import type { Character } from '@/core/novel/schemas';
 
 interface VirtualizedCharacterListProps {
@@ -20,7 +21,6 @@ export const VirtualizedCharacterList: React.FC<VirtualizedCharacterListProps> =
   characters,
   onCharacterClick,
   onAddCharacter,
-  searchQuery,
   onSearchChange,
 }) => {
   const [search, setSearch] = React.useState('');

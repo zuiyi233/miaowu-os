@@ -1,28 +1,17 @@
 'use client';
 
+import { Settings2, FileText, Sparkles, Loader2 } from 'lucide-react';
 import React, { useState } from 'react';
-import { useOutlineStore } from '@/core/novel/useOutlineStore';
-import { useNovelStore } from '@/core/novel/useNovelStore';
-import { OutlineListPanel } from './OutlineListPanel';
-import { OutlineItem } from './OutlineItem';
+
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
-import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import {
-  Settings2,
-  FileText,
-  Wand2,
-  ChevronDown,
-  ChevronUp,
-  Sparkles,
-  Loader2,
-} from 'lucide-react';
+import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
 import type { OutlineNode } from '@/core/novel/schemas';
+import { useNovelStore } from '@/core/novel/useNovelStore';
+import { useOutlineStore } from '@/core/novel/useOutlineStore';
+
+import { OutlineListPanel } from './OutlineListPanel';
 
 interface OutlineConfigPanelProps {
   novelId: string;
@@ -39,7 +28,7 @@ export interface GenerateConfig {
 }
 
 export const OutlineConfigPanel: React.FC<OutlineConfigPanelProps> = ({
-  novelId,
+  novelId: _novelId,
   novelTitle,
   onGenerate,
   onGenerateChapters,

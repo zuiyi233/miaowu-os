@@ -1,11 +1,12 @@
 'use client';
 
+import { GitCompare, History, RotateCcw } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
+
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Badge } from '@/components/ui/badge';
-import { ChevronDown, ChevronUp, GitCompare, History, RotateCcw } from 'lucide-react';
 import type { ChapterSnapshot } from '@/core/novel/database';
 
 interface VersionDiffProps {
@@ -63,9 +64,9 @@ function computeParagraphDiff(
   return result;
 }
 
-export function VersionDiff({ chapterId, currentContent, snapshots, onRestore, onLoadSnapshot }: VersionDiffProps) {
+export function VersionDiff({ chapterId: _chapterId, currentContent, snapshots, onRestore, onLoadSnapshot: _onLoadSnapshot }: VersionDiffProps) {
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<number | null>(null);
-  const [showDiff, setShowDiff] = useState(true);
+  const [showDiff] = useState(true);
   const [collapsedSections, setCollapsedSections] = useState<Set<number>>(new Set());
 
   const selectedSnapshot = useMemo(
@@ -86,15 +87,6 @@ export function VersionDiff({ chapterId, currentContent, snapshots, onRestore, o
     const modified = diffResult.filter((d) => d.type === 'modified').length;
     return { added, removed, modified, unchanged: diffResult.length - added - removed - modified };
   }, [diffResult]);
-
-  const toggleSection = useCallback((index: number) => {
-    setCollapsedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return next;
-    });
-  }, []);
 
   const collapseAll = useCallback(() => {
     setCollapsedSections(new Set(diffResult.map((_, i) => i)));

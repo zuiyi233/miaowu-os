@@ -1,10 +1,11 @@
 'use client';
 
-import type { Chapter } from '@/core/novel/schemas';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { ScrollText, Target } from 'lucide-react';
+
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useI18n } from '@/core/i18n/hooks';
+import type { Chapter } from '@/core/novel/schemas';
 
 interface ChapterInfoCardProps {
   chapter: Chapter;

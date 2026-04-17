@@ -1,10 +1,11 @@
 'use client';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+
 import { databaseService } from './database';
 import { executeRemoteFirst, novelApiService } from './novel-api';
-import type { Novel, Chapter, Character, Setting, Faction, Item, PromptTemplate, EntityRelationship, TimelineEvent, GraphLayout, Volume } from './schemas';
 import { emitNovelEvent } from './observability';
+import type { Novel, Chapter, Character, Setting, Faction, Item, PromptTemplate, EntityRelationship, TimelineEvent, GraphLayout, Volume } from './schemas';
 
 export function useNovelQuery(novelTitle?: string) {
   return useQuery({

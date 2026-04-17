@@ -1,10 +1,5 @@
 'use client';
 
-import { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   User,
   MapPin,
@@ -14,9 +9,16 @@ import {
   Edit,
   Trash2,
 } from 'lucide-react';
-import type { Character, Faction, Setting, Item } from '@/core/novel/schemas';
-import { EntityDialog } from '../common/EntityDialog';
+import { useState } from 'react';
+
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { useI18n } from '@/core/i18n/hooks';
+import type { Character, Faction, Setting, Item } from '@/core/novel/schemas';
+
+import { EntityDialog } from '../common/EntityDialog';
 
 type EntityType = 'character' | 'faction' | 'setting' | 'item';
 

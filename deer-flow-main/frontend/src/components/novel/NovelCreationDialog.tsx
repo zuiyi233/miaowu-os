@@ -1,6 +1,9 @@
 'use client';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -9,15 +12,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { useI18n } from '@/core/i18n/hooks';
 import { useNovelStore } from '@/core/novel';
 import { databaseService } from '@/core/novel/database';
 import { generateUniqueId } from '@/core/novel/utils';
-import { useI18n } from '@/core/i18n/hooks';
-import { useQueryClient } from '@tanstack/react-query';
 
 interface NovelCreationDialogProps {
   open: boolean;

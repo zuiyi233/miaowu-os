@@ -1,24 +1,5 @@
 'use client';
 
-import { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
-import { NovelEditor } from './Editor';
-import { AiPanel } from './AiPanel';
-import { NovelSelector } from './NovelSelector';
-import { OutlineView } from './outline/OutlineView';
-import { TimelineView } from './timeline/TimelineView';
-import { RelationshipGraph } from './RelationshipGraph';
-import { NovelSettings } from './settings/NovelSettings';
-import { ReaderWorkspaceView } from './reader/ReaderWorkspaceView';
-import { useNovelStore } from '@/core/novel';
-import { useMediaQuery } from '@/core/novel/useMediaQuery';
-import { useI18n } from '@/core/i18n/hooks';
 import {
   PanelRight,
   BookOpen,
@@ -27,6 +8,27 @@ import {
   GitBranch,
   Settings,
 } from 'lucide-react';
+import { useState } from 'react';
+
+import { Button } from '@/components/ui/button';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import { useI18n } from '@/core/i18n/hooks';
+import { useNovelStore } from '@/core/novel';
+import { useMediaQuery } from '@/core/novel/useMediaQuery';
+
+import { AiPanel } from './AiPanel';
+import { NovelEditor } from './Editor';
+import { NovelSelector } from './NovelSelector';
+import { OutlineView } from './outline/OutlineView';
+import { ReaderWorkspaceView } from './reader/ReaderWorkspaceView';
+import { RelationshipGraph } from './RelationshipGraph';
+import { NovelSettings } from './settings/NovelSettings';
+import { TimelineView } from './timeline/TimelineView';
 
 export function NovelWorkspace({ novelId }: { novelId: string }) {
   const { t } = useI18n();

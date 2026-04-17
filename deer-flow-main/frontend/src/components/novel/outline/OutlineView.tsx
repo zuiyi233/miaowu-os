@@ -1,9 +1,5 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   ChevronRight,
   ChevronDown,
@@ -13,10 +9,15 @@ import {
   BookOpen,
   Layers,
 } from 'lucide-react';
-import { useNovelQuery, useDeleteVolumeMutation, useDeleteChapterMutation, useAddChapterMutation, useAddVolumeMutation } from '@/core/novel/queries';
-import { useNovelStore } from '@/core/novel';
-import type { Volume, Chapter } from '@/core/novel/schemas';
+import { useState, useCallback } from 'react';
+
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { useI18n } from '@/core/i18n/hooks';
+import { useNovelStore } from '@/core/novel';
+import { useNovelQuery, useDeleteVolumeMutation, useDeleteChapterMutation, useAddChapterMutation, useAddVolumeMutation } from '@/core/novel/queries';
+import type { Volume, Chapter } from '@/core/novel/schemas';
 
 interface OutlineViewProps {
   novelId: string;

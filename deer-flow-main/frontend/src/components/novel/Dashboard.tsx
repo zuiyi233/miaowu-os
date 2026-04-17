@@ -1,8 +1,9 @@
 'use client';
 
-import { useDashboardStatsQuery } from '@/core/novel/queries';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { BookOpen, Users, FileText, PenTool } from 'lucide-react';
+
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useDashboardStatsQuery } from '@/core/novel/queries';
 
 export function NovelDashboard() {
   const { data: stats } = useDashboardStatsQuery();

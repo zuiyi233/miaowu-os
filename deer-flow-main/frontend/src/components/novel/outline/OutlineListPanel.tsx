@@ -1,10 +1,10 @@
 'use client';
 
 import React from 'react';
+
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Button } from '@/components/ui/button';
-import { useOutlineStore } from '@/core/novel/useOutlineStore';
 import type { OutlineNode } from '@/core/novel/schemas';
+import { useOutlineStore } from '@/core/novel/useOutlineStore';
 
 interface OutlineListPanelProps {
   onNodeClick?: (node: OutlineNode) => void;

@@ -1,7 +1,8 @@
 'use client';
 
-import { NovelEditor } from '@/components/novel/Editor';
 import { useParams } from 'next/navigation';
+
+import { NovelEditor } from '@/components/novel/Editor';
 
 export default function NovelEditorRoute() {
   const params = useParams();

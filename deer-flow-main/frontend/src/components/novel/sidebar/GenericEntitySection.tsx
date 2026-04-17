@@ -1,10 +1,11 @@
 'use client';
 
+import { ChevronDown, ChevronRight, Plus, Search } from 'lucide-react';
 import React from 'react';
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ChevronDown, ChevronRight, Plus, Search } from 'lucide-react';
 
 interface GenericEntitySectionProps<T> {
   title: string;

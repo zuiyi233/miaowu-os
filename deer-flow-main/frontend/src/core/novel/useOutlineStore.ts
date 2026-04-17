@@ -1,4 +1,5 @@
 import { create } from "zustand";
+
 import type { OutlineNode } from "./schemas";
 
 interface OutlineState {
@@ -28,7 +29,7 @@ function arrayMove<T>(array: T[], from: number, to: number): T[] {
   return newArray;
 }
 
-export const useOutlineStore = create<OutlineState>()((set, get) => ({
+export const useOutlineStore = create<OutlineState>()((set, _get) => ({
   tree: [],
   isGenerating: false,
   selectedNodeId: null,
@@ -168,8 +169,9 @@ export const useOutlineStore = create<OutlineState>()((set, get) => ({
     const updateIdsRecursive = (nodes: OutlineNode[]): OutlineNode[] => {
       return nodes.map((node) => {
         const updatedNode = { ...node };
-        if (idMap[node.id]) {
-          updatedNode.id = idMap[node.id];
+        const mappedId = idMap[node.id];
+        if (mappedId !== undefined) {
+          updatedNode.id = mappedId;
         }
         if (node.children) {
           updatedNode.children = updateIdsRecursive(node.children);

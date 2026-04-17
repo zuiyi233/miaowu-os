@@ -57,4 +57,3 @@ config.yaml.bak
 .playwright-mcp
 .gstack/
 .worktrees
-.ace-tool/

@@ -22,7 +22,7 @@ type AiEventListener = (event: AiEvent) => void;
 let requestIdCounter = 0;
 
 export class AiEventBus {
-  private listeners: Map<AiEventType, Set<AiEventListener>> = new Map();
+  private listeners = new Map<AiEventType, Set<AiEventListener>>();
   private eventHistory: AiEvent[] = [];
   private maxHistorySize = 100;
 

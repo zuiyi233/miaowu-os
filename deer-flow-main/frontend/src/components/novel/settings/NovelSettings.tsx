@@ -1,11 +1,14 @@
 'use client';
 
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { PromptTemplateManager } from './PromptTemplateManager';
-import { DataManagement } from './DataManagement';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { FileText, Database } from 'lucide-react';
+
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useI18n } from '@/core/i18n/hooks';
+
+import { DataManagement } from './DataManagement';
+import { PromptTemplateManager } from './PromptTemplateManager';
+
 
 interface NovelSettingsProps {
   novelId: string;

@@ -1,7 +1,9 @@
 'use client';
 
-import { useAllNovelsQuery } from '@/core/novel/queries';
-import { useNovelStore } from '@/core/novel';
+import { Plus } from 'lucide-react';
+import { useState } from 'react';
+
+import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
@@ -9,11 +11,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Button } from '@/components/ui/button';
-import { Plus } from 'lucide-react';
-import { NovelCreationDialog } from './NovelCreationDialog';
-import { useState } from 'react';
 import { useI18n } from '@/core/i18n/hooks';
+import { useNovelStore } from '@/core/novel';
+import { useAllNovelsQuery } from '@/core/novel/queries';
+
+import { NovelCreationDialog } from './NovelCreationDialog';
 
 export function NovelSelector() {
   const { t } = useI18n();

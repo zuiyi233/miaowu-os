@@ -9,7 +9,7 @@ export function extractMentionedIds(htmlContent: string): string[] {
   return Array.from(ids);
 }
 
-export function getPlainTextSnippet(html: string, maxLength: number = 100): string {
+export function getPlainTextSnippet(html: string, maxLength = 100): string {
   if (typeof window === "undefined") {
     return html.length > maxLength ? html.slice(0, maxLength) + "..." : html;
   }
@@ -21,11 +21,9 @@ export function getPlainTextSnippet(html: string, maxLength: number = 100): stri
 
 export function extractChapterGoal(htmlContent: string): string | null {
   if (!htmlContent) return null;
-  const standardMatch = htmlContent.match(
-    /<blockquote>[\s\S]*?<strong>.*?细纲.*?<\/strong>[\s\S]*?<br>([\s\S]*?)<\/blockquote>/i
-  );
+  const standardMatch = /<blockquote>[\s\S]*?<strong>.*?细纲.*?<\/strong>[\s\S]*?<br>([\s\S]*?)<\/blockquote>/i.exec(htmlContent);
   if (standardMatch?.[1]) return standardMatch[1].replace(/<[^>]+>/g, "").trim();
-  const simpleMatch = htmlContent.match(/^\s*<blockquote>([\s\S]*?)<\/blockquote>/i);
+  const simpleMatch = /^\s*<blockquote>([\s\S]*?)<\/blockquote>/i.exec(htmlContent);
   if (simpleMatch?.[1]) return simpleMatch[1].replace(/<[^>]+>/g, "").trim();
   return null;
 }
@@ -35,6 +33,6 @@ export function cleanNovelContent(html: string): string {
   const tempDiv = document.createElement("div");
   tempDiv.innerHTML = html;
   tempDiv.querySelectorAll("script, style").forEach((node) => node.remove());
-  let text = tempDiv.textContent || tempDiv.innerText || "";
+  const text = tempDiv.textContent || tempDiv.innerText || "";
   return text.replace(/\n\s*\n/g, "\n\n").replace(/[ \t]+/g, " ").trim();
 }

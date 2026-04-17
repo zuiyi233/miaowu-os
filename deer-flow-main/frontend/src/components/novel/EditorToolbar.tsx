@@ -1,7 +1,6 @@
 'use client';
 
 import { type Editor } from '@tiptap/react';
-import { cn } from '@/lib/utils';
 import {
   Bold,
   Italic,
@@ -21,11 +20,13 @@ import {
   X,
   Search,
 } from 'lucide-react';
+import { useState, useCallback, useRef } from 'react';
+import { toast } from 'sonner';
+
 import { useAiPanelStore, useNovelStore } from '@/core/novel';
 import { novelAiService } from '@/core/novel/ai-service';
 import { useNovelQuery } from '@/core/novel/queries';
-import { useState, useCallback, useRef } from 'react';
-import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 
 interface EditorToolbarProps {
   editor: Editor | null;
@@ -58,11 +59,6 @@ export function EditorToolbar({ editor, novelId, className }: EditorToolbarProps
     return editor.state.doc.textBetween(start, from);
   };
 
-  const insertAtCursor = (text: string) => {
-    const { from, to } = editor.state.selection;
-    editor.chain().focus().insertContentAt({ from, to }, text).run();
-  };
-
   const handleReplaceText = async (action: 'polish' | 'expand' | 'condense' | 'rewrite') => {
     const selectedText = getSelectedText();
     if (!selectedText) return;
@@ -73,7 +69,7 @@ export function EditorToolbar({ editor, novelId, className }: EditorToolbarProps
     startStreaming();
 
     try {
-      const result = await novelAiService.chat({
+      await novelAiService.chat({
         messages: [
           {
             role: 'system',
@@ -104,8 +100,8 @@ export function EditorToolbar({ editor, novelId, className }: EditorToolbarProps
           stopStreaming();
         },
       });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
+    } catch (_error) {
+      if (_error instanceof DOMException && _error.name === 'AbortError') {
         stopStreaming();
       } else {
         toast.error(`${action} 操作失败`, { description: '请稍后重试' });
@@ -196,7 +192,7 @@ export function EditorToolbar({ editor, novelId, className }: EditorToolbarProps
       toast.success('实体分析完成', {
         description: `角色: ${entities.characters?.length || 0}个, 场景: ${entities.settings?.length || 0}个`,
       });
-    } catch (error) {
+    } catch {
       toast.error('实体分析失败', { description: '请稍后重试' });
     } finally {
       setIsAnalyzing(false);

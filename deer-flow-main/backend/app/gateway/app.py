@@ -1,29 +1,14 @@
+import importlib
+import importlib.util
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from types import ModuleType
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.gateway.config import get_gateway_config
-from app.gateway.deps import langgraph_runtime
-from app.gateway.routers import (
-    agents,
-    artifacts,
-    assistants_compat,
-    channels,
-    mcp,
-    memory,
-    models,
-    novel,
-    runs,
-    skills,
-    suggestions,
-    thread_runs,
-    threads,
-    uploads,
-)
-from deerflow.config.app_config import get_app_config
 
 # Configure logging
 logging.basicConfig(
@@ -34,10 +19,71 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+HARNESS_ROUTER_MODULES = (
+    "app.gateway.routers.models",
+    "app.gateway.routers.mcp",
+    "app.gateway.routers.memory",
+    "app.gateway.routers.skills",
+    "app.gateway.routers.artifacts",
+    "app.gateway.routers.uploads",
+    "app.gateway.routers.threads",
+    "app.gateway.routers.agents",
+    "app.gateway.routers.suggestions",
+    "app.gateway.routers.channels",
+    "app.gateway.routers.assistants_compat",
+    "app.gateway.routers.thread_runs",
+    "app.gateway.routers.runs",
+)
+CORE_ROUTER_MODULES = ("app.gateway.routers.novel",)
+
+
+def _has_deerflow_package() -> bool:
+    return importlib.util.find_spec("deerflow") is not None
+
+
+def _is_deerflow_import_error(exc: ModuleNotFoundError) -> bool:
+    module_name = (exc.name or "").split(".", maxsplit=1)[0]
+    return module_name == "deerflow"
+
+
+def _import_router_module(module_path: str) -> ModuleType:
+    return importlib.import_module(module_path)
+
+
+def _include_router_module(app: FastAPI, module_path: str, *, skip_if_deerflow_missing: bool) -> bool:
+    try:
+        module = _import_router_module(module_path)
+    except ModuleNotFoundError as exc:
+        if skip_if_deerflow_missing and _is_deerflow_import_error(exc):
+            logger.warning("Skip router %s: deerflow package is unavailable", module_path)
+            return False
+        raise
+    app.include_router(module.router)
+    return True
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
+
+    config = get_gateway_config()
+    logger.info(f"Starting API Gateway on {config.host}:{config.port}")
+
+    if not _has_deerflow_package():
+        logger.warning("DeerFlow harness package is unavailable; gateway started in degraded mode")
+        yield
+        logger.info("Shutting down API Gateway")
+        return
+
+    try:
+        from deerflow.config.app_config import get_app_config
+    except ModuleNotFoundError as exc:
+        if _is_deerflow_import_error(exc):
+            logger.warning("DeerFlow harness package is unavailable; gateway started in degraded mode")
+            yield
+            logger.info("Shutting down API Gateway")
+            return
+        raise
 
     # Load config and check necessary environment variables at startup
     try:
@@ -47,8 +93,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         error_msg = f"Failed to load configuration during gateway startup: {e}"
         logger.exception(error_msg)
         raise RuntimeError(error_msg) from e
-    config = get_gateway_config()
-    logger.info(f"Starting API Gateway on {config.host}:{config.port}")
+
+    from app.gateway.deps import langgraph_runtime
 
     # Initialize LangGraph runtime components (StreamBridge, RunManager, checkpointer, store)
     async with langgraph_runtime(app):
@@ -162,6 +208,10 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
                 "name": "health",
                 "description": "Health check and system status endpoints",
             },
+            {
+                "name": "novel",
+                "description": "Novel workspace endpoints for writing, recommendations and audit",
+            },
         ],
     )
 
@@ -177,48 +227,27 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
         allow_headers=["*"],
     )
 
-    # Include routers
-    # Models API is mounted at /api/models
-    app.include_router(models.router)
+    deerflow_available = _has_deerflow_package()
+    registered_harness_router_count = 0
 
-    # MCP API is mounted at /api/mcp
-    app.include_router(mcp.router)
+    if deerflow_available:
+        for module_path in HARNESS_ROUTER_MODULES:
+            if _include_router_module(app, module_path, skip_if_deerflow_missing=True):
+                registered_harness_router_count += 1
+    else:
+        logger.warning(
+            "DeerFlow harness package not found; only core routers (%s) will be registered",
+            ", ".join(CORE_ROUTER_MODULES),
+        )
 
-    # Memory API is mounted at /api/memory
-    app.include_router(memory.router)
+    for module_path in CORE_ROUTER_MODULES:
+        _include_router_module(app, module_path, skip_if_deerflow_missing=False)
 
-    # Skills API is mounted at /api/skills
-    app.include_router(skills.router)
-
-    # Artifacts API is mounted at /api/threads/{thread_id}/artifacts
-    app.include_router(artifacts.router)
-
-    # Uploads API is mounted at /api/threads/{thread_id}/uploads
-    app.include_router(uploads.router)
-
-    # Thread cleanup API is mounted at /api/threads/{thread_id}
-    app.include_router(threads.router)
-
-    # Agents API is mounted at /api/agents
-    app.include_router(agents.router)
-
-    # Suggestions API is mounted at /api/threads/{thread_id}/suggestions
-    app.include_router(suggestions.router)
-
-    # Channels API is mounted at /api/channels
-    app.include_router(channels.router)
-
-    # Assistants compatibility API (LangGraph Platform stub)
-    app.include_router(assistants_compat.router)
-
-    # Thread Runs API (LangGraph Platform-compatible runs lifecycle)
-    app.include_router(thread_runs.router)
-
-    # Stateless Runs API (stream/wait without a pre-existing thread)
-    app.include_router(runs.router)
-
-    # Novel AI chat API (creative writing assistant)
-    app.include_router(novel.router)
+    full_mode = deerflow_available and registered_harness_router_count == len(HARNESS_ROUTER_MODULES)
+    app.state.gateway_mode = "full" if full_mode else "degraded"
+    app.state.deerflow_available = deerflow_available
+    app.state.registered_harness_routers = registered_harness_router_count
+    app.state.total_harness_routers = len(HARNESS_ROUTER_MODULES)
 
     @app.get("/health", tags=["health"])
     async def health_check() -> dict:
@@ -227,7 +256,14 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
         Returns:
             Service health status information.
         """
-        return {"status": "healthy", "service": "deer-flow-gateway"}
+        return {
+            "status": "healthy",
+            "service": "deer-flow-gateway",
+            "mode": app.state.gateway_mode,
+            "deerflow_available": app.state.deerflow_available,
+            "registered_harness_routers": app.state.registered_harness_routers,
+            "total_harness_routers": app.state.total_harness_routers,
+        }
 
     return app
 

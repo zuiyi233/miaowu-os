@@ -1,11 +1,12 @@
 'use client';
 
+import { Plus, Trash2, Save } from 'lucide-react';
 import React from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -14,10 +15,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useSettingsStore, type LlmProviderConfig } from '@/core/novel/useSettingsStore';
-import { Plus, Trash2, Save } from 'lucide-react';
 
 export const ProviderSettings: React.FC = () => {
-  const { llmProviders, setLlmProviders, addLlmProvider, updateLlmProvider, deleteLlmProvider } = useSettingsStore();
+  const { llmProviders, addLlmProvider, updateLlmProvider, deleteLlmProvider } = useSettingsStore();
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [formData, setFormData] = React.useState<Partial<LlmProviderConfig>>({});
 

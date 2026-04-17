@@ -1,26 +1,10 @@
 import type { KeyboardEvent } from "react";
 
-export type MaybeKeyboardEvent = {
-  nativeEvent?: {
-    isComposing?: boolean;
-  };
-  keyCode?: number;
-};
-
-const IME_ENTER_KEYCODE = 229;
+type IMEKeyboardEvent = KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>;
 
 export function isIMEComposing(
-  event: KeyboardEvent<HTMLElement> | MaybeKeyboardEvent,
-  isComposingState?: boolean,
+  event: IMEKeyboardEvent,
+  isComposing = false,
 ): boolean {
-  const nativeComposing = Boolean(event.nativeEvent?.isComposing);
-  const fallbackComposing = event.keyCode === IME_ENTER_KEYCODE;
-  return Boolean(isComposingState) || nativeComposing || fallbackComposing;
-}
-
-export function shouldSubmitOnEnter(
-  event: KeyboardEvent<HTMLElement> | MaybeKeyboardEvent,
-  isComposingState?: boolean,
-): boolean {
-  return !isIMEComposing(event, isComposingState);
+  return isComposing || event.nativeEvent.isComposing || event.keyCode === 229;
 }

@@ -1,10 +1,11 @@
 'use client';
 
+import { Sparkles, BookOpen, Users, MapPin, Shield, Package } from 'lucide-react';
 import React from 'react';
+
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useNovelStore } from '@/core/novel/useNovelStore';
-import { Sparkles, BookOpen, Users, MapPin, Shield, Package } from 'lucide-react';
 
 export const EditorCommandList: React.FC = () => {
   const { setViewMode, setIsAiPanelCollapsed, setIsCommandPaletteOpen, setIsHistorySheetOpen } = useNovelStore();

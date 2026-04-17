@@ -23,7 +23,7 @@ class GenerationLogger {
 
   logRawOutput(id: string, content: string): void { const log = this.findLog(id); if (log) log.output.rawContent = content; }
 
-  logParsingResult(id: string, parsedContent: any, success: boolean, error?: string, repairAttempts: number = 0): void {
+  logParsingResult(id: string, parsedContent: any, success: boolean, error?: string, repairAttempts = 0): void {
     const log = this.findLog(id);
     if (log) { log.output.parsedContent = parsedContent; log.output.success = success; log.output.error = error; log.output.repairAttempts = repairAttempts; }
   }

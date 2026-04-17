@@ -1,13 +1,14 @@
 'use client';
 
-import { useState } from 'react';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
 import { Send } from 'lucide-react';
+import { useState } from 'react';
+
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Textarea } from '@/components/ui/textarea';
+import { useI18n } from '@/core/i18n/hooks';
 import { useAiPanelStore } from '@/core/novel';
 import { novelAiService } from '@/core/novel/ai-service';
-import { useI18n } from '@/core/i18n/hooks';
 
 interface Message {
   id: string;

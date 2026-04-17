@@ -1,10 +1,10 @@
 'use client';
 
+import { BookOpen, PenLine, Star } from 'lucide-react';
 import React from 'react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+
 import { Badge } from '@/components/ui/badge';
-import { BookOpen, PenLine, Star, Sparkles } from 'lucide-react';
+import { Card } from '@/components/ui/card';
 
 interface NovelBookCardProps {
   title: string;

@@ -1,11 +1,8 @@
 'use client';
 
 import React from 'react';
-import { useOutlineStore } from '@/core/novel/useOutlineStore';
-import { useStyleStore } from '@/core/novel/useStyleStore';
-import { Button } from '@/components/ui/button';
+
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -13,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { useStyleStore } from '@/core/novel/useStyleStore';
 
 export const StyleConfigPanel: React.FC = () => {
   const { activeStyleId, setActiveStyleId, styles } = useStyleStore();

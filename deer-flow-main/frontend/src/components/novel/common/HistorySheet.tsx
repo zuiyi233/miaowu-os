@@ -1,6 +1,10 @@
 'use client';
 
+import { Clock } from 'lucide-react';
 import React from 'react';
+
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Sheet,
   SheetContent,
@@ -8,10 +12,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { useNovelStore } from '@/core/novel/useNovelStore';
-import { Button } from '@/components/ui/button';
-import { Clock } from 'lucide-react';
 
 interface HistorySheetProps {
   versions: Array<{ id: string; timestamp: Date; content: string; label: string }>;

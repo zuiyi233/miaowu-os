@@ -1,6 +1,5 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
 import {
   ReactFlow,
   Controls,
@@ -12,10 +11,13 @@ import {
   Panel,
 } from '@xyflow/react';
 import type { Node, Edge, Connection } from '@xyflow/react';
+import { Plus, Save, User, MapPin, Shield, Gem } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+
 import '@xyflow/react/dist/style.css';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
@@ -32,8 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Save, Trash2, User, MapPin, Shield, Gem } from 'lucide-react';
-import { useNovelQuery, useRelationshipsQuery, useAddRelationshipMutation, useDeleteRelationshipMutation, useGraphLayoutQuery, useSaveGraphLayoutMutation } from '@/core/novel/queries';
+import { useNovelQuery, useRelationshipsQuery, useAddRelationshipMutation, useGraphLayoutQuery, useSaveGraphLayoutMutation } from '@/core/novel/queries';
 import type { EntityRelationship, GraphLayout } from '@/core/novel/schemas';
 
 const ENTITY_COLORS: Record<string, string> = {
@@ -99,7 +100,6 @@ export function RelationshipGraph({ novelId }: RelationshipGraphProps) {
   const [hasLayoutChanges, setHasLayoutChanges] = useState(false);
 
   const addRelationship = useAddRelationshipMutation(novelId);
-  const deleteRelationship = useDeleteRelationshipMutation();
 
   const handleNodeDragStop = useCallback((_event: any, node: Node) => {
     setNodes((nds) => nds.map((n) => (n.id === node.id ? { ...n, position: node.position } : n)));
@@ -200,12 +200,6 @@ export function RelationshipGraph({ novelId }: RelationshipGraphProps) {
     setTargetId('');
     setRelType('friend');
     setRelDescription('');
-  };
-
-  const handleDeleteRelationship = async (edgeId: string) => {
-    if (confirm('Delete this relationship?')) {
-      await deleteRelationship.mutateAsync(edgeId);
-    }
   };
 
   if (!novel) {

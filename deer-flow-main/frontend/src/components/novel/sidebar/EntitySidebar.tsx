@@ -1,13 +1,15 @@
 'use client';
 
+import { Users, Castle, MapPin, Gem } from 'lucide-react';
 import { useState } from 'react';
+
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { EntityManager } from './EntityManager';
+import { useI18n } from '@/core/i18n/hooks';
 import { useNovelQuery } from '@/core/novel/queries';
 import { useAddCharacterMutation, useUpdateCharacterMutation, useDeleteCharacterMutation, useAddFactionMutation, useUpdateFactionMutation, useDeleteFactionMutation, useAddSettingMutation, useUpdateSettingMutation, useDeleteSettingMutation, useAddItemMutation, useUpdateItemMutation, useDeleteItemMutation } from '@/core/novel/queries';
-import { Users, Castle, MapPin, Gem } from 'lucide-react';
 import type { Character, Faction, Setting, Item } from '@/core/novel/schemas';
-import { useI18n } from '@/core/i18n/hooks';
+
+import { EntityManager } from './EntityManager';
 
 interface EntitySidebarProps {
   novelId?: string;
