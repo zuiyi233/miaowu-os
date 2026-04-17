@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
-from fastapi import Request
+from fastapi import Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.user_context import get_request_user_id
 from app.gateway.novel_migrated.models.settings import Settings
 from app.gateway.novel_migrated.services.ai_service import AIService, create_user_ai_service
 
 
-async def get_user_ai_service(request: Request, db: AsyncSession) -> AIService:
+async def get_user_ai_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> AIService:
     """Create user AI service from persisted settings."""
     user_id = get_request_user_id(request)
 

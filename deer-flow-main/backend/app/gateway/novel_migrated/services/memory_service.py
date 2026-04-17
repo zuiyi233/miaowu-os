@@ -70,15 +70,10 @@ class MemoryService:
             logger.warning("⚠️ chromadb 或 sentence-transformers 未安装，启用降级检索")
             return False
 
-        chroma_dir = "data/chroma_db"
-        os.makedirs(chroma_dir, exist_ok=True)
-
-        self.client = chromadb.PersistentClient(path=chroma_dir)
-        self.embedding_model = SentenceTransformer(
-            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-            device="cpu",
-        )
-        return True
+        # 跳过本地 embedding 模型加载，使用在线模型替代
+        logger.info("⚡ 跳过本地 embedding 模型加载，使用在线模型服务")
+        logger.warning("⚠️ 记忆服务使用降级模式（关键词检索）")
+        return False
 
     def get_collection(self, user_id: str, project_id: str):
         if not self._vector_enabled or not self.client:
