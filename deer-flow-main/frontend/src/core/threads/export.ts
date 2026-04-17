@@ -7,6 +7,7 @@ import {
   hasToolCalls,
   stripUploadedFilesTag,
 } from "../messages/utils";
+import { formatLocalDateTime } from "../utils/datetime";
 
 import type { AgentThread } from "./types";
 import { titleOfThread } from "./utils";
@@ -28,9 +29,7 @@ export function formatThreadAsMarkdown(
   messages: Message[],
 ): string {
   const title = titleOfThread(thread);
-  const createdAt = thread.created_at
-    ? new Date(thread.created_at).toLocaleString()
-    : "Unknown";
+  const createdAt = formatLocalDateTime(thread.created_at) || "Unknown";
 
   const lines: string[] = [
     `# ${title}`,

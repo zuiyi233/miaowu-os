@@ -4,7 +4,7 @@ param(
     [string]$Action = "start",
 
     [ValidateSet("single", "split")]
-    [string]$View = "single"
+    [string]$View = "split"
 )
 
 Set-StrictMode -Version Latest
@@ -323,7 +323,7 @@ function Start-RunnerProcess {
     return Start-Process -FilePath "powershell.exe" -ArgumentList $args -WindowStyle Hidden -PassThru
 }
 
-function Assert-PortsFree {
+function Ensure-PortsReadyForStart {
     $busy = @()
     foreach ($port in @($BackendPort, $FrontendPort)) {
         $owner = Get-PortOwnerPid -Port $port
@@ -335,13 +335,42 @@ function Assert-PortsFree {
         }
     }
 
-    if ($busy.Count -gt 0) {
-        Write-ErrLine "Required ports are currently occupied:"
-        foreach ($entry in $busy) {
+    if ($busy.Count -eq 0) {
+        return
+    }
+
+    Write-WarnLine "Required ports are currently occupied. Attempting cleanup before start."
+    foreach ($entry in $busy) {
+        Write-WarnLine "  - port $($entry.Port): PID $($entry.Pid)"
+    }
+
+    $targetPids = @($busy | Select-Object -ExpandProperty Pid -Unique)
+    foreach ($targetPid in $targetPids) {
+        Stop-PidIfRunning -TargetPid ([int]$targetPid)
+    }
+
+    Start-Sleep -Milliseconds 800
+
+    $stillBusy = @()
+    foreach ($port in @($BackendPort, $FrontendPort)) {
+        $owner = Get-PortOwnerPid -Port $port
+        if ($null -ne $owner) {
+            $stillBusy += [PSCustomObject]@{
+                Port = $port
+                Pid  = $owner
+            }
+        }
+    }
+
+    if ($stillBusy.Count -gt 0) {
+        Write-ErrLine "Failed to release required ports after cleanup:"
+        foreach ($entry in $stillBusy) {
             Write-Host "  - port $($entry.Port): PID $($entry.Pid)"
         }
-        throw "Cannot start services until ports are released. Run: scripts\dev-local.bat stop"
+        throw "Cannot start services because required ports are still occupied."
     }
+
+    Write-Ok "Port cleanup completed. Required ports are free now."
 }
 
 function Print-Status {
@@ -392,7 +421,7 @@ function Start-AllServices {
 
     Ensure-Directory -Path $RunDir
     Ensure-Directory -Path $LogDir
-    Assert-PortsFree
+    Ensure-PortsReadyForStart
 
     $splitWindow = $View -eq "split"
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"

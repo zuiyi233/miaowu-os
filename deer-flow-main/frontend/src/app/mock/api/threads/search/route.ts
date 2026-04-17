@@ -13,6 +13,29 @@ type MockThreadSearchResult = Record<string, unknown> & {
   updated_at: string | undefined;
 };
 
+function parseTimestampToMillis(value: unknown): number {
+  if (typeof value !== "string") {
+    return 0;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return 0;
+  }
+
+  if (/^[+-]?\d+(\.\d+)?$/.test(trimmed)) {
+    const numeric = Number(trimmed);
+    if (!Number.isFinite(numeric)) {
+      return 0;
+    }
+    // Accept unix seconds and milliseconds.
+    return Math.abs(numeric) < 1e11 ? numeric * 1000 : numeric;
+  }
+
+  const parsed = Date.parse(trimmed);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 export async function POST(request: Request) {
   const body = ((await request.json().catch(() => ({}))) ??
     {}) as ThreadSearchRequest;
@@ -71,12 +94,8 @@ export async function POST(request: Request) {
     .sort((a, b) => {
       const aTimestamp = a[sortBy];
       const bTimestamp = b[sortBy];
-      const aParsed =
-        typeof aTimestamp === "string" ? Date.parse(aTimestamp) : 0;
-      const bParsed =
-        typeof bTimestamp === "string" ? Date.parse(bTimestamp) : 0;
-      const aValue = Number.isNaN(aParsed) ? 0 : aParsed;
-      const bValue = Number.isNaN(bParsed) ? 0 : bParsed;
+      const aValue = parseTimestampToMillis(aTimestamp);
+      const bValue = parseTimestampToMillis(bTimestamp);
       return sortOrder === "asc" ? aValue - bValue : bValue - aValue;
     });
 

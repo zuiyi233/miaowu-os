@@ -24,4 +24,7 @@ If you're using Codex, project-scoped helpers may also live in:
 Keep this managed block so 'trellis update' can refresh the instructions.
 
 <!-- TRELLIS:END -->
+原版项目：D:\deer-flow-main
+工作区二开项目;D:\miaowu-os
+
 

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
+import { env } from "@/env";
 
 import { getAPIClient } from "../api";
 import { getBackendBaseURL } from "../config";
@@ -190,6 +191,9 @@ export function useThreadStream({
 
   const queryClient = useQueryClient();
   const updateSubtask = useUpdateSubtask();
+  const isGatewayCompatRuntime = Boolean(
+    env.NEXT_PUBLIC_LANGGRAPH_BASE_URL?.includes("/api"),
+  );
   const runMetadataStorageRef = useRef<
     ReturnType<typeof getRunMetadataStorage> | undefined
   >(undefined);
@@ -208,7 +212,7 @@ export function useThreadStream({
     reconnectOnMount: runMetadataStorageRef.current
       ? () => runMetadataStorageRef.current!
       : false,
-    fetchStateHistory: { limit: 1 },
+    fetchStateHistory: isGatewayCompatRuntime ? false : { limit: 1 },
     onCreated(meta) {
       handleStreamStart(meta.thread_id);
       setOnStreamThreadId(meta.thread_id);
@@ -217,17 +221,31 @@ export function useThreadStream({
           .threads.update(meta.thread_id, {
             metadata: { agent_name: context.agent_name },
           })
-          .catch(() => ({}));
+          .catch((error) => {
+            console.warn(
+              "[threads] Failed to persist agent_name metadata for thread",
+              meta.thread_id,
+              error,
+            );
+          });
       }
     },
-    onLangChainEvent(event) {
-      if (event.event === "on_tool_end") {
-        listeners.current.onToolEnd?.({
-          name: event.name,
-          data: event.data,
-        });
-      }
-    },
+    ...(isGatewayCompatRuntime
+      ? {}
+      : {
+          onLangChainEvent(event: {
+            event: string;
+            name: string;
+            data: unknown;
+          }) {
+            if (event.event === "on_tool_end") {
+              listeners.current.onToolEnd?.({
+                name: event.name,
+                data: event.data,
+              });
+            }
+          },
+        }),
     onUpdateEvent(data) {
       const updates: Array<Partial<AgentThreadState> | null> = Object.values(
         data || {},
@@ -291,7 +309,30 @@ export function useThreadStream({
       toast.error(getStreamErrorMessage(error));
     },
     onFinish(state) {
-      listeners.current.onFinish?.(state.values);
+      const valuesCandidate =
+        typeof state === "object" &&
+        state !== null &&
+        "values" in state &&
+        typeof state.values === "object" &&
+        state.values !== null
+          ? (state.values as Partial<AgentThreadState>)
+          : {};
+
+      const normalizedState: AgentThreadState = {
+        ...(valuesCandidate as AgentThreadState),
+        title:
+          typeof valuesCandidate.title === "string"
+            ? valuesCandidate.title
+            : "",
+        messages: Array.isArray(valuesCandidate.messages)
+          ? valuesCandidate.messages
+          : [],
+        artifacts: Array.isArray(valuesCandidate.artifacts)
+          ? valuesCandidate.artifacts
+          : [],
+      };
+
+      listeners.current.onFinish?.(normalizedState);
       void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
     },
   });
@@ -535,7 +576,7 @@ export function useThreads(
     limit: 50,
     sortBy: "updated_at",
     sortOrder: "desc",
-    select: ["thread_id", "updated_at", "values", "metadata"],
+    select: ["thread_id", "updated_at", "values", "metadata", "context"],
   },
 ) {
   const apiClient = getAPIClient();

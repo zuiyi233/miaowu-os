@@ -107,11 +107,6 @@ export default function NewAgentPage() {
       mode: "flash",
       is_bootstrap: true,
     },
-    onFinish() {
-      if (!agent && setupAgentStatus === "requested") {
-        setSetupAgentStatus("idle");
-      }
-    },
     onToolEnd({ name }) {
       if (name !== "setup_agent" || !agentName) return;
       setSetupAgentStatus("completed");
@@ -125,6 +120,54 @@ export default function NewAgentPage() {
       });
     },
   });
+
+  useEffect(() => {
+    if (setupAgentStatus !== "requested" || !agentName || agent) {
+      return;
+    }
+
+    let cancelled = false;
+    const startedAt = Date.now();
+    let timer: number | null = null;
+
+    const pollAgentCreation = async () => {
+      if (cancelled) {
+        return;
+      }
+
+      const fetched = await getAgentWithRetry(agentName);
+      if (cancelled) {
+        return;
+      }
+
+      if (fetched) {
+        setAgent(fetched);
+        setSetupAgentStatus("completed");
+        return;
+      }
+
+      if (Date.now() - startedAt > 60_000) {
+        setSetupAgentStatus("idle");
+        toast.error(t.agents.agentCreatedPendingRefresh);
+        return;
+      }
+
+      timer = window.setTimeout(() => {
+        void pollAgentCreation();
+      }, 2_000);
+    };
+
+    timer = window.setTimeout(() => {
+      void pollAgentCreation();
+    }, 1_500);
+
+    return () => {
+      cancelled = true;
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [agent, agentName, setupAgentStatus, t.agents.agentCreatedPendingRefresh]);
 
   useEffect(() => {
     if (typeof window === "undefined" || step !== "chat") {

@@ -74,6 +74,19 @@ export default function ChatPage() {
     },
   });
 
+  useEffect(() => {
+    // Fallback: in some runtime combinations, onCreated may not fire even
+    // after the first user message is already in the thread state (optimistic
+    // or streamed). Ensure we leave the "new thread" centered layout to avoid
+    // messages rendering behind the composer.
+    if (!isNewThread || thread.messages.length === 0) {
+      return;
+    }
+
+    setIsNewThread(false);
+    history.replaceState(null, "", `/workspace/chats/${threadId}`);
+  }, [isNewThread, setIsNewThread, thread.messages.length, threadId]);
+
   const handleSubmit = useCallback(
     (message: PromptInputMessage) => {
       void sendMessage(threadId, message);
@@ -137,9 +150,10 @@ export default function ChatPage() {
                   <div className="absolute right-0 bottom-0 left-0">
                     <TodoList
                       className="bg-background/5"
-                      todos={thread.values.todos ?? []}
+                      todos={thread.values?.todos ?? []}
                       hidden={
-                        !thread.values.todos || thread.values.todos.length === 0
+                        !thread.values?.todos ||
+                        thread.values.todos.length === 0
                       }
                     />
                   </div>

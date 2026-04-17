@@ -2,7 +2,7 @@
 
 import { BotIcon, PlusSquare } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Button } from "@/components/ui/button";
@@ -78,6 +78,27 @@ export default function AgentChatPage() {
       }
     },
   });
+
+  useEffect(() => {
+    // Fallback: if onCreated is not emitted but messages already exist, exit
+    // the centered "new thread" layout so messages are not covered by composer.
+    if (!isNewThread || thread.messages.length === 0) {
+      return;
+    }
+
+    setIsNewThread(false);
+    history.replaceState(
+      null,
+      "",
+      `/workspace/agents/${agent_name}/chats/${threadId}`,
+    );
+  }, [
+    agent_name,
+    isNewThread,
+    setIsNewThread,
+    thread.messages.length,
+    threadId,
+  ]);
 
   const handleSubmit = useCallback(
     (message: PromptInputMessage) => {
@@ -164,9 +185,10 @@ export default function AgentChatPage() {
                   <div className="absolute right-0 bottom-0 left-0">
                     <TodoList
                       className="bg-background/5"
-                      todos={thread.values.todos ?? []}
+                      todos={thread.values?.todos ?? []}
                       hidden={
-                        !thread.values.todos || thread.values.todos.length === 0
+                        !thread.values?.todos ||
+                        thread.values.todos.length === 0
                       }
                     />
                   </div>
