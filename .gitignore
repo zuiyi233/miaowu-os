@@ -469,6 +469,10 @@ dist-ssr
 **/*.booproj
 **/.vs/
 **/packages/
+# Keep DeerFlow backend workspace package tracked.
+!deer-flow-main/backend/packages/
+!deer-flow-main/backend/packages/harness/
+!deer-flow-main/backend/packages/harness/**
 **/TestResults/
 **/*.Cache
 **/ClientBin/
