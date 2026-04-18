@@ -1,9 +1,31 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-import type { Novel, Chapter } from './schemas';
+import type { Novel, Chapter, Character, Outline } from './schemas';
 
 type ViewMode = 'home' | 'editor' | 'reader' | 'graph' | 'timeline' | 'chat' | 'outline' | 'careers' | 'foreshadows' | 'settings';
+
+type CollectionKey = 'chapters' | 'characters' | 'outlines';
+type CollectionItem<K extends CollectionKey> = K extends 'chapters' ? Chapter : K extends 'characters' ? Character : Outline;
+
+function createCollectionActions<K extends CollectionKey>(key: K) {
+  const singular = key.slice(0, -1) as Capitalize<CollectionItem<K> extends Chapter ? 'chapter' : CollectionItem<K> extends Character ? 'character' : 'outline'>;
+  return {
+    [`set${key.charAt(0).toUpperCase() + key.slice(1)}`]: (items: CollectionItem<K>[]) => set({ [key]: items }),
+    [`add${singular}`]: (item: CollectionItem<K>) =>
+      set((state) => ({ [key]: [...(state[key] as CollectionItem<K>[]), item] })),
+    [`update${singular}`]: (id: string, updates: Partial<CollectionItem<K>>) =>
+      set((state) => ({
+        [key]: (state[key] as CollectionItem<K>[]).map((item) =>
+          item.id === id ? { ...item, ...updates } : item,
+        ),
+      })),
+    [`remove${singular}`]: (id: string) =>
+      set((state) => ({
+        [key]: (state[key] as CollectionItem<K>[]).filter((item) => item.id !== id),
+      })),
+  } as const;
+}
 
 interface NovelState {
   currentNovelTitle: string | null;
@@ -12,6 +34,8 @@ interface NovelState {
   viewMode: ViewMode;
   novels: Novel[];
   chapters: Chapter[];
+  characters: Character[];
+  outlines: Outline[];
   isLoading: boolean;
   isDirty: boolean;
   dirtyContent: string | null;
@@ -31,6 +55,17 @@ interface NovelState {
   setViewMode: (mode: ViewMode) => void;
   setNovels: (novels: Novel[]) => void;
   setChapters: (chapters: Chapter[]) => void;
+  addChapter: (chapter: Chapter) => void;
+  updateChapter: (chapterId: string, updates: Partial<Chapter>) => void;
+  removeChapter: (chapterId: string) => void;
+  setCharacters: (characters: Character[]) => void;
+  addCharacter: (character: Character) => void;
+  updateCharacter: (characterId: string, updates: Partial<Character>) => void;
+  removeCharacter: (characterId: string) => void;
+  setOutlines: (outlines: Outline[]) => void;
+  addOutline: (outline: Outline) => void;
+  updateOutline: (outlineId: string, updates: Partial<Outline>) => void;
+  removeOutline: (outlineId: string) => void;
   setLoading: (loading: boolean) => void;
   setDirtyContent: (content: string | null) => void;
   markDirty: () => void;
@@ -55,6 +90,8 @@ export const useNovelStore = create<NovelState>()(
       viewMode: 'home',
       novels: [],
       chapters: [],
+      characters: [],
+      outlines: [],
       isLoading: false,
       isDirty: false,
       dirtyContent: null,
@@ -74,6 +111,9 @@ export const useNovelStore = create<NovelState>()(
       setViewMode: (mode) => set({ viewMode: mode }),
       setNovels: (novels) => set({ novels }),
       setChapters: (chapters) => set({ chapters }),
+      ...createCollectionActions('chapters'),
+      ...createCollectionActions('characters'),
+      ...createCollectionActions('outlines'),
       setLoading: (loading) => set({ isLoading: loading }),
       setDirtyContent: (content) => set({ dirtyContent: content, isDirty: content !== null }),
       markDirty: () => set({ isDirty: true }),

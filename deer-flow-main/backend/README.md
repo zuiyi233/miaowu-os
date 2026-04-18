@@ -219,6 +219,7 @@ Direct access: LangGraph at http://localhost:2024, Gateway at http://localhost:8
 - `app.gateway.novel_migrated.api.memories`
 - `app.gateway.novel_migrated.api.inspiration`
 - `app.gateway.novel_migrated.api.wizard_stream`
+- `app.gateway.novel_migrated.api.novel_stream`
 - `app.gateway.novel_migrated.api.project_covers`
 - `app.gateway.novel_migrated.api.book_import`
 
@@ -227,6 +228,8 @@ Scope:
 - In scope (Wave 1): career system, foreshadow state machine, memory analysis, vector retrieval, and MCP tool-chain entry points.
 - In scope (Wave 2): no-auth closure for Wave 1 routes, inspiration API, project cover generation/download, and book import pipeline.
 - Wizard stream endpoints: `/api/wizard-stream/world-building|career-system|characters|outline`, plus `GET /api/projects/{id}` for resume state.
+- Novel stream endpoints (P0): `POST /api/novels/{novel_id}/chapters/{chapter_id}/generate-stream`, `POST /api/novels/{novel_id}/chapters/{chapter_id}/continue-stream`, `POST /api/novels/{novel_id}/chapters/batch-generate-stream`, `POST /api/novels/{novel_id}/outlines/generate-stream`, `POST /api/novels/{novel_id}/characters/generate-stream`.
+- Compatibility aliases: `POST /api/chapters/{chapter_id}/generate-stream|continue-stream|analyze`, `GET /api/chapters/{chapter_id}/analysis|analysis/status`.
 - Memory retrieval priority: local vector (when available) -> cloud embedding (OpenAI-compatible `/v1/embeddings`) -> keyword fallback.
 - Single-user fallback: `novel_migrated` routes resolve `request.state.user_id` first, then fallback to `local_single_user` (override via `NOVEL_MIGRATED_DEFAULT_USER_ID`).
 - Out of scope: `auth/users/admin`, user-model chain, and non-novel gateway endpoints.

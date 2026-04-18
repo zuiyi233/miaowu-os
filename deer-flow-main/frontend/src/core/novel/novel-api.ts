@@ -1,4 +1,5 @@
 import { getBackendBaseURL } from '@/core/config';
+import { parseSseStream } from './utils';
 
 import type {
   BookImportPreview,
@@ -13,6 +14,7 @@ import type {
   InspirationOption,
   Item,
   Novel,
+  Outline,
   Setting,
   TimelineEvent,
 } from './schemas';
@@ -26,6 +28,15 @@ interface RequestOptions {
   body?: unknown;
   query?: Record<string, QueryValue>;
 }
+
+interface StreamRequestOptions {
+  method?: HttpMethod;
+  body?: unknown;
+  query?: Record<string, QueryValue>;
+  signal?: AbortSignal;
+}
+
+export type NovelStreamEvent = Record<string, unknown>;
 
 export interface NovelSummary {
   id: string | number;
@@ -189,6 +200,66 @@ async function requestBookImport<T>(path: string, options: RequestOptions = {}):
   }
 
   return payload as T;
+}
+
+async function requestStream<T>(path: string, options: StreamRequestOptions = {}): Promise<AsyncGenerator<T>> {
+  const headers: HeadersInit = {
+    Accept: 'text/event-stream',
+  };
+
+  if (options.body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  const response = await fetch(buildUrl(path, options.query), {
+    method: options.method ?? 'POST',
+    headers,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    signal: options.signal,
+  });
+
+  if (!response.ok) {
+    const responseText = await response.text().catch(() => '');
+    let details: unknown = responseText;
+    if (responseText && responseText.trim()) {
+      try {
+        details = JSON.parse(responseText);
+      } catch {
+        details = responseText;
+      }
+    }
+    throw new ApiError(`Novel API stream request failed: ${response.status}`, response.status, details);
+  }
+
+  const contentType = response.headers.get('content-type') ?? '';
+  if (contentType.includes('application/json')) {
+    const payload = await response.json().catch(() => null);
+    async function* singlePayloadGenerator() {
+      yield payload as T;
+    }
+    return singlePayloadGenerator();
+  }
+
+  if (!response.body) {
+    throw new ApiError(`Novel API stream request has no response body at ${path}`, response.status);
+  }
+
+  return parseSseStream<T>(response.body);
+}
+
+async function requestStreamWith404Fallback<T>(
+  primaryPath: string,
+  fallbackPath: string | null,
+  options: StreamRequestOptions = {},
+): Promise<AsyncGenerator<T>> {
+  try {
+    return await requestStream<T>(primaryPath, options);
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 404 || !fallbackPath) {
+      throw error;
+    }
+    return requestStream<T>(fallbackPath, options);
+  }
 }
 
 function normalizeBookImportExtractMode(mode: string): 'tail' | 'full' {
@@ -574,6 +645,168 @@ export class NovelApiService {
     );
   }
 
+  async generateChapterStream(
+    novelId: string,
+    chapterId: string,
+    params: Record<string, unknown> = {},
+    signal?: AbortSignal,
+  ): Promise<AsyncGenerator<NovelStreamEvent>> {
+    return requestStreamWith404Fallback<NovelStreamEvent>(
+      `/novels/${encodeURIComponent(novelId)}/chapters/${encodeURIComponent(chapterId)}/generate-stream`,
+      `/chapters/${encodeURIComponent(chapterId)}/generate-stream`,
+      {
+        method: 'POST',
+        body: params,
+        signal,
+      },
+    );
+  }
+
+  async continueChapterStream(
+    novelId: string,
+    chapterId: string,
+    params: Record<string, unknown> = {},
+    signal?: AbortSignal,
+  ): Promise<AsyncGenerator<NovelStreamEvent>> {
+    try {
+      return await requestStreamWith404Fallback<NovelStreamEvent>(
+        `/novels/${encodeURIComponent(novelId)}/chapters/${encodeURIComponent(chapterId)}/continue-stream`,
+        `/chapters/${encodeURIComponent(chapterId)}/continue-stream`,
+        {
+          method: 'POST',
+          body: params,
+          signal,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) {
+        throw error;
+      }
+      return this.generateChapterStream(
+        novelId,
+        chapterId,
+        params,
+        signal,
+      );
+    }
+  }
+
+  async regenerateChapterStream(
+    novelId: string,
+    chapterId: string,
+    params: Record<string, unknown> = {},
+    signal?: AbortSignal,
+  ): Promise<AsyncGenerator<NovelStreamEvent>> {
+    try {
+      return await requestStreamWith404Fallback<NovelStreamEvent>(
+        `/novels/${encodeURIComponent(novelId)}/chapters/${encodeURIComponent(chapterId)}/regenerate-stream`,
+        `/chapters/${encodeURIComponent(chapterId)}/regenerate-stream`,
+        {
+          method: 'POST',
+          body: params,
+          signal,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) {
+        throw error;
+      }
+      return this.generateChapterStream(
+        novelId,
+        chapterId,
+        {
+          mode: 'regenerate',
+          ...params,
+        },
+        signal,
+      );
+    }
+  }
+
+  async batchGenerateChaptersStream(
+    novelId: string,
+    params: Record<string, unknown> = {},
+    signal?: AbortSignal,
+  ): Promise<AsyncGenerator<NovelStreamEvent>> {
+    return requestStreamWith404Fallback<NovelStreamEvent>(
+      `/novels/${encodeURIComponent(novelId)}/chapters/batch-generate-stream`,
+      `/chapters/project/${encodeURIComponent(novelId)}/batch-generate`,
+      {
+        method: 'POST',
+        body: params,
+        signal,
+      },
+    );
+  }
+
+  async generateOutlinesStream(
+    novelId: string,
+    params: Record<string, unknown> = {},
+    signal?: AbortSignal,
+  ): Promise<AsyncGenerator<NovelStreamEvent>> {
+    const streamPayload = {
+      project_id: novelId,
+      ...params,
+    };
+    try {
+      return await requestStreamWith404Fallback<NovelStreamEvent>(
+        `/novels/${encodeURIComponent(novelId)}/outlines/generate-stream`,
+        '/outlines/generate-stream',
+        {
+          method: 'POST',
+          body: streamPayload,
+          signal,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) {
+        throw error;
+      }
+      return requestStream<NovelStreamEvent>('/wizard-stream/outline', {
+        method: 'POST',
+        body: streamPayload,
+        signal,
+      });
+    }
+  }
+
+  async generateCharactersStream(
+    novelId: string,
+    params: Record<string, unknown> = {},
+    signal?: AbortSignal,
+  ): Promise<AsyncGenerator<NovelStreamEvent>> {
+    const streamPayload = {
+      project_id: novelId,
+      ...params,
+    };
+    try {
+      return await requestStreamWith404Fallback<NovelStreamEvent>(
+        `/novels/${encodeURIComponent(novelId)}/characters/generate-stream`,
+        '/characters/generate-stream',
+        {
+          method: 'POST',
+          body: streamPayload,
+          signal,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) {
+        throw error;
+      }
+      return requestStream<NovelStreamEvent>('/wizard-stream/characters', {
+        method: 'POST',
+        body: streamPayload,
+        signal,
+      });
+    }
+  }
+
+  async analyzeChapter(novelId: string, chapterId: string): Promise<unknown> {
+    return request(`/memories/projects/${encodeURIComponent(novelId)}/analyze-chapter/${encodeURIComponent(chapterId)}`, {
+      method: 'POST',
+    });
+  }
+
   async createCharacter(novelId: string, character: Character): Promise<Character> {
     return request<Character>(`/novels/${encodeURIComponent(novelId)}/entities`, {
       method: 'POST',
@@ -589,6 +822,71 @@ export class NovelApiService {
         body: toEntityPayload(character, 'character'),
       },
     );
+  }
+
+  async deleteCharacter(novelId: string, characterId: string): Promise<void> {
+    await request(
+      `/novels/${encodeURIComponent(novelId)}/entities/${encodeURIComponent(characterId)}`,
+      {
+        method: 'DELETE',
+      },
+    );
+  }
+
+  async getCharacters(novelId: string): Promise<Character[]> {
+    const novel = await this.getNovelByIdOrTitle(novelId);
+    return novel?.characters ?? [];
+  }
+
+  async getChapters(novelId: string): Promise<Chapter[]> {
+    const novel = await this.getNovelByIdOrTitle(novelId);
+    return novel?.chapters ?? [];
+  }
+
+  async getOutlines(novelId: string): Promise<Outline[]> {
+    try {
+      const raw = await request<unknown>('/outlines', {
+        query: { project_id: novelId },
+      });
+
+      if (Array.isArray(raw)) {
+        return raw as Outline[];
+      }
+
+      if (isRecord(raw) && Array.isArray(raw.items)) {
+        return raw.items as Outline[];
+      }
+
+      return [];
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) {
+        throw error;
+      }
+      return [];
+    }
+  }
+
+  async createOutline(novelId: string, outline: Outline): Promise<Outline> {
+    return request<Outline>('/outlines', {
+      method: 'POST',
+      body: {
+        project_id: novelId,
+        ...outline,
+      },
+    });
+  }
+
+  async updateOutline(outlineId: string, updates: Partial<Outline>): Promise<Outline> {
+    return request<Outline>(`/outlines/${encodeURIComponent(outlineId)}`, {
+      method: 'PUT',
+      body: updates,
+    });
+  }
+
+  async deleteOutline(outlineId: string): Promise<void> {
+    await request(`/outlines/${encodeURIComponent(outlineId)}`, {
+      method: 'DELETE',
+    });
   }
 
   async createSetting(novelId: string, setting: Setting): Promise<Setting> {

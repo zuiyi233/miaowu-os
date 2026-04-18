@@ -54,6 +54,19 @@ export const chapterSchema = z.object({
   ...lifecycleMixin,
 });
 
+export const outlineSchema = z.object({
+  id: z.string(),
+  projectId: z.string().optional(),
+  novelId: z.string().optional(),
+  title: z.string().min(1, '大纲标题不能为空'),
+  content: z.string().optional(),
+  summary: z.string().optional(),
+  chapterNumber: z.number().int().positive().optional(),
+  orderIndex: z.number().int().nonnegative().optional(),
+  status: z.string().optional(),
+  ...lifecycleMixin,
+});
+
 export const settingSchema = z.object({
   id: z.string().uuid().or(z.string().startsWith('setting-')),
   name: z.string().min(1, '场景名不能为空'),
@@ -248,6 +261,7 @@ export type ChatSession = z.infer<typeof chatSessionSchema>;
 export type ChapterSnapshot = z.infer<typeof chapterSnapshotSchema>;
 export type AnnotationThread = z.infer<typeof annotationThreadSchema>;
 export type RecommendationItem = z.infer<typeof recommendationItemSchema>;
+export type Outline = z.infer<typeof outlineSchema>;
 
 export type CreateCharacter = Omit<Character, 'id'>;
 export type CreateVolume = Omit<Volume, 'id'>;

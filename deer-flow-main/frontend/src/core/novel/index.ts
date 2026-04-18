@@ -10,3 +10,4 @@ export { aiEventBus, AiEventBus } from './ai-event-bus';
 export { emitNovelEvent, novelMetricEventType } from './observability';
 export { novelApiService, NovelApiService } from './novel-api';
 export { novelDomainService, NovelDomainService } from './novel-domain-service';
+export { useProjectSync, useCharacterSync, useOutlineSync, useChapterSync } from './sync-hooks';

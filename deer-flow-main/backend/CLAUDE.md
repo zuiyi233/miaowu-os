@@ -223,9 +223,11 @@ FastAPI application on port 8001 with health check at `GET /health`.
 | **Artifacts** (`/api/threads/{id}/artifacts`) | `GET /{path}` - serve artifacts; active content types (`text/html`, `application/xhtml+xml`, `image/svg+xml`) are always forced as download attachments to reduce XSS risk; `?download=true` still forces download for other file types |
 | **Suggestions** (`/api/threads/{id}/suggestions`) | `POST /` - generate follow-up questions; rich list/block model content is normalized before JSON parsing |
 
-Novel Migrated Wave1+Wave2 APIs are registered through `app.gateway.routers.novel_migrated`, which is added to `CORE_ROUTER_MODULES` in `app/gateway/app.py`. That aggregator conditionally includes `app.gateway.novel_migrated.api.careers`, `app.gateway.novel_migrated.api.foreshadows`, `app.gateway.novel_migrated.api.memories`, `app.gateway.novel_migrated.api.inspiration`, `app.gateway.novel_migrated.api.wizard_stream`, `app.gateway.novel_migrated.api.project_covers`, and `app.gateway.novel_migrated.api.book_import` when those modules exist.
+Novel Migrated Wave1+Wave2 APIs are registered through `app.gateway.routers.novel_migrated`, which is added to `CORE_ROUTER_MODULES` in `app/gateway/app.py`. That aggregator conditionally includes `app.gateway.novel_migrated.api.careers`, `app.gateway.novel_migrated.api.foreshadows`, `app.gateway.novel_migrated.api.memories`, `app.gateway.novel_migrated.api.inspiration`, `app.gateway.novel_migrated.api.wizard_stream`, `app.gateway.novel_migrated.api.novel_stream`, `app.gateway.novel_migrated.api.project_covers`, and `app.gateway.novel_migrated.api.book_import` when those modules exist.
 
 `wizard_stream` exposes SSE endpoints under `/api/wizard-stream/world-building|career-system|characters|outline`, and also `GET /api/projects/{project_id}` for frontend resume flows.
+
+`novel_stream` adds novel authoring SSE endpoints: `POST /api/novels/{novel_id}/chapters/{chapter_id}/generate-stream`, `POST /api/novels/{novel_id}/chapters/{chapter_id}/continue-stream`, `POST /api/novels/{novel_id}/chapters/batch-generate-stream`, `POST /api/novels/{novel_id}/outlines/generate-stream`, `POST /api/novels/{novel_id}/characters/generate-stream`, plus compatibility aliases `POST /api/chapters/{chapter_id}/generate-stream|continue-stream|analyze` and `GET /api/chapters/{chapter_id}/analysis|analysis/status`.
 
 `novel_migrated` memory retrieval now follows: local vector (if available) → cloud embedding via OpenAI-compatible `/v1/embeddings` → keyword fallback.
 

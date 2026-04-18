@@ -94,6 +94,17 @@ def test_uses_first_model_when_name_is_none(monkeypatch):
     assert FakeChatModel.captured_kwargs.get("model") == "alpha"
 
 
+def test_accepts_legacy_model_name_kwarg(monkeypatch):
+    cfg = _make_app_config([_make_model("alpha"), _make_model("beta")])
+    _patch_factory(monkeypatch, cfg)
+
+    FakeChatModel.captured_kwargs = {}
+    factory_module.create_chat_model(model_name="beta")
+
+    assert FakeChatModel.captured_kwargs.get("model") == "beta"
+    assert "model_name" not in FakeChatModel.captured_kwargs
+
+
 def test_raises_when_model_not_found(monkeypatch):
     cfg = _make_app_config([_make_model("only-model")])
     monkeypatch.setattr(factory_module, "get_app_config", lambda: cfg)

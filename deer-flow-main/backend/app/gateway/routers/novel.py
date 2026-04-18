@@ -780,17 +780,18 @@ def _resolve_llm(model_name: str | None = None):
             raise RuntimeError("No models configured")
 
         if model_name:
-            target = next((m for m in app_cfg.models if m.name == model_name), None)
-            if target is None:
+            target_name = next((m.name for m in app_cfg.models if m.name == model_name), None)
+            if target_name is None:
                 logger.warning(
                     "Requested model %r not found, falling back to first configured model",
                     model_name,
                 )
-                target = app_cfg.models[0]
+                target_name = app_cfg.models[0].name
         else:
-            target = app_cfg.models[0]
+            target_name = app_cfg.models[0].name
 
-        return create_chat_model(target)
+        resolved_name = str(target_name)
+        return create_chat_model(name=resolved_name)
     except Exception:
         logger.exception("Failed to resolve LLM from app config")
         raise

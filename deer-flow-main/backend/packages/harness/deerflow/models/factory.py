@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 
 from langchain.chat_models import BaseChatModel
 
@@ -30,21 +31,86 @@ def _vllm_disable_chat_template_kwargs(chat_template_kwargs: dict) -> dict:
     return disable_kwargs
 
 
-def create_chat_model(name: str | None = None, thinking_enabled: bool = False, **kwargs) -> BaseChatModel:
+def _normalize_model_name(name: str | object | None) -> Optional[str]:
+    """Normalize various model selector types into a string model name.
+
+    Handles the following cases in order of precedence:
+        1. **None** -> returns None (caller will use default model from config).
+        2. **str** -> returned as-is (already a valid model name).
+        3. **Object with `.name` attribute** -> uses the nested name if it's a non-empty string.
+           This covers config objects or enums that carry a model identifier.
+        4. **Fallback via `str()`** -> attempts string conversion; rejects objects whose
+           `str()` representation looks like a default Python repr (e.g. `<MyClass at 0x...>`).
+
+    Args:
+        name: A model identifier which may be a string, an object with a `.name`
+              attribute, or any object supporting `str()` conversion.
+
+    Returns:
+        The normalized model name as a string, or ``None`` when *name* is ``None``.
+
+    Raises:
+        TypeError: When *name* is not ``None``, not a string, has no usable ``.name``
+                  attribute, and its ``str()`` representation appears to be a default
+                  Python repr rather than a meaningful identifier.
+    """
+    # Case 1: Explicitly passed None – let the caller decide the default.
+    if name is None:
+        return None
+
+    # Case 2: Already a string – nothing to do.
+    if isinstance(name, str):
+        return name
+
+    # Case 3: Object carries a `.name` attribute (e.g. a Pydantic model or enum).
+    nested_name = getattr(name, "name", None)
+    if isinstance(nested_name, str) and nested_name:
+        logger.warning(
+            "create_chat_model received non-string model selector (%s); using nested name '%s'.",
+            type(name).__name__,
+            nested_name,
+        )
+        return nested_name
+
+    # Case 4: Last-resort fallback – try converting to string.
+    result = str(name)
+    # Reject default Python repr strings like "<MyClass object at 0x...>"
+    if not result or (result.startswith("<") and ">" in result):
+        raise TypeError(
+            f"Unsupported model selector: {type(name).__name__!r} (cannot derive a valid model name)"
+        )
+
+    logger.warning(
+        "create_chat_model received non-string model selector (%s); using str() representation '%s'.",
+        type(name).__name__,
+        result,
+    )
+    return result
+
+
+def create_chat_model(name: str | object | None = None, thinking_enabled: bool = False, **kwargs) -> BaseChatModel:
     """Create a chat model instance from the config.
 
     Args:
-        name: The name of the model to create. If None, the first model in the config will be used.
+        name: The name/selector of the model to create. If None, the first model in the config will be used.
 
     Returns:
         A chat model instance.
     """
+    # Backward compatibility: some call sites historically passed `model_name=...`.
+    # Normalize both entry points through `_normalize_model_name`.
+    legacy_model_name = kwargs.pop("model_name", None)
+    if name is None and legacy_model_name is not None:
+        logger.warning("create_chat_model(model_name=...) is deprecated; use name=... instead.")
+        name = legacy_model_name
+
     config = get_app_config()
-    if name is None:
-        name = config.models[0].name
-    model_config = config.get_model_config(name)
+    normalized_name = _normalize_model_name(name)
+    if normalized_name is None:
+        normalized_name = config.models[0].name
+    model_config = config.get_model_config(normalized_name)
     if model_config is None:
-        raise ValueError(f"Model {name} not found in config") from None
+        raise ValueError(f"Model {normalized_name} not found in config") from None
     model_class = resolve_class(model_config.use, BaseChatModel)
     model_settings_from_config = model_config.model_dump(
         exclude_none=True,
@@ -70,7 +136,10 @@ def create_chat_model(name: str | None = None, thinking_enabled: bool = False, *
         effective_wte = {**effective_wte, "thinking": merged_thinking}
     if thinking_enabled and has_thinking_settings:
         if not model_config.supports_thinking:
-            raise ValueError(f"Model {name} does not support thinking. Set `supports_thinking` to true in the `config.yaml` to enable thinking.") from None
+            raise ValueError(
+                f"Model {normalized_name} does not support thinking. "
+                "Set `supports_thinking` to true in the `config.yaml` to enable thinking."
+            ) from None
         if effective_wte:
             model_settings_from_config.update(effective_wte)
     if not thinking_enabled:
@@ -119,5 +188,5 @@ def create_chat_model(name: str | None = None, thinking_enabled: bool = False, *
     if callbacks:
         existing_callbacks = model_instance.callbacks or []
         model_instance.callbacks = [*existing_callbacks, *callbacks]
-        logger.debug(f"Tracing attached to model '{name}' with providers={len(callbacks)}")
+        logger.debug(f"Tracing attached to model '{normalized_name}' with providers={len(callbacks)}")
     return model_instance
