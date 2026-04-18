@@ -113,8 +113,11 @@ function getNovelApiPrefix() {
 }
 
 function buildUrl(path: string, query?: Record<string, QueryValue>) {
+  return buildUrlWithPrefix(getNovelApiPrefix(), path, query);
+}
+
+function buildUrlWithPrefix(prefix: string, path: string, query?: Record<string, QueryValue>) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  const prefix = getNovelApiPrefix();
   const base = `${prefix}${normalizedPath}`;
 
   if (!query) {
@@ -133,8 +136,44 @@ function buildUrl(path: string, query?: Record<string, QueryValue>) {
   return queryString ? `${base}?${queryString}` : base;
 }
 
+function getBookImportApiPrefix() {
+  const backendBase = getBackendBaseURL();
+  return `${backendBase}/book-import`;
+}
+
+function buildBookImportUrl(path: string, query?: Record<string, QueryValue>) {
+  return buildUrlWithPrefix(getBookImportApiPrefix(), path, query);
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const response = await fetch(buildUrl(path, options.query), {
+    method: options.method ?? 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  });
+
+  const responseText = await response.text();
+  let payload = null;
+  if (responseText && responseText.trim()) {
+    try {
+      payload = JSON.parse(responseText);
+    } catch {
+      const responseSnippet = responseText.slice(0, 100);
+      throw new ApiError(`Invalid JSON response at ${path}: ${responseSnippet}`, response.status);
+    }
+  }
+
+  if (!response.ok) {
+    throw new ApiError(`Novel API request failed: ${response.status}`, response.status, payload);
+  }
+
+  return payload as T;
+}
+
+async function requestBookImport<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const response = await fetch(buildBookImportUrl(path, options.query), {
     method: options.method ?? 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -146,10 +185,77 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const payload = responseText ? JSON.parse(responseText) : null;
 
   if (!response.ok) {
-    throw new ApiError(`Novel API request failed: ${response.status}`, response.status, payload);
+    throw new ApiError(`Book import request failed: ${response.status}`, response.status, payload);
   }
 
   return payload as T;
+}
+
+function normalizeBookImportExtractMode(mode: string): 'tail' | 'full' {
+  if (mode === 'full' || mode === 'full_book_reverse') {
+    return 'full';
+  }
+  return 'tail';
+}
+
+function normalizeBookImportPreview(raw: unknown): BookImportPreview {
+  if (!isRecord(raw)) {
+    return {
+      projectSuggestion: {
+        title: '',
+        genre: '',
+        theme: '',
+        description: '',
+        narrativePerspective: '第三人称',
+        targetWords: 100000,
+      },
+      chapters: [],
+      outlines: [],
+      warnings: [],
+    };
+  }
+
+  const projectSuggestionRaw = isRecord(raw.project_suggestion)
+    ? raw.project_suggestion
+    : isRecord(raw.projectSuggestion)
+      ? raw.projectSuggestion
+      : {};
+
+  const chaptersRaw = Array.isArray(raw.chapters) ? raw.chapters : [];
+  const outlinesRaw = Array.isArray(raw.outlines) ? raw.outlines : [];
+  const warningsRaw = Array.isArray(raw.warnings) ? raw.warnings : [];
+
+  return {
+    projectSuggestion: {
+      title: toStringOr(projectSuggestionRaw.title),
+      genre: toStringOr(projectSuggestionRaw.genre),
+      theme: toStringOr(projectSuggestionRaw.theme),
+      description: toStringOr(projectSuggestionRaw.description),
+      narrativePerspective: toStringOr(
+        projectSuggestionRaw.narrative_perspective ?? projectSuggestionRaw.narrativePerspective,
+        '第三人称',
+      ),
+      targetWords: Number(projectSuggestionRaw.target_words ?? projectSuggestionRaw.targetWords ?? 100000),
+    },
+    chapters: chaptersRaw.map((chapter) => {
+      const chapterRecord = isRecord(chapter) ? chapter : {};
+      return {
+        chapterNumber: Number(chapterRecord.chapter_number ?? chapterRecord.chapterNumber ?? 0),
+        title: toStringOr(chapterRecord.title),
+        summary: toStringOr(chapterRecord.summary),
+        content: toStringOr(chapterRecord.content),
+      };
+    }),
+    outlines: outlinesRaw,
+    warnings: warningsRaw.map((warning) => {
+      const warningRecord = isRecord(warning) ? warning : {};
+      return {
+        code: toStringOr(warningRecord.code),
+        level: toStringOr(warningRecord.level),
+        message: toStringOr(warningRecord.message),
+      };
+    }),
+  };
 }
 
 function normalizeNovel(raw: unknown): Novel {
@@ -790,13 +896,12 @@ export class NovelApiService {
   }
 
   async createBookImportTask(file: File, params: { extractMode: string; tailChapterCount: number }): Promise<{ taskId: string }> {
-    const backendBase = getBackendBaseURL();
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('extract_mode', params.extractMode);
+    formData.append('extract_mode', normalizeBookImportExtractMode(params.extractMode));
     formData.append('tail_chapter_count', String(params.tailChapterCount));
 
-    const response = await fetch(`${backendBase}/book-import/tasks`, {
+    const response = await fetch(buildBookImportUrl('/tasks'), {
       method: 'POST',
       body: formData,
     });
@@ -812,7 +917,7 @@ export class NovelApiService {
   }
 
   async getBookImportTaskStatus(taskId: string): Promise<BookImportTask> {
-    const raw = await request<unknown>(`/book-import/tasks/${encodeURIComponent(taskId)}`);
+    const raw = await requestBookImport<unknown>(`/tasks/${encodeURIComponent(taskId)}`);
     if (!isRecord(raw)) return { taskId, status: 'pending', progress: 0, message: '' };
     return {
       taskId: typeof raw.task_id === 'string' ? raw.task_id : taskId,
@@ -824,19 +929,19 @@ export class NovelApiService {
   }
 
   async getBookImportPreview(taskId: string): Promise<BookImportPreview> {
-    return request<BookImportPreview>(`/book-import/tasks/${encodeURIComponent(taskId)}/preview`);
+    const raw = await requestBookImport<unknown>(`/tasks/${encodeURIComponent(taskId)}/preview`);
+    return normalizeBookImportPreview(raw);
   }
 
   async applyBookImport(taskId: string, payload: Record<string, unknown>): Promise<unknown> {
-    return request(`/book-import/tasks/${encodeURIComponent(taskId)}/apply`, {
+    return requestBookImport(`/tasks/${encodeURIComponent(taskId)}/apply`, {
       method: 'POST',
       body: payload,
     });
   }
 
   async applyBookImportStream(taskId: string, payload: Record<string, unknown>): Promise<Response> {
-    const backendBase = getBackendBaseURL();
-    return fetch(`${backendBase}/book-import/tasks/${encodeURIComponent(taskId)}/apply-stream`, {
+    return fetch(buildBookImportUrl(`/tasks/${encodeURIComponent(taskId)}/apply-stream`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -844,15 +949,14 @@ export class NovelApiService {
   }
 
   async cancelBookImportTask(taskId: string): Promise<void> {
-    await request(`/book-import/tasks/${encodeURIComponent(taskId)}`, { method: 'DELETE' });
+    await requestBookImport(`/tasks/${encodeURIComponent(taskId)}`, { method: 'DELETE' });
   }
 
   async retryBookImportStepsStream(taskId: string, steps: string[]): Promise<Response> {
-    const backendBase = getBackendBaseURL();
-    return fetch(`${backendBase}/book-import/tasks/${encodeURIComponent(taskId)}/retry-stream`, {
+    return fetch(buildBookImportUrl(`/tasks/${encodeURIComponent(taskId)}/retry-stream`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ failed_steps: steps }),
+      body: JSON.stringify({ steps }),
     });
   }
 }

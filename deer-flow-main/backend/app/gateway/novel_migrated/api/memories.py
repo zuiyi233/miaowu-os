@@ -1,7 +1,7 @@
 """记忆管理API - 提供记忆的查询、分析等接口"""
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -375,7 +375,17 @@ async def search_memories(
     query: str,
     memory_types: list[str] | None = None,
     limit: int = 10,
-    min_importance: float = 0.0,
+    api_version: str = Query(
+        default="v1",
+        pattern=r"^v[12]$",
+        description="API 版本。v2 仅支持 min_similarity，不再接受 min_importance。",
+    ),
+    min_similarity: float = 0.0,
+    min_importance: float | None = Query(
+        default=None,
+        deprecated=True,
+        description="已弃用（计划于 2026-08-31 移除），请改用 min_similarity。",
+    ),
     db: AsyncSession = Depends(get_db)
 ):
     """语义搜索项目记忆"""
@@ -385,13 +395,28 @@ async def search_memories(
         # 验证用户权限
         await verify_project_access(project_id, user_id, db)
         
+        # 统一语义：内部只使用 min_similarity。
+        # v1 兼容旧客户端：若传入已弃用的 min_importance，则作为别名映射。
+        # v2 明确禁用 min_importance，避免参数语义混淆。
+        if api_version == "v2" and min_importance is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="`min_importance` 已在 v2 移除，请改用 `min_similarity`。",
+            )
+
+        effective_min_similarity = min_importance if min_importance is not None else min_similarity
+        if min_importance is not None:
+            logger.warning(
+                "⚠️ 参数 min_importance 已弃用，将于 2026-08-31 移除，请迁移到 min_similarity。"
+            )
+
         memories = await memory_service.search_memories(
             user_id=user_id,
             project_id=project_id,
             query=query,
             memory_types=memory_types,
             limit=limit,
-            min_importance=min_importance
+            min_similarity=effective_min_similarity,
         )
         
         return {

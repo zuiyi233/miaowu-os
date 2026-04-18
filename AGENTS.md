@@ -24,6 +24,7 @@ If you're using Codex, project-scoped helpers may also live in:
 Keep this managed block so 'trellis update' can refresh the instructions.
 
 <!-- TRELLIS:END -->
+前端依赖仅采用Win-only单平台方案，废弃双平台共享node_modules。严禁WSL操作前端依赖。
 你现在是一位资深的全栈开发工程师，正在协助维护一个基于 deer-flow 进行二次开发的项目 miaowu-os。
 你现在处理 `D:\miaowu-os` 二开项目的问题时，先对比原版项目 `D:\deer-flow-main` 的相关逻辑/函数**，再进行修复；若涉及**小说相关功能**，请优先参考 `/mnt/d/miaowu-os/参考项目/MuMuAINovel-main` 的代码实现。
 修复方案应尽量保持与原版核心逻辑的兼容性。

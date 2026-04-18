@@ -19,6 +19,7 @@ import { AIProjectGenerator } from './AIProjectGenerator';
 import type { GenerationConfig } from './AIProjectGenerator';
 
 type Step = 'idea' | 'title' | 'description' | 'theme' | 'genre' | 'perspective' | 'outline_mode' | 'confirm';
+type BackendGenerationStep = 'title' | 'description' | 'theme' | 'genre';
 
 interface Message {
   type: 'ai' | 'user';
@@ -30,6 +31,9 @@ interface Message {
 }
 
 const STEP_ORDER: Step[] = ['idea', 'title', 'description', 'theme', 'genre', 'perspective', 'outline_mode', 'confirm'];
+const BACKEND_GENERATION_STEPS: BackendGenerationStep[] = ['title', 'description', 'theme', 'genre'];
+const PERSPECTIVE_OPTIONS = ['第一人称', '第三人称', '全知视角'];
+const OUTLINE_MODE_OPTIONS = ['一对一', '一对多'];
 
 export function InspirationMode() {
   const router = useRouter();
@@ -78,10 +82,30 @@ export function InspirationMode() {
     }));
   }, []);
 
-  const generateOptions = useCallback(async (step: Step, context: string): Promise<string[]> => {
-    const res = await novelApiService.generateInspirationOptions(step, { idea: context });
+  const getInitialIdea = useCallback(() => {
+    const firstUserMessage = messages.find((message) => message.type === 'user');
+    return firstUserMessage?.content || wizardData.description || '';
+  }, [messages, wizardData.description]);
+
+  const buildInspirationContext = useCallback((
+    overrides: Partial<{ initial_idea: string; title: string; description: string; theme: string }> = {},
+  ) => {
+    const fallbackInitialIdea = getInitialIdea();
+    return {
+      initial_idea: overrides.initial_idea ?? fallbackInitialIdea,
+      title: overrides.title ?? wizardData.title,
+      description: overrides.description ?? wizardData.description,
+      theme: overrides.theme ?? wizardData.theme,
+    };
+  }, [getInitialIdea, wizardData.description, wizardData.theme, wizardData.title]);
+
+  const generateOptions = useCallback(async (
+    step: BackendGenerationStep,
+    contextOverrides: Partial<{ initial_idea: string; title: string; description: string; theme: string }> = {},
+  ): Promise<string[]> => {
+    const res = await novelApiService.generateInspirationOptions(step, buildInspirationContext(contextOverrides));
     return res.options;
-  }, []);
+  }, [buildInspirationContext]);
 
   const addAIMessage = useCallback((content: string, step?: Step, options?: string[], isMultiSelect?: boolean, canRefine?: boolean) => {
     const msg: Message = { type: 'ai' as const, content, options, isMultiSelect, canRefine, step };
@@ -109,44 +133,42 @@ export function InspirationMode() {
     try {
       switch (currentStep) {
         case 'idea': {
-          const options = await generateOptions('title', text);
+          const options = await generateOptions('title', { initial_idea: text, description: text });
           setCurrentStep('title');
           setMessages((prev) => [...prev, { type: 'ai', content: `太棒了！基于"${text}"的想法，我为你生成了几个书名选项：`, options, step: 'title', canRefine: true }]);
           break;
         }
         case 'title': {
-          const options = await generateOptions('description', text);
+          const options = await generateOptions('description', { title: text });
           setCurrentStep('description');
           setWizardData((d) => ({ ...d, title: text }));
           setMessages((prev) => [...prev, { type: 'ai', content: `书名"${text}"已确认！接下来生成简介：`, options, step: 'description', canRefine: true }]);
           break;
         }
         case 'description': {
-          const options = await generateOptions('theme', text);
+          const options = await generateOptions('theme', { description: text });
           setCurrentStep('theme');
           setWizardData((d) => ({ ...d, description: text }));
           setMessages((prev) => [...prev, { type: 'ai', content: `简介已记录！现在选择核心主题：`, options, step: 'theme', canRefine: true }]);
           break;
         }
         case 'theme': {
-          const options = await generateOptions('genre', text);
+          const options = await generateOptions('genre', { theme: text });
           setCurrentStep('genre');
           setWizardData((d) => ({ ...d, theme: text }));
           setMessages((prev) => [...prev, { type: 'ai', content: `主题"${text}"已确定！请选择小说类型（可多选）：`, options, step: 'genre', isMultiSelect: true, canRefine: true }]);
           break;
         }
         case 'genre': {
-          const options = await generateOptions('perspective', text);
           setCurrentStep('perspective');
           setWizardData((d) => ({ ...d, genre: [text] }));
-          setMessages((prev) => [...prev, { type: 'ai', content: `类型已选！接下来是叙事视角：`, options, step: 'perspective', canRefine: true }]);
+          setMessages((prev) => [...prev, { type: 'ai', content: `类型已选！接下来是叙事视角：`, options: PERSPECTIVE_OPTIONS, step: 'perspective' }]);
           break;
         }
         case 'perspective': {
-          const options = await generateOptions('outline_mode', text);
           setCurrentStep('outline_mode');
           setWizardData((d) => ({ ...d, narrativePerspective: text }));
-          setMessages((prev) => [...prev, { type: 'ai', content: `视角"${text}"已设定！最后选择大纲模式：`, options, step: 'outline_mode', canRefine: true }]);
+          setMessages((prev) => [...prev, { type: 'ai', content: `视角"${text}"已设定！最后选择大纲模式：`, options: OUTLINE_MODE_OPTIONS, step: 'outline_mode' }]);
           break;
         }
         case 'outline_mode': {
@@ -188,31 +210,30 @@ export function InspirationMode() {
     try {
       switch (currentStep) {
         case 'title': {
-          const options = await generateOptions('description', option);
+          const options = await generateOptions('description', { title: option });
           setCurrentStep('description');
           setWizardData((d) => ({ ...d, title: option }));
           setMessages((prev) => [...prev, { type: 'ai', content: `书名"${option}"已确认！接下来生成简介：`, options, step: 'description', canRefine: true }]);
           break;
         }
         case 'description': {
-          const options = await generateOptions('theme', option);
+          const options = await generateOptions('theme', { description: option });
           setCurrentStep('theme');
           setWizardData((d) => ({ ...d, description: option }));
           setMessages((prev) => [...prev, { type: 'ai', content: `简介已记录！现在选择核心主题：`, options, step: 'theme', canRefine: true }]);
           break;
         }
         case 'theme': {
-          const options = await generateOptions('genre', option);
+          const options = await generateOptions('genre', { theme: option });
           setCurrentStep('genre');
           setWizardData((d) => ({ ...d, theme: option }));
           setMessages((prev) => [...prev, { type: 'ai', content: `主题"${option}"已确定！请选择小说类型（可多选）：`, options, step: 'genre', isMultiSelect: true, canRefine: true }]);
           break;
         }
         case 'perspective': {
-          const options = await generateOptions('outline_mode', option);
           setCurrentStep('outline_mode');
           setWizardData((d) => ({ ...d, narrativePerspective: option }));
-          setMessages((prev) => [...prev, { type: 'ai', content: `视角"${option}"已设定！最后选择大纲模式：`, options, step: 'outline_mode', canRefine: true }]);
+          setMessages((prev) => [...prev, { type: 'ai', content: `视角"${option}"已设定！最后选择大纲模式：`, options: OUTLINE_MODE_OPTIONS, step: 'outline_mode' }]);
           break;
         }
         case 'outline_mode': {
@@ -242,16 +263,11 @@ export function InspirationMode() {
   const handleConfirmGenre = async () => {
     if (selectedOptions.size === 0) return;
     addUserMessage(Array.from(selectedOptions).join(', '));
-    setIsLoading(true);
     setSelectedOptions(new Set());
     setShowRefine(false);
-    try {
-      const options = await generateOptions('perspective', Array.from(selectedOptions).join(', '));
-      setCurrentStep('perspective');
-      setWizardData((d) => ({ ...d, genre: Array.from(selectedOptions) }));
-      setMessages((prev) => [...prev, { type: 'ai', content: `类型已选！接下来是叙事视角：`, options, step: 'perspective', canRefine: true }]);
-    } catch { toast.error('AI响应失败'); }
-    finally { setIsLoading(false); }
+    setCurrentStep('perspective');
+    setWizardData((d) => ({ ...d, genre: Array.from(selectedOptions) }));
+    setMessages((prev) => [...prev, { type: 'ai', content: `类型已选！接下来是叙事视角：`, options: PERSPECTIVE_OPTIONS, step: 'perspective' }]);
   };
 
   const handleConfirmCreate = () => {
@@ -289,12 +305,23 @@ export function InspirationMode() {
 
   const handleRefine = async () => {
     if (!refineText.trim()) return;
+    if (!BACKEND_GENERATION_STEPS.includes(currentStep as BackendGenerationStep)) {
+      toast.info('该步骤为固定选项，无需AI优化');
+      return;
+    }
+
+    const refineStep = currentStep as BackendGenerationStep;
     setIsLoading(true);
     setShowRefine(false);
     try {
       const prevOptions = messages.slice(-4).flatMap(m => m.options ?? []);
-      const res = await novelApiService.refineInspirationOptions(currentStep, { idea: '' }, refineText, prevOptions);
-      setMessages((prev) => [...prev, { type: 'ai' as const, content: '根据你的反馈，我重新生成了以下选项：', options: res.options, step: currentStep, canRefine: true }]);
+      const res = await novelApiService.refineInspirationOptions(
+        refineStep,
+        buildInspirationContext(),
+        refineText,
+        prevOptions,
+      );
+      setMessages((prev) => [...prev, { type: 'ai' as const, content: '根据你的反馈，我重新生成了以下选项：', options: res.options, step: refineStep, canRefine: true }]);
       setRefineText('');
     } catch { toast.error('优化失败'); }
     finally { setIsLoading(false); }

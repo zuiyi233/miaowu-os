@@ -17,6 +17,7 @@ _OPTIONAL_ROUTER_MODULES = (
     "app.gateway.novel_migrated.api.foreshadows",
     "app.gateway.novel_migrated.api.memories",
     "app.gateway.novel_migrated.api.inspiration",
+    "app.gateway.novel_migrated.api.wizard_stream",
     "app.gateway.novel_migrated.api.project_covers",
     "app.gateway.novel_migrated.api.book_import",
 )

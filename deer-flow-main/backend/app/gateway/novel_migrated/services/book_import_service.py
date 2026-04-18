@@ -48,6 +48,45 @@ from app.gateway.novel_migrated.services.txt_parser_service import txt_parser_se
 logger = get_logger(__name__)
 
 
+def normalize_narrative_perspective(value: Any, fallback: str = "第三人称") -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return fallback
+
+    if raw in {"第一人称", "第三人称", "全知视角"}:
+        return raw
+
+    raw_lower = raw.lower().replace("-", "_").replace(" ", "_")
+    if raw_lower in {"first_person", "firstperson", "first_person_perspective", "1st_person", "first"}:
+        return "第一人称"
+    if raw_lower in {"third_person", "thirdperson", "third_person_perspective", "3rd_person", "third"}:
+        return "第三人称"
+    if raw_lower in {"omniscient", "god_view", "godview", "all_knowing"}:
+        return "全知视角"
+
+    if "第一人称" in raw or raw in {"第一视角", "主角视角", "第一人称（我）", "我视角"}:
+        return "第一人称"
+    if "第三人称" in raw or raw in {"第三视角", "第三人称（他/她）", "旁观视角"}:
+        return "第三人称"
+    if "全知" in raw or "上帝视角" in raw:
+        return "全知视角"
+
+    return fallback
+
+
+def normalize_target_words(value: Any, fallback: int = 100000) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = fallback
+
+    if parsed < 1000:
+        return fallback
+    if parsed > 3000000:
+        return 3000000
+    return parsed
+
+
 @dataclass
 class _StepFailure:
     """记录某个生成步骤的失败信息"""
@@ -1538,41 +1577,10 @@ class BookImportService:
         return self._normalize_narrative_perspective(None, fallback)
 
     def _normalize_narrative_perspective(self, value: Any, fallback: str = "第三人称") -> str:
-        raw = str(value or "").strip()
-        if not raw:
-            return fallback
-
-        if raw in {"第一人称", "第三人称", "全知视角"}:
-            return raw
-
-        raw_lower = raw.lower().replace("-", "_").replace(" ", "_")
-        if raw_lower in {"first_person", "firstperson", "first_person_perspective", "1st_person", "first"}:
-            return "第一人称"
-        if raw_lower in {"third_person", "thirdperson", "third_person_perspective", "3rd_person", "third"}:
-            return "第三人称"
-        if raw_lower in {"omniscient", "god_view", "godview", "all_knowing"}:
-            return "全知视角"
-
-        if "第一人称" in raw or raw in {"第一视角", "主角视角", "第一人称（我）", "我视角"}:
-            return "第一人称"
-        if "第三人称" in raw or raw in {"第三视角", "第三人称（他/她）", "旁观视角"}:
-            return "第三人称"
-        if "全知" in raw or "上帝视角" in raw:
-            return "全知视角"
-
-        return fallback
+        return normalize_narrative_perspective(value, fallback)
 
     def _normalize_target_words(self, value: Any, fallback: int = 100000) -> int:
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            parsed = fallback
-
-        if parsed < 1000:
-            return fallback
-        if parsed > 3000000:
-            return 3000000
-        return parsed
+        return normalize_target_words(value, fallback)
 
     async def _build_user_ai_service(self, *, db: AsyncSession, user_id: str) -> AIService:
         """读取用户AI配置并创建支持MCP的AI服务实例。"""
@@ -2196,6 +2204,147 @@ class BookImportService:
 
         await db.flush()
         return created
+
+    async def _generate_outline_from_project(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: str,
+        project: Project,
+        chapter_count: int,
+        narrative_perspective: str,
+        target_words: int,
+        progress_callback: Any = None,
+        progress_range: tuple[int, int] = (0, 100),
+    ) -> int:
+        """基于项目设定生成完整章节大纲。"""
+
+        async def _notify(msg: str, sub: float) -> None:
+            if progress_callback:
+                p = progress_range[0] + int((progress_range[1] - progress_range[0]) * sub)
+                await progress_callback(msg, p)
+
+        normalized_chapter_count = max(5, min(int(chapter_count or project.chapter_count or 30), 300))
+        normalized_perspective = self._normalize_narrative_perspective(
+            narrative_perspective,
+            fallback=project.narrative_perspective or "第三人称",
+        )
+        normalized_target_words = self._normalize_target_words(
+            target_words,
+            fallback=project.target_words or 100000,
+        )
+
+        await _notify("📚 正在初始化AI服务...", 0.1)
+        ai_service = await self._build_user_ai_service(db=db, user_id=user_id)
+
+        await _notify("📚 正在准备大纲提示词...", 0.2)
+        template = await PromptService.get_template("WIZARD_COMPLETE_OUTLINE_GENERATION", user_id, db)
+        prompt = PromptService.format_prompt(
+            template,
+            title=project.title or "未命名项目",
+            genre=project.genre or "未设定",
+            theme=project.theme or "未设定",
+            description=project.description or "暂无简介",
+            time_period=project.world_time_period or "未设定",
+            location=project.world_location or "未设定",
+            atmosphere=project.world_atmosphere or "未设定",
+            rules=project.world_rules or "未设定",
+            narrative_perspective=normalized_perspective,
+            target_words=normalized_target_words,
+            chapter_count=normalized_chapter_count,
+            outline_mode=project.outline_mode or "one-to-many",
+        )
+
+        await _notify("📚 AI正在生成章节大纲...", 0.3)
+        raw_outlines = await ai_service.call_with_json_retry(
+            prompt=prompt,
+            max_retries=3,
+            expected_type="array",
+        )
+        if not isinstance(raw_outlines, list):
+            raw_outlines = []
+
+        await _notify("📚 正在解析大纲数据...", 0.75)
+        normalized_outlines = self._normalize_generated_outline_list(raw_outlines, normalized_chapter_count)
+
+        await _notify("📚 正在写入大纲...", 0.9)
+        await db.execute(delete(Outline).where(Outline.project_id == project.id))
+        for idx, item in enumerate(normalized_outlines, start=1):
+            structure = {
+                "chapter_number": idx,
+                "title": item["title"],
+                "summary": item["summary"],
+                "scenes": item["scenes"],
+                "key_points": item["key_points"],
+                "emotion": item["emotion"],
+                "goal": item["goal"],
+            }
+            db.add(
+                Outline(
+                    project_id=project.id,
+                    title=item["title"],
+                    content=item["summary"],
+                    structure=json.dumps(structure, ensure_ascii=False),
+                    order_index=idx,
+                )
+            )
+
+        project.chapter_count = normalized_chapter_count
+        project.narrative_perspective = normalized_perspective
+        project.target_words = normalized_target_words
+
+        await db.flush()
+        return len(normalized_outlines)
+
+    def _normalize_generated_outline_list(
+        self,
+        outlines: list[Any],
+        chapter_count: int,
+    ) -> list[dict[str, Any]]:
+        """将AI返回的大纲数据规范化为固定长度。"""
+
+        normalized: list[dict[str, Any]] = []
+        for idx in range(chapter_count):
+            item = outlines[idx] if idx < len(outlines) else {}
+            normalized.append(self._normalize_generated_outline_item(item, idx + 1))
+        return normalized
+
+    def _normalize_generated_outline_item(self, raw_item: Any, chapter_number: int) -> dict[str, Any]:
+        """规范化单条章节大纲。"""
+        fallback_title = f"第{chapter_number}章"
+        fallback_summary = "本章围绕核心冲突推进剧情，并为后续章节埋设悬念。"
+
+        if not isinstance(raw_item, dict):
+            return {
+                "title": fallback_title,
+                "summary": fallback_summary,
+                "scenes": [],
+                "key_points": [],
+                "emotion": "紧张",
+                "goal": "推进主线",
+            }
+
+        title = str(raw_item.get("title") or fallback_title).strip() or fallback_title
+        summary = str(raw_item.get("summary") or raw_item.get("content") or fallback_summary).strip() or fallback_summary
+        scenes = raw_item.get("scenes")
+        key_points = raw_item.get("key_points")
+
+        if not isinstance(scenes, list):
+            scenes = []
+        if not isinstance(key_points, list):
+            key_points = []
+
+        normalized_scenes = [str(scene).strip() for scene in scenes if str(scene).strip()][:6]
+        normalized_key_points = [str(point).strip() for point in key_points if str(point).strip()][:8]
+
+        return {
+            "title": title[:200],
+            "summary": summary,
+            "scenes": normalized_scenes,
+            "key_points": normalized_key_points,
+            "emotion": str(raw_item.get("emotion") or "紧张").strip()[:50],
+            "goal": str(raw_item.get("goal") or "推进主线").strip()[:120],
+        }
 
     def _build_summary(self, content: str, max_len: int = 120) -> str | None:
         if not content:

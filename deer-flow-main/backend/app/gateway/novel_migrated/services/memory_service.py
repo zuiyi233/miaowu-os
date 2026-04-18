@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
+import time
 from collections import defaultdict
 from datetime import datetime
 from typing import Any
 
+import httpx
+from sqlalchemy import select
+
+from app.gateway.novel_migrated.core.database import AsyncSessionLocal
 from app.gateway.novel_migrated.core.logger import get_logger
+from app.gateway.novel_migrated.models.settings import Settings
 
 try:
     import chromadb  # type: ignore
@@ -51,6 +58,17 @@ class MemoryService:
         self._fallback_store: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
         self.client = None
         self.embedding_model = None
+        self._local_embedding_model_name = os.getenv(
+            "NOVEL_MIGRATED_LOCAL_EMBEDDING_MODEL",
+            "paraphrase-multilingual-MiniLM-L12-v2",
+        )
+        self._local_embedding_failed = False
+        self._cloud_embedding_model = os.getenv(
+            "NOVEL_MIGRATED_EMBEDDING_MODEL",
+            "text-embedding-3-small",
+        )
+        self._cloud_config_cache_ttl = 120
+        self._cloud_config_cache: dict[str, tuple[float, dict[str, str] | None]] = {}
 
         try:
             self._vector_enabled = self._try_init_vector_stack()
@@ -66,14 +84,29 @@ class MemoryService:
         self._initialized = True
 
     def _try_init_vector_stack(self) -> bool:
-        if chromadb is None or SentenceTransformer is None:
-            logger.warning("⚠️ chromadb 或 sentence-transformers 未安装，启用降级检索")
+        if chromadb is None:
+            logger.warning("⚠️ chromadb 未安装，使用内存语义检索/关键词降级模式")
             return False
 
-        # 跳过本地 embedding 模型加载，使用在线模型替代
-        logger.info("⚡ 跳过本地 embedding 模型加载，使用在线模型服务")
-        logger.warning("⚠️ 记忆服务使用降级模式（关键词检索）")
-        return False
+        try:
+            vector_dir = os.getenv("NOVEL_MIGRATED_VECTOR_DB_DIR")
+            if not vector_dir:
+                backend_root = os.path.abspath(
+                    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
+                )
+                vector_dir = os.path.join(backend_root, ".deer-flow", "novel-migrated-chroma")
+            os.makedirs(vector_dir, exist_ok=True)
+            self.client = chromadb.PersistentClient(path=vector_dir)
+        except Exception as exc:
+            self.client = None
+            logger.warning("⚠️ 向量数据库初始化失败，降级为非向量检索: %s", exc)
+            return False
+
+        if SentenceTransformer is None:
+            logger.warning("⚠️ sentence-transformers 未安装，将优先使用云 Embedding（可回退关键词）")
+        else:
+            logger.info("✅ 本地 Embedding 可用：%s", self._local_embedding_model_name)
+        return True
 
     def get_collection(self, user_id: str, project_id: str):
         if not self._vector_enabled or not self.client:
@@ -111,6 +144,170 @@ class MemoryService:
         importance = float(metadata.get("importance_score", metadata.get("importance", 0.5)) or 0.5)
         return coverage * 0.8 + importance * 0.2
 
+    @staticmethod
+    def _normalize_base_url(base_url: str | None) -> str:
+        normalized = (base_url or "").strip() or "https://api.openai.com/v1"
+        normalized = normalized.rstrip("/")
+        if not normalized.endswith("/v1"):
+            normalized = f"{normalized}/v1"
+        return normalized
+
+    @staticmethod
+    def _safe_embedding(embedding: Any) -> list[float] | None:
+        if not isinstance(embedding, list) or not embedding:
+            return None
+        try:
+            return [float(v) for v in embedding]
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
+        if not vec_a or not vec_b:
+            return 0.0
+
+        size = min(len(vec_a), len(vec_b))
+        if size == 0:
+            return 0.0
+
+        dot = sum(vec_a[idx] * vec_b[idx] for idx in range(size))
+        norm_a = math.sqrt(sum(vec_a[idx] * vec_a[idx] for idx in range(size)))
+        norm_b = math.sqrt(sum(vec_b[idx] * vec_b[idx] for idx in range(size)))
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return max(0.0, min(1.0, dot / (norm_a * norm_b)))
+
+    def _resolve_embedding_model_name(self, settings: Settings) -> str:
+        raw_preferences = settings.preferences
+        if raw_preferences:
+            try:
+                parsed_preferences = json.loads(raw_preferences)
+            except Exception:
+                parsed_preferences = {}
+            if isinstance(parsed_preferences, dict):
+                for key in ("embedding_model", "embeddings_model", "embeddingModel"):
+                    value = parsed_preferences.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+
+        llm_model = (settings.llm_model or "").strip()
+        if llm_model and "embedding" in llm_model.lower():
+            return llm_model
+
+        return self._cloud_embedding_model
+
+    async def _load_cloud_embedding_config(self, user_id: str) -> dict[str, str] | None:
+        now = time.time()
+        cached = self._cloud_config_cache.get(user_id)
+        if cached and now - cached[0] < self._cloud_config_cache_ttl:
+            return cached[1]
+
+        config: dict[str, str] | None = None
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(select(Settings).where(Settings.user_id == user_id))
+                settings = result.scalar_one_or_none()
+            if settings and settings.api_key:
+                config = {
+                    "api_key": settings.api_key,
+                    "base_url": self._normalize_base_url(settings.api_base_url),
+                    "model": self._resolve_embedding_model_name(settings),
+                }
+        except Exception as exc:
+            logger.warning("⚠️ 读取云 Embedding 配置失败: %s", exc)
+
+        self._cloud_config_cache[user_id] = (now, config)
+        return config
+
+    def _embed_with_local_model(self, texts: list[str]) -> list[list[float]] | None:
+        if not texts or SentenceTransformer is None:
+            return None
+        if self._local_embedding_failed:
+            return None
+
+        if self.embedding_model is None:
+            try:
+                self.embedding_model = SentenceTransformer(self._local_embedding_model_name)
+            except Exception as exc:
+                self._local_embedding_failed = True
+                logger.warning("⚠️ 本地 Embedding 模型加载失败，将切换云 Embedding: %s", exc)
+                return None
+
+        try:
+            vectors = self.embedding_model.encode(texts)
+            if hasattr(vectors, "tolist"):
+                vectors = vectors.tolist()
+            if isinstance(vectors, list) and vectors and isinstance(vectors[0], (int, float)):
+                vectors = [vectors]
+            if not isinstance(vectors, list):
+                return None
+            normalized_vectors: list[list[float]] = []
+            for vector in vectors:
+                normalized = self._safe_embedding(vector)
+                if normalized is None:
+                    return None
+                normalized_vectors.append(normalized)
+            return normalized_vectors
+        except Exception as exc:
+            logger.warning("⚠️ 本地 Embedding 计算失败，将尝试云 Embedding: %s", exc)
+            return None
+
+    async def _embed_with_cloud_provider(self, user_id: str, texts: list[str]) -> list[list[float]] | None:
+        if not texts:
+            return None
+
+        config = await self._load_cloud_embedding_config(user_id)
+        if not config:
+            return None
+
+        url = f"{config['base_url']}/embeddings"
+        headers = {
+            "Authorization": f"Bearer {config['api_key']}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": config["model"],
+            "input": texts,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, headers=headers, json=payload)
+            if response.status_code >= 400:
+                logger.warning("⚠️ 云 Embedding 请求失败: %s %s", response.status_code, response.text[:200])
+                return None
+            data = response.json().get("data")
+            if not isinstance(data, list):
+                return None
+            sorted_items = sorted(
+                (item for item in data if isinstance(item, dict)),
+                key=lambda item: int(item.get("index", 0)),
+            )
+            vectors: list[list[float]] = []
+            for item in sorted_items:
+                normalized = self._safe_embedding(item.get("embedding"))
+                if normalized is None:
+                    return None
+                vectors.append(normalized)
+            if len(vectors) != len(texts):
+                logger.warning("⚠️ 云 Embedding 返回数量不匹配: expected=%s actual=%s", len(texts), len(vectors))
+                return None
+            return vectors
+        except Exception as exc:
+            logger.warning("⚠️ 云 Embedding 请求异常: %s", exc)
+            return None
+
+    async def _embed_texts(self, user_id: str, texts: list[str]) -> list[list[float]] | None:
+        local_vectors = self._embed_with_local_model(texts)
+        if local_vectors is not None:
+            return local_vectors
+
+        cloud_vectors = await self._embed_with_cloud_provider(user_id, texts)
+        if cloud_vectors is not None:
+            return cloud_vectors
+
+        return None
+
     async def add_memory(
         self,
         user_id: str,
@@ -121,12 +318,15 @@ class MemoryService:
         metadata: dict[str, Any] | None = None,
     ) -> bool:
         metadata = metadata or {}
+        semantic_embedding: list[float] | None = None
+        embeddings = await self._embed_texts(user_id, [content])
+        if embeddings and embeddings[0]:
+            semantic_embedding = embeddings[0]
 
-        if self._vector_enabled:
+        if self._vector_enabled and semantic_embedding is not None:
             try:
                 collection = self.get_collection(user_id, project_id)
-                if collection is not None and self.embedding_model is not None:
-                    embedding = self.embedding_model.encode(content).tolist()
+                if collection is not None:
                     vector_meta = {
                         "memory_type": memory_type,
                         "chapter_id": str(metadata.get("chapter_id", "")),
@@ -136,7 +336,12 @@ class MemoryService:
                         "title": str(metadata.get("title", ""))[:200],
                         "is_foreshadow": int(metadata.get("is_foreshadow", 0) or 0),
                     }
-                    collection.add(ids=[memory_id], embeddings=[embedding], documents=[content], metadatas=[vector_meta])
+                    collection.add(
+                        ids=[memory_id],
+                        embeddings=[semantic_embedding],
+                        documents=[content],
+                        metadatas=[vector_meta],
+                    )
                     return True
             except Exception as exc:
                 logger.warning("⚠️ 向量写入失败，回退到内存存储: %s", exc)
@@ -151,6 +356,7 @@ class MemoryService:
                     "memory_type": memory_type,
                     "importance": float(metadata.get("importance_score", 0.5) or 0.5),
                 },
+                "embedding": semantic_embedding,
                 "created_at": datetime.utcnow().isoformat(),
             }
         )
@@ -181,12 +387,16 @@ class MemoryService:
         min_similarity: float = 0.35,
     ) -> list[dict[str, Any]]:
         memory_types = memory_types or []
+        similarity_threshold = float(min_similarity)
+        query_embedding = None
+        query_vectors = await self._embed_texts(user_id, [query])
+        if query_vectors and query_vectors[0]:
+            query_embedding = query_vectors[0]
 
-        if self._vector_enabled:
+        if self._vector_enabled and query_embedding is not None:
             try:
                 collection = self.get_collection(user_id, project_id)
-                if collection is not None and self.embedding_model is not None:
-                    query_embedding = self.embedding_model.encode(query).tolist()
+                if collection is not None:
                     where_clause = None
                     if memory_types:
                         where_clause = {"memory_type": {"$in": memory_types}}
@@ -206,7 +416,7 @@ class MemoryService:
                     for idx, doc in enumerate(docs):
                         distance = float(distances[idx]) if idx < len(distances) else 1.0
                         similarity = max(0.0, 1.0 - distance)
-                        if similarity < min_similarity:
+                        if similarity < similarity_threshold:
                             continue
                         output.append(
                             {
@@ -225,10 +435,16 @@ class MemoryService:
         if memory_types:
             candidates = [m for m in candidates if m.get("metadata", {}).get("memory_type") in memory_types]
 
-        scored = []
+        scored: list[tuple[float, dict[str, Any]]] = []
         for mem in candidates:
-            score = self._fallback_score(query, mem.get("content", ""), mem.get("metadata", {}))
-            if score >= min_similarity:
+            memory_embedding = self._safe_embedding(mem.get("embedding"))
+            if query_embedding is not None and memory_embedding is not None:
+                importance = float(mem.get("metadata", {}).get("importance", 0.5) or 0.5)
+                score = self._cosine_similarity(query_embedding, memory_embedding) * 0.85 + importance * 0.15
+            else:
+                score = self._fallback_score(query, mem.get("content", ""), mem.get("metadata", {}))
+
+            if score >= similarity_threshold:
                 scored.append((score, mem))
 
         scored.sort(key=lambda item: item[0], reverse=True)
@@ -459,6 +675,11 @@ class MemoryService:
         metadata: dict[str, Any] | None = None,
     ) -> bool:
         metadata = metadata or {}
+        updated_embedding: list[float] | None = None
+        if content is not None:
+            vectors = await self._embed_texts(user_id, [content])
+            if vectors and vectors[0]:
+                updated_embedding = vectors[0]
 
         if self._vector_enabled:
             try:
@@ -467,8 +688,8 @@ class MemoryService:
                     update_data: dict[str, Any] = {"ids": [memory_id]}
                     if content is not None:
                         update_data["documents"] = [content]
-                        if self.embedding_model is not None:
-                            update_data["embeddings"] = [self.embedding_model.encode(content).tolist()]
+                        if updated_embedding is not None:
+                            update_data["embeddings"] = [updated_embedding]
                     if metadata:
                         update_data["metadatas"] = [
                             {
@@ -492,6 +713,8 @@ class MemoryService:
                 continue
             if content is not None:
                 item["content"] = content
+            if updated_embedding is not None:
+                item["embedding"] = updated_embedding
             if metadata:
                 item["metadata"].update(metadata)
             return True

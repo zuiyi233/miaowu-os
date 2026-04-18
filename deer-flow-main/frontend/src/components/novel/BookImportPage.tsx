@@ -87,7 +87,7 @@ export function BookImportPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const [parseRange, setParseRange] = useState<'last_n_chapters_reverse' | 'full_book_reverse'>('last_n_chapters_reverse');
+  const [parseRange, setParseRange] = useState<'tail' | 'full'>('tail');
   const [tailChapters, setTailChapters] = useState(20);
 
   // Task state
@@ -244,20 +244,33 @@ export function BookImportPage() {
 
     try {
       const payload = {
-        projectSuggestion: {
+        project_suggestion: {
           title: projectTitle,
           genre: projectType,
           theme: projectTheme,
           description: projectSummary,
-          narrativePerspective: narrativeAngle,
-          targetWords: targetWordCount,
+          narrative_perspective: narrativeAngle,
+          target_words: targetWordCount,
         },
         chapters: chapters.map((c) => ({
-          chapterNumber: c.chapterNumber,
+          chapter_number: c.chapterNumber,
           title: c.title,
           summary: c.summary || '',
           content: c.content || '',
         })),
+        outlines: Array.isArray(preview?.outlines)
+          ? preview.outlines
+            .filter((outline) => outline && typeof outline === 'object')
+            .map((outline, index) => {
+              const record = outline as Record<string, unknown>;
+              return {
+                title: String(record.title ?? `第${index + 1}章`),
+                content: String(record.content ?? ''),
+                order_index: Number(record.order_index ?? index + 1),
+                structure: record.structure ?? null,
+              };
+            })
+          : [],
       };
 
       const response = await novelApiService.applyBookImportStream(taskId, payload);
@@ -302,18 +315,52 @@ export function BookImportPage() {
             setTimeout(() => router.push('/workspace/novel'), 1500);
             return;
           } else if (data.type === 'error') {
-            setApplyError(data.message || '导入出错');
+            const errorMessage = data.message || data.error || '导入出错';
+            setApplyError(errorMessage);
             setApplyStatus('error');
-            updateCache({ applyError: data.message, applyStatus: 'error' });
+            updateCache({ applyError: errorMessage, applyStatus: 'error' });
             return;
           } else if (data.type === 'done') {
             setApplyProgress(100);
             setApplyStatus('completed');
             clearCache();
             return;
-          } else if (data.type === 'step_failure') {
-            setFailedSteps((prev) => [...prev, data]);
-            updateCache({ failedSteps: [...failedSteps, data] });
+          } else if (data.type === 'step_failure' || data.status === 'step_failures') {
+            let failuresRaw: unknown[] = [];
+            if (Array.isArray(data.failed_steps)) {
+              failuresRaw = data.failed_steps;
+            } else if (typeof data.message === 'string') {
+              try {
+                const parsed = JSON.parse(data.message);
+                if (parsed && Array.isArray(parsed.failed_steps)) {
+                  failuresRaw = parsed.failed_steps;
+                }
+              } catch {
+                // ignore parse error
+              }
+            } else if (data.step_name || data.stepName) {
+              failuresRaw = [data];
+            }
+
+            const normalizedFailures = failuresRaw
+              .map((item) => {
+                const entry = (item ?? {}) as Record<string, unknown>;
+                return {
+                  stepName: String(entry.step_name ?? entry.stepName ?? ''),
+                  stepLabel: String(entry.step_label ?? entry.stepLabel ?? '未知步骤'),
+                  error: String(entry.error ?? entry.error_message ?? '未知错误'),
+                  retryCount: Number(entry.retry_count ?? entry.retryCount ?? 0),
+                };
+              })
+              .filter((item) => item.stepName);
+
+            if (normalizedFailures.length > 0) {
+              setFailedSteps((prev) => {
+                const next = [...prev, ...normalizedFailures];
+                updateCache({ failedSteps: next });
+                return next;
+              });
+            }
           }
         } catch {
           // skip malformed JSON
@@ -444,12 +491,12 @@ export function BookImportPage() {
                     <Select value={parseRange} onValueChange={(v) => setParseRange(v as typeof parseRange)}>
                       <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="last_n_chapters_reverse">截取末 N 章反向生成</SelectItem>
-                        <SelectItem value="full_book_reverse">整本反向生成</SelectItem>
+                        <SelectItem value="tail">截取末 N 章反向生成</SelectItem>
+                        <SelectItem value="full">整本反向生成</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
-                  {parseRange === 'last_n_chapters_reverse' && (
+                  {parseRange === 'tail' && (
                     <div>
                       <Label>末尾章节数</Label>
                       <Input type="number" min={5} max={55} step={5} value={tailChapters} onChange={(e) => setTailChapters(parseInt(e.target.value) || 20)} className="mt-1 w-32" />

@@ -98,7 +98,7 @@ async function streamPost(url: string, body: Record<string, unknown>, callbacks:
           result = data.data;
           callbacks.onResult(result);
         } else if (data.type === 'error') {
-          callbacks.onError(data.message || 'Unknown error');
+          callbacks.onError(data.message || data.error || 'Unknown error');
         } else if (data.type === 'complete') {
           callbacks.onComplete?.();
         }
@@ -215,7 +215,7 @@ export function AIProjectGenerator({
         toast.success('项目已完成,正在跳转...');
         setProgress(100);
         onComplete(pidParam);
-        setTimeout(() => router.push(`/project/${pidParam}`), 1000);
+        setTimeout(() => router.push('/workspace/novel'), 1000);
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : '未知错误';
@@ -228,7 +228,7 @@ export function AIProjectGenerator({
 
   const resumeFromWorldBuilding = async (data: GenerationConfig) => {
     const genreString = Array.isArray(data.genre) ? data.genre.join('、') : data.genre;
-    const worldResult = await streamPost('/api/wizard/generate-world-building', {
+    const worldResult = await streamPost('/api/wizard-stream/world-building', {
       title: data.title,
       description: data.description,
       theme: data.theme,
@@ -260,7 +260,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, careers: 'processing' }));
     setProgressMessage('正在生成职业体系...');
 
-    await streamPost('/api/wizard/generate-career-system', { project_id: pid }, {
+    await streamPost('/api/wizard-stream/career-system', { project_id: pid }, {
       onProgress: (msg, prog) => { setProgress(prog); setProgressMessage(msg); },
       onResult: (result) => {
         console.log(`成功生成职业体系：主职业${(result as Record<string, unknown>).main_careers_count}个，副职业${(result as Record<string, unknown>).sub_careers_count}个`);
@@ -283,7 +283,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, characters: 'processing' }));
     setProgressMessage('正在生成角色...');
 
-    await streamPost('/api/wizard/generate-characters', {
+    await streamPost('/api/wizard-stream/characters', {
       project_id: pid,
       count: data.character_count,
       world_context: {
@@ -315,7 +315,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, outline: 'processing' }));
     setProgressMessage('正在生成大纲...');
 
-    await streamPost('/api/wizard/generate-complete-outline', {
+    await streamPost('/api/wizard-stream/outline', {
       project_id: pid,
       chapter_count: data.chapter_count,
       narrative_perspective: data.narrative_perspective,
@@ -341,7 +341,7 @@ export function AIProjectGenerator({
     clearStorage();
     setLoading(false);
     onComplete(pid);
-    setTimeout(() => router.push(`/project/${pid}`), 1000);
+    setTimeout(() => router.push('/workspace/novel'), 1000);
   };
 
   const handleAutoGenerate = async (data: GenerationConfig) => {
@@ -358,7 +358,7 @@ export function AIProjectGenerator({
       setGenerationSteps(prev => ({ ...prev, worldBuilding: 'processing' }));
       setProgressMessage('正在生成世界观...');
 
-      const worldResult = await streamPost('/api/wizard/generate-world-building', {
+      const worldResult = await streamPost('/api/wizard-stream/world-building', {
         title: data.title,
         description: data.description,
         theme: data.theme,
@@ -395,7 +395,7 @@ export function AIProjectGenerator({
       setGenerationSteps(prev => ({ ...prev, careers: 'processing' }));
       setProgressMessage('正在生成职业体系...');
 
-      await streamPost('/api/wizard/generate-career-system', { project_id: createdProjectId }, {
+      await streamPost('/api/wizard-stream/career-system', { project_id: createdProjectId }, {
         onProgress: (msg, prog) => { setProgress(prog); setProgressMessage(msg); },
         onResult: (result) => {
           console.log(`成功生成职业体系：主职业${(result as Record<string, unknown>).main_careers_count}个，副职业${(result as Record<string, unknown>).sub_careers_count}个`);
@@ -413,7 +413,7 @@ export function AIProjectGenerator({
       setGenerationSteps(prev => ({ ...prev, characters: 'processing' }));
       setProgressMessage('正在生成角色...');
 
-      await streamPost('/api/wizard/generate-characters', {
+      await streamPost('/api/wizard-stream/characters', {
         project_id: createdProjectId,
         count: data.character_count,
         world_context: {
@@ -442,7 +442,7 @@ export function AIProjectGenerator({
       setGenerationSteps(prev => ({ ...prev, outline: 'processing' }));
       setProgressMessage('正在生成大纲...');
 
-      await streamPost('/api/wizard/generate-complete-outline', {
+      await streamPost('/api/wizard-stream/outline', {
         project_id: createdProjectId,
         chapter_count: data.chapter_count,
         narrative_perspective: data.narrative_perspective,
@@ -468,7 +468,7 @@ export function AIProjectGenerator({
       clearStorage();
       setLoading(false);
       onComplete(createdProjectId);
-      setTimeout(() => router.push(`/project/${createdProjectId}`), 1000);
+      setTimeout(() => router.push('/workspace/novel'), 1000);
     } catch (error) {
       const msg = error instanceof Error ? error.message : '未知错误';
       console.error('创建项目失败:', msg);
@@ -511,7 +511,7 @@ export function AIProjectGenerator({
     setProgressMessage('重新生成世界观...');
     const genreString = Array.isArray(generationData.genre) ? generationData.genre.join('、') : generationData.genre;
 
-    const worldResult = await streamPost('/api/wizard/generate-world-building', {
+    const worldResult = await streamPost('/api/wizard-stream/world-building', {
       title: generationData.title,
       description: generationData.description,
       theme: generationData.theme,
@@ -550,7 +550,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, careers: 'processing' }));
     setProgressMessage('重新生成职业体系...');
 
-    await streamPost('/api/wizard/generate-career-system', { project_id: pid }, {
+    await streamPost('/api/wizard-stream/career-system', { project_id: pid }, {
       onProgress: (msg, prog) => { setProgress(prog); setProgressMessage(msg); },
       onResult: (result) => {
         console.log(`成功重新生成职业体系`);
@@ -576,7 +576,7 @@ export function AIProjectGenerator({
     setProgressMessage('重新生成角色...');
     const genreString = Array.isArray(generationData.genre) ? generationData.genre.join('、') : generationData.genre;
 
-    await streamPost('/api/wizard/generate-characters', {
+    await streamPost('/api/wizard-stream/characters', {
       project_id: pid,
       count: generationData.character_count,
       world_context: {
@@ -612,7 +612,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, outline: 'processing' }));
     setProgressMessage('重新生成大纲...');
 
-    await streamPost('/api/wizard/generate-complete-outline', {
+    await streamPost('/api/wizard-stream/outline', {
       project_id: pid,
       chapter_count: generationData.chapter_count,
       narrative_perspective: generationData.narrative_perspective,
@@ -637,7 +637,7 @@ export function AIProjectGenerator({
     toast.success('项目创建成功！正在进入项目...');
     setLoading(false);
     onComplete(pid);
-    setTimeout(() => router.push(`/project/${pid}`), 1000);
+    setTimeout(() => router.push('/workspace/novel'), 1000);
   };
 
   const continueFromCareers = async (worldResult: WorldBuildingResult) => {
@@ -646,7 +646,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, careers: 'processing' }));
     setProgressMessage('正在生成职业体系...');
 
-    await streamPost('/api/wizard/generate-career-system', { project_id: pid }, {
+    await streamPost('/api/wizard-stream/career-system', { project_id: pid }, {
       onProgress: (msg, prog) => { setProgress(prog); setProgressMessage(msg); },
       onResult: () => { setGenerationSteps(prev => ({ ...prev, careers: 'completed' })); },
       onError: (error) => {
@@ -666,7 +666,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, characters: 'processing' }));
     setProgressMessage('正在生成角色...');
 
-    await streamPost('/api/wizard/generate-characters', {
+    await streamPost('/api/wizard-stream/characters', {
       project_id: pid,
       count: generationData.character_count,
       world_context: {
@@ -695,7 +695,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, outline: 'processing' }));
     setProgressMessage('正在生成大纲...');
 
-    await streamPost('/api/wizard/generate-complete-outline', {
+    await streamPost('/api/wizard-stream/outline', {
       project_id: pid,
       chapter_count: generationData.chapter_count,
       narrative_perspective: generationData.narrative_perspective,
@@ -716,7 +716,7 @@ export function AIProjectGenerator({
     toast.success('项目创建成功！正在进入项目...');
     setLoading(false);
     onComplete(pid);
-    setTimeout(() => router.push(`/project/${pid}`), 1000);
+    setTimeout(() => router.push('/workspace/novel'), 1000);
   };
 
   const getStepStatus = (step: GenerationStep) => {

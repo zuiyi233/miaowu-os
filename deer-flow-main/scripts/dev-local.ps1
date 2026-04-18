@@ -268,6 +268,94 @@ function Assert-CommandExists {
     }
 }
 
+function Invoke-BackendUvSync {
+    param([switch]$RecreateVenv)
+
+    Push-Location -LiteralPath $BackendDir
+    try {
+        if ($RecreateVenv) {
+            if (Test-Path -LiteralPath ".venv") {
+                Write-WarnLine "Removing broken backend .venv before retry ..."
+                Remove-Item -LiteralPath ".venv" -Recurse -Force -ErrorAction Stop
+            }
+            Write-Info "Recreating backend virtual environment ..."
+            & uv venv --allow-existing .venv
+            if ($LASTEXITCODE -ne 0) {
+                throw "uv venv failed with exit code $LASTEXITCODE."
+            }
+        }
+
+        Write-Info "Prewarming backend dependencies with uv sync ..."
+        & uv sync
+        if ($LASTEXITCODE -ne 0) {
+            throw "uv sync failed with exit code $LASTEXITCODE."
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
+function Test-BackendVenvHealthy {
+    param([Parameter(Mandatory = $true)][string]$PythonExePath)
+
+    if (-not (Test-Path -LiteralPath $PythonExePath)) {
+        return $false
+    }
+
+    try {
+        & $PythonExePath -c "import sys; print(sys.executable)" *> $null
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    }
+}
+
+function Ensure-BackendVenvReady {
+    $venvDir = Join-Path $BackendDir ".venv"
+    $pyVenvCfg = Join-Path $venvDir "pyvenv.cfg"
+    $pythonExe = Join-Path $venvDir "Scripts/python.exe"
+    $uvicornExe = Join-Path $venvDir "Scripts/uvicorn.exe"
+
+    $reasons = @()
+    if (-not (Test-Path -LiteralPath $venvDir)) {
+        $reasons += ".venv is missing"
+    }
+    if (-not (Test-Path -LiteralPath $pyVenvCfg)) {
+        $reasons += "pyvenv.cfg is missing"
+    }
+    if (-not (Test-Path -LiteralPath $pythonExe)) {
+        $reasons += "python.exe is missing"
+    } elseif (-not (Test-BackendVenvHealthy -PythonExePath $pythonExe)) {
+        $reasons += "python.exe health check failed"
+    }
+    if (-not (Test-Path -LiteralPath $uvicornExe)) {
+        $reasons += "uvicorn.exe is missing"
+    }
+
+    if ($reasons.Count -eq 0) {
+        return $uvicornExe
+    }
+
+    Write-WarnLine "Backend .venv needs prewarm/repair: $($reasons -join '; ')"
+    try {
+        Invoke-BackendUvSync
+    } catch {
+        Write-WarnLine "Initial uv sync failed: $($_.Exception.Message)"
+        Write-WarnLine "Retrying with .venv recreation ..."
+        Invoke-BackendUvSync -RecreateVenv
+    }
+
+    if (-not (Test-Path -LiteralPath $uvicornExe)) {
+        throw "Backend .venv prewarm completed but uvicorn.exe is still missing: $uvicornExe"
+    }
+    if (-not (Test-BackendVenvHealthy -PythonExePath $pythonExe)) {
+        throw "Backend .venv prewarm completed but python health check still fails."
+    }
+
+    Write-Ok "Backend .venv prewarm completed."
+    return $uvicornExe
+}
+
 function New-RunnerScript {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -427,13 +515,9 @@ function Start-AllServices {
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $backendLog = Join-Path $LogDir "backend-$timestamp.log"
     $frontendLog = Join-Path $LogDir "frontend-$timestamp.log"
-    $backendUvicornExe = Join-Path $BackendDir ".venv/Scripts/uvicorn.exe"
-    $backendCommandLine = if (Test-Path -LiteralPath $backendUvicornExe) {
-        # Prefer the pre-created venv executable so startup does not trigger uv sync/install paths.
-        "& '.venv/Scripts/uvicorn.exe' app.gateway.app:app --host 0.0.0.0 --port 8551 --reload --reload-include '*.yaml' --reload-include '.env'"
-    } else {
-        "& uv run uvicorn app.gateway.app:app --host 0.0.0.0 --port 8551 --reload --reload-include '*.yaml' --reload-include '.env'"
-    }
+    $backendUvicornExe = Ensure-BackendVenvReady
+    # After prewarm, always use venv-local uvicorn executable to avoid startup-time env mutation.
+    $backendCommandLine = "& '.venv/Scripts/uvicorn.exe' app.gateway.app:app --host 0.0.0.0 --port 8551 --reload --reload-include '*.yaml' --reload-include '.env'"
 
     Write-Info "Starting backend (Gateway API) on port $BackendPort ..."
     $backendRunner = New-RunnerScript `

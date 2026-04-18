@@ -188,7 +188,7 @@ export function RelationshipGraph({ projectId }: RelationshipGraphProps) {
 
       const [graphRes, careerRes] = await Promise.all([
         fetch(`${backendBase}/api/relationships/graph?project_id=${projectId}`, { credentials: 'include' }),
-        fetch(`${backendBase}/api/careers?project_id=${projectId}`, { ...getAuthHeaders() }).catch(() => null),
+        fetch(`${backendBase}/api/careers?project_id=${projectId}`, { headers: getAuthHeaders() }).catch(() => null),
       ]);
 
       if (!graphRes.ok) return;

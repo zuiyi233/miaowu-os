@@ -4,6 +4,7 @@
 - WORLD_BUILDING
 - CAREER_SYSTEM_GENERATION
 - CHARACTERS_BATCH_GENERATION
+- WIZARD_COMPLETE_OUTLINE_GENERATION
 - BOOK_IMPORT_REVERSE_PROJECT_SUGGESTION
 - BOOK_IMPORT_REVERSE_OUTLINES
 """
@@ -150,6 +151,43 @@ class PromptService:
     ]
   }}
 ]
+</output>"""
+
+    WIZARD_COMPLETE_OUTLINE_GENERATION = """<system>
+你是资深网文总编与剧情架构师，擅长把项目设定拆解为可执行章节大纲。
+</system>
+
+<task>
+基于项目设定生成完整章节大纲，章节数必须精确等于 {chapter_count}。
+</task>
+
+<input>
+书名：{title}
+类型：{genre}
+主题：{theme}
+简介：{description}
+时间背景：{time_period}
+地理位置：{location}
+氛围基调：{atmosphere}
+世界规则：{rules}
+叙事视角：{narrative_perspective}
+目标字数：{target_words}
+章节总数：{chapter_count}
+大纲模式：{outline_mode}
+</input>
+
+<output>
+仅输出JSON数组（不要markdown），长度必须等于 {chapter_count}。
+每项格式：
+{{
+  "chapter_number": 1,
+  "title": "章节标题",
+  "summary": "本章概要（80-180字）",
+  "scenes": ["场景1", "场景2"],
+  "key_points": ["关键事件1", "关键事件2"],
+  "emotion": "情感基调",
+  "goal": "叙事目标"
+}}
 </output>"""
 
     BOOK_IMPORT_REVERSE_PROJECT_SUGGESTION = """<system>
