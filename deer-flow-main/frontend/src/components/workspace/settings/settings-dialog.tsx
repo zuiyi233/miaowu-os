@@ -2,6 +2,7 @@
 
 import {
   BellIcon,
+  BotIcon,
   InfoIcon,
   BrainIcon,
   PaletteIcon,
@@ -18,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AboutSettingsPage } from "@/components/workspace/settings/about-settings-page";
+import { AiProviderSettingsPage } from "@/components/workspace/settings/ai-provider-settings-page";
 import { AppearanceSettingsPage } from "@/components/workspace/settings/appearance-settings-page";
 import { MemorySettingsPage } from "@/components/workspace/settings/memory-settings-page";
 import { NotificationSettingsPage } from "@/components/workspace/settings/notification-settings-page";
@@ -31,6 +33,7 @@ type SettingsSection =
   | "memory"
   | "tools"
   | "skills"
+  | "ai-providers"
   | "notification"
   | "about";
 
@@ -58,6 +61,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
         id: "appearance",
         label: t.settings.sections.appearance,
         icon: PaletteIcon,
+      },
+      {
+        id: "ai-providers",
+        label: "AI 供应商",
+        icon: BotIcon,
       },
       {
         id: "notification",
@@ -125,6 +133,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
           <ScrollArea className="h-full min-h-0 rounded-lg border">
             <div className="space-y-8 p-6">
               {activeSection === "appearance" && <AppearanceSettingsPage />}
+              {activeSection === "ai-providers" && <AiProviderSettingsPage />}
               {activeSection === "memory" && <MemorySettingsPage />}
               {activeSection === "tools" && <ToolSettingsPage />}
               {activeSection === "skills" && (

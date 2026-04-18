@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "demo:save": "node scripts/save-demo.js",
+    "generate:ai-key": "node scripts/generate-ai-encryption-key.js",
     "build": "next build",
     "check": "eslint . --ext .ts,.tsx && tsc --noEmit",
     "dev": "next dev --turbo",
@@ -70,6 +71,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "codemirror": "^6.0.2",
+    "crypto-js": "^4.2.0",
     "dagre": "^0.8.5",
     "date-fns": "^4.1.0",
     "dexie": "^4.0.11",
@@ -110,6 +112,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.1",
     "@tailwindcss/postcss": "^4.0.15",
+    "@types/crypto-js": "^4.2.2",
     "@types/dagre": "^0.7.54",
     "@types/gsap": "^3.0.0",
     "@types/node": "^20.14.10",

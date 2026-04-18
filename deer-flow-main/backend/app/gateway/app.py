@@ -37,6 +37,7 @@ HARNESS_ROUTER_MODULES = (
 CORE_ROUTER_MODULES = (
     "app.gateway.routers.novel",
     "app.gateway.routers.novel_migrated",
+    "app.gateway.api.ai_provider",
 )
 
 
