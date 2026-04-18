@@ -97,6 +97,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.exception(error_msg)
         raise RuntimeError(error_msg) from e
 
+    # Validate encryption key availability for novel settings
+    try:
+        from app.gateway.novel_migrated.core.crypto import is_encryption_enabled
+
+        if not is_encryption_enabled():
+            logger.warning(
+                "SETTINGS_ENCRYPTION_KEY is not set; API keys will be stored in plaintext. "
+                "Set it for production use: python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'"
+            )
+        else:
+            logger.info("Encryption is enabled for sensitive settings")
+    except ImportError:
+        logger.debug("Novel crypto module unavailable; skipping encryption check")
+
     from app.gateway.deps import langgraph_runtime
 
     # Initialize LangGraph runtime components (StreamBridge, RunManager, checkpointer, store)

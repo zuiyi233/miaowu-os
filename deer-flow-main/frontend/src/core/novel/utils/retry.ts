@@ -1,4 +1,4 @@
-import { handleError, type StandardError, ErrorType } from "./errorhandler";
+import { handleError, type StandardError, ErrorType, ForbiddenSubType, type ExtendedStandardError } from "./errorhandler";
 
 export interface RetryOptions {
   maxAttempts?: number;
@@ -34,7 +34,7 @@ export class RetryManager {
       } catch (error) {
         lastError = handleError(error, context);
         if (attempt === opts.maxAttempts || !opts.shouldRetry(lastError, attempt)) break;
-        const delay = this.calculateDelay(attempt, opts);
+        const delay = this.calculateDelay(attempt, opts, lastError);
         opts.onRetry(attempt, lastError, delay);
         await new Promise((r) => setTimeout(r, delay));
       }
@@ -43,17 +43,47 @@ export class RetryManager {
   }
 
   private defaultShouldRetry(error: StandardError, attempt: number): boolean {
-    if (error.type === ErrorType.API_ERROR) {
-      if ([400, 401, 403, 404, 422].includes(Number(error.code))) return false;
-      if (error.code === 429) return attempt <= 2;
+    const extError = error as ExtendedStandardError;
+
+    if (extError.type === ErrorType.API_ERROR) {
+      const statusCode = Number(extError.code);
+
+      if ([400, 401, 404, 422].includes(statusCode)) return false;
+
+      if (statusCode === 403) {
+        switch (extError.forbiddenSubType) {
+          case ForbiddenSubType.AUTH_FAILED:
+            return false;
+          case ForbiddenSubType.RATE_LIMITED:
+          case ForbiddenSubType.WAF_CHALLENGE:
+            return attempt <= 2;
+          case ForbiddenSubType.GEO_BLOCKED:
+          case ForbiddenSubType.IP_BANNED:
+            return false;
+          case ForbiddenSubType.UNKNOWN:
+          default:
+            return attempt <= 1;
+        }
+      }
+
+      if (statusCode === 429) return attempt <= 2;
     }
-    return [ErrorType.NETWORK_ERROR, ErrorType.TIMEOUT_ERROR, ErrorType.API_ERROR].includes(error.type);
+
+    return [ErrorType.NETWORK_ERROR, ErrorType.TIMEOUT_ERROR].includes(extError.type);
   }
 
-  private calculateDelay(attempt: number, opts: Required<RetryOptions>): number {
+  private calculateDelay(attempt: number, opts: Required<RetryOptions>, error?: ExtendedStandardError): number {
+    if (error?.retryAfterMs && error.retryAfterMs > 0) {
+      return Math.min(error.retryAfterMs, opts.maxDelay);
+    }
+
     let delay = opts.baseDelay * Math.pow(opts.backoffFactor, attempt - 1);
     delay = Math.min(delay, opts.maxDelay);
-    if (opts.jitterFactor > 0) delay += delay * opts.jitterFactor * Math.random();
+
+    if (opts.jitterFactor > 0) {
+      delay += delay * opts.jitterFactor * Math.random();
+    }
+
     return Math.floor(delay);
   }
 }

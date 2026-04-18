@@ -1,7 +1,7 @@
 'use client';
 
-import { Plus, Trash2, Save } from 'lucide-react';
-import React from 'react';
+import { Plus, Trash2, Save, RefreshCw } from 'lucide-react';
+import React, { useEffect } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -15,11 +15,51 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useSettingsStore, type LlmProviderConfig } from '@/core/novel/useSettingsStore';
+import { useAiSettingsApi } from '@/core/novel/useAiSettingsApi';
 
 export const ProviderSettings: React.FC = () => {
   const { llmProviders, addLlmProvider, updateLlmProvider, deleteLlmProvider } = useSettingsStore();
+  const { settings: serverSettings, loading, updateSettings } = useAiSettingsApi();
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [formData, setFormData] = React.useState<Partial<LlmProviderConfig>>({});
+  const [syncing, setSyncing] = React.useState(false);
+
+  useEffect(() => {
+    if (serverSettings && !loading && llmProviders.length === 0) {
+      const defaultProvider: LlmProviderConfig = {
+        id: 'default',
+        name: 'Default Provider',
+        provider: serverSettings.api_provider as LlmProviderConfig['provider'],
+        apiKey: '',
+        baseUrl: serverSettings.api_base_url,
+        models: [serverSettings.llm_model],
+      };
+      addLlmProvider(defaultProvider);
+    }
+  }, [serverSettings, loading, llmProviders.length, addLlmProvider]);
+
+  const handleSave = async () => {
+    if (editingId) {
+      updateLlmProvider(editingId, formData);
+
+      setSyncing(true);
+      try {
+        const payload: Record<string, unknown> = {
+          api_provider: formData.provider,
+          api_base_url: formData.baseUrl,
+          llm_model: formData.models?.[0],
+        };
+        if (formData.apiKey && formData.apiKey.trim()) {
+          payload.api_key = formData.apiKey;
+        }
+        await updateSettings(payload);
+      } finally {
+        setSyncing(false);
+      }
+
+      setEditingId(null);
+    }
+  };
 
   const handleAdd = () => {
     const id = crypto.randomUUID();
@@ -36,13 +76,6 @@ export const ProviderSettings: React.FC = () => {
     setFormData(newProvider);
   };
 
-  const handleSave = () => {
-    if (editingId) {
-      updateLlmProvider(editingId, formData);
-      setEditingId(null);
-    }
-  };
-
   const handleDelete = (id: string) => {
     deleteLlmProvider(id);
     if (editingId === id) setEditingId(null);
@@ -51,8 +84,15 @@ export const ProviderSettings: React.FC = () => {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>LLM 提供商设置</CardTitle>
-        <CardDescription>配置和管理 AI 模型的提供商信息</CardDescription>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle>LLM 提供商设置</CardTitle>
+            <CardDescription>配置和管理 AI 模型的提供商信息</CardDescription>
+          </div>
+          {syncing && (
+            <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
