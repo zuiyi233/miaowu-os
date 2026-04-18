@@ -2,7 +2,7 @@
   "id": "novel-migration-1to1",
   "name": "novel-migration-1to1",
   "title": "brainstorm: 小说缺失功能1:1迁移至主项目",
-  "description": "",
+  "description": "基于 小说功能完整迁移方案_2026-04-18.md 的 Trellis 执行计划（v2）",
   "status": "planning",
   "dev_type": null,
   "scope": null,
@@ -45,9 +45,21 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "04-18-novel-mig-p0-backend",
+    "04-18-novel-mig-p1-frontend-infra",
+    "04-18-novel-mig-p2-chapters",
+    "04-18-novel-mig-p3-main-pages",
+    "04-18-novel-mig-p4-secondary-pages",
+    "04-18-novel-mig-p5-integration-qa",
+    "04-18-novel-mig-p6-performance"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "plan_baseline": "/mnt/d/miaowu-os/小说功能完整迁移方案_2026-04-18.md",
+    "plan_version": "v2-2026-04-18",
+    "implementation_plan_file": "/mnt/d/miaowu-os/.trellis/tasks/04-17-novel-migration-1to1/implementation-plan.md"
+  }
 }

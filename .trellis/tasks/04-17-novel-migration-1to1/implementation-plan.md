@@ -3,355 +3,304 @@
 ## 0. 文档信息
 
 - 任务目录：`/mnt/d/miaowu-os/.trellis/tasks/04-17-novel-migration-1to1`
-- 计划日期：2026-04-17
-- 计划范围：Wave 1 + Wave 2（已执行）
-- Wave 1 In-Scope：职业体系、伏笔状态机、记忆分析与向量检索、MCP 工具链
-- Wave 1 Out-of-Scope：`auth/users/admin` 与用户模型链
-- Wave 2 执行前提：单机单用户固定 `user_id` 回退层（仅 `novel_migrated`）
-- Wave 3 状态：延期（当前不做账号体系）
+- 计划版本：`v2`
+- 计划日期：`2026-04-18`
+- 基线方案：`/mnt/d/miaowu-os/小说功能完整迁移方案_2026-04-18.md`
+- 对照代码库：
+  - 主项目（二开）：`/mnt/d/miaowu-os/deer-flow-main`
+  - 原版项目：`/mnt/d/deer-flow-main`
+  - 小说参考：`/mnt/d/miaowu-os/参考项目/MuMuAINovel-main`
+- 当前任务状态：`planning`
 
 ---
 
 ## 1. Trellis 规则对齐
 
-本计划按 `.trellis/workflow.md` 与 `brainstorm` 产出规则执行：
+本实现计划按 `.trellis/workflow.md` 与 `spec/guides/*` 执行：
 
 1. Read Before Write
-- 已完成：基于现有事实文档与参考/主项目代码静态核验后制定计划。
+- 先读事实文档与代码，再写代码；计划已基于三库交叉核验。
 
 2. Incremental Development
-- 采用小步 PR（Wave1: PR1~PR4；Wave2: W2-PR1~W2-PR5），每个 PR 独立可验证、可回滚。
+- 按阶段切片 + 小步 PR；每个 PR 独立可验证、可回滚。
 
 3. Cross-Layer Thinking
-- 本任务跨 3+ 层（Gateway Router -> Service -> Model/Vector Store -> Frontend 调用面），在每个 PR 里明确边界契约与验证点。
+- 本任务跨前端路由/状态层、网关路由层、服务层、模型层、SSE 流协议层。
 
 4. Code Reuse First
-- 严格执行“不造轮子”：复用主项目 `models/mcp/memory` 既有能力，避免平行实现。
+- 以参考项目成熟实现为主，主项目只做最小适配；禁止无必要重写。
 
-5. 可验证交付
-- 每个 PR 都包含最小验证命令与通过标准；无证据不宣称完成。
-
----
-
-## 2. 执行目标与原则
-
-## 2.1 执行目标
-
-在不重写业务逻辑的前提下，把参考项目 Wave 1 相关模块按 1:1 复制到主项目，并完成最小接入，使主项目具备可调用的同类能力链路。
-
-## 2.2 固定原则
-
-- 复制优先：能直接复制的文件优先原样复制。
-- 适配最小化：仅修改导入路径、路由注册、依赖注入接点、配置入口。
-- 复用优先：
-  - 模型配置复用 `/api/models`
-  - MCP 配置复用 `/api/mcp/config`
-  - 全局 memory 管理复用 `/api/memory`
-- 禁止项：禁止基于主观理解重写参考项目业务逻辑。
+5. Verifiable Delivery
+- 每阶段定义“准入条件 + 退出条件 + 验证命令”；无验证证据不宣布完成。
 
 ---
 
-## 3. Wave 1 迁移清单（文件级）
+## 2. 范围定义
 
-## 3.1 业务模块（必须迁移）
+## 2.1 In-Scope（本轮必须完成）
 
-- Career
-  - `参考: backend/app/api/careers.py`
-  - `参考: backend/app/services/career_service.py`
-  - `参考: backend/app/services/career_update_service.py`
-  - `参考: backend/app/models/career.py`
+- 小说工作区从“单页 viewMode 切换”迁移为“子路由导航”。
+- 章节/大纲/角色/世界观的核心 AI 流式能力落地。
+- `novelApiService` 扩展 AI 流方法，`useNovelStore` 扩展细粒度数组操作。
+- 建立 `DTO <-> UI Model` 映射层（`project_id <-> novelId`、`chapter_number <-> order`）。
+- 建立 Sync Hooks 与 TanStack Query 的单一事实源策略。
 
-- Foreshadow
-  - `参考: backend/app/api/foreshadows.py`
-  - `参考: backend/app/services/foreshadow_service.py`
-  - `参考: backend/app/models/foreshadow.py`
+## 2.2 Out-of-Scope（本轮排除）
 
-- Memory + Vector
-  - `参考: backend/app/api/memories.py`
-  - `参考: backend/app/services/memory_service.py`
-  - `参考: backend/app/models/memory.py`
+- 账号/用户体系（登录、注册、管理员、多租户隔离）。
+- 与小说主流程无关的全局架构重构。
+- 大规模 UI 重设计（以功能对齐和稳定为主）。
 
-- MCP Tools Loader
-  - `参考: backend/app/services/mcp_tools_loader.py`
+## 2.3 环境约束（强制）
 
-## 3.2 传递依赖（按需复制，避免重写）
-
-以下为 Wave 1 文件可见直接依赖，需通过“复制或桥接”满足：
-
-- 基础支撑：
-  - `app.database`
-  - `app.logger`
-  - `app.utils.sse_response`
-- API 依赖：
-  - `app.api.common`
-  - `app.api.settings`
-- Schema 依赖：
-  - `app.schemas.career`
-  - `app.schemas.foreshadow`
-- Model 依赖（Wave1 路由/服务直接引用）：
-  - `app.models.project`
-  - `app.models.chapter`
-  - `app.models.character`
-  - `app.models.settings`
-- Service 依赖：
-  - `app.services.plot_analyzer`
-  - `app.services.ai_service`（需与主项目既有模型/MCP/memory能力桥接）
+- 前端依赖安装、构建、测试仅在 Windows 原生环境执行。
+- 严禁在 WSL 里执行前端依赖操作（`pnpm install` / `pnpm build` / `pnpm test`）。
 
 ---
 
-## 4. 目录落位方案（执行约束）
+## 3. 关键契约（实施前冻结）
 
-为避免污染现有网关结构，先隔离落位：
+## 3.1 API 路径契约
 
-- 目标根：`deer-flow-main/backend/app/gateway/novel_migrated/`
-- 建议结构：
-  - `api/`
-  - `services/`
-  - `models/`
-  - `schemas/`
-  - `utils/`
-  - `core/`（如需承载 `database/logger` 桥接）
+- 主路径采用主项目风格：`/api/novels/{novel_id}/...`
+- 兼容别名可选：`/api/chapters/{chapter_id}/generate-stream` 等（用于兼容参考前端调用习惯）
+- P0 接口：
+  - `POST /api/novels/{novel_id}/chapters/{chapter_id}/generate-stream`
+  - `POST /api/novels/{novel_id}/chapters/{chapter_id}/continue-stream`
+  - `POST /api/novels/{novel_id}/chapters/batch-generate-stream`
+  - `POST /api/novels/{novel_id}/outlines/generate-stream`
+  - `POST /api/novels/{novel_id}/characters/generate-stream`
 
-路由入口先通过单独 router 模块聚合，再由 `gateway/app.py` 增量注册。
+## 3.2 数据契约
+
+- API DTO 层：沿参考项目 snake_case（`project_id`, `chapter_number`, `expansion_plan`）。
+- 前端 UI 层：沿主项目 camelCase（`novelId`, `order`, `expansionPlanRaw`）。
+- 映射统一收口在 `novel-api.ts`/adapter，禁止页面层自行散落转换。
+
+## 3.3 状态契约
+
+- TanStack Query：服务端状态唯一事实源（列表、详情、正文）。
+- Zustand：仅保存 UI 状态（当前章节、侧栏、进度、选择态等）。
+- 同一份业务数据禁止 Query + Store 长期双写。
+
+## 3.4 流协议契约
+
+- `Content-Type: text/event-stream; charset=utf-8`
+- 事件字段：`event/type/id/seq/chapterId/data/done/error`
+- 支持 `AbortController` 取消。
+- 预留断线恢复能力：`id + Last-Event-ID` 或业务 `cursor`。
 
 ---
 
-## 5. 小步 PR 计划（Trellis 推荐格式）
+## 4. 分阶段实施计划（Trellis 执行版）
 
-## PR1: 迁移脚手架与依赖闭包建立
+## 阶段 0：后端 P0 能力打通（预计 10 个工作日）
 
 ### 目标
-- 建立 `novel_migrated` 目录与包结构。
-- 完成 Wave 1 所需基础依赖的“复制/桥接”闭包。
+- 先打通章节/大纲/角色核心流式接口，解除前端主路径阻塞。
 
-### 变更
-- 新增 `novel_migrated/{api,services,models,schemas,utils}` 目录与 `__init__.py`。
-- 复制基础模块：`database/logger/sse_response/common/settings/schemas` 的最小集。
-- 在不启用业务路由的前提下，确保模块可 import。
+### PR 切片
+1. PR0-1：路由与 schema 骨架
+- 新增 `novel_migrated` 下章节/大纲/角色流式路由骨架、请求模型、响应事件模型。
 
-### 验证
-- `cd deer-flow-main/backend && uv run python -m compileall app`
-- `cd deer-flow-main/backend && uv run ruff check app`
+2. PR0-2：章节生成/续写流
+- 落地 `generate-stream` + `continue-stream`。
+- 支持进度、内容增量、完成、错误事件。
 
-### 通过标准
-- `novel_migrated` 目录可被 Python 正常导入。
-- 无循环导入/缺失依赖导致的 import error。
+3. PR0-3：批量章节生成流
+- 落地 `batch-generate-stream`，定义 item 级事件。
 
----
+4. PR0-4：大纲与角色流
+- 落地 `outlines/generate-stream`、`characters/generate-stream`。
 
-## PR2: Career + Foreshadow 1:1 迁移接入
-
-### 目标
-- 完成职业体系与伏笔状态机路由/服务/模型迁移。
-
-### 变更
-- 原样复制 `careers.py / foreshadows.py` 与对应 services/models。
-- 做最小适配：导入路径、路由聚合、依赖注入接点。
-- 在网关中注册迁移路由（可用开关控制启用）。
+### 退出条件
+- 5 个 P0 端点可用，响应协议稳定。
+- 接口文档与事件契约冻结。
 
 ### 验证
-- `cd deer-flow-main/backend && uv run ruff check app`
-- `cd deer-flow-main/backend && uv run pytest -q`（如现有测试可运行）
-- 手工 smoke：路由可见、参数校验与 4xx/5xx 行为符合预期。
-
-### 通过标准
-- 路由可访问且不会影响现有 `/api/novel*` 路由。
-- 业务逻辑代码保持参考项目语义（无重写）。
-
----
-
-## PR3: Memory/Vector + MCP Tools 链路迁移
-
-### 目标
-- 完成章节分析记忆链路、向量检索服务、MCP tools loader 迁移。
-
-### 变更
-- 原样复制 `memories.py`、`memory_service.py`、`memory.py`、`mcp_tools_loader.py`。
-- 适配主项目已有能力：
-  - 对接 `/api/models`（模型配置来源）
-  - 对接 `/api/mcp/config`（MCP 配置来源）
-  - 对接 `/api/memory`（全局 memory 基础能力）
-- 补齐 `chromadb`、`sentence_transformers` 依赖声明（若当前依赖未覆盖）。
-
-### 验证
-- `cd deer-flow-main/backend && uv sync`
 - `cd deer-flow-main/backend && uv run ruff check app`
 - `cd deer-flow-main/backend && uv run python -m compileall app`
-- 手工 smoke：analyze/search 路由、异常路径、空数据路径。
-
-### 通过标准
-- 记忆与向量链路接口可调用。
-- 与主项目现有 `models/mcp/memory` 能力无重复冲突。
+- `cd deer-flow-main/backend && uv run pytest -q`（可跑部分就记录缺口）
 
 ---
 
-## PR4: Wave 1 收口（联调与回归）
+## 阶段 1：前端基础设施（预计 4 个工作日）
 
 ### 目标
-- 完成 Wave 1 跨层联调、文档与规范回填。
+- 为路由化迁移建立基础框架，不改业务行为。
 
-### 变更
-- 补最小测试（路由 smoke / service 单测）。
-- 更新任务 PRD、迁移清单与必要 spec 注记。
+### 任务
+- 新增 `workspace/novel/[novelId]/layout.tsx` 与侧边栏布局。
+- 扩展 `useNovelStore`：`add/update/remove`（chapter/character/outline）。
+- 新增 `sync-hooks.ts`（chapter/character/outline 三类）。
+- 扩展 `novelApiService`：流式方法签名与请求封装。
+
+### 退出条件
+- 页面路由骨架可运行。
+- Store/Api/Hook 具备后续页面迁移所需最小能力。
 
 ### 验证
-- `cd deer-flow-main/backend && uv run ruff check app`
-- `cd deer-flow-main/backend && uv run pytest -q`
-- 必要时配合前端调用链做网关接口联调（仅 Wave1 涉及路径）。
-
-### 通过标准
-- Wave 1 in-scope 能力可验证。
-- 文档与代码一致，缺口和风险有记录。
+- Windows 环境：`pnpm -C deer-flow-main/frontend lint`
+- Windows 环境：`pnpm -C deer-flow-main/frontend typecheck`
 
 ---
 
-## 6. 跨层契约与边界（执行时必须逐项核验）
+## 阶段 2：章节管理核心闭环（预计 5 个工作日）
 
-## 6.1 边界 A：Frontend -> Gateway Router
+### 目标
+- 章节列表页 + 编辑页 + 生成流 + 局部重写形成可用闭环。
 
-- 输入：HTTP JSON + Query
-- 输出：JSON/SSE
-- 风险：路径冲突、字段命名漂移
-- 约束：保留参考项目 API 语义，新增路径避免覆盖现有 `novel.py` 路由
+### 任务
+- `.../chapters/page.tsx`：列表、创建、删除、状态显示。
+- `.../chapters/[chapterId]/page.tsx`：编辑、保存、切章保护。
+- 接入 `generate/continue/batch` 流，展示进度面板。
+- 接入局部重写工具栏（选区同步 + 防抖）。
 
-## 6.2 边界 B：Router -> Service
+### 退出条件
+- 用户可完成“创建章节 -> 流式生成 -> 编辑保存 -> 切章”全流程。
 
-- 输入：Pydantic Schema / Request payload
-- 输出：domain dict / DB model
-- 风险：validation 分散、多处重复校验
-- 约束：入口校验集中在 router/schema，service 保持参考实现逻辑
-
-## 6.3 边界 C：Service -> Storage/Vector
-
-- 输入：结构化剧情数据
-- 输出：DB 记录 + 向量索引
-- 风险：依赖缺失、模型缓存路径、性能开销
-- 约束：先保证 correctness，性能优化不进入 Wave 1
+### 验证
+- Windows 环境：`pnpm -C deer-flow-main/frontend lint`
+- Windows 环境：`pnpm -C deer-flow-main/frontend typecheck`
+- 手工 smoke：流程脚本 + 关键失败路径（断网、取消、超时）。
 
 ---
 
-## 7. 质量门禁（每个 PR 必做）
+## 阶段 3：角色/大纲/世界观页迁移（预计 8 个工作日）
 
-- Lint：`cd deer-flow-main/backend && uv run ruff check app`
-- 编译检查：`cd deer-flow-main/backend && uv run python -m compileall app`
-- 测试：`cd deer-flow-main/backend && uv run pytest -q`（能跑多少跑多少，失败需记录）
-- 手工核验：
-  - 新路由启动可见
-  - 关键 4xx/5xx 错误路径可复现
-  - 不影响现有网关能力
+### 目标
+- 完成三大页面能力与 AI 流式对齐。
 
----
+### 任务
+- 角色页：列表、CRUD、AI 生成流。
+- 大纲页：列表、生成、展开（单条/批量）。
+- 世界观页：展示、编辑、重生成流。
 
-## 8. 风险与回滚计划
+### 退出条件
+- 三页核心操作可用，数据回流与缓存刷新正确。
 
-## 8.1 主要风险
-
-- 架构差异：参考项目的 SQLAlchemy 全栈依赖在主项目并不存在。
-- 依赖重量：`sentence_transformers` 与 `chromadb` 增加环境复杂度。
-- 路由冲突：新旧小说域端点路径可能重叠。
-
-## 8.2 回滚策略
-
-- 以 PR 为回滚粒度，逐个回退。
-- 新增路由统一放在独立注册块，故障时可快速移除注册。
-- 迁移代码隔离在 `novel_migrated`，避免污染原有 `gateway/routers/novel.py`。
+### 验证
+- 同阶段 2。
 
 ---
 
-## 9. 完成定义（Wave 1）
+## 阶段 4：非核心页与路由补齐（预计 5 个工作日）
 
-- [x] PR1~PR4 合并完成。
-- [x] Wave 1 四项能力可调用并有最小验证证据。
-- [x] `auth/users/admin` 未进入 Wave 1（保持排除）。
-- [x] 所有“未验证项/失败项”均在任务文档中明确记录。
+### 目标
+- 完成组织/职业/关系/伏笔/风格/工坊与分析页路由化补齐。
 
----
+### 任务
+- 页面迁移优先“可用”而非“美化”，保持主项目视觉体系。
 
-## 11. Wave 2 执行记录（已完成）
-
-### 11.1 Wave 2 In-Scope（已落地）
-
-- Wave 1 已落地模块的“无账号化收口改造”（必须先做）
-  - `api/common.py`
-  - `api/settings.py`
-  - `api/careers.py`
-  - `api/foreshadows.py`
-  - `api/memories.py`
-- `api/book_import.py` + `services/book_import_service.py`
-- `api/project_covers.py` + `services/cover_generation_service.py`
-- `api/inspiration.py`
-
-### 11.2 Wave 2 前置任务（必须先做）
-
-- 在 `novel_migrated` 内新增“固定 `user_id` 回退层”：
-  - 仅作用于 `novel_migrated` 路由；
-  - 不修改全局网关鉴权链；
-  - 默认固定用户标识（例如 `local_single_user`），可通过配置覆盖。
-- 将 Wave 1 已落地接口全部切换到该回退层，移除对 `request.state.user_id` 的硬依赖。
-
-### 11.3 Wave 2 执行状态（W2-PR1 ~ W2-PR5）
-
-1. W2-PR1：`[已完成]` 单机单用户回退层 + Wave 1 无账号化收口（`careers/foreshadows/memories/settings/common`）。
-2. W2-PR2：`[已完成]` 灵感模块接入（`api/inspiration.py`）。
-3. W2-PR3：`[已完成]` 封面模块接入（`api/project_covers.py` + `services/cover_generation_service.py`）。
-4. W2-PR4：`[已完成]` 拆书导入模块接入（`api/book_import.py` + `services/book_import_service.py` + 依赖闭包）。
-5. W2-PR5：`[本次完成]` 路由聚合注册 + 文档收口（`README.md`、`CLAUDE.md`、本任务文档）。
-
-### 11.4 Wave 2 验收状态
-
-- [x] Wave 1 与 Wave 2 API 均可在 `novel_migrated` 路由下接入且不依赖账号登录链路（小说域内固定 `user_id` 回退）。
-- [x] 不影响现有 `/api/models`、`/api/mcp/config`、`/api/memory`、`/api/novel*` 路由边界。
-- [ ] 运行态联调与异常路径全量回归待 Windows 侧补验（见 14.2）。
+### 退出条件
+- 基线方案中定义的目标路由全部可访问且无 500。
 
 ---
 
-## 12. Wave 3 计划（延期）
+## 阶段 5：联调、回归与文档收口（预计 3 个工作日）
 
-### 12.1 延期范围
+### 目标
+- 端到端稳定性验证、缺陷修复、文档一致性。
 
-- `auth.py`、`users.py`、`admin.py`
-- `models/user.py`
-- `services/oauth_service.py`、`services/email_service.py`
-- `user_manager.py`、`user_password.py`
+### 任务
+- 回归清单执行。
+- 补齐 Trellis 任务记录、会话记录、必要 spec 更新。
 
-### 12.2 延期原因
+### 退出条件
+- 功能清单通过率 >= 95%。
+- 所有未通过项有明确 issue/风险登记。
 
-- 当前目标是单机单用户小说域能力落地，账号体系不在本期范围。
-- 若提前并入，会显著扩大跨层改动面和联调复杂度。
+---
 
-## 13. Wave 1 实施状态（历史记录）
+## 阶段 6：性能优化（附加，可并行推进，预计 3 个工作日）
 
-- PR1：`[本次完成]` 已建立 `backend/app/gateway/novel_migrated/` 包结构，迁移 `core/logger`、`core/database`、`utils/sse_response`、`api/common`、`api/settings`，并补齐共享模型 `project/chapter/character/settings`。
-- PR2：`[本次完成]` 已完成 `careers.py`、`foreshadows.py` 及对应 `services/models/schemas` 迁移，导入路径已对齐 `app.gateway.novel_migrated.*`。
-- PR3：`[本次完成]` 已完成 `memories.py`、`memory_service.py`、`memory.py`、`mcp_tools_loader.py`、`plot_analyzer.py` 迁移与桥接，新增兼容 `ai_service.py`，并在 `backend/pyproject.toml` 补齐 `chromadb`、`sentence-transformers`、`sqlalchemy`、`aiosqlite` 依赖声明。
-- PR4：`[本次完成]` 已新增 `app.gateway.routers.novel_migrated` 聚合路由并接入 `CORE_ROUTER_MODULES`，同步更新 `backend/README.md`、`backend/CLAUDE.md`。
+### P0 优先
+- chunk 合并提交（避免 token 级重渲染）。
+- 心跳与断线恢复策略落地。
+- 取消链路完整（切章/离页/超时）。
 
-### 13.1 本地验证结果（WSL）
+### P1 优先
+- 指标埋点：重连次数、解析失败率、渲染次数。
+- Worker 化文本后处理。
 
-- 已通过：`python3 -m compileall app/gateway/novel_migrated app/gateway/routers/novel_migrated.py app/gateway/app.py`
-- 已通过：`.venv/bin/ruff check app/gateway/novel_migrated app/gateway/routers/novel_migrated.py app/gateway/app.py`
-- 未执行：`pytest`（当前 WSL 环境与 Windows 侧依赖安装不一致，按任务约束跳过）
-- 未执行：完整运行态联调（需在可用依赖环境执行 `uv sync` 后再做）
+### 退出条件
+- 章节长文本生成期间页面不卡死，无明显内存增长异常。
 
-## 14. Wave 2 收口状态（本次更新）
+---
 
-### 14.1 代码与文档收口
+## 5. Trellis 子任务拆分建议
 
-- 已完成 `app/gateway/routers/novel_migrated.py` 可选模块注册补齐：
-  - `app.gateway.novel_migrated.api.inspiration`
-  - `app.gateway.novel_migrated.api.project_covers`
-  - `app.gateway.novel_migrated.api.book_import`
-- 已保持原有“可选导入容错”机制（`ModuleNotFoundError` 仅跳过模块，不阻断网关启动）。
-- 已同步更新 `backend/README.md` 与 `backend/CLAUDE.md`，明确 Wave 2 模块覆盖与无账号化回退前提（`NOVEL_MIGRATED_DEFAULT_USER_ID`）。
-- 已回填本任务文档（`implementation-plan.md` + `prd.md`）中的 Wave 2 执行状态。
+建议在当前任务下建立子任务（可直接执行）：
 
-### 14.2 验证与补验说明
+```bash
+python3 ./.trellis/scripts/task.py create "novel migration phase0 backend p0" --slug novel-mig-p0-backend --parent .trellis/tasks/04-17-novel-migration-1to1
+python3 ./.trellis/scripts/task.py create "novel migration phase1 frontend infra" --slug novel-mig-p1-frontend-infra --parent .trellis/tasks/04-17-novel-migration-1to1
+python3 ./.trellis/scripts/task.py create "novel migration phase2 chapters" --slug novel-mig-p2-chapters --parent .trellis/tasks/04-17-novel-migration-1to1
+python3 ./.trellis/scripts/task.py create "novel migration phase3 world outline characters" --slug novel-mig-p3-main-pages --parent .trellis/tasks/04-17-novel-migration-1to1
+python3 ./.trellis/scripts/task.py create "novel migration phase4 secondary pages" --slug novel-mig-p4-secondary-pages --parent .trellis/tasks/04-17-novel-migration-1to1
+python3 ./.trellis/scripts/task.py create "novel migration phase5 integration qa" --slug novel-mig-p5-integration-qa --parent .trellis/tasks/04-17-novel-migration-1to1
+python3 ./.trellis/scripts/task.py create "novel migration phase6 performance" --slug novel-mig-p6-performance --parent .trellis/tasks/04-17-novel-migration-1to1
+```
 
-- WSL 本次仅执行最小静态验证（`compileall` + `ruff check`），不执行重型测试。
-- Windows 端补验建议：
-  - `cd deer-flow-main/backend && uv sync`
-  - `cd deer-flow-main/backend && uv run pytest -q`
-  - 对 Wave2 新接口做 smoke：
-    - `/api/inspiration/*`
-    - `/api/projects/{project_id}/cover/*`
-    - `/book-import/*`
+---
+
+## 6. 验收矩阵（Definition of Done）
+
+## 6.1 功能验收
+
+- [ ] 目标路由可达。
+- [ ] 章节生成/续写/批量生成可用（含进度反馈）。
+- [ ] 大纲生成、角色生成、世界观重生成可用。
+- [ ] 切章与保存逻辑稳定，无脏数据覆盖。
+
+## 6.2 技术验收
+
+- [ ] Query/Store 职责符合契约，无长期双写。
+- [ ] DTO/UI 映射集中化，无页面层散落转换。
+- [ ] 流式协议稳定，可处理中断与取消。
+
+## 6.3 质量验收
+
+- [ ] Backend lint/compile/test 通过（或缺口有记录）。
+- [ ] Frontend lint/typecheck 通过（Windows）。
+- [ ] 关键 smoke 场景通过并留证据。
+
+---
+
+## 7. 风险与回滚
+
+## 7.1 核心风险
+
+- 后端 P0 进度拖延，导致前端路由迁移被阻塞。
+- 章节编辑器与流式写入耦合，切章状态容易异常。
+- 字段映射分散导致数据错位（`project_id/novelId` 等）。
+
+## 7.2 回滚策略
+
+- 以 PR 为回滚粒度，保持每个 PR 可独立撤销。
+- 新增路由集中在 `novel_migrated` 注册块，故障可快速摘除。
+- 映射层失败时先回退到“只读展示 + 基础 CRUD”，保护写路径。
+
+---
+
+## 8. 首周执行清单（可直接开工）
+
+Day 1-2
+- 完成阶段 0 的 PR0-1（路由/schema 骨架）。
+
+Day 3-4
+- 完成 PR0-2（章节 generate/continue 流）。
+
+Day 5
+- 完成 PR0-3（batch 流）并跑首轮联调。
+
+Day 6-7
+- 进入阶段 1，完成 Store + API + sync hooks 基建。
+
+---
+
+## 9. 备注
+
+- 本计划是“执行计划”，不是最终设计冻结文档。
+- 若实现中发现与基线文档冲突，按“代码事实优先”更新该计划与基线文档。
+- 每阶段结束后必须回填任务状态与验证证据到 Trellis 任务上下文。
