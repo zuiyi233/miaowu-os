@@ -340,10 +340,11 @@ def _format_glob_results(root_path: str, matches: list[str], truncated: bool) ->
     if not matches:
         return f"No files matched under {root_path}"
 
-    lines = [f"Found {len(matches)} paths under {root_path}"]
+    normalized_matches = [match.replace("\\", "/") for match in matches]
+    lines = [f"Found {len(normalized_matches)} paths under {root_path}"]
     if truncated:
-        lines[0] += f" (showing first {len(matches)})"
-    lines.extend(f"{index}. {path}" for index, path in enumerate(matches, start=1))
+        lines[0] += f" (showing first {len(normalized_matches)})"
+    lines.extend(f"{index}. {path}" for index, path in enumerate(normalized_matches, start=1))
     if truncated:
         lines.append("Results truncated. Narrow the path or pattern to see fewer matches.")
     return "\n".join(lines)
@@ -1047,6 +1048,7 @@ def ls_tool(runtime: ToolRuntime[ContextT, ThreadState], description: str, path:
         sandbox = ensure_sandbox_initialized(runtime)
         ensure_thread_directories_exist(runtime)
         requested_path = path
+        thread_data = None
         if is_local_sandbox(runtime):
             thread_data = get_thread_data(runtime)
             validate_local_tool_path(path, thread_data, read_only=True)
@@ -1061,6 +1063,8 @@ def ls_tool(runtime: ToolRuntime[ContextT, ThreadState], description: str, path:
         if not children:
             return "(empty)"
         output = "\n".join(children)
+        if thread_data is not None:
+            output = mask_local_paths_in_output(output, thread_data)
         try:
             from deerflow.config.app_config import get_app_config
 

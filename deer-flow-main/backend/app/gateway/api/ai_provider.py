@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from app.gateway.novel_migrated.api.settings import get_user_ai_service
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.core.user_context import get_request_user_id
+from app.gateway.novel_migrated.schemas.ai_message import AiMessage
 from app.gateway.novel_migrated.services.ai_service import AIService
 
 logger = get_logger(__name__)
@@ -39,11 +40,6 @@ _STREAMING_RESPONSE_HEADERS = {
     "X-Accel-Buffering": "no",
 }
 _DISABLED_BOOL_ENV_VALUES = {"0", "false", "no", "off"}
-
-
-class AiMessage(BaseModel):
-    role: str = Field(..., description="消息角色: user/assistant/system")
-    content: str = Field(..., description="消息内容")
 
 
 class AiProviderConfig(BaseModel):

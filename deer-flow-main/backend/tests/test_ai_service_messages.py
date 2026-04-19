@@ -16,7 +16,7 @@ import pytest
 from langchain_core.messages import AIMessage as LCAIMessage
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.gateway.api.ai_provider import AiMessage
+from app.gateway.novel_migrated.schemas.ai_message import AiMessage
 from app.gateway.novel_migrated.services.ai_service import AIService
 
 

@@ -17,7 +17,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.services.mcp_tools_loader import mcp_tools_loader
-from app.gateway.api.ai_provider import AiMessage
+from app.gateway.novel_migrated.schemas.ai_message import AiMessage
 from deerflow.config import get_app_config
 from deerflow.models import create_chat_model
 

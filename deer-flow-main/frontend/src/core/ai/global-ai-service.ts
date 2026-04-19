@@ -208,6 +208,26 @@ async function fetchWithRetry(
   throw lastError || new Error("Unknown error after retries");
 }
 
+const HARD_AUTH_PATTERNS = [
+  "invalid api key",
+  "invalid_api_key",
+  "api key invalid",
+  "api key not found",
+  "incorrect api key",
+  "api key disabled",
+  "api key expired",
+  "account suspended",
+  "account deactivated",
+  "account banned",
+  "key revoked",
+  "token revoked",
+];
+
+function isHardAuthError(errorBody: string): boolean {
+  const lowered = errorBody.toLowerCase();
+  return HARD_AUTH_PATTERNS.some((p) => lowered.includes(p));
+}
+
 function classifyHttpError(
   status: number,
   errorBody: string
@@ -222,13 +242,62 @@ function classifyHttpError(
         suggestion: "请检查请求参数是否正确",
       };
     case 401:
-    case 403:
       return {
         code: "AUTH_FAILED",
         message: errorBody || ERROR_CATALOG.AUTH_FAILED.message || "认证失败",
         retryable: false,
         severity: "high",
         suggestion: ERROR_CATALOG.AUTH_FAILED.suggestion,
+      };
+    case 403:
+      if (isHardAuthError(errorBody)) {
+        return {
+          code: "AUTH_FAILED",
+          message: errorBody || ERROR_CATALOG.AUTH_FAILED.message || "认证失败",
+          retryable: false,
+          severity: "high",
+          suggestion: ERROR_CATALOG.AUTH_FAILED.suggestion,
+        };
+      }
+      return {
+        code: "TRANSIENT_AUTH",
+        message: errorBody || "认证暂时失败",
+        retryable: true,
+        severity: "medium",
+        suggestion: "可能是网络波动导致的临时认证失败，将自动重试",
+      };
+    case 402:
+      if (isHardAuthError(errorBody)) {
+        return {
+          code: "AUTH_FAILED",
+          message: errorBody || "支付验证失败",
+          retryable: false,
+          severity: "high",
+          suggestion: ERROR_CATALOG.AUTH_FAILED.suggestion,
+        };
+      }
+      return {
+        code: "TRANSIENT_PAYMENT",
+        message: errorBody || "支付服务暂时不可用",
+        retryable: true,
+        severity: "medium",
+        suggestion: "可能是网络波动导致的临时问题，将自动重试",
+      };
+    case 404:
+      return {
+        code: "TRANSIENT_NOT_FOUND",
+        message: errorBody || "服务暂时不可达",
+        retryable: true,
+        severity: "medium",
+        suggestion: "可能是网络波动导致的临时问题，将自动重试",
+      };
+    case 419:
+      return {
+        code: "TRANSIENT_AUTH_TIMEOUT",
+        message: errorBody || "认证会话超时",
+        retryable: true,
+        severity: "medium",
+        suggestion: "可能是网络波动导致的临时问题，将自动重试",
       };
     case 429:
       return {

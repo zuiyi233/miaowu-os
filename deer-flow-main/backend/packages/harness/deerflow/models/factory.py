@@ -31,6 +31,22 @@ def _vllm_disable_chat_template_kwargs(chat_template_kwargs: dict) -> dict:
     return disable_kwargs
 
 
+def _enable_stream_usage_by_default(model_use_path: str, model_settings_from_config: dict) -> None:
+    """Enable stream usage for OpenAI-compatible models unless explicitly configured.
+
+    LangChain only auto-enables ``stream_usage`` for OpenAI models when no custom
+    base URL or client is configured. DeerFlow frequently uses OpenAI-compatible
+    gateways, so token usage tracking would otherwise stay empty and the
+    TokenUsageMiddleware would have nothing to log.
+    """
+    if model_use_path != "langchain_openai:ChatOpenAI":
+        return
+    if "stream_usage" in model_settings_from_config:
+        return
+    if "base_url" in model_settings_from_config or "openai_api_base" in model_settings_from_config:
+        model_settings_from_config["stream_usage"] = True
+
+
 def _normalize_model_name(name: str | object | None) -> Optional[str]:
     """Normalize various model selector types into a string model name.
 
@@ -165,6 +181,8 @@ def create_chat_model(name: str | object | None = None, thinking_enabled: bool =
     if not model_config.supports_reasoning_effort:
         kwargs.pop("reasoning_effort", None)
         model_settings_from_config.pop("reasoning_effort", None)
+
+    _enable_stream_usage_by_default(model_config.use, model_settings_from_config)
 
     # For Codex Responses API models: map thinking mode to reasoning_effort
     from deerflow.models.openai_codex_provider import CodexChatModel

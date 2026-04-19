@@ -25,6 +25,25 @@ from deerflow.config import get_app_config
 logger = logging.getLogger(__name__)
 
 _RETRIABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+_HARD_AUTH_PATTERNS = (
+    "invalid api key",
+    "invalid_api_key",
+    "api key invalid",
+    "api key not found",
+    "incorrect api key",
+    "api key disabled",
+    "api key expired",
+    "account suspended",
+    "account deactivated",
+    "account banned",
+    "key revoked",
+    "token revoked",
+    "密钥无效",
+    "密钥已过期",
+    "密钥已撤销",
+    "账号已被封禁",
+    "账号已被停用",
+)
 _BUSY_PATTERNS = (
     "server busy",
     "temporarily unavailable",
@@ -150,8 +169,12 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         error_code = _extract_error_code(exc)
         status_code = _extract_status_code(exc)
 
+        if _matches_any(lowered, _HARD_AUTH_PATTERNS) or _matches_any(str(error_code).lower(), _HARD_AUTH_PATTERNS):
+            return False, "auth"
+
         if _matches_any(lowered, _QUOTA_PATTERNS) or _matches_any(str(error_code).lower(), _QUOTA_PATTERNS):
             return False, "quota"
+
         if _matches_any(lowered, _AUTH_PATTERNS):
             return False, "auth"
 
@@ -160,6 +183,8 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
             "APITimeoutError",
             "APIConnectionError",
             "InternalServerError",
+            "ReadError",
+            "RemoteProtocolError",
         }:
             return True, "transient"
         if status_code in _RETRIABLE_STATUS_CODES:
