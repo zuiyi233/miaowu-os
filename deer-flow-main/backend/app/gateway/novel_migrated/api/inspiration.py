@@ -148,6 +148,19 @@ except Exception:
                 return template
 
 
+def _handle_empty_content(content: str, attempt: int, max_retries: int, step: str) -> dict | None:
+    if not content.strip():
+        logger.warning("⚠️ 第%s次AI返回为空内容，可能模型调用失败", attempt + 1)
+        if attempt < max_retries - 1:
+            return None
+        return {
+            "prompt": f"请为【{step}】提供内容：",
+            "options": ["让AI重新生成", "我自己输入"],
+            "error": "AI返回为空，可能模型配置有误或API不可用",
+        }
+    return None
+
+
 router = APIRouter(prefix="/api/inspiration", tags=["灵感模式"])
 logger = get_logger(__name__)
 
@@ -253,6 +266,12 @@ async def generate_options(
 
             content = accumulated_text
             logger.info("AI返回内容长度: %s", len(content))
+
+            empty_result = _handle_empty_content(content, attempt, max_retries, step)
+            if empty_result is not None:
+                return empty_result
+            if not content.strip():
+                continue
 
             try:
                 cleaned_content = ai_service._clean_json_response(content)
@@ -377,6 +396,12 @@ async def refine_options(
 
             content = accumulated_text
             logger.info("AI返回内容长度: %s", len(content))
+
+            empty_result = _handle_empty_content(content, attempt, max_retries, step)
+            if empty_result is not None:
+                return empty_result
+            if not content.strip():
+                continue
 
             try:
                 cleaned_content = ai_service._clean_json_response(content)

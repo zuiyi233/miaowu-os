@@ -65,6 +65,36 @@ class AIService:
             return fallback
         raise ValueError("deerflow 未配置任何可用模型")
 
+    def _apply_runtime_params(
+        self,
+        llm: Any,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> Any:
+        """运行时覆盖 temperature / max_tokens。
+
+        与主项目 novel.py 保持一致，使用 model_copy(update=...) 而非
+        config={"configurable": ...}，后者是 LangGraph RunnableConfig 约定，
+        LangChain ChatModel 不会从中读取推理参数。
+        """
+        updates: dict[str, Any] = {}
+        effective_temp = temperature if temperature is not None else self.default_temperature
+        effective_tokens = max_tokens if max_tokens is not None else self.default_max_tokens
+
+        if effective_temp is not None:
+            updates["temperature"] = effective_temp
+        if effective_tokens is not None:
+            updates["max_tokens"] = effective_tokens
+
+        if not updates:
+            return llm
+
+        try:
+            return llm.model_copy(update=updates)
+        except Exception as exc:
+            logger.warning("model_copy 设置运行时参数失败，使用原始模型: %s", exc)
+            return llm
+
     async def _prepare_mcp_tools(self, auto_mcp: bool = True, force_refresh: bool = False) -> list[Any] | None:
         if not self.enable_mcp or not auto_mcp:
             self.clear_mcp_cache()
@@ -101,17 +131,6 @@ class AIService:
 
     @staticmethod
     def _build_messages_from_array(messages: list[AiMessage]) -> list[Any]:
-        """将AiMessage[]转换为LangChain消息列表。
-
-        直接映射前端传递的messages数组到LangChain消息类型，
-        保留完整的多轮对话结构以激活LLM Provider的缓存机制。
-
-        Args:
-            messages: 前端发送的消息列表
-
-        Returns:
-            LangChain消息列表（SystemMessage/HumanMessage/AIMessage）
-        """
         langchain_messages = []
 
         for msg in messages:
@@ -144,12 +163,14 @@ class AIService:
         """非流式文本生成，返回与历史接口兼容的 dict。"""
         model_name = self._resolve_model_name(model)
         llm = create_chat_model(name=model_name)
+        llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
-        # 尽力设置推理参数（不同 provider 不一定都支持）
-        cfg = {
-            "temperature": temperature if temperature is not None else self.default_temperature,
-            "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,
-        }
+        logger.info(
+            "generate_text: model=%s, temperature=%s, max_tokens=%s",
+            model_name,
+            llm.temperature if hasattr(llm, "temperature") else "N/A",
+            llm.max_tokens if hasattr(llm, "max_tokens") else "N/A",
+        )
 
         tools = await self._prepare_mcp_tools(auto_mcp=auto_mcp)
         if tools:
@@ -159,7 +180,7 @@ class AIService:
                 logger.warning("⚠️ 当前模型不支持 bind_tools，忽略 MCP 工具: %s", exc)
 
         messages = self._build_messages(prompt, system_prompt)
-        response = await llm.ainvoke(messages, config={"configurable": cfg})
+        response = await llm.ainvoke(messages)
 
         content = response.content if hasattr(response, "content") else str(response)
         if isinstance(content, list):
@@ -185,11 +206,14 @@ class AIService:
         """流式文本生成；保持与 careers/memories/plot_analyzer 调用兼容。"""
         model_name = self._resolve_model_name(model)
         llm = create_chat_model(name=model_name)
+        llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
-        cfg = {
-            "temperature": temperature if temperature is not None else self.default_temperature,
-            "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,
-        }
+        logger.info(
+            "generate_text_stream: model=%s, temperature=%s, max_tokens=%s",
+            model_name,
+            llm.temperature if hasattr(llm, "temperature") else "N/A",
+            llm.max_tokens if hasattr(llm, "max_tokens") else "N/A",
+        )
 
         tools = await self._prepare_mcp_tools(auto_mcp=auto_mcp)
         if tools:
@@ -200,7 +224,7 @@ class AIService:
 
         messages = self._build_messages(prompt, system_prompt)
 
-        async for chunk in llm.astream(messages, config={"configurable": cfg}):
+        async for chunk in llm.astream(messages):
             if isinstance(chunk, AIMessage):
                 text = chunk.content
             else:
@@ -221,29 +245,10 @@ class AIService:
         auto_mcp: bool = True,
         **_: Any,
     ) -> dict[str, Any]:
-        """非流式文本生成（messages数组直传版本）。
-
-        直接传递完整的messages数组到LLM Provider，保留多轮对话结构。
-        返回与 generate_text() 完全兼容的格式。
-
-        Args:
-            messages: 前端发送的消息列表
-            provider: 供应商类型（保留兼容）
-            model: 模型名称
-            temperature: 温度参数
-            max_tokens: 最大token数
-            auto_mcp: 是否加载MCP工具
-
-        Returns:
-            包含 content, finish_reason, tool_calls 的字典
-        """
+        """非流式文本生成（messages数组直传版本）。"""
         model_name = self._resolve_model_name(model)
         llm = create_chat_model(name=model_name)
-
-        cfg = {
-            "temperature": temperature if temperature is not None else self.default_temperature,
-            "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,
-        }
+        llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
         tools = await self._prepare_mcp_tools(auto_mcp=auto_mcp)
         if tools:
@@ -253,7 +258,7 @@ class AIService:
                 logger.warning("⚠️ 当前模型不支持 bind_tools，忽略 MCP 工具: %s", exc)
 
         langchain_messages = self._build_messages_from_array(messages)
-        response = await llm.ainvoke(langchain_messages, config={"configurable": cfg})
+        response = await llm.ainvoke(langchain_messages)
 
         content = response.content if hasattr(response, "content") else str(response)
         if isinstance(content, list):
@@ -275,29 +280,10 @@ class AIService:
         auto_mcp: bool = True,
         **_: Any,
     ) -> AsyncGenerator[str, None]:
-        """流式文本生成（messages数组直传版本）。
-
-        直接传递完整的messages数组到LLM Provider，保留多轮对话结构。
-        返回类型与 generate_text_stream() 一致。
-
-        Args:
-            messages: 前端发送的消息列表
-            provider: 供应商类型（保留兼容）
-            model: 模型名称
-            temperature: 温度参数
-            max_tokens: 最大token数
-            auto_mcp: 是否加载MCP工具
-
-        Yields:
-            文本片段字符串
-        """
+        """流式文本生成（messages数组直传版本）。"""
         model_name = self._resolve_model_name(model)
         llm = create_chat_model(name=model_name)
-
-        cfg = {
-            "temperature": temperature if temperature is not None else self.default_temperature,
-            "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,
-        }
+        llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
         tools = await self._prepare_mcp_tools(auto_mcp=auto_mcp)
         if tools:
@@ -308,7 +294,7 @@ class AIService:
 
         langchain_messages = self._build_messages_from_array(messages)
 
-        async for chunk in llm.astream(langchain_messages, config={"configurable": cfg}):
+        async for chunk in llm.astream(langchain_messages):
             if isinstance(chunk, AIMessage):
                 text = chunk.content
             else:
@@ -321,7 +307,6 @@ class AIService:
 
     @staticmethod
     def _clean_json_response(text: str) -> str:
-        """兼容参考实现：清理 markdown 代码块并提取 JSON。"""
         if not text:
             return ""
 
@@ -356,17 +341,6 @@ class AIService:
         expected_type: str = "object",
         **kwargs: Any,
     ) -> Any:
-        """调用模型并进行 JSON 解析重试。
-
-        Args:
-            prompt: 输入提示词。
-            max_retries: 最大重试次数。
-            expected_type: 期望类型，支持 `object` / `array`。
-            **kwargs: 透传到 generate_text。
-
-        Returns:
-            解析后的 JSON 数据。
-        """
         if max_retries < 1:
             max_retries = 1
 
@@ -411,7 +385,6 @@ def create_user_ai_service(
     db_session: Any | None = None,
     enable_mcp: bool = True,
 ) -> AIService:
-    """创建用户 AI 服务（兼容历史签名）。"""
     provider = normalize_provider(api_provider) or "openai"
     return AIService(
         api_provider=provider,
@@ -439,7 +412,6 @@ def create_user_ai_service_with_mcp(
     db_session: Any | None = None,
     enable_mcp: bool = True,
 ) -> AIService:
-    """兼容参考实现命名，行为等同 create_user_ai_service。"""
     return create_user_ai_service(
         api_provider=api_provider,
         api_key=api_key,

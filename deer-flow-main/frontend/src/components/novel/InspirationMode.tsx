@@ -104,6 +104,9 @@ export function InspirationMode() {
     contextOverrides: Partial<{ initial_idea: string; title: string; description: string; theme: string }> = {},
   ): Promise<string[]> => {
     const res = await novelApiService.generateInspirationOptions(step, buildInspirationContext(contextOverrides));
+    if (res.error) {
+      toast.error(`AI生成失败: ${res.error}`);
+    }
     return res.options;
   }, [buildInspirationContext]);
 
@@ -321,6 +324,9 @@ export function InspirationMode() {
         refineText,
         prevOptions,
       );
+      if (res.error) {
+        toast.error(`AI优化失败: ${res.error}`);
+      }
       setMessages((prev) => [...prev, { type: 'ai' as const, content: '根据你的反馈，我重新生成了以下选项：', options: res.options, step: refineStep, canRefine: true }]);
       setRefineText('');
     } catch { toast.error('优化失败'); }

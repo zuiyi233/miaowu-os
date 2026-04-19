@@ -169,13 +169,16 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         error_code = _extract_error_code(exc)
         status_code = _extract_status_code(exc)
 
-        if _matches_any(lowered, _HARD_AUTH_PATTERNS) or _matches_any(str(error_code).lower(), _HARD_AUTH_PATTERNS):
+        if _matches_any(lowered, _HARD_AUTH_PATTERNS) or error_code in {401} or status_code == 401 or _matches_any(str(error_code).lower(), _HARD_AUTH_PATTERNS):
             return False, "auth"
 
-        if _matches_any(lowered, _QUOTA_PATTERNS) or _matches_any(str(error_code).lower(), _QUOTA_PATTERNS):
+        if status_code in {402, 403}:
+            return True, "transient"
+
+        if _matches_any(lowered, _QUOTA_PATTERNS) or error_code in {402} or _matches_any(str(error_code).lower(), _QUOTA_PATTERNS):
             return False, "quota"
 
-        if _matches_any(lowered, _AUTH_PATTERNS):
+        if _matches_any(lowered, _AUTH_PATTERNS) and not _matches_any(lowered, ("timeout", "timed out")):
             return False, "auth"
 
         exc_name = exc.__class__.__name__
@@ -188,6 +191,8 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         }:
             return True, "transient"
         if status_code in _RETRIABLE_STATUS_CODES:
+            return True, "transient"
+        if status_code is not None and status_code >= 400 and status_code < 500:
             return True, "transient"
         if _matches_any(lowered, _BUSY_PATTERNS):
             return True, "busy"
