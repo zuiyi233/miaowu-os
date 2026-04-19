@@ -5,28 +5,6 @@ import type { Novel, Chapter, Character, Outline } from './schemas';
 
 type ViewMode = 'home' | 'editor' | 'reader' | 'graph' | 'timeline' | 'chat' | 'outline' | 'careers' | 'foreshadows' | 'settings';
 
-type CollectionKey = 'chapters' | 'characters' | 'outlines';
-type CollectionItem<K extends CollectionKey> = K extends 'chapters' ? Chapter : K extends 'characters' ? Character : Outline;
-
-function createCollectionActions<K extends CollectionKey>(key: K) {
-  const singular = key.slice(0, -1) as Capitalize<CollectionItem<K> extends Chapter ? 'chapter' : CollectionItem<K> extends Character ? 'character' : 'outline'>;
-  return {
-    [`set${key.charAt(0).toUpperCase() + key.slice(1)}`]: (items: CollectionItem<K>[]) => set({ [key]: items }),
-    [`add${singular}`]: (item: CollectionItem<K>) =>
-      set((state) => ({ [key]: [...(state[key] as CollectionItem<K>[]), item] })),
-    [`update${singular}`]: (id: string, updates: Partial<CollectionItem<K>>) =>
-      set((state) => ({
-        [key]: (state[key] as CollectionItem<K>[]).map((item) =>
-          item.id === id ? { ...item, ...updates } : item,
-        ),
-      })),
-    [`remove${singular}`]: (id: string) =>
-      set((state) => ({
-        [key]: (state[key] as CollectionItem<K>[]).filter((item) => item.id !== id),
-      })),
-  } as const;
-}
-
 interface NovelState {
   currentNovelTitle: string | null;
   activeChapterId: string | null;
@@ -111,9 +89,44 @@ export const useNovelStore = create<NovelState>()(
       setViewMode: (mode) => set({ viewMode: mode }),
       setNovels: (novels) => set({ novels }),
       setChapters: (chapters) => set({ chapters }),
-      ...createCollectionActions('chapters'),
-      ...createCollectionActions('characters'),
-      ...createCollectionActions('outlines'),
+      addChapter: (chapter) =>
+        set((state) => ({ chapters: [...state.chapters, chapter] })),
+      updateChapter: (chapterId, updates) =>
+        set((state) => ({
+          chapters: state.chapters.map((chapter) =>
+            chapter.id === chapterId ? { ...chapter, ...updates } : chapter
+          ),
+        })),
+      removeChapter: (chapterId) =>
+        set((state) => ({
+          chapters: state.chapters.filter((chapter) => chapter.id !== chapterId),
+        })),
+      setCharacters: (characters) => set({ characters }),
+      addCharacter: (character) =>
+        set((state) => ({ characters: [...state.characters, character] })),
+      updateCharacter: (characterId, updates) =>
+        set((state) => ({
+          characters: state.characters.map((character) =>
+            character.id === characterId ? { ...character, ...updates } : character
+          ),
+        })),
+      removeCharacter: (characterId) =>
+        set((state) => ({
+          characters: state.characters.filter((character) => character.id !== characterId),
+        })),
+      setOutlines: (outlines) => set({ outlines }),
+      addOutline: (outline) =>
+        set((state) => ({ outlines: [...state.outlines, outline] })),
+      updateOutline: (outlineId, updates) =>
+        set((state) => ({
+          outlines: state.outlines.map((outline) =>
+            outline.id === outlineId ? { ...outline, ...updates } : outline
+          ),
+        })),
+      removeOutline: (outlineId) =>
+        set((state) => ({
+          outlines: state.outlines.filter((outline) => outline.id !== outlineId),
+        })),
       setLoading: (loading) => set({ isLoading: loading }),
       setDirtyContent: (content) => set({ dirtyContent: content, isDirty: content !== null }),
       markDirty: () => set({ isDirty: true }),

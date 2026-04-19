@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections import deque
 from datetime import datetime
 from typing import Any
 
@@ -33,6 +36,76 @@ router = APIRouter(tags=["novel_stream"])
 
 _ANALYSIS_TASKS: dict[str, dict[str, Any]] = {}
 _ANALYSIS_RESULTS: dict[str, dict[str, Any]] = {}
+_STREAM_REQUEST_WINDOWS: dict[str, deque[float]] = {}
+
+
+def _read_positive_int_env(env_name: str, default: int) -> int:
+    raw = (os.getenv(env_name) or "").strip()
+    if not raw:
+        return default
+    try:
+        parsed = int(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%s, fallback to %s", env_name, raw, default)
+        return default
+    return max(1, parsed)
+
+
+_STREAM_RATE_LIMIT_PER_MINUTE = _read_positive_int_env(
+    "NOVEL_STREAM_RATE_LIMIT_PER_MINUTE",
+    30,
+)
+_ANALYSIS_CACHE_TTL_SECONDS = _read_positive_int_env(
+    "NOVEL_ANALYSIS_CACHE_TTL_SECONDS",
+    6 * 60 * 60,
+)
+_ANALYSIS_CACHE_MAX_ENTRIES = _read_positive_int_env(
+    "NOVEL_ANALYSIS_CACHE_MAX_ENTRIES",
+    500,
+)
+
+
+def _enforce_stream_rate_limit(*, user_id: str, action: str) -> None:
+    now = time.monotonic()
+    key = f"{action}:{user_id}"
+    window = _STREAM_REQUEST_WINDOWS.setdefault(key, deque())
+    while window and now - window[0] >= 60:
+        window.popleft()
+
+    if len(window) >= _STREAM_RATE_LIMIT_PER_MINUTE:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"请求过于频繁（{action}）。每分钟最多 {_STREAM_RATE_LIMIT_PER_MINUTE} 次，"
+                "请稍后重试。"
+            ),
+        )
+    window.append(now)
+
+
+def _cleanup_analysis_cache() -> None:
+    cutoff = time.time() - _ANALYSIS_CACHE_TTL_SECONDS
+
+    def parse_ts(item: dict[str, Any]) -> float:
+        raw = (item.get("updated_at") or "").strip()
+        if not raw:
+            return 0.0
+        try:
+            return datetime.fromisoformat(raw).timestamp()
+        except Exception:
+            return 0.0
+
+    for mapping in (_ANALYSIS_TASKS, _ANALYSIS_RESULTS):
+        expired_keys = [key for key, value in mapping.items() if parse_ts(value) < cutoff]
+        for key in expired_keys:
+            mapping.pop(key, None)
+
+        if len(mapping) <= _ANALYSIS_CACHE_MAX_ENTRIES:
+            continue
+        overflow = len(mapping) - _ANALYSIS_CACHE_MAX_ENTRIES
+        oldest_keys = sorted(mapping.keys(), key=lambda item_key: parse_ts(mapping[item_key]))[:overflow]
+        for key in oldest_keys:
+            mapping.pop(key, None)
 
 
 class ChapterGenerateStreamRequest(BaseModel):
@@ -513,6 +586,7 @@ async def generate_chapter_stream(
         request=request,
         db=db,
     )
+    _enforce_stream_rate_limit(user_id=style_user_id, action="generate_chapter_stream")
     return create_sse_response(
         _safe_chapter_stream(
             db=db,
@@ -539,12 +613,13 @@ async def continue_chapter_stream(
     db: AsyncSession = Depends(get_db),
     user_ai_service: AIService = Depends(get_user_ai_service),
 ):
-    project, chapter, _ = await _ensure_novel_chapter(
+    project, chapter, user_id = await _ensure_novel_chapter(
         novel_id=novel_id,
         chapter_id=chapter_id,
         request=request,
         db=db,
     )
+    _enforce_stream_rate_limit(user_id=user_id, action="continue_chapter_stream")
     return create_sse_response(
         _safe_chapter_stream(
             db=db,
@@ -571,6 +646,7 @@ async def generate_chapter_stream_alias(
     user_ai_service: AIService = Depends(get_user_ai_service),
 ):
     user_id = get_user_id(request)
+    _enforce_stream_rate_limit(user_id=user_id, action="generate_chapter_stream_alias")
     project, chapter = await _get_chapter_with_project_access(
         chapter_id=chapter_id,
         novel_id=None,
@@ -604,6 +680,7 @@ async def continue_chapter_stream_alias(
     user_ai_service: AIService = Depends(get_user_ai_service),
 ):
     user_id = get_user_id(request)
+    _enforce_stream_rate_limit(user_id=user_id, action="continue_chapter_stream_alias")
     project, chapter = await _get_chapter_with_project_access(
         chapter_id=chapter_id,
         novel_id=None,
@@ -636,6 +713,7 @@ async def batch_generate_chapters_stream(
     user_ai_service: AIService = Depends(get_user_ai_service),
 ):
     user_id = get_user_id(request)
+    _enforce_stream_rate_limit(user_id=user_id, action="batch_generate_chapters_stream")
     project = await verify_project_access(novel_id, user_id, db)
 
     async def event_generator() -> AsyncGenerator[str, None]:
@@ -734,6 +812,7 @@ async def generate_novel_outline_stream(
     db: AsyncSession = Depends(get_db),
 ):
     user_id = get_user_id(request)
+    _enforce_stream_rate_limit(user_id=user_id, action="generate_novel_outline_stream")
 
     async def worker(progress_callback: Callable[[str, int, str], Awaitable[None]]) -> dict[str, Any]:
         project = await verify_project_access(novel_id, user_id, db)
@@ -765,6 +844,7 @@ async def generate_novel_characters_stream(
     db: AsyncSession = Depends(get_db),
 ):
     user_id = get_user_id(request)
+    _enforce_stream_rate_limit(user_id=user_id, action="generate_novel_characters_stream")
 
     async def worker(progress_callback: Callable[[str, int, str], Awaitable[None]]) -> dict[str, Any]:
         project = await verify_project_access(novel_id, user_id, db)
@@ -798,6 +878,8 @@ async def analyze_chapter(
     user_ai_service: AIService = Depends(get_user_ai_service),
 ):
     user_id = get_user_id(request)
+    _enforce_stream_rate_limit(user_id=user_id, action="analyze_chapter")
+    _cleanup_analysis_cache()
     project, chapter = await _get_chapter_with_project_access(
         chapter_id=chapter_id,
         novel_id=None,
@@ -863,6 +945,7 @@ async def get_chapter_analysis(
     db: AsyncSession = Depends(get_db),
 ):
     user_id = get_user_id(request)
+    _cleanup_analysis_cache()
     await _get_chapter_with_project_access(
         chapter_id=chapter_id,
         novel_id=None,
@@ -892,6 +975,7 @@ async def get_chapter_analysis_status(
     db: AsyncSession = Depends(get_db),
 ):
     user_id = get_user_id(request)
+    _cleanup_analysis_cache()
     await _get_chapter_with_project_access(
         chapter_id=chapter_id,
         novel_id=None,

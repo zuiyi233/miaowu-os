@@ -1,5 +1,5 @@
 import { getBackendBaseURL } from "@/core/config";
-import type { AiProviderConfig } from "./ai-provider-store";
+import { useAiProviderStore, type AiProviderConfig } from "./ai-provider-store";
 
 const API_BASE_URL = getBackendBaseURL();
 
@@ -10,7 +10,8 @@ export interface AiMessage {
 
 export interface AiRequestOptions {
   messages: AiMessage[];
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
+  novelId?: string;
   stream?: boolean;
   temperature?: number;
   maxTokens?: number;
@@ -169,13 +170,14 @@ async function fetchWithRetry(
   url: string,
   options: RequestInit,
   retries: number,
-  delayMs: number
+  timeoutMs: number,
+  retryDelayMs: number
 ): Promise<Response> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const response = await fetchWithTimeout(url, options, delayMs);
+      const response = await fetchWithTimeout(url, options, timeoutMs);
       if (response.ok) return response;
 
       const errorBody = await response.text().catch(() => "");
@@ -192,7 +194,7 @@ async function fetchWithRetry(
       }
 
       if (attempt < retries) {
-        const backoffDelay = delayMs * Math.pow(2, attempt);
+        const backoffDelay = retryDelayMs * Math.pow(2, attempt);
         console.warn(
           `AI请求失败 (尝试 ${attempt + 1}/${retries + 1}): ${lastError.message}. ${backoffDelay}ms后重试...`
         );
@@ -307,7 +309,6 @@ export class GlobalAiService {
       "建议显式传入配置以提高性能和可测试性。"
     );
 
-    const { useAiProviderStore } = require("./ai-provider-store");
     const store = useAiProviderStore.getState();
 
     return {
@@ -380,7 +381,6 @@ export class GlobalAiService {
         context: options.context,
         provider_config: {
           provider: provider!.provider,
-          api_key: provider!.apiKey,
           base_url: provider!.baseUrl,
           model_name: model,
           temperature,
@@ -397,7 +397,8 @@ export class GlobalAiService {
           signal,
         },
         ctx.maxRetries,
-        ctx.requestTimeout
+        ctx.requestTimeout,
+        1000
       );
 
       if (!stream) {
@@ -407,7 +408,11 @@ export class GlobalAiService {
         return content;
       }
 
-      return await this.processStreamResponse(response, callbacks);
+      return await this.processStreamResponse(
+        response,
+        callbacks,
+        ctx.requestTimeout
+      );
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         callbacks?.onAbort?.();
@@ -425,7 +430,8 @@ export class GlobalAiService {
 
   private async processStreamResponse(
     response: Response,
-    callbacks?: AiStreamCallbacks
+    callbacks?: AiStreamCallbacks,
+    timeoutMs: number = 30000
   ): Promise<string> {
     const reader = response.body?.getReader();
     if (!reader) {
@@ -434,38 +440,71 @@ export class GlobalAiService {
 
     const decoder = new TextDecoder();
     let fullText = "";
+    let buffer = "";
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split("\n");
-
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          const data = line.slice(6);
-          if (data === "[DONE]") continue;
-
-          try {
-            const parsed = JSON.parse(data);
-            const content =
-              parsed.content ||
-              parsed.delta?.content ||
-              parsed.choices?.[0]?.delta?.content ||
-              "";
-            if (content) {
-              fullText += content;
-              callbacks?.onChunk?.(content);
-            }
-          } catch {
-            if (data.trim()) {
-              fullText += data;
-              callbacks?.onChunk?.(data);
-            }
-          }
+    const readWithTimeout = async () => {
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => {
+              reject(new Error(`SSE stream timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
+          }),
+        ]);
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
         }
       }
+    };
+
+    const processLine = (rawLine: string) => {
+      const line = rawLine.trimEnd();
+      if (!line.startsWith("data: ")) {
+        return;
+      }
+
+      const data = line.slice(6);
+      if (data === "[DONE]") {
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(data);
+        const content =
+          parsed.content ||
+          parsed.delta?.content ||
+          parsed.choices?.[0]?.delta?.content ||
+          "";
+        if (content) {
+          fullText += content;
+          callbacks?.onChunk?.(content);
+        }
+      } catch {
+        if (data.trim()) {
+          fullText += data;
+          callbacks?.onChunk?.(data);
+        }
+      }
+    };
+
+    while (true) {
+      const { done, value } = await readWithTimeout();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        processLine(line);
+      }
+    }
+
+    if (buffer.trim()) {
+      processLine(buffer);
     }
 
     callbacks?.onComplete?.(fullText);
@@ -500,7 +539,6 @@ export class GlobalAiService {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             provider: provider!.provider,
-            api_key: provider!.apiKey,
             base_url: provider!.baseUrl,
             model: provider!.models[0],
           }),

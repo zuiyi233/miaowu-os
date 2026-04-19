@@ -1,5 +1,7 @@
 import { globalAiService, type AiRequestOptions, type AiStreamCallbacks } from "@/core/ai/global-ai-service";
 
+export type { AiRequestOptions, AiStreamCallbacks } from "@/core/ai/global-ai-service";
+
 class NovelAiServiceAdapter {
   async chat(
     options: AiRequestOptions,

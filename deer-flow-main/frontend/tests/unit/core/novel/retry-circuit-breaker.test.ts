@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ErrorHandler, ErrorType, ForbiddenSubType } from '@/core/novel/utils/errorhandler';
+import type { ExtendedStandardError } from '@/core/novel/utils/errorhandler';
 import { RetryManager } from '@/core/novel/utils/retry';
 import { CircuitBreaker } from '@/core/novel/utils/circuit-breaker';
 
@@ -24,7 +25,7 @@ describe('403 Retry Mechanism', () => {
       headers: { 'cf-ray': 'abc123' },
     });
 
-    const standardized = errorHandler.handle(error403);
+    const standardized = errorHandler.handle(error403) as ExtendedStandardError;
     expect(standardized.forbiddenSubType).toBe(ForbiddenSubType.WAF_CHALLENGE);
 
     const shouldRetry = retryManager['defaultShouldRetry'](standardized, 1);
@@ -38,7 +39,7 @@ describe('403 Retry Mechanism', () => {
       responseBody: { error: { message: 'invalid api key' } },
     });
 
-    const standardized = errorHandler.handle(error403);
+    const standardized = errorHandler.handle(error403) as ExtendedStandardError;
     expect(standardized.forbiddenSubType).toBe(ForbiddenSubType.AUTH_FAILED);
 
     const shouldRetry = retryManager['defaultShouldRetry'](standardized, 1);
@@ -53,7 +54,7 @@ describe('403 Retry Mechanism', () => {
       headers: { 'retry-after': '5' },
     });
 
-    const standardized = errorHandler.handle(error403);
+    const standardized = errorHandler.handle(error403) as ExtendedStandardError;
     expect(standardized.retryAfterMs).toBe(5000);
 
     const delay = retryManager['calculateDelay'](

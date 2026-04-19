@@ -128,6 +128,14 @@ FastAPI application providing REST endpoints for frontend integration:
 | `GET /api/threads/{id}/uploads/list` | List uploaded files |
 | `DELETE /api/threads/{id}` | Delete DeerFlow-managed local thread data after LangGraph thread deletion; unexpected failures are logged server-side and return a generic 500 detail |
 | `GET /api/threads/{id}/artifacts/{path}` | Serve generated artifacts |
+| `POST /api/ai/chat` | Global AI chat endpoint (uses server-side user settings; ignores client-provided plaintext api_key) |
+| `POST /api/ai/test-connection` | AI connectivity check (uses server-side user settings; ignores client-provided plaintext api_key) |
+| `GET /api/ai/providers` | List provider metadata for frontend selector |
+
+`/api/ai/*` endpoints are now protected by gateway-side access control:
+- If `DEERFLOW_AI_PROVIDER_API_TOKEN` is configured, callers must provide `Authorization: Bearer <token>`.
+- If token is not configured, only loopback requests are allowed by default.
+- Request rate is limited by `DEERFLOW_AI_PROVIDER_RATE_LIMIT_PER_MINUTE` (default `30`).
 
 ### IM Channels
 
@@ -232,6 +240,8 @@ Scope:
 - Compatibility aliases: `POST /api/chapters/{chapter_id}/generate-stream|continue-stream|analyze`, `GET /api/chapters/{chapter_id}/analysis|analysis/status`.
 - Memory retrieval priority: local vector (when available) -> cloud embedding (OpenAI-compatible `/v1/embeddings`) -> keyword fallback.
 - Single-user fallback: `novel_migrated` routes resolve `request.state.user_id` first, then fallback to `local_single_user` (override via `NOVEL_MIGRATED_DEFAULT_USER_ID`).
+- `novel_stream` endpoints now include in-process request throttling (default `30` req/min per user+action, configurable via `NOVEL_STREAM_RATE_LIMIT_PER_MINUTE`).
+- Chapter analysis in-memory cache (`_ANALYSIS_TASKS` / `_ANALYSIS_RESULTS`) now performs TTL + size cleanup (`NOVEL_ANALYSIS_CACHE_TTL_SECONDS`, `NOVEL_ANALYSIS_CACHE_MAX_ENTRIES`).
 - Out of scope: `auth/users/admin`, user-model chain, and non-novel gateway endpoints.
 
 ---

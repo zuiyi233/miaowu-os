@@ -8,14 +8,14 @@ function isProduction(): boolean {
 }
 
 function generateSecureKey(): string {
-  const array = new Uint8Array(32);
-  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
-    crypto.getRandomValues(array);
-  } else {
-    for (let i = 0; i < array.length; i++) {
-      array[i] = Math.floor(Math.random() * 256);
-    }
+  if (typeof crypto === "undefined" || typeof crypto.getRandomValues !== "function") {
+    throw new Error(
+      "当前环境不支持安全随机数生成（crypto.getRandomValues）。请升级浏览器后重试。"
+    );
   }
+
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
   return btoa(String.fromCharCode(...array));
 }
 
@@ -73,14 +73,17 @@ function getEncryptionKey(): string {
       }
 
       const newKey = generateSecureKey();
-      window.localStorage.setItem(LOCAL_STORAGE_KEY, newKey);
+      try {
+        window.localStorage.setItem(LOCAL_STORAGE_KEY, newKey);
+      } catch (storageError) {
+        console.warn("无法写入localStorage，开发密钥仅在当前会话内生效", storageError);
+      }
 
       console.log("🔐 AI Provider: 已生成新的开发密钥并缓存");
-      console.log(`   密钥指纹: ${newKey.substring(0, 8)}...${newKey.slice(-8)}`);
 
       return newKey;
     }
-  } catch (error) {
+  } catch {
     console.warn("无法访问localStorage，使用会话临时密钥");
   }
 
@@ -102,9 +105,21 @@ export function decryptApiKey(encryptedKey: string): string {
   try {
     const bytes = CryptoJS.AES.decrypt(encryptedKey, ENCRYPTION_KEY);
     const decrypted = bytes.toString(CryptoJS.enc.Utf8);
-    return decrypted || encryptedKey;
-  } catch (error) {
-    console.warn("Failed to decrypt API key, returning as-is");
+    if (decrypted) {
+      return decrypted;
+    }
+    if (isEncrypted(encryptedKey)) {
+      console.warn("检测到已加密配置解密失败，已返回空值，请重新录入 API Key。");
+      return "";
+    }
+    // 兼容历史明文存量：旧版本可能直接写入明文
+    return encryptedKey;
+  } catch {
+    if (isEncrypted(encryptedKey)) {
+      console.warn("检测到已加密配置解密异常，已返回空值，请重新录入 API Key。");
+      return "";
+    }
+    // 兼容历史明文存量：旧版本可能直接写入明文
     return encryptedKey;
   }
 }
@@ -133,7 +148,6 @@ export function validateEncryptionConfig(): {
   return {
     isValid: ENCRYPTION_KEY.length > 0,
     source,
-    keyFingerprint:
-      ENCRYPTION_KEY.substring(0, 6) + "..." + ENCRYPTION_KEY.slice(-6),
+    keyFingerprint: "hidden",
   };
 }

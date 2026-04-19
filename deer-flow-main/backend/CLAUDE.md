@@ -222,12 +222,21 @@ FastAPI application on port 8001 with health check at `GET /health`.
 | **Threads** (`/api/threads/{id}`) | `DELETE /` - remove DeerFlow-managed local thread data after LangGraph thread deletion; unexpected failures are logged server-side and return a generic 500 detail |
 | **Artifacts** (`/api/threads/{id}/artifacts`) | `GET /{path}` - serve artifacts; active content types (`text/html`, `application/xhtml+xml`, `image/svg+xml`) are always forced as download attachments to reduce XSS risk; `?download=true` still forces download for other file types |
 | **Suggestions** (`/api/threads/{id}/suggestions`) | `POST /` - generate follow-up questions; rich list/block model content is normalized before JSON parsing |
+| **AI Provider** (`/api/ai`) | `POST /chat` - global chat; `POST /test-connection` - connectivity check; `GET /providers` - provider metadata |
+
+`/api/ai/*` security behavior:
+- Client-side plaintext `api_key` fields are deprecated and ignored by backend handlers.
+- If `DEERFLOW_AI_PROVIDER_API_TOKEN` is set, callers must provide `Authorization: Bearer <token>`.
+- If token is unset, endpoints are loopback-only by default.
+- Request throttling is enforced via `DEERFLOW_AI_PROVIDER_RATE_LIMIT_PER_MINUTE` (default `30`).
 
 Novel Migrated Wave1+Wave2 APIs are registered through `app.gateway.routers.novel_migrated`, which is added to `CORE_ROUTER_MODULES` in `app/gateway/app.py`. That aggregator conditionally includes `app.gateway.novel_migrated.api.careers`, `app.gateway.novel_migrated.api.foreshadows`, `app.gateway.novel_migrated.api.memories`, `app.gateway.novel_migrated.api.inspiration`, `app.gateway.novel_migrated.api.wizard_stream`, `app.gateway.novel_migrated.api.novel_stream`, `app.gateway.novel_migrated.api.project_covers`, and `app.gateway.novel_migrated.api.book_import` when those modules exist.
 
 `wizard_stream` exposes SSE endpoints under `/api/wizard-stream/world-building|career-system|characters|outline`, and also `GET /api/projects/{project_id}` for frontend resume flows.
 
 `novel_stream` adds novel authoring SSE endpoints: `POST /api/novels/{novel_id}/chapters/{chapter_id}/generate-stream`, `POST /api/novels/{novel_id}/chapters/{chapter_id}/continue-stream`, `POST /api/novels/{novel_id}/chapters/batch-generate-stream`, `POST /api/novels/{novel_id}/outlines/generate-stream`, `POST /api/novels/{novel_id}/characters/generate-stream`, plus compatibility aliases `POST /api/chapters/{chapter_id}/generate-stream|continue-stream|analyze` and `GET /api/chapters/{chapter_id}/analysis|analysis/status`.
+
+`novel_stream` now enforces per-user+action in-process throttling (`NOVEL_STREAM_RATE_LIMIT_PER_MINUTE`, default `30`) and analysis cache cleanup (TTL/size caps via `NOVEL_ANALYSIS_CACHE_TTL_SECONDS`, `NOVEL_ANALYSIS_CACHE_MAX_ENTRIES`).
 
 `novel_migrated` memory retrieval now follows: local vector (if available) → cloud embedding via OpenAI-compatible `/v1/embeddings` → keyword fallback.
 
