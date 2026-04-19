@@ -13,15 +13,16 @@ import json
 import os
 import time
 from collections import deque
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.gateway.novel_migrated.api.settings import get_user_ai_service
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.core.user_context import get_request_user_id
-from app.gateway.novel_migrated.api.settings import get_user_ai_service
 from app.gateway.novel_migrated.services.ai_service import AIService
 
 logger = get_logger(__name__)
@@ -30,6 +31,14 @@ router = APIRouter(prefix="/api/ai", tags=["ai"])
 _ACCESS_TOKEN_ENV = "DEERFLOW_AI_PROVIDER_API_TOKEN"
 _RATE_LIMIT_ENV = "DEERFLOW_AI_PROVIDER_RATE_LIMIT_PER_MINUTE"
 _REQUEST_WINDOWS: dict[str, deque[float]] = {}
+_USE_MESSAGES_FORMAT_ENV = "USE_MESSAGES_FORMAT"
+_STREAM_EXPOSE_RAW_ERROR_ENV = "DEERFLOW_AI_PROVIDER_STREAM_EXPOSE_RAW_ERROR"
+_STREAMING_RESPONSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+_DISABLED_BOOL_ENV_VALUES = {"0", "false", "no", "off"}
 
 
 class AiMessage(BaseModel):
@@ -139,6 +148,47 @@ def _enforce_rate_limit(scope: str) -> None:
     window.append(now)
 
 
+def _build_streaming_response(stream_generator: AsyncGenerator[str, None]) -> StreamingResponse:
+    return StreamingResponse(
+        stream_generator,
+        media_type="text/event-stream",
+        headers=_STREAMING_RESPONSE_HEADERS.copy(),
+    )
+
+
+def _should_expose_raw_stream_error() -> bool:
+    """Whether SSE stream error payload should expose raw exception details."""
+    value = (os.getenv(_STREAM_EXPOSE_RAW_ERROR_ENV) or "").strip().lower()
+    if not value:
+        return False
+    return value in ("1", "true", "yes", "on")
+
+
+def _is_messages_format_enabled() -> bool:
+    value = os.getenv(_USE_MESSAGES_FORMAT_ENV, "1")
+    return value.strip().lower() not in _DISABLED_BOOL_ENV_VALUES
+
+
+async def _stream_response_builder(
+    stream: AsyncGenerator[str, None],
+    *,
+    error_log_prefix: str,
+    expose_raw_error: bool,
+) -> AsyncGenerator[str, None]:
+    try:
+        async for chunk in stream:
+            if isinstance(chunk, str) and chunk:
+                data = json.dumps({"content": chunk}, ensure_ascii=False)
+                yield f"data: {data}\n\n"
+
+        yield "data: [DONE]\n\n"
+    except Exception as exc:
+        logger.error("%s: %s", error_log_prefix, exc)
+        error_text = str(exc) if expose_raw_error else "AI 请求失败"
+        error_data = json.dumps({"error": error_text}, ensure_ascii=False)
+        yield f"data: {error_data}\n\n"
+
+
 @router.post("/chat")
 async def chat_endpoint(
     request: Request,
@@ -149,6 +199,9 @@ async def chat_endpoint(
 
     接收前端请求，根据provider_config动态创建AI服务实例并执行请求。
     支持流式和非流式两种模式。
+
+    当 USE_MESSAGES_FORMAT=1（默认）时，直接传递messages数组到LLM Provider，
+    保留完整的多轮对话结构以激活Provider原生缓存机制。
     """
     try:
         _enforce_access_control(request)
@@ -156,25 +209,39 @@ async def chat_endpoint(
         if body.provider_config.api_key:
             logger.warning("Deprecated field provider_config.api_key was provided and ignored for /api/ai/chat")
 
+        use_messages_format = _is_messages_format_enabled()
+        provider_config_params = {
+            "model": body.provider_config.model_name,
+            "temperature": body.provider_config.temperature,
+            "max_tokens": body.provider_config.max_tokens,
+        }
+
+        if use_messages_format:
+            if body.stream:
+                return _build_streaming_response(
+                    _stream_generator_with_messages(
+                        ai_service,
+                        body.messages,
+                        body.provider_config,
+                    )
+                )
+
+            result = await ai_service.generate_text_with_messages(messages=body.messages, **provider_config_params)
+
+            return JSONResponse(content={"content": result.get("content", "")})
+
         prompt = _build_prompt_from_messages(body.messages)
 
         if body.stream:
-            return StreamingResponse(
-                _stream_generator(ai_service, prompt, body.provider_config),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                },
+            return _build_streaming_response(
+                _stream_generator(
+                    ai_service,
+                    prompt,
+                    body.provider_config,
+                )
             )
 
-        result = await ai_service.generate_text(
-            prompt=prompt,
-            model=body.provider_config.model_name,
-            temperature=body.provider_config.temperature,
-            max_tokens=body.provider_config.max_tokens,
-        )
+        result = await ai_service.generate_text(prompt=prompt, **provider_config_params)
 
         return JSONResponse(content={"content": result.get("content", "")})
 
@@ -188,27 +255,41 @@ async def chat_endpoint(
         raise HTTPException(status_code=500, detail=f"AI 请求失败: {str(exc)}")
 
 
-async def _stream_generator(ai_service: AIService, prompt: str, config: AiProviderConfig):
-    """流式响应生成器。
+async def _stream_generator_with_messages(ai_service: AIService, messages: list[AiMessage], config: AiProviderConfig):
+    """流式响应生成器（messages数组直传版本）。
 
+    直接传递完整的messages数组到LLM Provider，保留多轮对话结构。
     使用SSE (Server-Sent Events) 格式返回流式数据。
     """
-    try:
-        async for chunk in ai_service.generate_text_stream(
+    async for payload in _stream_response_builder(
+        ai_service.generate_text_stream_with_messages(
+            messages=messages,
+            model=config.model_name,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+        ),
+        error_log_prefix="Stream generation error (messages format)",
+        expose_raw_error=_should_expose_raw_stream_error(),
+    ):
+        yield payload
+
+
+async def _stream_generator(ai_service: AIService, prompt: str, config: AiProviderConfig):
+    """流式响应生成器（deprecated - 字符串prompt版本）。
+
+    @deprecated: 使用 _stream_generator_with_messages() 替代
+    """
+    async for payload in _stream_response_builder(
+        ai_service.generate_text_stream(
             prompt=prompt,
             model=config.model_name,
             temperature=config.temperature,
             max_tokens=config.max_tokens,
-        ):
-            if isinstance(chunk, str) and chunk:
-                data = json.dumps({"content": chunk}, ensure_ascii=False)
-                yield f"data: {data}\n\n"
-
-        yield "data: [DONE]\n\n"
-    except Exception as e:
-        logger.error("Stream generation error: %s", e)
-        error_data = json.dumps({"error": str(e)}, ensure_ascii=False)
-        yield f"data: {error_data}\n\n"
+        ),
+        error_log_prefix="Stream generation error",
+        expose_raw_error=_should_expose_raw_stream_error(),
+    ):
+        yield payload
 
 
 @router.post("/test-connection")

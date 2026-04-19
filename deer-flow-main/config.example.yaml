@@ -115,7 +115,30 @@ models:
   # For Docker deployments, use host.docker.internal instead of localhost:
   #   base_url: http://host.docker.internal:11434
 
-  # Example: Anthropic Claude model
+  # Example: Anthropic Claude model with Prompt Caching enabled
+  # IMPORTANT: Use deerflow.models.claude_provider:ClaudeChatModel to enable
+  # automatic prompt caching (90% cost reduction on cached tokens).
+  # The provider automatically adds cache_control: {type: "ephemeral"} markers.
+  #
+  # - name: claude-sonnet-4
+  #   display_name: Claude Sonnet 4 (with Prompt Cache)
+  #   use: deerflow.models.claude_provider:ClaudeChatModel  # Built-in caching provider
+  #   model: claude-sonnet-4-20250514
+  #   api_key: $ANTHROPIC_API_KEY
+  #   default_request_timeout: 600.0
+  #   max_retries: 2
+  #   max_tokens: 8192
+  #   enable_prompt_caching: true       # Enable automatic cache_control markers
+  #   prompt_cache_size: 3              # Cache last 3 messages + system prompt
+  #   supports_vision: true
+  #   when_thinking_enabled:
+  #     thinking:
+  #       type: enabled
+  #   when_thinking_disabled:
+  #     thinking:
+  #       type: disabled
+
+  # Example: Anthropic Claude model (standard, no caching)
   # - name: claude-3-5-sonnet
   #   display_name: Claude 3.5 Sonnet
   #   use: langchain_anthropic:ChatAnthropic

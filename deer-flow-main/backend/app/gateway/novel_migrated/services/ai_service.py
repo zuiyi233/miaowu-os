@@ -17,6 +17,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.services.mcp_tools_loader import mcp_tools_loader
+from app.gateway.api.ai_provider import AiMessage
 from deerflow.config import get_app_config
 from deerflow.models import create_chat_model
 
@@ -98,6 +99,37 @@ class AIService:
         messages.append(HumanMessage(content=prompt))
         return messages
 
+    @staticmethod
+    def _build_messages_from_array(messages: list[AiMessage]) -> list[Any]:
+        """将AiMessage[]转换为LangChain消息列表。
+
+        直接映射前端传递的messages数组到LangChain消息类型，
+        保留完整的多轮对话结构以激活LLM Provider的缓存机制。
+
+        Args:
+            messages: 前端发送的消息列表
+
+        Returns:
+            LangChain消息列表（SystemMessage/HumanMessage/AIMessage）
+        """
+        langchain_messages = []
+
+        for msg in messages:
+            role = msg.role.lower().strip()
+            content = msg.content
+
+            if role == "system":
+                langchain_messages.append(SystemMessage(content=content))
+            elif role == "user":
+                langchain_messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                langchain_messages.append(AIMessage(content=content))
+            else:
+                logger.warning("Unknown message role '%s', treating as user", role)
+                langchain_messages.append(HumanMessage(content=content))
+
+        return langchain_messages
+
     async def generate_text(
         self,
         prompt: str,
@@ -169,6 +201,114 @@ class AIService:
         messages = self._build_messages(prompt, system_prompt)
 
         async for chunk in llm.astream(messages, config={"configurable": cfg}):
+            if isinstance(chunk, AIMessage):
+                text = chunk.content
+            else:
+                text = getattr(chunk, "content", chunk)
+
+            if isinstance(text, list):
+                text = "".join(str(part) for part in text)
+            if text:
+                yield str(text)
+
+    async def generate_text_with_messages(
+        self,
+        messages: list[AiMessage],
+        provider: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        auto_mcp: bool = True,
+        **_: Any,
+    ) -> dict[str, Any]:
+        """非流式文本生成（messages数组直传版本）。
+
+        直接传递完整的messages数组到LLM Provider，保留多轮对话结构。
+        返回与 generate_text() 完全兼容的格式。
+
+        Args:
+            messages: 前端发送的消息列表
+            provider: 供应商类型（保留兼容）
+            model: 模型名称
+            temperature: 温度参数
+            max_tokens: 最大token数
+            auto_mcp: 是否加载MCP工具
+
+        Returns:
+            包含 content, finish_reason, tool_calls 的字典
+        """
+        model_name = self._resolve_model_name(model)
+        llm = create_chat_model(name=model_name)
+
+        cfg = {
+            "temperature": temperature if temperature is not None else self.default_temperature,
+            "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,
+        }
+
+        tools = await self._prepare_mcp_tools(auto_mcp=auto_mcp)
+        if tools:
+            try:
+                llm = llm.bind_tools(tools)
+            except Exception as exc:
+                logger.warning("⚠️ 当前模型不支持 bind_tools，忽略 MCP 工具: %s", exc)
+
+        langchain_messages = self._build_messages_from_array(messages)
+        response = await llm.ainvoke(langchain_messages, config={"configurable": cfg})
+
+        content = response.content if hasattr(response, "content") else str(response)
+        if isinstance(content, list):
+            content = "".join(str(part) for part in content)
+
+        return {
+            "content": str(content),
+            "finish_reason": "stop",
+            "tool_calls": getattr(response, "tool_calls", None) or [],
+        }
+
+    async def generate_text_stream_with_messages(
+        self,
+        messages: list[AiMessage],
+        provider: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        auto_mcp: bool = True,
+        **_: Any,
+    ) -> AsyncGenerator[str, None]:
+        """流式文本生成（messages数组直传版本）。
+
+        直接传递完整的messages数组到LLM Provider，保留多轮对话结构。
+        返回类型与 generate_text_stream() 一致。
+
+        Args:
+            messages: 前端发送的消息列表
+            provider: 供应商类型（保留兼容）
+            model: 模型名称
+            temperature: 温度参数
+            max_tokens: 最大token数
+            auto_mcp: 是否加载MCP工具
+
+        Yields:
+            文本片段字符串
+        """
+        model_name = self._resolve_model_name(model)
+        llm = create_chat_model(name=model_name)
+
+        cfg = {
+            "temperature": temperature if temperature is not None else self.default_temperature,
+            "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,
+        }
+
+        tools = await self._prepare_mcp_tools(auto_mcp=auto_mcp)
+        if tools:
+            try:
+                llm = llm.bind_tools(tools)
+            except Exception as exc:
+                logger.warning("⚠️ 当前模型不支持 bind_tools，忽略 MCP 工具: %s", exc)
+
+        langchain_messages = self._build_messages_from_array(messages)
+
+        async for chunk in llm.astream(langchain_messages, config={"configurable": cfg}):
             if isinstance(chunk, AIMessage):
                 text = chunk.content
             else:

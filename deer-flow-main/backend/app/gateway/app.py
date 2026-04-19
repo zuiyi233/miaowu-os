@@ -1,6 +1,7 @@
 import importlib
 import importlib.util
 import logging
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from types import ModuleType
@@ -276,6 +277,32 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
     app.state.deerflow_available = deerflow_available
     app.state.registered_harness_routers = registered_harness_router_count
     app.state.total_harness_routers = len(HARNESS_ROUTER_MODULES)
+
+    # Add prompt cache middleware for AI chat endpoint optimization
+    try:
+        from app.gateway.middleware.prompt_cache import PromptCacheMiddleware
+
+        enable_cache = os.getenv("ENABLE_PROMPT_CACHE", "true").lower() in ("1", "true", "yes")
+        if enable_cache:
+            cache_ttl = int(os.getenv("PROMPT_CACHE_TTL", "300"))
+            cache_max_entries = int(os.getenv("PROMPT_CACHE_MAX_ENTRIES", "1000"))
+
+            app.add_middleware(
+                PromptCacheMiddleware,
+                ttl=cache_ttl,
+                max_entries=cache_max_entries,
+            )
+            logger.info(
+                "PromptCacheMiddleware enabled: ttl=%ds, max_entries=%d",
+                cache_ttl,
+                cache_max_entries,
+            )
+        else:
+            logger.info("PromptCacheMiddleware disabled via ENABLE_PROMPT_CACHE")
+    except ImportError:
+        logger.debug("PromptCacheMiddleware not available, skipping")
+    except Exception as exc:
+        logger.warning("Failed to initialize PromptCacheMiddleware: %s", exc)
 
     @app.get("/health", tags=["health"])
     async def health_check() -> dict:
