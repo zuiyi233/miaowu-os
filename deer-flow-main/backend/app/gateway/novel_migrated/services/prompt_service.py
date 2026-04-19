@@ -1,12 +1,12 @@
-"""Prompt templates used by novel_migrated book-import flow.
+"""Unified prompt template service for novel_migrated.
 
-仅保留拆书导入与向导生成必需模板：
-- WORLD_BUILDING
-- CAREER_SYSTEM_GENERATION
-- CHARACTERS_BATCH_GENERATION
-- WIZARD_COMPLETE_OUTLINE_GENERATION
-- BOOK_IMPORT_REVERSE_PROJECT_SUGGESTION
-- BOOK_IMPORT_REVERSE_OUTLINES
+支持完整小说创作流程的提示词模板管理：
+- 世界构建与职业体系（拆书导入/向导生成）
+- 灵感模式引导创建（INSPIRATION系列）
+- 未来可扩展：章节生成、大纲续写、情节分析等
+
+模板来源：参考项目 MuMuAINovel-main 完整移植
+适用范围：主项目与小说项目统一调用
 """
 
 from __future__ import annotations
@@ -17,14 +17,21 @@ logger = get_logger(__name__)
 
 
 class PromptService:
-    """最小提示词服务。"""
+    """统一提示词服务 - 支持主项目与小说项目调用。
+
+    模板分类：
+    - 基础模板：世界构建、职业体系、角色生成、大纲生成、拆书导入
+    - 灵感模式：书名/简介/主题/类型生成 + 智能补全（9个模板）
+    """
+
+    # ========== 基础模板（拆书导入与向导生成） ==========
 
     WORLD_BUILDING = """<system>
 你是资深的世界观设计师，擅长为{genre}类型的小说构建真实、自洽的世界观。
 </system>
 
 <task>
-为小说《{title}》生成世界观，要求贴合主题“{theme}”与简介内容。
+为小说《{title}》生成世界观，要求贴合主题"{theme}"与简介内容。
 </task>
 
 <input>
@@ -250,6 +257,113 @@ class PromptService:
   "goal": "叙事目标"
 }}
 </output>"""
+
+    # ========== 灵感模式提示词（从参考项目 MuMuAINovel-main 移植） ==========
+    # 来源：D:\miaowu-os\参考项目\MuMuAINovel-main\backend\app\services\prompt_service.py (第1652-1760行)
+    # 用途：支持灵感模式引导式创建小说项目
+
+    INSPIRATION_TITLE_SYSTEM = """你是一位专业的小说创作顾问。
+用户的原始想法：{initial_idea}
+
+请根据用户的想法，生成6个吸引人的书名建议，要求：
+1. 紧扣用户的原始想法和核心故事构思
+2. 富有创意和吸引力
+3. 涵盖不同的风格倾向
+4. 书名中不要带有"《》"符号
+
+返回JSON格式：
+{{
+    "prompt": "根据你的想法，我为你准备了几个书名建议：",
+    "options": ["书名1", "书名2", "书名3", "书名4", "书名5", "书名6"]
+}}
+
+只返回纯JSON，不要有其他文字。"""
+
+    INSPIRATION_TITLE_USER = "用户的想法：{initial_idea}\n请生成6个书名建议"
+
+    INSPIRATION_DESCRIPTION_SYSTEM = """你是一位专业的小说创作顾问。
+用户的原始想法：{initial_idea}
+已确定的书名：{title}
+
+请生成6个精彩的小说简介，要求：
+1. 必须紧扣用户的原始想法，确保简介是原始想法的具体展开
+2. 符合已确定的书名风格
+3. 简洁有力，每个50-100字
+4. 包含核心冲突
+5. 涵盖不同的故事走向，但都基于用户的原始构思
+
+返回JSON格式：
+{{"prompt":"选择一个简介：","options":["简介1","简介2","简介3","简介4","简介5","简介6"]}}
+
+只返回纯JSON，不要有其他文字，不要换行。"""
+
+    INSPIRATION_DESCRIPTION_USER = "原始想法：{initial_idea}\n书名：{title}\n请生成6个简介选项"
+
+    INSPIRATION_THEME_SYSTEM = """你是一位专业的小说创作顾问。
+用户的原始想法：{initial_idea}
+小说信息：
+- 书名：{title}
+- 简介：{description}
+
+请生成6个深刻的主题选项，要求：
+1. 必须与用户的原始想法保持高度一致
+2. 符合书名和简介的风格
+3. 有深度和思想性
+4. 每个50-150字
+5. 涵盖不同角度（如：成长、复仇、救赎、探索等），但都围绕用户的核心构思
+
+返回JSON格式：
+{{"prompt":"这本书的核心主题是什么？","options":["主题1","主题2","主题3","主题4","主题5","主题6"]}}
+
+只返回纯JSON，不要有其他文字，不要换行。"""
+
+    INSPIRATION_THEME_USER = "原始想法：{initial_idea}\n书名：{title}\n简介：{description}\n请生成6个主题选项"
+
+    INSPIRATION_GENRE_SYSTEM = """你是一位专业的小说创作顾问。
+用户的原始想法：{initial_idea}
+小说信息：
+- 书名：{title}
+- 简介：{description}
+- 主题：{theme}
+
+请生成6个合适的类型标签（每个2-4字），要求：
+1. 必须符合用户原始想法中暗示的类型倾向
+2. 符合小说整体风格
+3. 可以多选组合
+
+常见类型：玄幻、都市、科幻、武侠、仙侠、历史、言情、悬疑、奇幻、修仙等
+
+返回JSON格式：
+{{"prompt":"选择类型标签（可多选）：","options":["类型1","类型2","类型3","类型4","类型5","类型6"]}}
+
+只返回紧凑的纯JSON，不要换行，不要有其他文字。"""
+
+    INSPIRATION_GENRE_USER = (
+        "原始想法：{initial_idea}\n书名：{title}\n简介：{description}\n主题：{theme}\n请生成6个类型标签"
+    )
+
+    INSPIRATION_QUICK_COMPLETE = """你是一位专业的小说创作顾问。用户提供了部分小说信息，请补全缺失的字段。
+
+用户已提供的信息：
+{existing}
+
+请生成完整的小说方案，包含：
+1. title: 书名（3-6字，如果用户已提供则保持原样）
+2. description: 简介（50-100字，必须基于用户提供的信息，不要偏离原意）
+3. theme: 核心主题（30-50字，必须与用户提供的信息保持一致）
+4. genre: 类型标签数组（2-3个）
+
+重要：所有补全的内容都必须与用户提供的信息保持高度关联，确保前后一致性。
+
+返回JSON格式：
+{{
+    "title": "书名",
+    "description": "简介内容...",
+    "theme": "主题内容...",
+    "genre": ["类型1", "类型2"]
+}}
+
+只返回纯JSON，不要有其他文字。"""
 
     @staticmethod
     def format_prompt(template: str, **kwargs) -> str:
