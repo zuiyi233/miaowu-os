@@ -16,9 +16,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.gateway.novel_migrated.models.novel_agent_config import NovelAgentConfig, NovelAgentType
 from app.gateway.novel_migrated.models.settings import Settings
 from app.gateway.novel_migrated.services.novel_agent_config_service import (
+    MAX_MAX_TOKENS,
+    MAX_TEMPERATURE,
+    MIN_MAX_TOKENS,
+    MIN_TEMPERATURE,
     NovelAgentConfigService,
     _build_presets_from_deployed_models,
     _classify_models,
+    _clamp_max_tokens,
+    _clamp_temperature,
     _get_deployed_models,
     DEFAULT_AGENT_CONFIGS,
 )
@@ -508,29 +514,45 @@ class TestAgentConfigPayload:
         from app.gateway.novel_migrated.api.novel_agent_configs import AgentConfigPayload
 
         # Valid temperatures
-        AgentConfigPayload(agent_type="writer", temperature=0.0)
-        AgentConfigPayload(agent_type="writer", temperature=2.0)
+        AgentConfigPayload(agent_type="writer", temperature=MIN_TEMPERATURE)
+        AgentConfigPayload(agent_type="writer", temperature=MAX_TEMPERATURE)
         AgentConfigPayload(agent_type="writer", temperature=1.5)
 
         # Invalid temperatures should fail
         with pytest.raises(ValueError):
-            AgentConfigPayload(agent_type="writer", temperature=-0.1)
+            AgentConfigPayload(agent_type="writer", temperature=MIN_TEMPERATURE - 0.1)
         with pytest.raises(ValueError):
-            AgentConfigPayload(agent_type="writer", temperature=2.1)
+            AgentConfigPayload(agent_type="writer", temperature=MAX_TEMPERATURE + 0.1)
 
     def test_max_tokens_bounds(self):
         """Test max_tokens field bounds."""
         from app.gateway.novel_migrated.api.novel_agent_configs import AgentConfigPayload
 
         # Valid values
-        AgentConfigPayload(agent_type="writer", max_tokens=512)
-        AgentConfigPayload(agent_type="writer", max_tokens=16000)
+        AgentConfigPayload(agent_type="writer", max_tokens=MIN_MAX_TOKENS)
+        AgentConfigPayload(agent_type="writer", max_tokens=MAX_MAX_TOKENS)
 
         # Invalid values should fail
         with pytest.raises(ValueError):
-            AgentConfigPayload(agent_type="writer", max_tokens=511)
+            AgentConfigPayload(agent_type="writer", max_tokens=MIN_MAX_TOKENS - 1)
         with pytest.raises(ValueError):
-            AgentConfigPayload(agent_type="writer", max_tokens=16001)
+            AgentConfigPayload(agent_type="writer", max_tokens=MAX_MAX_TOKENS + 1)
+
+    def test_clamp_temperature(self):
+        """Test temperature clamp helper."""
+        assert _clamp_temperature(-0.5) == MIN_TEMPERATURE
+        assert _clamp_temperature(0.0) == 0.0
+        assert _clamp_temperature(1.0) == 1.0
+        assert _clamp_temperature(2.0) == 2.0
+        assert _clamp_temperature(3.0) == MAX_TEMPERATURE
+
+    def test_clamp_max_tokens(self):
+        """Test max_tokens clamp helper."""
+        assert _clamp_max_tokens(100) == MIN_MAX_TOKENS
+        assert _clamp_max_tokens(512) == 512
+        assert _clamp_max_tokens(4096) == 4096
+        assert _clamp_max_tokens(16000) == 16000
+        assert _clamp_max_tokens(20000) == MAX_MAX_TOKENS
 
     def test_system_prompt_sanitization(self):
         """Test system prompt XSS sanitization."""

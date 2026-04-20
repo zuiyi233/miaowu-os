@@ -17,6 +17,10 @@ from app.gateway.novel_migrated.api.common import get_user_id
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.models.novel_agent_config import NovelAgentType
 from app.gateway.novel_migrated.services.novel_agent_config_service import (
+    MAX_MAX_TOKENS,
+    MAX_TEMPERATURE,
+    MIN_MAX_TOKENS,
+    MIN_TEMPERATURE,
     NovelAgentConfigService,
 )
 
@@ -33,8 +37,12 @@ class AgentConfigPayload(BaseModel):
     agent_type: str = Field(..., description="Agent task type")
     provider_id: str | None = Field(None, description="AI provider ID")
     model_name: str | None = Field(None, description="Model name")
-    temperature: float | None = Field(None, ge=0.0, le=2.0, description="Temperature")
-    max_tokens: int | None = Field(None, ge=512, le=16000, description="Max tokens")
+    temperature: float | None = Field(
+        None, ge=MIN_TEMPERATURE, le=MAX_TEMPERATURE, description="Temperature"
+    )
+    max_tokens: int | None = Field(
+        None, ge=MIN_MAX_TOKENS, le=MAX_MAX_TOKENS, description="Max tokens"
+    )
     system_prompt: str | None = Field(
         None, max_length=2000, description="System prompt"
     )

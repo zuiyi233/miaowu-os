@@ -212,6 +212,24 @@ def _build_presets_from_deployed_models() -> dict[str, dict[str, Any]]:
     }
 
 
+# ==================== Parameter Bounds ====================
+
+MIN_TEMPERATURE = 0.0
+MAX_TEMPERATURE = 2.0
+MIN_MAX_TOKENS = 512
+MAX_MAX_TOKENS = 16000
+
+
+def _clamp_temperature(value: float) -> float:
+    """Clamp temperature to valid range [0.0, 2.0]."""
+    return max(MIN_TEMPERATURE, min(MAX_TEMPERATURE, value))
+
+
+def _clamp_max_tokens(value: int) -> int:
+    """Clamp max_tokens to valid range [512, 16000]."""
+    return max(MIN_MAX_TOKENS, min(MAX_MAX_TOKENS, value))
+
+
 # ==================== Default Config per Agent Type ====================
 
 DEFAULT_AGENT_CONFIGS: dict[str, dict[str, Any]] = {
@@ -300,9 +318,9 @@ class NovelAgentConfigService:
         if model_name is not None:
             config.model_name = model_name
         if temperature is not None:
-            config.temperature = max(0.0, min(2.0, temperature))
+            config.temperature = _clamp_temperature(temperature)
         if max_tokens is not None:
-            config.max_tokens = max(512, min(16000, max_tokens))
+            config.max_tokens = _clamp_max_tokens(max_tokens)
         if system_prompt is not None:
             config.system_prompt = system_prompt
         if is_enabled is not None:
