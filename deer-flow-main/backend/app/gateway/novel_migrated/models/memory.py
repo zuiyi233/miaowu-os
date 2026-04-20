@@ -1,7 +1,7 @@
 """长期记忆数据模型 - 支持向量检索和剧情分析"""
 import uuid
 
-from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.sql import func
 
 from app.gateway.novel_migrated.core.database import Base
@@ -56,7 +56,12 @@ class StoryMemory(Base):
     
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")
-    
+
+    __table_args__ = (
+        Index("idx_memory_project_type", "project_id", "memory_type"),
+        Index("idx_memory_project_timeline", "project_id", "story_timeline"),
+    )
+
     def __repr__(self):
         return f"<StoryMemory(id={self.id[:8]}, type={self.memory_type}, title={self.title})>"
     

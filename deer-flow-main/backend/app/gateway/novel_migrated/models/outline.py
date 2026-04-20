@@ -12,7 +12,7 @@ class Outline(Base):
     __tablename__ = "outlines"
     
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(200), nullable=False, comment="大纲标题")
     content = Column(Text, comment="大纲内容")
     structure = Column(Text, comment="结构化大纲数据(JSON)")

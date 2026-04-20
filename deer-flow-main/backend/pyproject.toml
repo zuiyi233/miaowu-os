@@ -6,10 +6,12 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "deerflow-harness",
+    "bcrypt>=4.2.0",
     "chromadb>=0.5.0",
     "sqlalchemy>=2.0.36",
     "aiosqlite>=0.20.0",
     "fastapi>=0.115.0",
+    "email-validator>=2.2.0",
     "httpx>=0.28.0",
     "python-multipart>=0.0.26",
     "sentence-transformers>=3.0.0",

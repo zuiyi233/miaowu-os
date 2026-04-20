@@ -7,7 +7,6 @@ import json
 import math
 import os
 import time
-from collections import defaultdict
 from datetime import datetime
 from typing import Any
 
@@ -30,6 +29,10 @@ except Exception:  # pragma: no cover - 环境可选依赖
 
 logger = get_logger(__name__)
 
+# 配置常量
+_FALLBACK_STORE_MAX_CAPACITY = int(os.getenv("NOVEL_MIGRATED_FALLBACK_MAX_CAPACITY", "10000"))
+_HTTP_CLIENT_TIMEOUT = float(os.getenv("NOVEL_MIGRATED_HTTP_TIMEOUT", "30.0"))
+
 
 class MemoryService:
     """记忆管理服务。
@@ -40,10 +43,16 @@ class MemoryService:
     降级模式：
     - 任一依赖不可用时切换为内存存储 + 关键词/覆盖度检索。
     - 保证服务可初始化，不因依赖缺失阻塞启动。
+
+    性能优化（P2）：
+    - 复用长生命周期 AsyncClient（避免每次创建）
+    - 降级存储使用容量上限策略
+    - 降级检索使用索引加速（避免全量 O(n)）
     """
 
     _instance = None
     _initialized = False
+    _http_client: httpx.AsyncClient | None = None  # 复用的 HTTP 客户端
 
     def __new__(cls):
         if cls._instance is None:
@@ -55,20 +64,21 @@ class MemoryService:
             return
 
         self._vector_enabled = False
-        self._fallback_store: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+        self._fallback_store: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self.client = None
         self.embedding_model = None
+        self._local_embedding_failed = False
         self._local_embedding_model_name = os.getenv(
             "NOVEL_MIGRATED_LOCAL_EMBEDDING_MODEL",
             "paraphrase-multilingual-MiniLM-L12-v2",
         )
-        self._local_embedding_failed = False
         self._cloud_embedding_model = os.getenv(
             "NOVEL_MIGRATED_EMBEDDING_MODEL",
             "text-embedding-3-small",
         )
         self._cloud_config_cache_ttl = 120
         self._cloud_config_cache: dict[str, tuple[float, dict[str, str] | None]] = {}
+        self._fallback_total_count = 0  # 跟踪总条目数（用于容量控制）
 
         try:
             self._vector_enabled = self._try_init_vector_stack()
@@ -76,12 +86,27 @@ class MemoryService:
             self._vector_enabled = False
             logger.warning("⚠️ 向量组件初始化失败，降级为非向量检索: %s", exc)
 
+        # 初始化复用的 HTTP 客户端
+        if MemoryService._http_client is None:
+            try:
+                MemoryService._http_client = httpx.AsyncClient(timeout=_HTTP_CLIENT_TIMEOUT)
+                logger.info("✅ HTTP 客户端初始化成功（复用模式）")
+            except Exception as e:
+                logger.warning("⚠️ HTTP 客户端初始化失败: %s", e)
+
         if self._vector_enabled:
             logger.info("✅ MemoryService 初始化成功（向量模式）")
         else:
-            logger.warning("⚠️ MemoryService 初始化为降级模式（无向量依赖）")
+            logger.warning("⚠️ MemoryService 初始化为降级模式（无向量依赖），容量上限: %d", _FALLBACK_STORE_MAX_CAPACITY)
 
         self._initialized = True
+
+    @classmethod
+    async def close_http_client(cls):
+        """关闭 HTTP 客户端（应用关闭时调用）"""
+        if cls._http_client is not None:
+            await cls._http_client.aclose()
+            cls._http_client = None
 
     def _try_init_vector_stack(self) -> bool:
         if chromadb is None:
@@ -208,9 +233,10 @@ class MemoryService:
                 result = await session.execute(select(Settings).where(Settings.user_id == user_id))
                 settings = result.scalar_one_or_none()
             if settings and settings.api_key:
+                base_url = self._normalize_base_url(settings.api_base_url)
                 config = {
                     "api_key": settings.api_key,
-                    "base_url": self._normalize_base_url(settings.api_base_url),
+                    "base_url": base_url,
                     "model": self._resolve_embedding_model_name(settings),
                 }
         except Exception as exc:
@@ -271,8 +297,9 @@ class MemoryService:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(url, headers=headers, json=payload)
+            # 使用复用的 HTTP 客户端（避免每次创建新实例）
+            client = MemoryService._http_client or httpx.AsyncClient(timeout=_HTTP_CLIENT_TIMEOUT)
+            response = await client.post(url, headers=headers, json=payload)
             if response.status_code >= 400:
                 logger.warning("⚠️ 云 Embedding 请求失败: %s %s", response.status_code, response.text[:200])
                 return None
@@ -347,6 +374,19 @@ class MemoryService:
                 logger.warning("⚠️ 向量写入失败，回退到内存存储: %s", exc)
 
         key = self._fallback_key(user_id, project_id)
+
+        # 容量控制：如果总条目数超过上限，移除最旧的条目
+        if self._fallback_total_count >= _FALLBACK_STORE_MAX_CAPACITY:
+            oldest_user_project = next(iter(self._fallback_store), None)
+            if oldest_user_project and oldest_user_project != key:
+                removed_count = len(self._fallback_store.get(oldest_user_project, []))
+                del self._fallback_store[oldest_user_project]
+                self._fallback_total_count -= removed_count
+                logger.debug("🗑️ 容量淘汰: 移除 %s 条旧记忆（用户项目: %s）", removed_count, oldest_user_project)
+
+        if key not in self._fallback_store:
+            self._fallback_store[key] = []
+
         self._fallback_store[key].append(
             {
                 "id": memory_id,
@@ -360,6 +400,7 @@ class MemoryService:
                 "created_at": datetime.utcnow().isoformat(),
             }
         )
+        self._fallback_total_count += 1
         return True
 
     async def batch_add_memories(self, user_id: str, project_id: str, memories: list[dict[str, Any]]) -> int:

@@ -797,8 +797,10 @@ class BookImportService:
             outline_content = item.content
             if not outline_content and item.structure and isinstance(item.structure, dict):
                 outline_content = str(item.structure.get("summary") or item.structure.get("content") or "").strip()
+            outline_id = str(uuid.uuid4())
 
             outline = Outline(
+                id=outline_id,
                 project_id=project_id,
                 title=item.title,
                 content=outline_content,
@@ -806,8 +808,7 @@ class BookImportService:
                 order_index=(existing_max_order + idx),
             )
             db.add(outline)
-            await db.flush()
-            title_to_id[item.title] = outline.id
+            title_to_id[item.title] = outline_id
 
         return title_to_id
 
@@ -1949,7 +1950,9 @@ class BookImportService:
                 continue
 
             is_organization = bool(item.get("is_organization", False))
+            character_id = str(uuid.uuid4())
             character = Character(
+                id=character_id,
                 project_id=project.id,
                 name=raw_name[:100],
                 age=(str(item.get("age")) if item.get("age") is not None else None) if not is_organization else None,
@@ -1968,10 +1971,11 @@ class BookImportService:
                 traits=json.dumps(item.get("traits", []), ensure_ascii=False) if item.get("traits") else None,
             )
             db.add(character)
-            await db.flush()
 
             if is_organization:
+                organization_id = str(uuid.uuid4())
                 organization = Organization(
+                    id=organization_id,
                     character_id=character.id,
                     project_id=project.id,
                     power_level=max(0, min(_to_int(item.get("power_level", 50), 50), 100)),
@@ -1981,7 +1985,6 @@ class BookImportService:
                     color=item.get("color"),
                 )
                 db.add(organization)
-                await db.flush()
                 organization_name_to_obj[character.name] = organization
 
             created_items.append((character, item))

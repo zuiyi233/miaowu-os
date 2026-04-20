@@ -213,6 +213,58 @@ async def generate_world_building_stream(
     return create_sse_response(_stream_worker(worker))
 
 
+@router.post("/api/wizard-stream/world-building/{project_id}/regenerate", summary="重新生成世界观")
+async def regenerate_world_building(
+    project_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    重新生成项目的世界观设定
+
+    当用户对当前世界观不满意时，可以调用此接口重新生成。
+    会保留项目基本信息（标题、类型等），只重新生成世界观相关字段。
+    """
+    user_id = get_user_id(request)
+    project = await verify_project_access(project_id, user_id, db)
+
+    async def worker(progress_callback: Callable[[str, int, str], Awaitable[None]]) -> dict[str, Any]:
+        await progress_callback("开始重新生成世界观...", 5, "processing")
+
+        # 重置世界观相关字段
+        project.world_time_period = None
+        project.world_location = None
+        project.world_atmosphere = None
+        project.world_rules = None
+        await db.flush()
+
+        # 调用现有的世界生成服务
+        await book_import_service._generate_world_building_from_project(  # noqa: SLF001
+            db=db,
+            user_id=user_id,
+            project=project,
+            progress_callback=progress_callback,
+            progress_range=(10, 88),
+            raise_on_error=True,
+        )
+
+        await db.commit()
+
+        logger.info(f"用户 {user_id} 重新生成了项目 {project_id} 的世界观")
+
+        return {
+            "project_id": project.id,
+            "regenerated": True,
+            "time_period": project.world_time_period or "",
+            "location": project.world_location or "",
+            "atmosphere": project.world_atmosphere or "",
+            "rules": project.world_rules or "",
+            "message": "世界观重新生成成功",
+        }
+
+    return create_sse_response(_stream_worker(worker))
+
+
 @router.post("/api/wizard-stream/career-system", summary="流式生成职业体系")
 async def generate_career_system_stream(
     payload: CareerSystemStreamRequest,

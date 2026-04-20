@@ -515,25 +515,38 @@ class ForeshadowService:
             
             result = await db.execute(query)
             analyses = result.scalars().all()
+
+            chapter_ids = {
+                analysis.chapter_id
+                for analysis in analyses
+                if analysis.chapter_id and analysis.foreshadows
+            }
+            chapter_map: dict[str, int] = {}
+            if chapter_ids:
+                chapter_result = await db.execute(
+                    select(Chapter.id, Chapter.chapter_number).where(
+                        and_(
+                            Chapter.project_id == project_id,
+                            Chapter.id.in_(chapter_ids),
+                        )
+                    )
+                )
+                chapter_map = {row[0]: int(row[1] or 0) for row in chapter_result.all()}
             
             for analysis in analyses:
                 if not analysis.foreshadows:
                     continue
-                
-                # 获取章节信息
-                chapter_result = await db.execute(
-                    select(Chapter).where(Chapter.id == analysis.chapter_id)
-                )
-                chapter = chapter_result.scalar_one_or_none()
-                if not chapter:
+
+                chapter_number = chapter_map.get(analysis.chapter_id)
+                if chapter_number is None:
                     continue
                 
                 # 委托给统一的处理方法
                 chapter_stats = await self.auto_update_from_analysis(
                     db=db,
                     project_id=project_id,
-                    chapter_id=chapter.id,
-                    chapter_number=chapter.chapter_number,
+                    chapter_id=analysis.chapter_id,
+                    chapter_number=chapter_number,
                     analysis_foreshadows=analysis.foreshadows
                 )
                 
@@ -600,17 +613,30 @@ class ForeshadowService:
         current_chapter: int
     ) -> list[Foreshadow]:
         """
-        获取超期未回收的伏笔
-        
-        Args:
-            db: 数据库会话
-            project_id: 项目ID
-            current_chapter: 当前章节号
-        
-        Returns:
-            超期伏笔列表
+        获取超期未回收的伏笔（SQL COUNT 优化版）
+
+        使用 SQL COUNT 而非 Python len() 统计，避免全量加载。
         """
         try:
+            # 先用 COUNT 查询数量（性能优化）
+            count_query = (
+                select(func.count(Foreshadow.id))
+                .where(
+                    and_(
+                        Foreshadow.project_id == project_id,
+                        Foreshadow.status == "planted",
+                        Foreshadow.target_resolve_chapter_number.is_not(None),
+                        Foreshadow.target_resolve_chapter_number < current_chapter
+                    )
+                )
+            )
+            count_result = await db.execute(count_query)
+            overdue_count = count_result.scalar() or 0
+
+            if overdue_count == 0:
+                return []
+
+            # 只在有数据时执行完整查询
             query = (
                 select(Foreshadow)
                 .where(
@@ -623,10 +649,10 @@ class ForeshadowService:
                 )
                 .order_by(Foreshadow.target_resolve_chapter_number)
             )
-            
+
             result = await db.execute(query)
             return list(result.scalars().all())
-            
+
         except Exception as e:
             logger.error(f"❌ 获取超期伏笔失败: {str(e)}")
             return []
@@ -870,8 +896,17 @@ class ForeshadowService:
             # 超期数量
             overdue_count = 0
             if current_chapter:
-                overdue = await self.get_overdue_foreshadows(db, project_id, current_chapter)
-                overdue_count = len(overdue)
+                overdue_count_result = await db.execute(
+                    select(func.count(Foreshadow.id)).where(
+                        and_(
+                            Foreshadow.project_id == project_id,
+                            Foreshadow.status.in_(["planted", "partially_resolved"]),
+                            Foreshadow.target_resolve_chapter_number.is_not(None),
+                            Foreshadow.target_resolve_chapter_number < current_chapter,
+                        )
+                    )
+                )
+                overdue_count = overdue_count_result.scalar() or 0
             
             return {
                 "total": total,
@@ -1026,17 +1061,16 @@ class ForeshadowService:
                 conditions.append(Foreshadow.source_type == "analysis")
             
             # 查询要删除的伏笔
-            query = select(Foreshadow).where(and_(*conditions))
+            query = select(Foreshadow.id, Foreshadow.title).where(and_(*conditions))
             result = await db.execute(query)
-            foreshadows_to_delete = result.scalars().all()
-            
-            deleted_count = len(foreshadows_to_delete)
-            deleted_ids = [f.id for f in foreshadows_to_delete]
-            deleted_titles = [f.title for f in foreshadows_to_delete]
-            
-            # 执行删除
-            for foreshadow in foreshadows_to_delete:
-                await db.delete(foreshadow)
+            rows_to_delete = result.all()
+
+            deleted_count = len(rows_to_delete)
+            deleted_ids = [row[0] for row in rows_to_delete]
+            deleted_titles = [row[1] for row in rows_to_delete]
+
+            if deleted_ids:
+                await db.execute(delete(Foreshadow).where(Foreshadow.id.in_(deleted_ids)))
             
             await db.commit()
             
@@ -1083,7 +1117,7 @@ class ForeshadowService:
         """
         try:
             # 步骤1: 删除在本章埋入的分析伏笔
-            query = select(Foreshadow).where(
+            query = select(Foreshadow.id).where(
                 and_(
                     Foreshadow.project_id == project_id,
                     Foreshadow.source_type == "analysis",
@@ -1092,13 +1126,11 @@ class ForeshadowService:
             )
             
             result = await db.execute(query)
-            foreshadows_to_clean = result.scalars().all()
-            
-            cleaned_count = len(foreshadows_to_clean)
-            cleaned_ids = [f.id for f in foreshadows_to_clean]
-            
-            for foreshadow in foreshadows_to_clean:
-                await db.delete(foreshadow)
+            cleaned_ids = [row[0] for row in result.all()]
+            cleaned_count = len(cleaned_ids)
+
+            if cleaned_ids:
+                await db.execute(delete(Foreshadow).where(Foreshadow.id.in_(cleaned_ids)))
             
             # 步骤2: 回退在本章被回收的伏笔（恢复为 planted 状态）
             reverted_count = await self._revert_chapter_resolutions(db, project_id, chapter_id)
@@ -1336,9 +1368,6 @@ class ForeshadowService:
                             if fs_data.get("content"):
                                 existing.resolution_text = fs_data.get("content")
                             
-                            await db.flush()
-                            await db.refresh(existing)
-                            
                             stats["resolved_count"] += 1
                             stats["updated_ids"].append(existing.id)
                             if matched_by_content:
@@ -1408,7 +1437,6 @@ class ForeshadowService:
                                 existing_fs.target_resolve_chapter_number = fs_data.get("estimated_resolve_chapter")
                             # 更新为稳定的source_memory_id
                             existing_fs.source_memory_id = source_memory_id
-                            await db.flush()
                             stats["updated_ids"].append(existing_fs.id)
                             logger.info(f"📝 更新已存在伏笔（避免重复）: {fs_title} (ID: {existing_fs.id})")
                         else:
@@ -1443,7 +1471,6 @@ class ForeshadowService:
                             )
                             
                             db.add(new_foreshadow)
-                            await db.flush()
                             
                             stats["planted_count"] += 1
                             stats["created_count"] += 1
@@ -1513,7 +1540,6 @@ class ForeshadowService:
                     fs.status = "planted"
                     fs.plant_chapter_id = chapter_id
                     fs.planted_at = datetime.now()
-                    await db.flush()
                     
                     stats["planted_count"] += 1
                     stats["planted_ids"].append(fs.id)

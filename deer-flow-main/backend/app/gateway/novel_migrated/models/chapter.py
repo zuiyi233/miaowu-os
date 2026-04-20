@@ -1,7 +1,7 @@
 """章节数据模型"""
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.sql import func
 
 from app.gateway.novel_migrated.core.database import Base
@@ -12,7 +12,7 @@ class Chapter(Base):
     __tablename__ = "chapters"
     
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     chapter_number = Column(Integer, nullable=False, comment="章节序号")
     title = Column(String(200), nullable=False, comment="章节标题")
     content = Column(Text, comment="章节内容")
@@ -29,6 +29,12 @@ class Chapter(Base):
     
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")
+
+    __table_args__ = (
+        Index("idx_chapter_project_number", "project_id", "chapter_number"),
+        Index("idx_chapter_project_status", "project_id", "status"),
+        Index("idx_chapter_outline", "outline_id", "sub_index"),
+    )
     
     def __repr__(self):
         return f"<Chapter(id={self.id}, chapter_number={self.chapter_number}, title={self.title}, outline_id={self.outline_id})>"

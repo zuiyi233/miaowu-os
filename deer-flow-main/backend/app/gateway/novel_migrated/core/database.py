@@ -7,6 +7,7 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
+from sqlalchemy import text
 
 Base = declarative_base()
 
@@ -21,7 +22,23 @@ engine = create_async_engine(
     DATABASE_URL,
     future=True,
     echo=False,
+    connect_args={
+        "check_same_thread": False,
+    },
 )
+
+_WAL_INITIALIZED = False
+
+
+async def _ensure_wal_and_pragma(conn) -> None:
+    global _WAL_INITIALIZED
+    if _WAL_INITIALIZED:
+        return
+    await conn.execute(text("PRAGMA journal_mode=WAL"))
+    await conn.execute(text("PRAGMA synchronous=NORMAL"))
+    await conn.execute(text("PRAGMA cache_size=-64000"))
+    await conn.execute(text("PRAGMA foreign_keys=ON"))
+    _WAL_INITIALIZED = True
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
@@ -42,21 +59,30 @@ async def init_db_schema() -> None:
 
     # Ensure all mapped tables are registered on Base.metadata before create_all.
     from app.gateway.novel_migrated.models import (  # noqa: F401
+        ai_metric,
+        analysis_task,
+        batch_generation_task,
         career,
         chapter,
         character,
         foreshadow,
+        generation_history,
         mcp_plugin,
         memory,
         outline,
         project,
         project_default_style,
+        prompt_template,
+        prompt_workshop,  # 新增：提示词工坊模型
+        regeneration_task,
         relationship,
         settings,
+        user,  # 新增：用户模型
         writing_style,
     )
 
     async with engine.begin() as conn:
+        await _ensure_wal_and_pragma(conn)
         await conn.run_sync(Base.metadata.create_all)
     _schema_initialized = True
 

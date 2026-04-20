@@ -21,7 +21,22 @@ _OPTIONAL_ROUTER_MODULES = (
     "app.gateway.novel_migrated.api.novel_stream",
     "app.gateway.novel_migrated.api.project_covers",
     "app.gateway.novel_migrated.api.book_import",
+    "app.gateway.novel_migrated.api.settings",
     "app.gateway.novel_migrated.api.user_settings",
+    "app.gateway.novel_migrated.api.chapters",
+    "app.gateway.novel_migrated.api.outlines",
+    "app.gateway.novel_migrated.api.characters",
+    "app.gateway.novel_migrated.api.projects",
+    "app.gateway.novel_migrated.api.mcp_plugins",
+    "app.gateway.novel_migrated.api.relationships",
+    "app.gateway.novel_migrated.api.organizations",
+    "app.gateway.novel_migrated.api.polish",
+    "app.gateway.novel_migrated.api.writing_styles",
+    # ========== 新增模块（P2 补齐） ==========
+    "app.gateway.novel_migrated.api.prompt_templates",
+    "app.gateway.novel_migrated.api.prompt_workshop",
+    "app.gateway.novel_migrated.api.admin",
+    "app.gateway.novel_migrated.api.changelog",
 )
 
 
@@ -35,6 +50,23 @@ def _include_optional_router(module_path: str) -> bool:
     except ModuleNotFoundError as exc:
         missing_name = exc.name or "<unknown>"
         logger.warning("Skip optional router %s: missing module dependency %s", module_path, missing_name)
+        return False
+    except ImportError as exc:
+        logger.warning(
+            "Skip optional router %s: import failed (%s: %s)",
+            module_path,
+            type(exc).__name__,
+            exc,
+        )
+        return False
+    except Exception as exc:  # pragma: no cover - 启动期兜底保护
+        logger.warning(
+            "Skip optional router %s: unexpected import error (%s: %s)",
+            module_path,
+            type(exc).__name__,
+            exc,
+            exc_info=True,
+        )
         return False
 
     module_router = getattr(module, "router", None)

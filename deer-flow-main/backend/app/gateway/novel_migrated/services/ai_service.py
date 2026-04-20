@@ -4,11 +4,19 @@
 1. 复用 deerflow 的模型配置中心与模型工厂，不维护第二套模型配置。
 2. 对外兼容参考实现最常用接口：AIService/create_user_ai_service/generate_text_stream。
 3. 在可用时桥接 MCP 工具加载（读取 extensions_config），不可用时自动降级。
+
+增强功能（P2 补齐）：
+4. 模型实例缓存（按 model_name），避免重复创建
+5. _handle_tool_calls 循环支持（参考项目兼容）
+6. 调用统计构建与日志输出（性能监控）
 """
 
 from __future__ import annotations
 
 import json
+import threading
+import time
+from collections import defaultdict
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any
@@ -22,6 +30,92 @@ from deerflow.config import get_app_config
 from deerflow.models import create_chat_model
 
 logger = get_logger(__name__)
+
+
+# ==================== 模型实例缓存 ====================
+
+_model_cache: dict[str, Any] = {}
+_model_cache_stats: dict[str, dict] = defaultdict(lambda: {"hits": 0, "misses": 0, "created_at": 0})
+_model_cache_lock = threading.Lock()
+
+
+def _get_cached_model(model_name: str) -> Any:
+    """
+    获取缓存的模型实例
+    
+    使用说明：
+    - 按 model_name 缓存模型实例，避免重复创建
+    - 缓存命中时直接返回，未命中时创建并缓存
+    - 适用于高频调用的场景（如批量章节生成）
+    - 线程安全：使用 threading.Lock 保护所有缓存操作
+    """
+    with _model_cache_lock:
+        if model_name in _model_cache:
+            _model_cache_stats[model_name]["hits"] += 1
+            return _model_cache[model_name]
+
+        _model_cache_stats[model_name]["misses"] += 1
+        model = create_chat_model(name=model_name)
+        _model_cache[model_name] = model
+        _model_cache_stats[model_name]["created_at"] = time.time()
+        logger.info("📦 模型缓存未命中，创建新实例: %s", model_name)
+        return model
+
+
+def clear_model_cache() -> None:
+    """清空模型缓存（用于配置变更后刷新）"""
+    global _model_cache, _model_cache_stats
+    with _model_cache_lock:
+        count = len(_model_cache)
+        _model_cache.clear()
+        _model_cache_stats.clear()
+    logger.info("🗑️ 已清空模型缓存（共 %s 个实例）", count)
+
+
+def get_model_cache_stats() -> dict:
+    """获取模型缓存统计信息"""
+    with _model_cache_lock:
+        return {
+            "cache_size": len(_model_cache),
+            "models": {name: stats.copy() for name, stats in _model_cache_stats.items()},
+        }
+
+
+# ==================== 调用统计 ====================
+
+_call_stats: dict[str, dict] = defaultdict(
+    lambda: {
+        "total_calls": 0,
+        "total_time_ms": 0,
+        "success_count": 0,
+        "error_count": 0,
+        "avg_time_ms": 0,
+    }
+)
+
+
+def record_call(model_name: str, success: bool, elapsed_ms: float) -> None:
+    """
+    记录 AI 调用统计
+    
+    Args:
+        model_name: 模型名称
+        success: 是否成功
+        elapsed_ms: 耗时（毫秒）
+    """
+    stats = _call_stats[model_name]
+    stats["total_calls"] += 1
+    stats["total_time_ms"] += elapsed_ms
+    if success:
+        stats["success_count"] += 1
+    else:
+        stats["error_count"] += 1
+    stats["avg_time_ms"] = round(stats["total_time_ms"] / stats["total_calls"], 2)
+
+
+def get_call_stats() -> dict:
+    """获取调用统计"""
+    return {name: stats.copy() for name, stats in _call_stats.items()}
 
 
 def normalize_provider(provider: str | None) -> str | None:
@@ -161,36 +255,221 @@ class AIService:
         **_: Any,
     ) -> dict[str, Any]:
         """非流式文本生成，返回与历史接口兼容的 dict。"""
+        start_time = time.time()
         model_name = self._resolve_model_name(model)
-        llm = create_chat_model(name=model_name)
-        llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
+        try:
+            llm = _get_cached_model(model_name)  # 使用缓存
+            llm = self._apply_runtime_params(llm, temperature, max_tokens)
+
+            logger.info(
+                "generate_text: model=%s, temperature=%s, max_tokens=%s",
+                model_name,
+                llm.temperature if hasattr(llm, "temperature") else "N/A",
+                llm.max_tokens if hasattr(llm, "max_tokens") else "N/A",
+            )
+
+            tools = await self._prepare_mcp_tools(auto_mcp=auto_mcp)
+            if tools:
+                try:
+                    llm = llm.bind_tools(tools)
+                except Exception as exc:
+                    logger.warning("⚠️ 当前模型不支持 bind_tools，忽略 MCP 工具: %s", exc)
+
+            messages = self._build_messages(prompt, system_prompt)
+            response = await llm.ainvoke(messages)
+
+            content = response.content if hasattr(response, "content") else str(response)
+            if isinstance(content, list):
+                content = "".join(str(part) for part in content)
+
+            tool_calls = getattr(response, "tool_calls", None) or []
+
+            # 处理 tool_calls 循环（参考项目兼容）
+            if tool_calls and tools:
+                content, tool_calls = await self._handle_tool_calls_loop(
+                    messages, response, tools, llm, max_iterations=5
+                )
+
+            elapsed_ms = (time.time() - start_time) * 1000
+            record_call(model_name, success=True, elapsed_ms=elapsed_ms)
+
+            return {
+                "content": str(content),
+                "finish_reason": "stop" if not tool_calls else "tool_calls",
+                "tool_calls": tool_calls,
+            }
+
+        except Exception as exc:
+            elapsed_ms = (time.time() - start_time) * 1000
+            record_call(model_name, success=False, elapsed_ms=elapsed_ms)
+            logger.error("❌ generate_text 失败: %s", exc, exc_info=True)
+            raise
+
+    async def _handle_tool_calls_loop(
+        self,
+        messages: list[Any],
+        last_response: Any,
+        tools: list[Any],
+        llm: Any,
+        max_iterations: int = 5,
+    ) -> tuple[str, list]:
+        """
+        处理 tool_calls 循环（真实执行版）
+
+        当模型返回 tool_calls 时：
+        1. 在已绑定的工具中查找对应名称的工具
+        2. 执行工具并获取真实结果
+        3. 将 ToolMessage 回填给模型继续推理
+        4. 重复直到模型完成或达到最大迭代次数
+
+        Args:
+            messages: 原始消息列表
+            last_response: 上一次模型响应
+            tools: 工具列表（LangChain Tool 对象）
+            llm: 模型实例
+            max_iterations: 最大迭代次数（默认5次，防止无限循环）
+
+        Returns:
+            (最终文本内容, 所有工具调用记录)
+        """
+        from langchain_core.messages import ToolMessage
+
+        all_tool_calls = []
+        current_messages = messages + [last_response]
+        iteration_stats = {
+            "total_iterations": 0,
+            "successful_calls": 0,
+            "failed_calls": 0,
+            "total_execution_time_ms": 0,
+        }
+
+        for iteration in range(max_iterations):
+            tool_calls = getattr(last_response, "tool_calls", None) or []
+            if not tool_calls:
+                break
+
+            iteration_stats["total_iterations"] = iteration + 1
+            all_tool_calls.extend(tool_calls)
+            logger.info(
+                "🔧 第 %s 次工具调用循环，共 %s 个工具需要执行",
+                iteration + 1,
+                len(tool_calls),
+            )
+
+            # 执行每个工具调用
+            for tool_call in tool_calls:
+                start_time = time.time()
+                tool_name = tool_call.get("name", "unknown")
+                tool_args = tool_call.get("args", {})
+                tool_id = tool_call.get("id", f"call_{iteration}_{tool_name}")
+
+                try:
+                    # 在已绑定工具中查找并执行
+                    tool_result = await self._execute_tool_call(
+                        tool_name=tool_name,
+                        tool_args=tool_args,
+                        tools=tools,
+                    )
+
+                    execution_time_ms = (time.time() - start_time) * 1000
+                    iteration_stats["successful_calls"] += 1
+                    iteration_stats["total_execution_time_ms"] += execution_time_ms
+
+                    logger.info(
+                        "✅ 工具 [%s] 执行成功 (耗时 %.0fms): %s",
+                        tool_name,
+                        execution_time_ms,
+                        str(tool_result)[:100] + ("..." if len(str(tool_result)) > 100 else ""),
+                    )
+
+                    current_messages.append(
+                        ToolMessage(content=str(tool_result), tool_call_id=tool_id)
+                    )
+
+                except Exception as exc:
+                    execution_time_ms = (time.time() - start_time) * 1000
+                    iteration_stats["failed_calls"] += 1
+                    iteration_stats["total_execution_time_ms"] += execution_time_ms
+
+                    error_msg = f"Error executing {tool_name}: {str(exc)}"
+                    logger.warning(
+                        "❌ 工具 [%s] 执行失败 (耗时 %.0fms): %s",
+                        tool_name,
+                        execution_time_ms,
+                        str(exc),
+                    )
+
+                    current_messages.append(
+                        ToolMessage(content=error_msg, tool_call_id=tool_id)
+                    )
+
+            # 再次调用模型，继续推理
+            last_response = await llm.ainvoke(current_messages)
+
+        # 输出统计日志
         logger.info(
-            "generate_text: model=%s, temperature=%s, max_tokens=%s",
-            model_name,
-            llm.temperature if hasattr(llm, "temperature") else "N/A",
-            llm.max_tokens if hasattr(llm, "max_tokens") else "N/A",
+            "📊 工具调用循环完成: %s 次迭代, %s 成功/%s 失败, 总耗时 %.0fms",
+            iteration_stats["total_iterations"],
+            iteration_stats["successful_calls"],
+            iteration_stats["failed_calls"],
+            iteration_stats["total_execution_time_ms"],
         )
 
-        tools = await self._prepare_mcp_tools(auto_mcp=auto_mcp)
-        if tools:
-            try:
-                llm = llm.bind_tools(tools)
-            except Exception as exc:
-                logger.warning("⚠️ 当前模型不支持 bind_tools，忽略 MCP 工具: %s", exc)
-
-        messages = self._build_messages(prompt, system_prompt)
-        response = await llm.ainvoke(messages)
-
-        content = response.content if hasattr(response, "content") else str(response)
+        content = getattr(last_response, "content", "")
         if isinstance(content, list):
             content = "".join(str(part) for part in content)
 
-        return {
-            "content": str(content),
-            "finish_reason": "stop",
-            "tool_calls": getattr(response, "tool_calls", None) or [],
-        }
+        return str(content), all_tool_calls
+
+    async def _execute_tool_call(
+        self,
+        tool_name: str,
+        tool_args: dict,
+        tools: list[Any],
+    ) -> Any:
+        """
+        执行单个工具调用
+
+        在已绑定的 LangChain 工具列表中查找匹配的工具并执行。
+
+        Args:
+            tool_name: 工具名称（来自模型的 tool_call.name）
+            tool_args: 工具参数（来自模型的 tool_call.args）
+            tools: 已绑定的 LangChain Tool 对象列表
+
+        Returns:
+            Any: 工具执行结果
+
+        Raises:
+            ValueError: 未找到匹配的工具
+            Exception: 工具执行过程中的异常
+        """
+        if not tools:
+            raise ValueError("没有可用的工具")
+
+        # 在工具列表中查找匹配的工具
+        target_tool = None
+        for tool in tools:
+            if hasattr(tool, 'name') and tool.name == tool_name:
+                target_tool = tool
+                break
+            elif hasattr(tool, '__name__') and tool.__name__ == tool_name:
+                target_tool = tool
+                break
+
+        if target_tool is None:
+            raise ValueError(f"未找到名为 '{tool_name}' 的工具。可用工具: {[getattr(t, 'name', 'unknown') for t in tools]}")
+
+        # 执行工具
+        if hasattr(target_tool, 'ainvoke'):
+            result = await target_tool.ainvoke(tool_args)
+        elif callable(target_tool):
+            result = target_tool(tool_args)
+        else:
+            raise ValueError(f"工具 '{tool_name}' 不可调用")
+
+        return result
 
     async def generate_text_stream(
         self,
@@ -205,7 +484,7 @@ class AIService:
     ) -> AsyncGenerator[str, None]:
         """流式文本生成；保持与 careers/memories/plot_analyzer 调用兼容。"""
         model_name = self._resolve_model_name(model)
-        llm = create_chat_model(name=model_name)
+        llm = _get_cached_model(model_name)  # 使用缓存
         llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
         logger.info(
@@ -246,8 +525,9 @@ class AIService:
         **_: Any,
     ) -> dict[str, Any]:
         """非流式文本生成（messages数组直传版本）。"""
+        start_time = time.time()
         model_name = self._resolve_model_name(model)
-        llm = create_chat_model(name=model_name)
+        llm = _get_cached_model(model_name)  # 使用缓存
         llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
         tools = await self._prepare_mcp_tools(auto_mcp=auto_mcp)
@@ -264,10 +544,20 @@ class AIService:
         if isinstance(content, list):
             content = "".join(str(part) for part in content)
 
+        # 处理 tool_calls 循环（与 generate_text 保持一致）
+        tool_calls = getattr(response, "tool_calls", None) or []
+        if tool_calls and tools:
+            content, tool_calls = await self._handle_tool_calls_loop(
+                langchain_messages, response, tools, llm, max_iterations=5
+            )
+
+        elapsed_ms = (time.time() - start_time) * 1000
+        record_call(model_name, success=True, elapsed_ms=elapsed_ms)
+
         return {
             "content": str(content),
-            "finish_reason": "stop",
-            "tool_calls": getattr(response, "tool_calls", None) or [],
+            "finish_reason": "stop" if not tool_calls else "tool_calls",
+            "tool_calls": tool_calls,
         }
 
     async def generate_text_stream_with_messages(
@@ -282,7 +572,7 @@ class AIService:
     ) -> AsyncGenerator[str, None]:
         """流式文本生成（messages数组直传版本）。"""
         model_name = self._resolve_model_name(model)
-        llm = create_chat_model(name=model_name)
+        llm = _get_cached_model(model_name)  # 使用缓存
         llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
         tools = await self._prepare_mcp_tools(auto_mcp=auto_mcp)

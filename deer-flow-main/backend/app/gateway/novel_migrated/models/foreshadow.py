@@ -1,7 +1,7 @@
 """伏笔管理数据模型 - 独立管理小说伏笔的埋入和回收"""
 import uuid
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.sql import func
 
 from app.gateway.novel_migrated.core.database import Base
@@ -85,6 +85,12 @@ class Foreshadow(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")
     planted_at = Column(DateTime, comment="埋入时间")
     resolved_at = Column(DateTime, comment="回收时间")
+
+    __table_args__ = (
+        Index("idx_foreshadow_project_status", "project_id", "status"),
+        Index("idx_foreshadow_project_plant_chapter", "project_id", "plant_chapter_number"),
+        Index("idx_foreshadow_project_target_resolve", "project_id", "target_resolve_chapter_number"),
+    )
     
     def __repr__(self):
         return f"<Foreshadow(id={self.id[:8]}, title={self.title}, status={self.status})>"
