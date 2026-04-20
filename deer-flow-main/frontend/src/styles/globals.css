@@ -144,6 +144,30 @@
       transform: rotate(20deg);
     }
   }
+
+  --animate-fade-up: fade-up 1s cubic-bezier(0.215, 0.61, 0.355, 1) both;
+  @keyframes fade-up {
+    0% {
+      opacity: 0;
+      transform: translateY(30px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  --animate-scale-in: scale-in 1s cubic-bezier(0.215, 0.61, 0.355, 1) both;
+  @keyframes scale-in {
+    0% {
+      opacity: 0;
+      transform: scale(0.5);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
 }
 
 @theme inline {

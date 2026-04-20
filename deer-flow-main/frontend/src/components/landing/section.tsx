@@ -1,29 +1,39 @@
 import { cn } from "@/lib/utils";
 
 export function Section({
-  className,
   title,
   subtitle,
   children,
+  className,
 }: {
-  className?: string;
-  title: React.ReactNode;
+  title?: React.ReactNode;
   subtitle?: React.ReactNode;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <section className={cn("mx-auto flex flex-col py-16", className)}>
-      <header className="flex flex-col items-center justify-between">
-        <div className="mb-4 bg-linear-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-center text-5xl font-bold text-transparent">
-          {title}
-        </div>
-        {subtitle && (
-          <div className="text-muted-foreground text-center text-xl">
-            {subtitle}
-          </div>
+    <section
+      className={cn(
+        "relative w-full py-20",
+        className,
+      )}
+    >
+      {/* Section separator - subtle glow line */}
+      <div className="pointer-events-none absolute top-0 left-1/2 h-px w-1/2 -translate-x-1/2 bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+
+      <div className="container-md relative mx-auto px-4 md:px-20">
+        {title && (
+          <h2 className="text-center text-3xl font-bold text-white/90">
+            {title}
+          </h2>
         )}
-      </header>
-      <main className="mt-4">{children}</main>
+        {subtitle && (
+          <p className="text-muted-foreground mt-2 text-center text-lg">
+            {subtitle}
+          </p>
+        )}
+        {children}
+      </div>
     </section>
   );
 }
