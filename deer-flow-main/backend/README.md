@@ -136,8 +136,12 @@ FastAPI application providing REST endpoints for frontend integration:
 - If `DEERFLOW_AI_PROVIDER_API_TOKEN` is configured, callers must provide `Authorization: Bearer <token>`.
 - If token is not configured, only loopback requests are allowed by default.
 - Request rate is limited by `DEERFLOW_AI_PROVIDER_RATE_LIMIT_PER_MINUTE` (default `30`).
-- `POST /api/ai/chat` now includes lightweight intent recognition for novel creation. When "create novel" intent is detected, the gateway executes creation directly (prefers `/projects`, falls back to legacy `/api/novels`) and returns `tool_calls` metadata.
-- Side-effect intent responses set `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches create actions.
+- `POST /api/ai/chat` includes session-based intent middleware for novel workflows and currently supports two conversation tracks:
+  - Novel creation session: guided field collection (title/genre/theme/audience/target_words), then persistence only after explicit confirmation.
+  - Novel lifecycle management session: project/chapter/outline/character/relationship/organization/item mapping operations inside the same conversational flow.
+- For side-effect actions (create/update/delete and other writes), the middleware requires explicit confirmation before execution.
+- During intent sessions, skill context is loaded strictly from enabled entries in `extensions_config.json` (prioritized by novel relevance), and users can send `技能推荐` to force-refresh suggestions.
+- Guided/side-effect intent responses set `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches these intent-session workflow responses.
 
 ### IM Channels
 

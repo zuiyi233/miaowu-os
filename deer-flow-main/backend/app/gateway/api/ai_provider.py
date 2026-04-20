@@ -232,17 +232,33 @@ async def chat_endpoint(
         if body.provider_config.api_key:
             logger.warning("Deprecated field provider_config.api_key was provided and ignored for /api/ai/chat")
 
-        intent_result = await _INTENT_RECOGNITION_MIDDLEWARE.process_request(
-            request=body,
-            user_id=get_request_user_id(request),
-            db_session=getattr(ai_service, "db_session", None),
-        )
-        if intent_result.handled:
+        try:
+            intent_result = await _INTENT_RECOGNITION_MIDDLEWARE.process_request(
+                request=body,
+                user_id=get_request_user_id(request),
+                db_session=getattr(ai_service, "db_session", None),
+                ai_service=ai_service,
+            )
+        except Exception as exc:
+            logger.error("Intent recognition failed: %s", exc)
+            error_payload: dict[str, Any] = {
+                "content": "意图识别服务暂时不可用，请稍后重试。"
+            }
+            if body.stream:
+                return _build_streaming_response(
+                    _stream_single_payload(error_payload),
+                    extra_headers=_ACTION_RESPONSE_HEADERS,
+                )
+            return JSONResponse(content=error_payload, headers=_ACTION_RESPONSE_HEADERS.copy())
+
+        if intent_result and intent_result.handled:
             payload: dict[str, Any] = {"content": intent_result.content}
             if intent_result.tool_calls:
                 payload["tool_calls"] = intent_result.tool_calls
             if intent_result.novel:
                 payload["novel"] = intent_result.novel
+            if intent_result.session:
+                payload["session"] = intent_result.session
 
             if body.stream:
                 return _build_streaming_response(

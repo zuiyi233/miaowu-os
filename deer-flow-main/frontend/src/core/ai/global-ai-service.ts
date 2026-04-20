@@ -444,10 +444,18 @@ export class GlobalAiService {
         }
       }
 
+      const requestContext = options.novelId
+        ? {
+            ...(options.context ?? {}),
+            novelId: options.novelId,
+            novel_id: options.novelId,
+          }
+        : options.context;
+
       const requestBody = {
         messages,
         stream,
-        context: options.context,
+        context: requestContext,
         provider_config: {
           provider: provider!.provider,
           base_url: provider!.baseUrl,

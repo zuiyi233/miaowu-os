@@ -229,8 +229,12 @@ FastAPI application on port 8001 with health check at `GET /health`.
 - If `DEERFLOW_AI_PROVIDER_API_TOKEN` is set, callers must provide `Authorization: Bearer <token>`.
 - If token is unset, endpoints are loopback-only by default.
 - Request throttling is enforced via `DEERFLOW_AI_PROVIDER_RATE_LIMIT_PER_MINUTE` (default `30`).
-- `POST /api/ai/chat` includes intent recognition middleware for novel-creation commands. On hit, gateway executes novel creation directly (prefer `novel_migrated /projects`, fallback legacy `/api/novels`) and returns `tool_calls` metadata.
-- Intent-triggered side-effect responses include `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches create actions.
+- `POST /api/ai/chat` includes session-based intent middleware for novel workflows with two active tracks:
+  - Novel creation session: guided field collection (title/genre/theme/audience/target_words), then persistence only after explicit confirmation.
+  - Novel lifecycle management session: project/chapter/outline/character/relationship/organization/item mapping operations in a conversational session.
+- Side-effect actions (create/update/delete and other writes) require explicit confirmation before execution.
+- Intent-session skill loading follows enabled states in `extensions_config.json` (ranked by novel relevance), and `技能推荐` can force a refresh.
+- Intent workflow responses include `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches these session replies.
 
 Novel Migrated Wave1+Wave2 APIs are registered through `app.gateway.routers.novel_migrated`, which is added to `CORE_ROUTER_MODULES` in `app/gateway/app.py`. That aggregator conditionally includes `app.gateway.novel_migrated.api.careers`, `app.gateway.novel_migrated.api.foreshadows`, `app.gateway.novel_migrated.api.memories`, `app.gateway.novel_migrated.api.inspiration`, `app.gateway.novel_migrated.api.wizard_stream`, `app.gateway.novel_migrated.api.novel_stream`, `app.gateway.novel_migrated.api.project_covers`, and `app.gateway.novel_migrated.api.book_import` when those modules exist.
 

@@ -29,6 +29,7 @@ class ChapterCreateRequest(BaseModel):
     summary: str = ""
     content: str = ""
     outline_id: Optional[str] = None
+    chapter_number: Optional[int] = Field(default=None, ge=1)
     sub_index: Optional[int] = None
     expansion_plan: Optional[str] = None
 
