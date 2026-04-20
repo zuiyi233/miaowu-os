@@ -1,5 +1,3 @@
-import os
-
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -10,7 +8,13 @@ class _FakeAiService:
     async def generate_text(self, *args, **kwargs):
         return {"content": "ok"}
 
+    async def generate_text_with_messages(self, *args, **kwargs):
+        return {"content": "ok"}
+
     async def generate_text_stream(self, *args, **kwargs):
+        yield "ok"
+
+    async def generate_text_stream_with_messages(self, *args, **kwargs):
         yield "ok"
 
 
@@ -83,4 +87,3 @@ def test_chat_rate_limit(monkeypatch):
     assert first.json()["content"] == "ok"
     assert second.status_code == 429
     assert "Rate limit exceeded" in second.json()["detail"]
-

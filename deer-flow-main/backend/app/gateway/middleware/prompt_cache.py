@@ -149,6 +149,9 @@ class PromptCacheMiddleware(BaseHTTPMiddleware):
                 if isinstance(response, StreamingResponse):
                     logger.debug("Bypassing cache for streaming response key %s", cache_key[:16])
                     return response
+                if self._should_bypass_response_cache(response):
+                    logger.debug("Bypassing cache via response header for key %s", cache_key[:16])
+                    return response
 
                 cached_response = await self._cache_non_streaming_response(cache_key, response)
                 if cached_response is not None:
@@ -181,6 +184,15 @@ class PromptCacheMiddleware(BaseHTTPMiddleware):
             return False
 
         return request.url.path == "/api/ai/chat"
+
+    @staticmethod
+    def _should_bypass_response_cache(response: Response) -> bool:
+        marker = (response.headers.get("X-Prompt-Cache") or "").strip().lower()
+        if marker in {"bypass", "skip", "no-store"}:
+            return True
+
+        cache_control = (response.headers.get("Cache-Control") or "").strip().lower()
+        return "no-store" in cache_control
 
     def _compute_cache_key(self, data: dict[str, Any]) -> str:
         """Generate SHA256 hash key from normalized request data.

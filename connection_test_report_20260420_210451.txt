@@ -1,0 +1,83 @@
+================================================================================
+AI与小说模块连接状态测试报告
+测试时间: 2026-04-20 21:04:51
+总耗时: 13.91秒
+================================================================================
+
+1. 后端服务健康检查
+   状态: ❌ FAIL
+   响应时间: 2332.47ms
+   error: 服务不可达或异常
+   status_code: 0
+   response: {
+  "error": "All connection attempts failed"
+}
+
+2. AI聊天端点可用性
+   状态: ❌ FAIL
+   响应时间: 2324.4ms
+   error: AI聊天端点不可达
+   status_code: 0
+   response: {'error': 'All connection attempts failed'}
+
+3. 小说API端点可用性
+   状态: ❌ FAIL
+   响应时间: 2310.24ms
+   error: 小说API端点不可达
+   status_code: 0
+   response: {'error': 'All connection attempts failed'}
+
+4. '创建小说'指令识别与路由
+   状态: ❌ FAIL
+   响应时间: 0ms
+   recognition_status: ❌ 系统无法自动识别'创建小说'指令并调用小说模块
+   test_cases: [
+  {
+    "input_message": "请帮我创建一本新的小说",
+    "status_code": 0,
+    "response_preview": "",
+    "has_tool_calls": false,
+    "has_novel_related_tool_call": false,
+    "tool_calls": []
+  },
+  {
+    "in...
+   conclusion: AI对话模块与小说模块之间缺乏自动化的指令识别和路由机制
+   root_cause_analysis: [
+  "1. /api/ai/chat 是通用LLM聊天接口，不包含业务逻辑路由",
+  "2. 未发现从AI对话到小说创建API的中间件/拦截器",
+  "3. 小说模块有独立的API端点(/novels)，但未被AI层自动调用",
+  "4. 当前架构下，用户需手动切换到小说模块进行操作"
+]
+
+5. 架构连接分析
+   状态: ❌ FAIL
+   响应时间: 0ms
+   ai_module_location: frontend/src/core/ai/global-ai-service.ts → backend/app/gateway/api/ai_provider.py
+   novel_module_location: frontend/src/core/novel/ → backend/app/gateway/novel_migrated/
+   ai_endpoint: /api/ai/chat (通用LLM聊天接口)
+   novel_endpoints: /novels/* (独立小说CRUD API)
+   connection_mechanism: ❌ 未发现自动指令识别和路由机制
+   novel_internal_ai: ✅ 小说模块内部有独立的AI对话组件(AiChatView.tsx)
+   integration_points: [
+  "ai_provider.py 导入了 novel_migrated 的 AIService (共享AI服务层)",
+  "但这是底层服务共享，非业务逻辑集成"
+]
+   mcp_plugin_system: ✅ 存在MCP插件系统(mcp_plugins.py)，可用于扩展
+   recommended_solution: [
+  "方案1: 在AI Provider层添加意图识别中间件，检测'创建小说'等关键词",
+  "方案2: 注册小说操作为AI工具(tool calling)，让LLM主动调用",
+  "方案3: 使用MCP插件系统将小说API暴露为AI可调用的工具",
+  "方案4: 在前端添加指令预处理层，根据用户输入路由到不同模块"
+]
+
+--------------------------------------------------------------------------------
+测试汇总:
+  总计: 5 项测试
+  通过: 0 项
+  失败: 5 项
+  警告: 0 项
+--------------------------------------------------------------------------------
+
+总体结论: ❌ 连接状态异常 - 存在集成问题
+================================================================================

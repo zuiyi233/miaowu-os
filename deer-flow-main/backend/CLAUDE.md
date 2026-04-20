@@ -44,7 +44,7 @@ deer-flow/
 │   │           │   ├── builtins/      # general-purpose, bash agents
 │   │           │   ├── executor.py    # Background execution engine
 │   │           │   └── registry.py    # Agent registry
-│   │           ├── tools/builtins/    # Built-in tools (present_files, ask_clarification, view_image)
+│   │           ├── tools/builtins/    # Built-in tools (present_files, ask_clarification, create_novel, view_image)
 │   │           ├── mcp/               # MCP integration (tools, cache, client)
 │   │           ├── models/            # Model factory with thinking/vision support
 │   │           ├── skills/            # Skills discovery, loading, parsing
@@ -229,6 +229,8 @@ FastAPI application on port 8001 with health check at `GET /health`.
 - If `DEERFLOW_AI_PROVIDER_API_TOKEN` is set, callers must provide `Authorization: Bearer <token>`.
 - If token is unset, endpoints are loopback-only by default.
 - Request throttling is enforced via `DEERFLOW_AI_PROVIDER_RATE_LIMIT_PER_MINUTE` (default `30`).
+- `POST /api/ai/chat` includes intent recognition middleware for novel-creation commands. On hit, gateway executes novel creation directly (prefer `novel_migrated /projects`, fallback legacy `/api/novels`) and returns `tool_calls` metadata.
+- Intent-triggered side-effect responses include `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches create actions.
 
 Novel Migrated Wave1+Wave2 APIs are registered through `app.gateway.routers.novel_migrated`, which is added to `CORE_ROUTER_MODULES` in `app/gateway/app.py`. That aggregator conditionally includes `app.gateway.novel_migrated.api.careers`, `app.gateway.novel_migrated.api.foreshadows`, `app.gateway.novel_migrated.api.memories`, `app.gateway.novel_migrated.api.inspiration`, `app.gateway.novel_migrated.api.wizard_stream`, `app.gateway.novel_migrated.api.novel_stream`, `app.gateway.novel_migrated.api.project_covers`, and `app.gateway.novel_migrated.api.book_import` when those modules exist.
 
@@ -281,6 +283,7 @@ Proxied through nginx: `/api/langgraph/*` → LangGraph, all other `/api/*` → 
 3. **Built-in tools**:
    - `present_files` - Make output files visible to user (only `/mnt/user-data/outputs`)
    - `ask_clarification` - Request clarification (intercepted by ClarificationMiddleware → interrupts)
+   - `create_novel` - Create a novel via gateway endpoints (`/projects` with `/api/novels` fallback)
    - `view_image` - Read image as base64 (added only if model supports vision)
 4. **Subagent tool** (if enabled):
    - `task` - Delegate to subagent (description, prompt, subagent_type, max_turns)

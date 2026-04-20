@@ -105,7 +105,7 @@ LLM-powered persistent context retention across conversations:
 | Category | Tools |
 |----------|-------|
 | **Sandbox** | `bash`, `ls`, `read_file`, `write_file`, `str_replace` |
-| **Built-in** | `present_files`, `ask_clarification`, `view_image`, `task` (subagent) |
+| **Built-in** | `present_files`, `ask_clarification`, `create_novel`, `view_image`, `task` (subagent) |
 | **Community** | Tavily (web search), Jina AI (web fetch), Firecrawl (scraping), DuckDuckGo (image search) |
 | **MCP** | Any Model Context Protocol server (stdio, SSE, HTTP transports) |
 | **Skills** | Domain-specific workflows injected via system prompt |
@@ -136,6 +136,8 @@ FastAPI application providing REST endpoints for frontend integration:
 - If `DEERFLOW_AI_PROVIDER_API_TOKEN` is configured, callers must provide `Authorization: Bearer <token>`.
 - If token is not configured, only loopback requests are allowed by default.
 - Request rate is limited by `DEERFLOW_AI_PROVIDER_RATE_LIMIT_PER_MINUTE` (default `30`).
+- `POST /api/ai/chat` now includes lightweight intent recognition for novel creation. When "create novel" intent is detected, the gateway executes creation directly (prefers `/projects`, falls back to legacy `/api/novels`) and returns `tool_calls` metadata.
+- Side-effect intent responses set `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches create actions.
 
 ### IM Channels
 

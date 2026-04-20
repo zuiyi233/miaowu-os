@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.gateway.middleware.intent_recognition_middleware import IntentRecognitionMiddleware
 from app.gateway.novel_migrated.api.settings import get_user_ai_service
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.core.user_context import get_request_user_id
@@ -40,6 +41,11 @@ _STREAMING_RESPONSE_HEADERS = {
     "X-Accel-Buffering": "no",
 }
 _DISABLED_BOOL_ENV_VALUES = {"0", "false", "no", "off"}
+_ACTION_RESPONSE_HEADERS = {
+    "Cache-Control": "no-store",
+    "X-Prompt-Cache": "bypass",
+}
+_INTENT_RECOGNITION_MIDDLEWARE = IntentRecognitionMiddleware()
 
 
 class AiProviderConfig(BaseModel):
@@ -144,11 +150,18 @@ def _enforce_rate_limit(scope: str) -> None:
     window.append(now)
 
 
-def _build_streaming_response(stream_generator: AsyncGenerator[str, None]) -> StreamingResponse:
+def _build_streaming_response(
+    stream_generator: AsyncGenerator[str, None],
+    *,
+    extra_headers: dict[str, str] | None = None,
+) -> StreamingResponse:
+    headers = _STREAMING_RESPONSE_HEADERS.copy()
+    if extra_headers:
+        headers.update(extra_headers)
     return StreamingResponse(
         stream_generator,
         media_type="text/event-stream",
-        headers=_STREAMING_RESPONSE_HEADERS.copy(),
+        headers=headers,
     )
 
 
@@ -185,6 +198,20 @@ async def _stream_response_builder(
         yield f"data: {error_data}\n\n"
 
 
+def _build_chat_json_payload(result: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {"content": result.get("content", "")}
+    tool_calls = result.get("tool_calls")
+    if isinstance(tool_calls, list) and tool_calls:
+        payload["tool_calls"] = tool_calls
+    return payload
+
+
+async def _stream_single_payload(payload: dict[str, Any]) -> AsyncGenerator[str, None]:
+    data = json.dumps(payload, ensure_ascii=False)
+    yield f"data: {data}\n\n"
+    yield "data: [DONE]\n\n"
+
+
 @router.post("/chat")
 async def chat_endpoint(
     request: Request,
@@ -205,6 +232,25 @@ async def chat_endpoint(
         if body.provider_config.api_key:
             logger.warning("Deprecated field provider_config.api_key was provided and ignored for /api/ai/chat")
 
+        intent_result = await _INTENT_RECOGNITION_MIDDLEWARE.process_request(
+            request=body,
+            user_id=get_request_user_id(request),
+            db_session=getattr(ai_service, "db_session", None),
+        )
+        if intent_result.handled:
+            payload: dict[str, Any] = {"content": intent_result.content}
+            if intent_result.tool_calls:
+                payload["tool_calls"] = intent_result.tool_calls
+            if intent_result.novel:
+                payload["novel"] = intent_result.novel
+
+            if body.stream:
+                return _build_streaming_response(
+                    _stream_single_payload(payload),
+                    extra_headers=_ACTION_RESPONSE_HEADERS,
+                )
+            return JSONResponse(content=payload, headers=_ACTION_RESPONSE_HEADERS.copy())
+
         use_messages_format = _is_messages_format_enabled()
         provider_config_params = {
             "model": body.provider_config.model_name,
@@ -223,8 +269,7 @@ async def chat_endpoint(
                 )
 
             result = await ai_service.generate_text_with_messages(messages=body.messages, **provider_config_params)
-
-            return JSONResponse(content={"content": result.get("content", "")})
+            return JSONResponse(content=_build_chat_json_payload(result))
 
         prompt = _build_prompt_from_messages(body.messages)
 
@@ -238,8 +283,7 @@ async def chat_endpoint(
             )
 
         result = await ai_service.generate_text(prompt=prompt, **provider_config_params)
-
-        return JSONResponse(content={"content": result.get("content", "")})
+        return JSONResponse(content=_build_chat_json_payload(result))
 
     except ValueError as exc:
         logger.error("AI service configuration error: %s", exc)

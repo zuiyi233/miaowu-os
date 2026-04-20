@@ -481,5 +481,49 @@ class TestEnabledFlag:
         assert middleware.enabled is False
 
 
+class TestResponseHeaderBypass:
+    """Test bypass behavior via response headers."""
+
+    @pytest.mark.asyncio
+    async def test_dispatch_bypasses_cache_when_header_requests_bypass(self):
+        middleware = PromptCacheMiddleware(app=MagicMock(), ttl=300, max_entries=1000)
+
+        request_data = {
+            "messages": [{"role": "user", "content": "create novel"}],
+            "provider_config": {"model_name": "gpt-4o", "temperature": 0.7, "max_tokens": 2000},
+        }
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.method = "POST"
+        mock_request.url.path = "/api/ai/chat"
+        mock_request.body = AsyncMock(return_value=json.dumps(request_data).encode())
+
+        response = JSONResponse(
+            content={"content": "handled by action middleware"},
+            headers={"X-Prompt-Cache": "bypass", "Cache-Control": "no-store"},
+        )
+        call_next = AsyncMock(return_value=response)
+
+        returned = await middleware.dispatch(mock_request, call_next)
+
+        assert returned is response
+        assert middleware._stats["misses"] == 1
+        assert middleware._stats["hits"] == 0
+        assert len(middleware._cache) == 0
+        call_next.assert_awaited_once()
+
+    def test_should_bypass_response_cache_helper(self):
+        middleware = PromptCacheMiddleware(app=MagicMock(), ttl=300, max_entries=1000)
+
+        marked = JSONResponse(content={"ok": True}, headers={"X-Prompt-Cache": "bypass"})
+        assert middleware._should_bypass_response_cache(marked) is True
+
+        no_store = JSONResponse(content={"ok": True}, headers={"Cache-Control": "private, no-store"})
+        assert middleware._should_bypass_response_cache(no_store) is True
+
+        normal = JSONResponse(content={"ok": True})
+        assert middleware._should_bypass_response_cache(normal) is False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
