@@ -19,7 +19,7 @@ import time
 from collections import defaultdict
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypedDict
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -30,6 +30,68 @@ from deerflow.config import get_app_config
 from deerflow.models import create_chat_model
 
 logger = get_logger(__name__)
+
+
+class AgentModelConfig(TypedDict):
+    """Resolved model configuration for a novel agent.
+
+    Attributes:
+        agent_type: The agent task type (e.g., writer, critic, polish).
+        provider_id: The AI provider ID (e.g., openai, deepseek).
+        model_name: The specific model name to use.
+        temperature: Sampling temperature (0.0-2.0).
+        max_tokens: Maximum tokens per generation.
+        system_prompt: Optional system prompt override.
+        source: Where this config came from (custom, default, fallback).
+    """
+
+    agent_type: str
+    provider_id: str | None
+    model_name: str | None
+    temperature: float
+    max_tokens: int
+    system_prompt: str | None
+    source: str
+
+
+# ==================== Agent-aware model resolution ====================
+
+async def resolve_agent_model_config(
+    user_id: str,
+    agent_type: str,
+    db_session: Any,
+    default_provider: str | None = None,
+    default_model: str | None = None,
+) -> AgentModelConfig:
+    """Resolve model configuration for a specific agent type at runtime.
+
+    Resolution order:
+    1. User's custom agent config (if enabled)
+    2. User's default Settings config
+    3. System fallback defaults
+
+    Args:
+        user_id: User identifier.
+        agent_type: Agent task type (writer/critic/polish/outline/etc.).
+        db_session: Async database session.
+        default_provider: Fallback provider if no config found.
+        default_model: Fallback model if no config found.
+
+    Returns:
+        AgentModelConfig with provider_id, model_name, temperature,
+        max_tokens, system_prompt, and source.
+    """
+    from app.gateway.novel_migrated.services.novel_agent_config_service import (
+        NovelAgentConfigService,
+    )
+
+    service = NovelAgentConfigService(db_session)
+    return await service.resolve_agent_config(
+        user_id=user_id,
+        agent_type=agent_type,
+        default_provider_id=default_provider,
+        default_model_name=default_model,
+    )
 
 
 # ==================== 模型实例缓存 ====================
@@ -471,6 +533,53 @@ class AIService:
 
         return result
 
+    async def _resolve_agent_params(
+        self,
+        agent_type: str | None,
+        model: str | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        system_prompt: str | None,
+    ) -> tuple[str | None, float | None, int | None, str | None]:
+        """Resolve model params from agent config if agent_type is provided.
+
+        Returns:
+            Tuple of (resolved_model, resolved_temperature, resolved_max_tokens, resolved_system_prompt)
+        """
+        if not agent_type or not self.db_session or not self.user_id:
+            return model, temperature, max_tokens, system_prompt
+
+        try:
+            agent_config = await resolve_agent_model_config(
+                self.user_id,
+                agent_type,
+                self.db_session,
+                default_provider=self.api_provider,
+                default_model=self.default_model,
+            )
+            resolved_model = agent_config.get("model_name") or model
+            resolved_temp = (
+                agent_config.get("temperature")
+                if agent_config.get("temperature") is not None
+                else temperature
+            )
+            resolved_tokens = (
+                agent_config.get("max_tokens")
+                if agent_config.get("max_tokens") is not None
+                else max_tokens
+            )
+            resolved_prompt = agent_config.get("system_prompt") or system_prompt
+            logger.info(
+                "Agent config resolved: agent=%s model=%s source=%s",
+                agent_type,
+                resolved_model,
+                agent_config.get("source", "unknown"),
+            )
+            return resolved_model, resolved_temp, resolved_tokens, resolved_prompt
+        except Exception as exc:
+            logger.warning("Failed to resolve agent config for %s: %s", agent_type, exc)
+            return model, temperature, max_tokens, system_prompt
+
     async def generate_text_stream(
         self,
         prompt: str,
@@ -480,9 +589,26 @@ class AIService:
         max_tokens: int | None = None,
         system_prompt: str | None = None,
         auto_mcp: bool = True,
+        agent_type: str | None = None,
         **_: Any,
     ) -> AsyncGenerator[str, None]:
-        """流式文本生成；保持与 careers/memories/plot_analyzer 调用兼容。"""
+        """流式文本生成；保持与 careers/memories/plot_analyzer 调用兼容。
+
+        Args:
+            prompt: 输入提示词
+            provider: 供应商（保留兼容性，实际通过 model 选择）
+            model: 模型名称，None 时使用默认模型
+            temperature: 温度参数
+            max_tokens: 最大 token 数
+            system_prompt: 系统提示词
+            auto_mcp: 是否自动加载 MCP 工具
+            agent_type: 智能体类型（writer/critic/polish/outline 等），
+                        提供时会从配置服务解析对应模型和参数
+        """
+        model, temperature, max_tokens, system_prompt = await self._resolve_agent_params(
+            agent_type, model, temperature, max_tokens, system_prompt
+        )
+
         model_name = self._resolve_model_name(model)
         llm = _get_cached_model(model_name)  # 使用缓存
         llm = self._apply_runtime_params(llm, temperature, max_tokens)

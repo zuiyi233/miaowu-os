@@ -69,15 +69,16 @@ async def init_db_schema() -> None:
         generation_history,
         mcp_plugin,
         memory,
+        novel_agent_config,
         outline,
         project,
         project_default_style,
         prompt_template,
-        prompt_workshop,  # 新增：提示词工坊模型
+        prompt_workshop,
         regeneration_task,
         relationship,
         settings,
-        user,  # 新增：用户模型
+        user,
         writing_style,
     )
 

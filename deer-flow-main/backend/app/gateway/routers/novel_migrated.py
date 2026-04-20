@@ -37,6 +37,8 @@ _OPTIONAL_ROUTER_MODULES = (
     "app.gateway.novel_migrated.api.prompt_workshop",
     "app.gateway.novel_migrated.api.admin",
     "app.gateway.novel_migrated.api.changelog",
+    # ========== 小说智能体配置模块 ==========
+    "app.gateway.novel_migrated.api.novel_agent_configs",
 )
 
 
