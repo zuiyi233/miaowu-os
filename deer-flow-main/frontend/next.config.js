@@ -72,6 +72,13 @@ const config = {
         source: "/api/:path*",
         destination: `${gatewayURL}/api/:path*`,
       });
+
+      // Novel export endpoint is served under `/projects/*` on gateway.
+      // Keep this rewrite so default frontend proxy mode can download archives.
+      rewrites.push({
+        source: "/projects/:path*",
+        destination: `${gatewayURL}/projects/:path*`,
+      });
     }
 
     return rewrites;
