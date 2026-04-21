@@ -15,9 +15,11 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from deerflow.config.extensions_config import ExtensionsConfig
@@ -29,6 +31,26 @@ _DEFAULT_GENRE = "科幻"
 _SESSION_TTL = timedelta(hours=2)
 _SKILL_CACHE_TTL = timedelta(minutes=5)
 _MAX_SKILL_ENTRIES = 12
+_SESSION_STORE_PATH_ENV = "DEERFLOW_INTENT_SESSION_STORE_PATH"
+_SESSION_BACKEND_ENV = "DEERFLOW_INTENT_SESSION_BACKEND"
+_DATABASE_STORAGE_BACKENDS = {"database", "db", "sqlite"}
+_FILE_STORAGE_BACKENDS = {"file", "json"}
+_SESSION_CONTEXT_KEYS: tuple[str, ...] = (
+    "thread_id",
+    "threadId",
+    "conversation_id",
+    "conversationId",
+    "chat_id",
+    "chatId",
+    "workspace_id",
+    "workspaceId",
+    "session_id",
+    "sessionId",
+    "novel_id",
+    "novelId",
+    "project_id",
+    "projectId",
+)
 
 _FIELD_ORDER: tuple[str, ...] = (
     "title",
@@ -96,6 +118,9 @@ _MANAGE_ACTION_KEYWORDS = (
     "修改",
     "更新",
     "删除",
+    "导入",
+    "导出",
+    "生成",
     "新增",
     "新建",
     "创建",
@@ -108,7 +133,7 @@ _MANAGE_ACTION_KEYWORDS = (
 )
 
 _MANAGE_INTENT_PATTERNS = (
-    re.compile(r"(管理|修改|更新|删除|新增|新建|切换|查看|列出).{0,24}(项目|章节|大纲|角色|关系|组织|物品|伏笔)"),
+    re.compile(r"(管理|修改|更新|删除|新增|新建|切换|查看|列出|导入|导出|生成).{0,24}(项目|章节|大纲|角色|关系|组织|物品|伏笔)"),
     re.compile(r"(chapter|outline|character|relationship|project).{0,24}(update|delete|create|list|manage)", re.IGNORECASE),
 )
 
@@ -240,7 +265,7 @@ class _NovelCreationSession:
     user_id: str
     started_at: datetime
     updated_at: datetime
-    mode: str = "create"
+    mode: str = "normal"
     fields: dict[str, Any] = field(default_factory=dict)
     awaiting_confirm: bool = False
     last_prompted_field: str | None = None
@@ -248,10 +273,13 @@ class _NovelCreationSession:
     active_project_id: str | None = None
     active_project_title: str | None = None
     pending_action: _PendingAction | None = None
+    idempotency_key: str | None = None
 
 
 class IntentRecognitionMiddleware:
     """Guided intent recognition middleware for /api/ai/chat."""
+
+    _INTENT_FEATURE_FLAG = "intent_recognition"
 
     def __init__(self) -> None:
         self._sessions: dict[str, _NovelCreationSession] = {}
@@ -259,6 +287,11 @@ class IntentRecognitionMiddleware:
         self._skills_cache_at: datetime | None = None
         self._skills_cache: list[dict[str, str]] = []
         self._skills_cache_config_mtime: float | None = None
+        self._used_idempotency_keys: dict[str, datetime] = {}
+        self._storage_backend = self._resolve_storage_backend()
+        self._session_store_path = self._resolve_session_store_path()
+        if self._storage_backend == "file":
+            self._load_state_from_disk()
 
     async def process_request(
         self,
@@ -268,33 +301,41 @@ class IntentRecognitionMiddleware:
         db_session: Any | None,
         ai_service: Any | None = None,
     ) -> IntentRecognitionResult:
+        if not self._is_feature_enabled():
+            return IntentRecognitionResult(handled=False)
+
         messages = list(getattr(request, "messages", []) or [])
         user_message = self._extract_latest_user_message(messages)
         if not user_message:
             return IntentRecognitionResult(handled=False)
 
         await self._prune_expired_sessions()
+        await self._prune_expired_idempotency_keys()
         session_key = self._resolve_session_key(request, user_id)
 
         session = await self._get_session(session_key)
         if session is not None:
-            if session.mode == "create":
+            if session.mode == "normal":
+                pass
+            elif session.mode == "create":
                 return await self._handle_active_creation_session(
                     session=session,
                     user_message=user_message,
                     db_session=db_session,
                     ai_service=ai_service,
                 )
-            return await self._handle_manage_session(
-                session=session,
-                user_message=user_message,
-                db_session=db_session,
-                ai_service=ai_service,
-                opening=False,
-            )
+            elif session.mode == "manage":
+                return await self._handle_manage_session(
+                    session=session,
+                    user_message=user_message,
+                    db_session=db_session,
+                    ai_service=ai_service,
+                    opening=False,
+                )
 
         intent = self._detect_novel_creation_intent(user_message)
         if intent is not None:
+            idem_key = self._generate_idempotency_key(user_id, "create_novel")
             session = _NovelCreationSession(
                 session_key=session_key,
                 user_id=user_id,
@@ -302,6 +343,7 @@ class IntentRecognitionMiddleware:
                 started_at=datetime.now(),
                 updated_at=datetime.now(),
                 fields=self._initialize_fields(intent.prefill),
+                idempotency_key=idem_key,
             )
             await self._save_session(session)
             return await self._ask_next_field(
@@ -311,6 +353,7 @@ class IntentRecognitionMiddleware:
             )
 
         if self._detect_novel_management_intent(user_message):
+            idem_key = self._generate_idempotency_key(user_id, "manage_novel")
             session = _NovelCreationSession(
                 session_key=session_key,
                 user_id=user_id,
@@ -318,6 +361,7 @@ class IntentRecognitionMiddleware:
                 started_at=datetime.now(),
                 updated_at=datetime.now(),
                 fields=self._initialize_fields({}),
+                idempotency_key=idem_key,
             )
             await self._save_session(session)
             return await self._handle_manage_session(
@@ -329,6 +373,27 @@ class IntentRecognitionMiddleware:
             )
 
         return IntentRecognitionResult(handled=False)
+
+    def build_session_key_for_context(self, *, user_id: str, context: dict[str, Any] | None) -> str:
+        """Build a stable session key from user and context.
+
+        This is the public API used by external callers (e.g. tool layer) to
+        avoid coupling with internal key-generation logic.
+        """
+        return self._resolve_session_key_from_context(context, (user_id or "").strip())
+
+    async def has_active_creation_session(self, *, user_id: str, session_key: str) -> bool:
+        """Whether the given user/session currently has an active create flow."""
+        normalized_user_id = (user_id or "").strip()
+        normalized_session_key = (session_key or "").strip()
+        if not normalized_user_id or not normalized_session_key:
+            return False
+
+        await self._prune_expired_sessions()
+        session = await self._get_session(normalized_session_key)
+        if session is None:
+            return False
+        return session.mode == "create" and session.user_id == normalized_user_id
 
     def invalidate_skill_cache(self) -> None:
         """Clear middleware skill cache so updates in extensions config apply immediately."""
@@ -476,6 +541,19 @@ class IntentRecognitionMiddleware:
         session: _NovelCreationSession,
         db_session: Any | None,
     ) -> IntentRecognitionResult:
+        idem_key = session.idempotency_key
+        if idem_key and not await self._consume_idempotency_key(
+            idem_key,
+            user_id=session.user_id,
+            action="create_novel",
+        ):
+            await self._remove_session(session.session_key)
+            return IntentRecognitionResult(
+                handled=True,
+                content="该创建请求已被处理过，请勿重复提交。",
+                session={"status": "duplicate", "mode": "create", "idempotency_key": idem_key},
+            )
+
         payload: dict[str, Any] | None = None
         errors: list[str] = []
 
@@ -634,6 +712,7 @@ class IntentRecognitionMiddleware:
         action.missing_fields = self._compute_missing_fields(action)
         session.pending_action = action
         session.awaiting_confirm = False
+        session.idempotency_key = self._generate_idempotency_key(session.user_id, action.action)
         session.updated_at = datetime.now()
         await self._save_session(session)
 
@@ -741,6 +820,9 @@ class IntentRecognitionMiddleware:
             "- 更新组织 星火会 势力值改成85\n"
             "- 删除组织 星火会\n"
             "- 新增物品 龙纹钥匙 描述：可开启旧文明遗迹\n"
+            "- 生成完整大纲 章节数30 目标字数20万\n"
+            "- 自动生成角色与组织 角色数8\n"
+            "- 导出当前项目数据包\n"
             "- 删除项目（会删除当前项目）\n"
             "所有写操作都会先确认，回复“确认执行”后才落库。"
         ).strip()
@@ -1013,6 +1095,41 @@ class IntentRecognitionMiddleware:
 
         if not project_id:
             return None
+
+        if self._is_project_export_request(lowered):
+            return _PendingAction(
+                action="export_project_archive",
+                entity="project",
+                operation="export",
+                project_id=project_id,
+                target_id=project_id,
+                target_label=session.active_project_title or project_id,
+                payload={},
+            )
+
+        if self._is_outline_generate_request(lowered):
+            payload = self._extract_outline_generate_payload(user_message)
+            return _PendingAction(
+                action="generate_outline",
+                entity="outline",
+                operation="generate",
+                project_id=project_id,
+                target_id=project_id,
+                target_label="完整大纲",
+                payload=payload,
+            )
+
+        if self._is_character_generate_request(lowered):
+            payload = self._extract_character_generate_payload(user_message)
+            return _PendingAction(
+                action="generate_characters",
+                entity="character",
+                operation="generate",
+                project_id=project_id,
+                target_id=project_id,
+                target_label="角色与组织",
+                payload=payload,
+            )
 
         if self._is_chapter_create_request(lowered):
             payload = self._extract_chapter_create_payload(user_message)
@@ -1321,6 +1438,14 @@ class IntentRecognitionMiddleware:
             action.payload.update(self._extract_project_update_payload(user_message))
             return
 
+        if action.action == "generate_outline":
+            action.payload.update(self._extract_outline_generate_payload(user_message))
+            return
+
+        if action.action == "generate_characters":
+            action.payload.update(self._extract_character_generate_payload(user_message))
+            return
+
         if action.action == "create_chapter":
             action.payload.update(self._extract_chapter_create_payload(user_message))
             return
@@ -1446,6 +1571,15 @@ class IntentRecognitionMiddleware:
             return missing
 
         if action.action == "delete_project":
+            return missing
+
+        if action.action == "export_project_archive":
+            return missing
+
+        if action.action == "generate_outline":
+            return missing
+
+        if action.action == "generate_characters":
             return missing
 
         if action.action == "create_chapter":
@@ -1615,6 +1749,22 @@ class IntentRecognitionMiddleware:
                 session=self._session_brief(session),
             )
 
+        idem_key = session.idempotency_key
+        if idem_key and not await self._consume_idempotency_key(
+            idem_key,
+            user_id=session.user_id,
+            action=action.action,
+        ):
+            session.awaiting_confirm = False
+            session.pending_action = None
+            session.updated_at = datetime.now()
+            await self._save_session(session)
+            return IntentRecognitionResult(
+                handled=True,
+                content="该操作已被处理过，请勿重复提交。",
+                session={"status": "duplicate", "mode": "manage", "idempotency_key": idem_key},
+            )
+
         try:
             result_payload = await self._dispatch_manage_action(action=action, session=session, db_session=db_session)
         except Exception as exc:
@@ -1654,6 +1804,12 @@ class IntentRecognitionMiddleware:
         content = f"已完成操作：{action.action}。"
         if action.target_label:
             content = f"已完成操作：{action.action}（{action.target_label}）。"
+        if action.action == "export_project_archive" and isinstance(result_payload, dict):
+            download_path = str(result_payload.get("download_path") or "").strip()
+            if download_path:
+                content = f"已完成操作：{action.action}。可通过 {download_path} 下载导出包。"
+            elif result_payload.get("file_name"):
+                content = f"已完成操作：{action.action}。导出文件：{result_payload.get('file_name')}。"
 
         if action.action == "update_project" and isinstance(result_payload, dict):
             session.active_project_title = str(result_payload.get("title") or session.active_project_title or "")
@@ -1670,6 +1826,7 @@ class IntentRecognitionMiddleware:
             handled=True,
             content=content,
             tool_calls=[tool_call],
+            novel=result_payload if isinstance(result_payload, dict) else {"result": result_payload},
             session=self._session_brief(session),
         )
 
@@ -1689,6 +1846,108 @@ class IntentRecognitionMiddleware:
             if isinstance(payload, dict):
                 return payload
             return {"message": "Project deleted"}
+
+        if action_name == "export_project_archive":
+            from app.gateway.novel_migrated.api.import_export import build_export_download_path
+            from app.gateway.novel_migrated.services.import_export_service import get_import_export_service
+
+            project = await self._get_project_model(
+                project_id=action.project_id or "",
+                user_id=session.user_id,
+                db_session=db_session,
+            )
+            if project is None:
+                raise ValueError("项目不存在或无权限")
+
+            service = get_import_export_service()
+            export_bytes = await service.export_project(project_id=project.id, db=db_session)
+            export_dir = Path(__file__).resolve().parents[1] / "data" / "exports"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            file_name = f"project-{project.id}-{datetime.now().strftime('%Y%m%d%H%M%S')}.zip"
+            file_path = export_dir / file_name
+            file_path.write_bytes(export_bytes)
+            return {
+                "project_id": project.id,
+                "file_name": file_name,
+                "file_path": str(file_path),
+                "download_path": build_export_download_path(project.id),
+                "size_bytes": len(export_bytes),
+                "source": "import_export_service",
+            }
+
+        if action_name == "generate_outline":
+            from app.gateway.novel_migrated.services.book_import_service import book_import_service
+
+            project = await self._get_project_model(
+                project_id=action.project_id or "",
+                user_id=session.user_id,
+                db_session=db_session,
+            )
+            if project is None:
+                raise ValueError("项目不存在或无权限")
+
+            chapter_count = max(5, min(int(action.payload.get("chapter_count") or project.chapter_count or 30), 300))
+            narrative_perspective = str(
+                action.payload.get("narrative_perspective")
+                or project.narrative_perspective
+                or "第三人称"
+            )
+            target_words = max(1000, min(int(action.payload.get("target_words") or project.target_words or 100000), 3_000_000))
+
+            outlines_count = await book_import_service._generate_outline_from_project(  # noqa: SLF001
+                db=db_session,
+                user_id=session.user_id,
+                project=project,
+                chapter_count=chapter_count,
+                narrative_perspective=narrative_perspective,
+                target_words=target_words,
+            )
+            project.wizard_step = 4
+            project.wizard_status = "completed"
+            project.status = "writing"
+            await db_session.commit()
+            return {
+                "project_id": project.id,
+                "outlines_count": outlines_count,
+                "chapter_count": chapter_count,
+                "target_words": target_words,
+                "narrative_perspective": narrative_perspective,
+                "source": "book_import_service.generate_outline",
+            }
+
+        if action_name == "generate_characters":
+            from app.gateway.novel_migrated.services.book_import_service import book_import_service
+
+            project = await self._get_project_model(
+                project_id=action.project_id or "",
+                user_id=session.user_id,
+                db_session=db_session,
+            )
+            if project is None:
+                raise ValueError("项目不存在或无权限")
+
+            count = max(5, min(int(action.payload.get("count") or project.character_count or 8), 20))
+            if action.payload.get("theme"):
+                project.theme = str(action.payload.get("theme"))
+            if action.payload.get("genre"):
+                project.genre = str(action.payload.get("genre"))[:50]
+            project.character_count = count
+
+            generated_count = await book_import_service._generate_characters_and_organizations_from_project(  # noqa: SLF001
+                db=db_session,
+                user_id=session.user_id,
+                project=project,
+                count=count,
+            )
+            project.wizard_step = max(int(project.wizard_step or 0), 3)
+            project.wizard_status = "incomplete"
+            await db_session.commit()
+            return {
+                "project_id": project.id,
+                "count": count,
+                "generated_count": generated_count,
+                "source": "book_import_service.generate_characters",
+            }
 
         if action_name == "create_chapter":
             from app.gateway.novel_migrated.api.chapters import ChapterCreateRequest, create_chapter
@@ -2023,6 +2282,19 @@ class IntentRecognitionMiddleware:
         except Exception:
             return None
 
+    async def _get_project_model(self, *, project_id: str, user_id: str, db_session: Any) -> Any | None:
+        from sqlalchemy import select
+
+        from app.gateway.novel_migrated.models.project import Project
+
+        result = await db_session.execute(
+            select(Project).where(
+                Project.id == project_id,
+                Project.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def _resolve_chapter_from_text(
         self,
         *,
@@ -2339,6 +2611,27 @@ class IntentRecognitionMiddleware:
         return "项目" in lowered and "删除" in lowered
 
     @staticmethod
+    def _is_project_export_request(lowered: str) -> bool:
+        return "项目" in lowered and any(keyword in lowered for keyword in ("导出", "export"))
+
+    @staticmethod
+    def _is_outline_generate_request(lowered: str) -> bool:
+        return "大纲" in lowered and any(keyword in lowered for keyword in ("生成", "自动生成", "重建"))
+
+    @staticmethod
+    def _is_character_generate_request(lowered: str) -> bool:
+        return any(keyword in lowered for keyword in ("角色", "人物", "组织")) and any(
+            keyword in lowered
+            for keyword in (
+                "自动生成",
+                "批量生成",
+                "生成角色与组织",
+                "生成组织和角色",
+                "补充角色",
+            )
+        )
+
+    @staticmethod
     def _is_project_list_request(text: str) -> bool:
         lowered = text.lower()
         return any(keyword in text for keyword in _PROJECT_LIST_KEYWORDS) or any(keyword in lowered for keyword in ("list projects",))
@@ -2653,6 +2946,40 @@ class IntentRecognitionMiddleware:
     def _extract_item_update_payload(self, text: str) -> dict[str, Any]:
         payload = self._extract_item_create_payload(text)
         payload.pop("title", None)
+        return payload
+
+    def _extract_outline_generate_payload(self, text: str) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        chapter_count = self._extract_integer_assignment(text, labels=("章节数", "章数", "chapter_count"))
+        if chapter_count is not None:
+            payload["chapter_count"] = max(5, min(chapter_count, 300))
+
+        perspective = self._extract_assignment(
+            text,
+            labels=("叙事视角", "视角", "narrative_perspective"),
+            max_len=30,
+        )
+        if perspective:
+            payload["narrative_perspective"] = perspective
+
+        target_words = self._extract_target_words(text)
+        if target_words is not None:
+            payload["target_words"] = target_words
+        return payload
+
+    def _extract_character_generate_payload(self, text: str) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        count = self._extract_integer_assignment(text, labels=("角色数", "人物数", "count", "character_count"))
+        if count is not None:
+            payload["count"] = max(5, min(count, 20))
+
+        genre_raw = self._extract_assignment(text, labels=("类型", "genre"), max_len=30)
+        if genre_raw:
+            payload["genre"] = self._extract_genre(genre_raw) or genre_raw[:30]
+
+        theme = self._extract_assignment(text, labels=("主题", "题材", "theme"), max_len=120)
+        if theme:
+            payload["theme"] = theme
         return payload
 
     @staticmethod
@@ -3121,24 +3448,13 @@ class IntentRecognitionMiddleware:
     @staticmethod
     def _resolve_session_key(request: Any, user_id: str) -> str:
         context = getattr(request, "context", None)
+        return IntentRecognitionMiddleware._resolve_session_key_from_context(context, user_id)
+
+    @staticmethod
+    def _resolve_session_key_from_context(context: dict[str, Any] | None, user_id: str) -> str:
         if isinstance(context, dict):
             # Keep upstream-compatible thread first to avoid splitting main chat sessions.
-            for key in (
-                "thread_id",
-                "threadId",
-                "conversation_id",
-                "conversationId",
-                "chat_id",
-                "chatId",
-                "workspace_id",
-                "workspaceId",
-                "session_id",
-                "sessionId",
-                "novel_id",
-                "novelId",
-                "project_id",
-                "projectId",
-            ):
+            for key in _SESSION_CONTEXT_KEYS:
                 value = context.get(key)
                 if isinstance(value, str) and value.strip():
                     return f"{user_id}:{key}:{value.strip()}"
@@ -3196,6 +3512,9 @@ class IntentRecognitionMiddleware:
             },
         }
 
+        if session.idempotency_key:
+            base["idempotency_key"] = session.idempotency_key
+
         if session.mode == "create":
             base["missing_field"] = self._next_missing_field(session)
             base["fields"] = {
@@ -3219,21 +3538,335 @@ class IntentRecognitionMiddleware:
         )
         return base
 
+    @staticmethod
+    def _resolve_session_store_path() -> Path:
+        configured = (os.getenv(_SESSION_STORE_PATH_ENV) or "").strip()
+        if configured:
+            return Path(configured)
+        return Path(__file__).resolve().parents[1] / "data" / "intent_sessions.json"
+
+    @staticmethod
+    def _resolve_storage_backend() -> str:
+        configured = (os.getenv(_SESSION_BACKEND_ENV) or "").strip().lower()
+        if configured in _FILE_STORAGE_BACKENDS:
+            return "file"
+        if configured in _DATABASE_STORAGE_BACKENDS:
+            return "database"
+        if configured:
+            logger.warning(
+                "unknown %s=%s, fallback to database backend",
+                _SESSION_BACKEND_ENV,
+                configured,
+            )
+        return "database"
+
+    @staticmethod
+    def _safe_parse_dt(raw: Any, *, fallback: datetime | None = None) -> datetime:
+        if isinstance(raw, datetime):
+            return raw
+        if isinstance(raw, str):
+            try:
+                return datetime.fromisoformat(raw)
+            except ValueError:
+                pass
+        return fallback or datetime.now()
+
+    @staticmethod
+    def _serialize_pending_action(action: _PendingAction | None) -> dict[str, Any] | None:
+        if action is None:
+            return None
+        return {
+            "action": action.action,
+            "entity": action.entity,
+            "operation": action.operation,
+            "project_id": action.project_id,
+            "target_id": action.target_id,
+            "target_label": action.target_label,
+            "payload": action.payload,
+            "missing_fields": action.missing_fields,
+        }
+
+    @staticmethod
+    def _deserialize_pending_action(raw: Any) -> _PendingAction | None:
+        if not isinstance(raw, dict):
+            return None
+        payload = raw.get("payload")
+        missing_fields = raw.get("missing_fields")
+        return _PendingAction(
+            action=str(raw.get("action") or ""),
+            entity=str(raw.get("entity") or ""),
+            operation=str(raw.get("operation") or ""),
+            project_id=str(raw.get("project_id") or "") or None,
+            target_id=str(raw.get("target_id") or "") or None,
+            target_label=str(raw.get("target_label") or ""),
+            payload=payload if isinstance(payload, dict) else {},
+            missing_fields=[str(item) for item in missing_fields] if isinstance(missing_fields, list) else [],
+        )
+
+    def _serialize_session(self, session: _NovelCreationSession) -> dict[str, Any]:
+        return {
+            "session_key": session.session_key,
+            "user_id": session.user_id,
+            "started_at": session.started_at.isoformat(),
+            "updated_at": session.updated_at.isoformat(),
+            "mode": session.mode,
+            "fields": session.fields,
+            "awaiting_confirm": session.awaiting_confirm,
+            "last_prompted_field": session.last_prompted_field,
+            "skill_suggestions": session.skill_suggestions,
+            "active_project_id": session.active_project_id,
+            "active_project_title": session.active_project_title,
+            "pending_action": self._serialize_pending_action(session.pending_action),
+            "idempotency_key": session.idempotency_key,
+        }
+
+    def _deserialize_session(self, raw: Any) -> _NovelCreationSession | None:
+        if not isinstance(raw, dict):
+            return None
+        session_key = str(raw.get("session_key") or "").strip()
+        user_id = str(raw.get("user_id") or "").strip()
+        if not session_key or not user_id:
+            return None
+
+        fields = raw.get("fields")
+        skill_suggestions = raw.get("skill_suggestions")
+        started_at = self._safe_parse_dt(raw.get("started_at"))
+        updated_at = self._safe_parse_dt(raw.get("updated_at"), fallback=started_at)
+        pending_action = self._deserialize_pending_action(raw.get("pending_action"))
+
+        return _NovelCreationSession(
+            session_key=session_key,
+            user_id=user_id,
+            started_at=started_at,
+            updated_at=updated_at,
+            mode=str(raw.get("mode") or "normal"),
+            fields=fields if isinstance(fields, dict) else self._initialize_fields({}),
+            awaiting_confirm=bool(raw.get("awaiting_confirm", False)),
+            last_prompted_field=str(raw.get("last_prompted_field") or "") or None,
+            skill_suggestions=(
+                {str(k): str(v) for k, v in skill_suggestions.items()}
+                if isinstance(skill_suggestions, dict)
+                else {}
+            ),
+            active_project_id=str(raw.get("active_project_id") or "") or None,
+            active_project_title=str(raw.get("active_project_title") or "") or None,
+            pending_action=pending_action,
+            idempotency_key=str(raw.get("idempotency_key") or "") or None,
+        )
+
+    def _load_state_from_disk(self) -> None:
+        if self._storage_backend != "file":
+            return
+        if not self._session_store_path.exists():
+            return
+        try:
+            payload = json.loads(self._session_store_path.read_text(encoding="utf-8"))
+            sessions_payload = payload.get("sessions")
+            idempotency_payload = payload.get("idempotency_keys")
+            now = datetime.now()
+
+            if isinstance(sessions_payload, dict):
+                for key, raw in sessions_payload.items():
+                    session = self._deserialize_session(raw)
+                    if session is None:
+                        continue
+                    if now - session.updated_at > _SESSION_TTL:
+                        continue
+                    self._sessions[str(key)] = session
+
+            if isinstance(idempotency_payload, dict):
+                for key, raw_ts in idempotency_payload.items():
+                    ts = self._safe_parse_dt(raw_ts)
+                    if now - ts > _SESSION_TTL:
+                        continue
+                    self._used_idempotency_keys[str(key)] = ts
+        except Exception:
+            logger.exception("failed to load intent session state from %s", self._session_store_path)
+
+    def _persist_state_locked(self) -> None:
+        if self._storage_backend != "file":
+            return
+        self._session_store_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "sessions": {key: self._serialize_session(session) for key, session in self._sessions.items()},
+            "idempotency_keys": {key: ts.isoformat() for key, ts in self._used_idempotency_keys.items()},
+            "updated_at": datetime.now().isoformat(),
+        }
+        tmp_path = self._session_store_path.with_suffix(".tmp")
+        tmp_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        tmp_path.replace(self._session_store_path)
+
+    def _persist_state_best_effort_locked(self) -> None:
+        try:
+            self._persist_state_locked()
+        except Exception:
+            logger.exception("failed to persist intent session state to %s", self._session_store_path)
+
+    async def _db_get_session(self, session_key: str) -> _NovelCreationSession | None:
+        from sqlalchemy import select
+
+        from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+        from app.gateway.novel_migrated.models.intent_session import IntentSessionState
+
+        await init_db_schema()
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(IntentSessionState).where(IntentSessionState.session_key == session_key)
+            )
+            row = result.scalar_one_or_none()
+            if row is None:
+                return None
+
+            updated_at = row.updated_at or datetime.now()
+            if datetime.now() - updated_at > _SESSION_TTL:
+                await db.delete(row)
+                await db.commit()
+                return None
+
+            try:
+                payload = json.loads(row.payload_json)
+            except Exception:
+                await db.delete(row)
+                await db.commit()
+                return None
+
+            session = self._deserialize_session(payload)
+            if session is None:
+                await db.delete(row)
+                await db.commit()
+                return None
+            return session
+
+    async def _db_upsert_session(self, session: _NovelCreationSession) -> None:
+        from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+        from app.gateway.novel_migrated.models.intent_session import IntentSessionState
+
+        await init_db_schema()
+        payload_json = json.dumps(self._serialize_session(session), ensure_ascii=False)
+
+        async with AsyncSessionLocal() as db:
+            existing = await db.get(IntentSessionState, session.session_key)
+            if existing is None:
+                db.add(
+                    IntentSessionState(
+                        session_key=session.session_key,
+                        user_id=session.user_id,
+                        payload_json=payload_json,
+                        updated_at=session.updated_at,
+                    )
+                )
+            else:
+                existing.user_id = session.user_id
+                existing.payload_json = payload_json
+                existing.updated_at = session.updated_at
+            await db.commit()
+
+    async def _db_delete_session(self, session_key: str) -> None:
+        from sqlalchemy import delete
+
+        from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+        from app.gateway.novel_migrated.models.intent_session import IntentSessionState
+
+        await init_db_schema()
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                delete(IntentSessionState).where(IntentSessionState.session_key == session_key)
+            )
+            await db.commit()
+
+    async def _db_prune_expired_sessions(self) -> None:
+        from sqlalchemy import delete
+
+        from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+        from app.gateway.novel_migrated.models.intent_session import IntentSessionState
+
+        await init_db_schema()
+        cutoff = datetime.now() - _SESSION_TTL
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                delete(IntentSessionState).where(IntentSessionState.updated_at < cutoff)
+            )
+            await db.commit()
+
+    async def _db_consume_idempotency_key(
+        self,
+        key: str,
+        *,
+        user_id: str | None = None,
+        action: str | None = None,
+    ) -> bool:
+        from sqlalchemy.exc import IntegrityError
+
+        from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+        from app.gateway.novel_migrated.models.intent_session import IntentIdempotencyKey
+
+        await init_db_schema()
+        async with AsyncSessionLocal() as db:
+            db.add(IntentIdempotencyKey(key=key, user_id=user_id, action=action))
+            try:
+                await db.commit()
+                return True
+            except IntegrityError:
+                await db.rollback()
+                return False
+
+    async def _db_prune_expired_idempotency_keys(self) -> None:
+        from sqlalchemy import delete
+
+        from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+        from app.gateway.novel_migrated.models.intent_session import IntentIdempotencyKey
+
+        await init_db_schema()
+        cutoff = datetime.now() - _SESSION_TTL
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                delete(IntentIdempotencyKey).where(IntentIdempotencyKey.created_at < cutoff)
+            )
+            await db.commit()
+
     async def _get_session(self, session_key: str) -> _NovelCreationSession | None:
         async with self._lock:
+            if self._storage_backend == "database":
+                try:
+                    return await self._db_get_session(session_key)
+                except Exception:
+                    logger.exception("failed to load intent session from database, fallback to memory cache")
             return self._sessions.get(session_key)
 
     async def _save_session(self, session: _NovelCreationSession) -> None:
         async with self._lock:
+            if self._storage_backend == "database":
+                try:
+                    await self._db_upsert_session(session)
+                    return
+                except Exception:
+                    logger.exception("failed to persist intent session to database, fallback to memory cache")
             self._sessions[session.session_key] = session
+            self._persist_state_best_effort_locked()
 
     async def _remove_session(self, session_key: str) -> None:
         async with self._lock:
+            if self._storage_backend == "database":
+                try:
+                    await self._db_delete_session(session_key)
+                    return
+                except Exception:
+                    logger.exception("failed to delete intent session from database, fallback to memory cache")
             self._sessions.pop(session_key, None)
+            self._persist_state_best_effort_locked()
 
     async def _prune_expired_sessions(self) -> None:
         now = datetime.now()
         async with self._lock:
+            if self._storage_backend == "database":
+                try:
+                    await self._db_prune_expired_sessions()
+                    return
+                except Exception:
+                    logger.exception("failed to prune expired intent sessions in database, fallback to memory cache")
             expired = [
                 key
                 for key, session in self._sessions.items()
@@ -3241,6 +3874,62 @@ class IntentRecognitionMiddleware:
             ]
             for key in expired:
                 self._sessions.pop(key, None)
+            if expired:
+                self._persist_state_best_effort_locked()
+
+    def _is_feature_enabled(self) -> bool:
+        try:
+            from deerflow.config.extensions_config import get_extensions_config
+            cfg = get_extensions_config()
+            return cfg.is_feature_enabled(self._INTENT_FEATURE_FLAG, default=True)
+        except Exception:
+            return True
+
+    @staticmethod
+    def _generate_idempotency_key(user_id: str, action: str) -> str:
+        raw = f"{user_id}:{action}:{datetime.now().isoformat()}"
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+    async def _consume_idempotency_key(
+        self,
+        key: str,
+        *,
+        user_id: str | None = None,
+        action: str | None = None,
+    ) -> bool:
+        async with self._lock:
+            if self._storage_backend == "database":
+                try:
+                    return await self._db_consume_idempotency_key(
+                        key,
+                        user_id=user_id,
+                        action=action,
+                    )
+                except Exception:
+                    logger.exception("failed to consume idempotency key in database, fallback to memory cache")
+            if key in self._used_idempotency_keys:
+                return False
+            self._used_idempotency_keys[key] = datetime.now()
+            self._persist_state_best_effort_locked()
+            return True
+
+    async def _prune_expired_idempotency_keys(self) -> None:
+        now = datetime.now()
+        async with self._lock:
+            if self._storage_backend == "database":
+                try:
+                    await self._db_prune_expired_idempotency_keys()
+                    return
+                except Exception:
+                    logger.exception("failed to prune idempotency keys in database, fallback to memory cache")
+            expired = [
+                key for key, ts in self._used_idempotency_keys.items()
+                if now - ts > _SESSION_TTL
+            ]
+            for key in expired:
+                self._used_idempotency_keys.pop(key, None)
+            if expired:
+                self._persist_state_best_effort_locked()
 
     async def _create_with_modern_projects(
         self,

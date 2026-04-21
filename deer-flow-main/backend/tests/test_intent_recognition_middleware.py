@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 
 from app.gateway.middleware.intent_recognition_middleware import IntentRecognitionMiddleware
+from app.gateway.novel_migrated.api.import_export import build_export_download_path
 
 
 class _FakeAiService:
@@ -188,3 +189,126 @@ def test_session_auto_uses_enabled_skills_without_manual_trigger(monkeypatch):
 
     assert result.handled is True
     assert "技能建议" in result.content
+
+
+def test_has_active_creation_session_is_scoped_by_user_and_session():
+    middleware = IntentRecognitionMiddleware()
+    user_id = "gate-user-a"
+    thread_id = "gate-thread-a"
+
+    asyncio.run(
+        middleware.process_request(
+            request=_request_with_message("请创建一本小说", thread_id=thread_id),
+            user_id=user_id,
+            db_session=None,
+            ai_service=_FakeAiService(),
+        )
+    )
+
+    session_key = middleware.build_session_key_for_context(
+        user_id=user_id,
+        context={"thread_id": thread_id},
+    )
+
+    same_user_hit = asyncio.run(
+        middleware.has_active_creation_session(user_id=user_id, session_key=session_key)
+    )
+    other_user_hit = asyncio.run(
+        middleware.has_active_creation_session(user_id="gate-user-b", session_key=session_key)
+    )
+    other_session_hit = asyncio.run(
+        middleware.has_active_creation_session(
+            user_id=user_id,
+            session_key=middleware.build_session_key_for_context(
+                user_id=user_id,
+                context={"thread_id": "other-thread"},
+            ),
+        )
+    )
+
+    assert same_user_hit is True
+    assert other_user_hit is False
+    assert other_session_hit is False
+
+
+def test_has_active_creation_session_hits_database_backend(monkeypatch):
+    middleware = IntentRecognitionMiddleware()
+    user_id = "gate-db-user"
+    thread_id = "gate-db-thread"
+
+    asyncio.run(
+        middleware.process_request(
+            request=_request_with_message("请创建一本小说", thread_id=thread_id),
+            user_id=user_id,
+            db_session=None,
+            ai_service=_FakeAiService(),
+        )
+    )
+
+    session_key = middleware.build_session_key_for_context(
+        user_id=user_id,
+        context={"thread_id": thread_id},
+    )
+    cached_session = asyncio.run(middleware._get_session(session_key))
+    assert cached_session is not None
+
+    called = {"count": 0}
+
+    async def _fake_db_get_session(key: str):
+        called["count"] += 1
+        if key == session_key:
+            return cached_session
+        return None
+
+    async def _fake_db_prune_expired_sessions():
+        return None
+
+    monkeypatch.setattr(middleware, "_db_get_session", _fake_db_get_session)
+    monkeypatch.setattr(middleware, "_db_prune_expired_sessions", _fake_db_prune_expired_sessions)
+    middleware._storage_backend = "database"
+
+    hit = asyncio.run(
+        middleware.has_active_creation_session(user_id=user_id, session_key=session_key)
+    )
+
+    assert hit is True
+    assert called["count"] >= 1
+
+
+def test_export_project_archive_returns_real_download_path(monkeypatch):
+    middleware = IntentRecognitionMiddleware()
+    project_id = "proj-export-1"
+
+    async def _fake_get_project_model(*args, **kwargs):
+        return SimpleNamespace(id=project_id)
+
+    class _FakeExportService:
+        async def export_project(self, *, project_id: str, db):
+            assert project_id == "proj-export-1"
+            return b"zip-content"
+
+    monkeypatch.setattr(middleware, "_get_project_model", _fake_get_project_model)
+    monkeypatch.setattr(
+        "app.gateway.novel_migrated.services.import_export_service.get_import_export_service",
+        lambda: _FakeExportService(),
+    )
+
+    action = SimpleNamespace(
+        action="export_project_archive",
+        project_id=project_id,
+        target_id=project_id,
+        payload={},
+    )
+    session = SimpleNamespace(user_id="export-user")
+
+    payload = asyncio.run(
+        middleware._dispatch_manage_action(
+            action=action,
+            session=session,
+            db_session=object(),
+        )
+    )
+
+    assert payload["project_id"] == project_id
+    assert payload["file_name"].endswith(".zip")
+    assert payload["download_path"] == build_export_download_path(project_id)

@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.gateway.middleware.domain_protocol import extract_context_fields
 from app.gateway.middleware.intent_recognition_middleware import IntentRecognitionMiddleware
 from app.gateway.novel_migrated.api.settings import get_user_ai_service
 from app.gateway.novel_migrated.core.logger import get_logger
@@ -233,6 +234,7 @@ async def chat_endpoint(
             logger.warning("Deprecated field provider_config.api_key was provided and ignored for /api/ai/chat")
 
         try:
+            context_fields = extract_context_fields(body.context)
             intent_result = await _INTENT_RECOGNITION_MIDDLEWARE.process_request(
                 request=body,
                 user_id=get_request_user_id(request),
@@ -259,6 +261,8 @@ async def chat_endpoint(
                 payload["novel"] = intent_result.novel
             if intent_result.session:
                 payload["session"] = intent_result.session
+            if context_fields:
+                payload["context"] = context_fields
 
             if body.stream:
                 return _build_streaming_response(
