@@ -8,6 +8,38 @@ export interface AiMessage {
   content: string;
 }
 
+export interface DomainToolCall {
+  name: string;
+  args: Record<string, unknown>;
+  id: string;
+}
+
+export interface SessionBrief {
+  mode: "normal" | "create" | "manage";
+  status: string;
+  active_project?: {
+    id: string | null;
+    title: string | null;
+  };
+  missing_field?: string | null;
+  fields?: Record<string, unknown>;
+  pending_action?: {
+    action: string;
+    entity: string;
+    target: string;
+    missing_fields: string[];
+  } | null;
+  idempotency_key?: string;
+}
+
+export interface AiStructuredResponse {
+  content: string;
+  tool_calls?: DomainToolCall[];
+  novel?: Record<string, unknown>;
+  session?: SessionBrief;
+  context?: Record<string, unknown>;
+}
+
 export interface AiRequestOptions {
   messages: AiMessage[];
   context?: Record<string, unknown>;
@@ -21,9 +53,10 @@ export interface AiRequestOptions {
 
 export interface AiStreamCallbacks {
   onChunk?: (chunk: string) => void;
-  onComplete?: (fullText: string) => void;
+  onComplete?: (fullText: string, structured?: AiStructuredResponse) => void;
   onError?: (error: Error) => void;
   onAbort?: () => void;
+  onStructured?: (data: AiStructuredResponse) => void;
   abortSignal?: AbortSignal;
 }
 
@@ -365,6 +398,34 @@ function validateProviderConfig(provider: AiProviderConfig | null | undefined): 
   }
 }
 
+function _extractStructuredResponse(data: Record<string, unknown>): AiStructuredResponse {
+  const result: AiStructuredResponse = {
+    content: (data.content as string) || "",
+  };
+
+  if (Array.isArray(data.tool_calls) && data.tool_calls.length > 0) {
+    result.tool_calls = data.tool_calls.map((tc: Record<string, unknown>) => ({
+      name: String(tc.name || ""),
+      args: (tc.args as Record<string, unknown>) || {},
+      id: String(tc.id || ""),
+    }));
+  }
+
+  if (data.novel && typeof data.novel === "object") {
+    result.novel = data.novel as Record<string, unknown>;
+  }
+
+  if (data.session && typeof data.session === "object") {
+    result.session = data.session as SessionBrief;
+  }
+
+  if (data.context && typeof data.context === "object") {
+    result.context = data.context as Record<string, unknown>;
+  }
+
+  return result;
+}
+
 export class GlobalAiService {
   private abortController: AbortController | null = null;
 
@@ -481,7 +542,11 @@ export class GlobalAiService {
       if (!stream) {
         const data = await response.json();
         const content = data.content || data.message?.content || "";
-        callbacks?.onComplete?.(content);
+        const structured = _extractStructuredResponse(data);
+        if (structured && (structured.tool_calls || structured.session || structured.novel)) {
+          callbacks?.onStructured?.(structured);
+        }
+        callbacks?.onComplete?.(content, structured);
         return content;
       }
 
@@ -518,6 +583,7 @@ export class GlobalAiService {
     const decoder = new TextDecoder();
     let fullText = "";
     let buffer = "";
+    let lastStructured: AiStructuredResponse | undefined;
 
     const readWithTimeout = async () => {
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -550,6 +616,12 @@ export class GlobalAiService {
 
       try {
         const parsed = JSON.parse(data);
+
+        if (parsed.tool_calls || parsed.session || parsed.novel || parsed.context) {
+          lastStructured = _extractStructuredResponse(parsed);
+          callbacks?.onStructured?.(lastStructured);
+        }
+
         const content =
           parsed.content ||
           parsed.delta?.content ||
@@ -584,7 +656,7 @@ export class GlobalAiService {
       processLine(buffer);
     }
 
-    callbacks?.onComplete?.(fullText);
+    callbacks?.onComplete?.(fullText, lastStructured);
     return fullText;
   }
 

@@ -149,6 +149,7 @@ async def update_mcp_configuration(request: McpConfigUpdateRequest) -> McpConfig
         config_data = {
             "mcpServers": {name: server.model_dump() for name, server in request.mcp_servers.items()},
             "skills": {name: {"enabled": skill.enabled} for name, skill in current_config.skills.items()},
+            "features": {name: {"enabled": flag.enabled} for name, flag in current_config.features.items()},
         }
 
         # Write the configuration to file

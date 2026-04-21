@@ -52,6 +52,12 @@ class SkillStateConfig(BaseModel):
     enabled: bool = Field(default=True, description="Whether this skill is enabled")
 
 
+class FeatureFlagConfig(BaseModel):
+    """Configuration for a feature flag."""
+
+    enabled: bool = Field(default=True, description="Whether this feature is enabled")
+
+
 class ExtensionsConfig(BaseModel):
     """Unified configuration for MCP servers and skills."""
 
@@ -63,6 +69,10 @@ class ExtensionsConfig(BaseModel):
     skills: dict[str, SkillStateConfig] = Field(
         default_factory=dict,
         description="Map of skill name to state configuration",
+    )
+    features: dict[str, FeatureFlagConfig] = Field(
+        default_factory=dict,
+        description="Map of feature flag name to configuration",
     )
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
@@ -192,9 +202,23 @@ class ExtensionsConfig(BaseModel):
         """
         skill_config = self.skills.get(skill_name)
         if skill_config is None:
-            # Default to enable for public & custom skill
             return skill_category in ("public", "custom")
         return skill_config.enabled
+
+    def is_feature_enabled(self, feature_name: str, *, default: bool = True) -> bool:
+        """Check if a feature flag is enabled.
+
+        Args:
+            feature_name: Name of the feature flag
+            default: Default value when the flag is not configured
+
+        Returns:
+            True if enabled, False otherwise
+        """
+        flag = self.features.get(feature_name)
+        if flag is None:
+            return default
+        return flag.enabled
 
 
 _extensions_config: ExtensionsConfig | None = None

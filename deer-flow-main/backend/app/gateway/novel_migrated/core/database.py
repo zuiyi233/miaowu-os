@@ -67,6 +67,7 @@ async def init_db_schema() -> None:
         character,
         foreshadow,
         generation_history,
+        intent_session,
         mcp_plugin,
         memory,
         novel_agent_config,

@@ -337,6 +337,7 @@ async def update_skill(skill_name: str, request: SkillUpdateRequest) -> SkillRes
         config_data = {
             "mcpServers": {name: server.model_dump() for name, server in extensions_config.mcp_servers.items()},
             "skills": {name: {"enabled": skill_config.enabled} for name, skill_config in extensions_config.skills.items()},
+            "features": {name: {"enabled": flag.enabled} for name, flag in extensions_config.features.items()},
         }
 
         with open(config_path, "w", encoding="utf-8") as f:

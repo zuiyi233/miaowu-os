@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 HARNESS_ROUTER_MODULES = (
     "app.gateway.routers.models",
     "app.gateway.routers.mcp",
+    "app.gateway.routers.features",
     "app.gateway.routers.memory",
     "app.gateway.routers.skills",
     "app.gateway.routers.artifacts",
@@ -196,6 +197,10 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
             {
                 "name": "memory",
                 "description": "Access and manage global memory data for personalized conversations",
+            },
+            {
+                "name": "features",
+                "description": "Manage runtime feature flags for gateway capabilities",
             },
             {
                 "name": "skills",

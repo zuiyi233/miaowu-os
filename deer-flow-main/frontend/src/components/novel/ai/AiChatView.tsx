@@ -1,26 +1,65 @@
 'use client';
 
-import { Send } from 'lucide-react';
+import { Download, Send } from 'lucide-react';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
+import { getBackendBaseURL } from '@/core/config';
 import { useI18n } from '@/core/i18n/hooks';
 import { useAiPanelStore } from '@/core/novel';
 import { novelAiService } from '@/core/novel/ai-service';
+import type { AiStructuredResponse, SessionBrief } from '@/core/ai/global-ai-service';
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  structured?: AiStructuredResponse;
+}
+
+const SESSION_MODE_LABELS: Record<string, string> = {
+  normal: '',
+  create: '📝 创建小说中',
+  manage: '🔧 管理小说中',
+};
+
+const SESSION_STATUS_LABELS: Record<string, string> = {
+  collecting: '收集信息',
+  awaiting_confirmation: '等待确认',
+  completed: '已完成',
+  cancelled: '已取消',
+  failed: '失败',
+  duplicate: '重复提交',
+};
+
+function extractDownloadPath(structured?: AiStructuredResponse): string | null {
+  if (!structured || typeof structured.novel !== 'object' || structured.novel === null) {
+    return null;
+  }
+  const raw = (structured.novel as Record<string, unknown>).download_path;
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  const normalized = raw.trim();
+  return normalized ? normalized : null;
+}
+
+function resolveDownloadUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+  return `${getBackendBaseURL()}${normalized}`;
 }
 
 export function AiChatView({ novelId }: { novelId: string }) {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [activeSession, setActiveSession] = useState<SessionBrief | null>(null);
   const { t } = useI18n();
   const aiStream = useAiPanelStore((s) => s.aiStream);
   const selectedText = useAiPanelStore((s) => s.selectedText);
@@ -79,6 +118,18 @@ export function AiChatView({ novelId }: { novelId: string }) {
               )
             );
           },
+          onStructured: (data) => {
+            if (data.session) {
+              setActiveSession(data.session);
+            }
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === assistantMessageId
+                  ? { ...msg, structured: data }
+                  : msg
+              )
+            );
+          },
           onError: () => {
             setMessages((prev) =>
               prev.map((msg) =>
@@ -95,11 +146,34 @@ export function AiChatView({ novelId }: { novelId: string }) {
     }
   };
 
+  const sessionModeLabel = activeSession
+    ? SESSION_MODE_LABELS[activeSession.mode] || ''
+    : '';
+  const sessionStatusLabel = activeSession
+    ? SESSION_STATUS_LABELS[activeSession.status] || activeSession.status
+    : '';
+
   return (
     <div className="flex h-full flex-col">
       {selectedText && (
         <div className="border-b p-2 text-xs text-muted-foreground">
           {t.novel.selectedText}: {selectedText.slice(0, 100)}...
+        </div>
+      )}
+      {activeSession && activeSession.mode !== 'normal' && (
+        <div className="border-b bg-primary/5 px-3 py-1.5 text-xs text-primary flex items-center gap-2">
+          <span className="font-medium">{sessionModeLabel}</span>
+          <span className="text-muted-foreground">· {sessionStatusLabel}</span>
+          {activeSession.active_project?.title && (
+            <span className="text-muted-foreground">
+              · 项目：{activeSession.active_project.title}
+            </span>
+          )}
+          {activeSession.missing_field && (
+            <span className="text-amber-600">
+              · 待填：{activeSession.missing_field}
+            </span>
+          )}
         </div>
       )}
       <ScrollArea className="flex-1 p-4">
@@ -114,15 +188,33 @@ export function AiChatView({ novelId }: { novelId: string }) {
                 key={msg.id}
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
-                <div
-                  className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
-                    msg.role === 'user'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted'
-                  }`}
-                >
-                  {msg.content}
-                </div>
+                {(() => {
+                  const downloadPath = extractDownloadPath(msg.structured);
+                  const downloadUrl = downloadPath ? resolveDownloadUrl(downloadPath) : null;
+                  return (
+                    <div>
+                      <div
+                        className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                          msg.role === 'user'
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-muted'
+                        }`}
+                      >
+                        {msg.content}
+                      </div>
+                      {msg.role === 'assistant' && downloadUrl ? (
+                        <div className="mt-2">
+                          <Button asChild size="sm" variant="outline">
+                            <a href={downloadUrl} download>
+                              <Download className="mr-1 h-3.5 w-3.5" />
+                              下载导出包
+                            </a>
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })()}
               </div>
             ))}
           </div>

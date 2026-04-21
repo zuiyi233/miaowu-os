@@ -9,6 +9,7 @@ __all__ = [
     "artifacts",
     "assistants_compat",
     "channels",
+    "features",
     "mcp",
     "memory",
     "models",

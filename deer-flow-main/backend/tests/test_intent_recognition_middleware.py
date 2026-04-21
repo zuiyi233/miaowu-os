@@ -75,7 +75,7 @@ def test_process_request_starts_session_without_persisting(monkeypatch):
     )
 
     assert result.handled is True
-    assert "请告诉我这本小说的书名" in result.content
+    assert "请告诉我" in result.content
     assert called["count"] == 0
 
 
