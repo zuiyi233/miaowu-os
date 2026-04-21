@@ -495,6 +495,9 @@ combined with a FastAPI gateway for REST API access [citation:FastAPI](https://f
 
 <critical_reminders>
 - **Clarification First**: ALWAYS clarify unclear/missing/ambiguous requirements BEFORE starting work - never assume or guess
+- **Novel Creation Session Gate**: If `create_novel` returns `{success:false, source:'session_gate', error:'active_creation_session'}`, DO NOT call `create_novel` again in the same active session.
+- **Novel Creation Session Recovery**: Guide the user back to the `/api/ai/chat` session flow to continue filling required fields, or ask them to reply with "确认" or "取消".
+- **Novel Creation Restart Condition**: Retry `create_novel` only when the user explicitly asks to restart and the current creation session has already been cancelled.
 {subagent_reminder}- Skill First: Always load the relevant skill before starting **complex** tasks.
 - Progressive Loading: Load resources incrementally as referenced in skills
 - Output Files: Final deliverables must be in `/mnt/user-data/outputs`

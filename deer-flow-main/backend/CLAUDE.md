@@ -232,6 +232,8 @@ FastAPI application on port 8001 with health check at `GET /health`.
 - `POST /api/ai/chat` includes session-based intent middleware for novel workflows with two active tracks:
   - Novel creation session: guided field collection (title/genre/theme/audience/target_words), then persistence only after explicit confirmation.
   - Novel lifecycle management session: project/chapter/outline/character/relationship/organization/item mapping operations in a conversational session.
+- Intent session state and idempotency keys are persisted in shared `novel_migrated` database tables (`intent_session_states`, `intent_idempotency_keys`) by default.
+- Set `DEERFLOW_INTENT_SESSION_BACKEND=file` to force legacy JSON-file storage (`DEERFLOW_INTENT_SESSION_STORE_PATH`).
 - Side-effect actions (create/update/delete and other writes) require explicit confirmation before execution.
 - Intent-session skill loading follows enabled states in `extensions_config.json` (ranked by novel relevance), and `技能推荐` can force a refresh.
 - Intent workflow responses include `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches these session replies.
