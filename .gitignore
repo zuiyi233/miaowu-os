@@ -942,3 +942,6 @@ MuMuAINovel-main/
 
 nul  
 .ace-tool/
+
+# Standalone desktop shell repo
+tauri-app-template-main/
