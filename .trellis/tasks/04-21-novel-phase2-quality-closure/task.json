@@ -1,0 +1,67 @@
+{
+  "id": "novel-phase2-quality-closure",
+  "name": "novel-phase2-quality-closure",
+  "title": "阶段二：小说创作质量闭环与生产化联动",
+  "description": "在首期联动完成后，推进质量闭环、跨章一致性、定稿门禁、任务恢复与可观测灰度发布。",
+  "status": "planning",
+  "dev_type": "fullstack",
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-04-21",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "brainstorm"
+    },
+    {
+      "phase": 2,
+      "action": "research"
+    },
+    {
+      "phase": 3,
+      "action": "implement"
+    },
+    {
+      "phase": 4,
+      "action": "check"
+    },
+    {
+      "phase": 5,
+      "action": "update-spec"
+    },
+    {
+      "phase": 6,
+      "action": "record-session"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "AI_Novel_Connection_Test_Report.md",
+    "Novel_Creation_Process_Assessment_Report.md",
+    "主项目写作流程与小说创作深度联动打通方案.md",
+    ".trellis/spec/guides/cross-layer-thinking-guide.md"
+  ],
+  "notes": "阶段二任务包，约束：不新增前端依赖、不重做全量UI、不一次性重构legacy路由。",
+  "meta": {
+    "phase": "phase-2",
+    "focus": [
+      "quality-closure",
+      "consistency-engine",
+      "finalization-gate",
+      "job-recovery",
+      "observability"
+    ]
+  }
+}

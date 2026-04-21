@@ -13,7 +13,7 @@ import json
 import os
 import time
 from collections import deque
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -27,6 +27,12 @@ from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.core.user_context import get_request_user_id
 from app.gateway.novel_migrated.schemas.ai_message import AiMessage
 from app.gateway.novel_migrated.services.ai_service import AIService
+from app.gateway.observability.context import (
+    copy_trace_context,
+    extract_trace_fields_from_context,
+    update_trace_context,
+)
+from app.gateway.observability.metrics import record_gateway_request
 
 logger = get_logger(__name__)
 
@@ -179,6 +185,49 @@ def _is_messages_format_enabled() -> bool:
     return value.strip().lower() not in _DISABLED_BOOL_ENV_VALUES
 
 
+def _to_non_negative_int(raw: Any) -> int | None:
+    if raw is None:
+        return None
+    try:
+        parsed = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return max(0, parsed)
+
+
+def _is_retry_request(request: Request, context: Mapping[str, Any] | None) -> bool:
+    for key in ("x-retry-attempt", "x-retry-count"):
+        parsed = _to_non_negative_int(request.headers.get(key))
+        if parsed and parsed > 0:
+            return True
+
+    if isinstance(context, Mapping):
+        for key in ("retry_count", "retryCount", "retry_attempt", "retryAttempt"):
+            parsed = _to_non_negative_int(context.get(key))
+            if parsed and parsed > 0:
+                return True
+    return False
+
+
+def _extract_trace_from_intent_session(session: Any) -> dict[str, str]:
+    if not isinstance(session, Mapping):
+        return {}
+
+    extracted: dict[str, str] = {}
+    for canonical, aliases in (
+        ("session_key", ("session_key", "sessionKey")),
+        ("idempotency_key", ("idempotency_key", "idempotencyKey")),
+        ("project_id", ("project_id", "projectId", "active_project_id", "activeProjectId")),
+    ):
+        for alias in aliases:
+            value = session.get(alias)
+            normalized = str(value).strip() if value is not None else ""
+            if normalized:
+                extracted[canonical] = normalized
+                break
+    return extracted
+
+
 async def _stream_response_builder(
     stream: AsyncGenerator[str, None],
     *,
@@ -213,6 +262,46 @@ async def _stream_single_payload(payload: dict[str, Any]) -> AsyncGenerator[str,
     yield "data: [DONE]\n\n"
 
 
+async def _mark_stream_failure(
+    stream: AsyncGenerator[str, None],
+    *,
+    stream_state: dict[str, bool],
+) -> AsyncGenerator[str, None]:
+    try:
+        async for chunk in stream:
+            yield chunk
+    except Exception:
+        stream_state["failed"] = True
+        raise
+
+
+async def _observe_stream_request(
+    stream: AsyncGenerator[str, None],
+    *,
+    started_at: float,
+    retried: bool,
+    stream_state: dict[str, bool],
+) -> AsyncGenerator[str, None]:
+    try:
+        async for payload in stream:
+            yield payload
+    finally:
+        duration_ms = (time.perf_counter() - started_at) * 1000.0
+        success = not stream_state.get("failed", False)
+        record_gateway_request(
+            success=success,
+            retried=retried,
+            duration_ms=duration_ms,
+        )
+        logger.debug(
+            "ai_chat_request_observed success=%s retried=%s duration_ms=%.2f",
+            success,
+            retried,
+            duration_ms,
+            extra=copy_trace_context(),
+        )
+
+
 @router.post("/chat")
 async def chat_endpoint(
     request: Request,
@@ -227,17 +316,32 @@ async def chat_endpoint(
     当 USE_MESSAGES_FORMAT=1（默认）时，直接传递messages数组到LLM Provider，
     保留完整的多轮对话结构以激活Provider原生缓存机制。
     """
+    started_at = time.perf_counter()
+    request_succeeded = False
+    stream_metrics_deferred = False
+    user_id = get_request_user_id(request)
+    request_is_retry = _is_retry_request(request, body.context)
+    context_fields = extract_context_fields(body.context)
+
+    session_key = _INTENT_RECOGNITION_MIDDLEWARE.build_session_key_for_context(
+        user_id=user_id,
+        context=body.context,
+    )
+    update_trace_context(
+        **extract_trace_fields_from_context(body.context),
+        session_key=session_key,
+    )
+
     try:
         _enforce_access_control(request)
-        _enforce_rate_limit(f"chat:{get_request_user_id(request)}")
+        _enforce_rate_limit(f"chat:{user_id}")
         if body.provider_config.api_key:
             logger.warning("Deprecated field provider_config.api_key was provided and ignored for /api/ai/chat")
 
         try:
-            context_fields = extract_context_fields(body.context)
             intent_result = await _INTENT_RECOGNITION_MIDDLEWARE.process_request(
                 request=body,
-                user_id=get_request_user_id(request),
+                user_id=user_id,
                 db_session=getattr(ai_service, "db_session", None),
                 ai_service=ai_service,
             )
@@ -254,6 +358,11 @@ async def chat_endpoint(
             return JSONResponse(content=error_payload, headers=_ACTION_RESPONSE_HEADERS.copy())
 
         if intent_result and intent_result.handled:
+            if intent_result.session:
+                update_trace_context(**_extract_trace_from_intent_session(intent_result.session))
+                session_status = str(intent_result.session.get("status") or "").strip().lower()
+                if session_status == "duplicate":
+                    request_is_retry = True
             payload: dict[str, Any] = {"content": intent_result.content}
             if intent_result.tool_calls:
                 payload["tool_calls"] = intent_result.tool_calls
@@ -264,6 +373,7 @@ async def chat_endpoint(
             if context_fields:
                 payload["context"] = context_fields
 
+            request_succeeded = True
             if body.stream:
                 return _build_streaming_response(
                     _stream_single_payload(payload),
@@ -280,29 +390,47 @@ async def chat_endpoint(
 
         if use_messages_format:
             if body.stream:
+                stream_state = {"failed": False}
+                stream_metrics_deferred = True
                 return _build_streaming_response(
-                    _stream_generator_with_messages(
-                        ai_service,
-                        body.messages,
-                        body.provider_config,
+                    _observe_stream_request(
+                        _stream_generator_with_messages(
+                            ai_service,
+                            body.messages,
+                            body.provider_config,
+                            stream_state=stream_state,
+                        ),
+                        started_at=started_at,
+                        retried=request_is_retry,
+                        stream_state=stream_state,
                     )
                 )
 
             result = await ai_service.generate_text_with_messages(messages=body.messages, **provider_config_params)
+            request_succeeded = True
             return JSONResponse(content=_build_chat_json_payload(result))
 
         prompt = _build_prompt_from_messages(body.messages)
 
         if body.stream:
+            stream_state = {"failed": False}
+            stream_metrics_deferred = True
             return _build_streaming_response(
-                _stream_generator(
-                    ai_service,
-                    prompt,
-                    body.provider_config,
+                _observe_stream_request(
+                    _stream_generator(
+                        ai_service,
+                        prompt,
+                        body.provider_config,
+                        stream_state=stream_state,
+                    ),
+                    started_at=started_at,
+                    retried=request_is_retry,
+                    stream_state=stream_state,
                 )
             )
 
         result = await ai_service.generate_text(prompt=prompt, **provider_config_params)
+        request_succeeded = True
         return JSONResponse(content=_build_chat_json_payload(result))
 
     except ValueError as exc:
@@ -313,39 +441,74 @@ async def chat_endpoint(
     except Exception as exc:
         logger.error("AI request failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"AI 请求失败: {str(exc)}")
+    finally:
+        if not stream_metrics_deferred:
+            duration_ms = (time.perf_counter() - started_at) * 1000.0
+            record_gateway_request(
+                success=request_succeeded,
+                retried=request_is_retry,
+                duration_ms=duration_ms,
+            )
+            logger.debug(
+                "ai_chat_request_observed success=%s retried=%s duration_ms=%.2f",
+                request_succeeded,
+                request_is_retry,
+                duration_ms,
+                extra=copy_trace_context(),
+            )
 
 
-async def _stream_generator_with_messages(ai_service: AIService, messages: list[AiMessage], config: AiProviderConfig):
+async def _stream_generator_with_messages(
+    ai_service: AIService,
+    messages: list[AiMessage],
+    config: AiProviderConfig,
+    *,
+    stream_state: dict[str, bool] | None = None,
+):
     """流式响应生成器（messages数组直传版本）。
 
     直接传递完整的messages数组到LLM Provider，保留多轮对话结构。
     使用SSE (Server-Sent Events) 格式返回流式数据。
     """
+    stream = ai_service.generate_text_stream_with_messages(
+        messages=messages,
+        model=config.model_name,
+        temperature=config.temperature,
+        max_tokens=config.max_tokens,
+    )
+    if stream_state is not None:
+        stream = _mark_stream_failure(stream, stream_state=stream_state)
+
     async for payload in _stream_response_builder(
-        ai_service.generate_text_stream_with_messages(
-            messages=messages,
-            model=config.model_name,
-            temperature=config.temperature,
-            max_tokens=config.max_tokens,
-        ),
+        stream,
         error_log_prefix="Stream generation error (messages format)",
         expose_raw_error=_should_expose_raw_stream_error(),
     ):
         yield payload
 
 
-async def _stream_generator(ai_service: AIService, prompt: str, config: AiProviderConfig):
+async def _stream_generator(
+    ai_service: AIService,
+    prompt: str,
+    config: AiProviderConfig,
+    *,
+    stream_state: dict[str, bool] | None = None,
+):
     """流式响应生成器（deprecated - 字符串prompt版本）。
 
     @deprecated: 使用 _stream_generator_with_messages() 替代
     """
+    stream = ai_service.generate_text_stream(
+        prompt=prompt,
+        model=config.model_name,
+        temperature=config.temperature,
+        max_tokens=config.max_tokens,
+    )
+    if stream_state is not None:
+        stream = _mark_stream_failure(stream, stream_state=stream_state)
+
     async for payload in _stream_response_builder(
-        ai_service.generate_text_stream(
-            prompt=prompt,
-            model=config.model_name,
-            temperature=config.temperature,
-            max_tokens=config.max_tokens,
-        ),
+        stream,
         error_log_prefix="Stream generation error",
         expose_raw_error=_should_expose_raw_stream_error(),
     ):

@@ -216,6 +216,7 @@ FastAPI application on port 8001 with health check at `GET /health`.
 |--------|-----------|
 | **Models** (`/api/models`) | `GET /` - list models; `GET /{name}` - model details |
 | **MCP** (`/api/mcp`) | `GET /config` - get config; `PUT /config` - update config (saves to extensions_config.json) |
+| **Features** (`/api/features`) | `GET /` - list flags; `PUT /{feature_name}` - update enabled+rollout; `POST /{feature_name}/rollback` - disable + rollout=0; `GET /{feature_name}/evaluate?user_id=` - evaluate canary; `GET /metrics/novel-pipeline` - gateway metrics snapshot |
 | **Skills** (`/api/skills`) | `GET /` - list skills; `GET /{name}` - details; `PUT /{name}` - update enabled; `POST /install` - install from .skill archive (accepts standard optional frontmatter like `version`, `author`, `compatibility`) |
 | **Memory** (`/api/memory`) | `GET /` - memory data; `POST /reload` - force reload; `GET /config` - config; `GET /status` - config + data |
 | **Uploads** (`/api/threads/{id}/uploads`) | `POST /` - upload files (auto-converts PDF/PPT/Excel/Word); `GET /list` - list; `DELETE /{filename}` - delete |
@@ -237,14 +238,22 @@ FastAPI application on port 8001 with health check at `GET /health`.
 - Side-effect actions (create/update/delete and other writes) require explicit confirmation before execution.
 - Intent-session skill loading follows enabled states in `extensions_config.json` (ranked by novel relevance), and `技能推荐` can force a refresh.
 - Intent workflow responses include `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches these session replies.
+- Gateway request logs now carry unified trace fields via middleware/context filters: `request_id/thread_id/project_id/session_key/idempotency_key`.
+- In-process novel pipeline metrics are exposed by `/api/features/metrics/novel-pipeline`: success rate, failure rate, retry rate, P95 latency, duplicate-write interception rate.
+- Feature flags support user-scoped canary release through `FeatureFlagConfig(enabled, rollout_percentage, allow_users, deny_users)` and deterministic hash bucketing.
+- Fast rollback runbook is implemented as one API step: `POST /api/features/{feature_name}/rollback` (forces `enabled=false`, `rollout_percentage=0`).
 
 Novel Migrated Wave1+Wave2 APIs are registered through `app.gateway.routers.novel_migrated`, which is added to `CORE_ROUTER_MODULES` in `app/gateway/app.py`. That aggregator conditionally includes `app.gateway.novel_migrated.api.careers`, `app.gateway.novel_migrated.api.foreshadows`, `app.gateway.novel_migrated.api.memories`, `app.gateway.novel_migrated.api.inspiration`, `app.gateway.novel_migrated.api.wizard_stream`, `app.gateway.novel_migrated.api.novel_stream`, `app.gateway.novel_migrated.api.project_covers`, and `app.gateway.novel_migrated.api.book_import` when those modules exist.
 
 `wizard_stream` exposes SSE endpoints under `/api/wizard-stream/world-building|career-system|characters|outline`, and also `GET /api/projects/{project_id}` for frontend resume flows.
 
-`novel_stream` adds novel authoring SSE endpoints: `POST /api/novels/{novel_id}/chapters/{chapter_id}/generate-stream`, `POST /api/novels/{novel_id}/chapters/{chapter_id}/continue-stream`, `POST /api/novels/{novel_id}/chapters/batch-generate-stream`, `POST /api/novels/{novel_id}/outlines/generate-stream`, `POST /api/novels/{novel_id}/characters/generate-stream`, plus compatibility aliases `POST /api/chapters/{chapter_id}/generate-stream|continue-stream|analyze` and `GET /api/chapters/{chapter_id}/analysis|analysis/status`.
+`novel_stream` adds novel authoring SSE endpoints: `POST /api/novels/{novel_id}/chapters/{chapter_id}/generate-stream`, `POST /api/novels/{novel_id}/chapters/{chapter_id}/continue-stream`, `POST /api/novels/{novel_id}/chapters/batch-generate-stream`, `POST /api/novels/{novel_id}/outlines/generate-stream`, `POST /api/novels/{novel_id}/characters/generate-stream`, plus compatibility aliases `POST /api/chapters/{chapter_id}/generate-stream|continue-stream|analyze`, `GET /api/chapters/{chapter_id}/analysis|analysis/status`, and `POST /api/chapters/{chapter_id}/revision/confirm`.
+
+Batch task resume/replay APIs are available at `GET /api/novels/{novel_id}/chapters/batch-generate-tasks/{task_id}`, `POST /api/novels/{novel_id}/chapters/batch-generate-tasks/{task_id}/replay-failed-stream`, and `GET /chapters/project/{project_id}/batch-generate/active`.
 
 `novel_stream` now enforces per-user+action in-process throttling (`NOVEL_STREAM_RATE_LIMIT_PER_MINUTE`, default `30`) and analysis cache cleanup (TTL/size caps via `NOVEL_ANALYSIS_CACHE_TTL_SECONDS`, `NOVEL_ANALYSIS_CACHE_MAX_ENTRIES`).
+
+Long-running analysis/regeneration/batch tasks include timeout auto-recovery and compensation metadata (`failed_chapters[].compensation`) to support idempotent replay flows.
 
 `novel_migrated` memory retrieval now follows: local vector (if available) → cloud embedding via OpenAI-compatible `/v1/embeddings` → keyword fallback.
 

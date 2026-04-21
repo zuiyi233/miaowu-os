@@ -1,24 +1,20 @@
 """章节管理API - CRUD、单章/批量生成、重写、局部重写"""
 from __future__ import annotations
 
-import json
-from typing import Any, Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
 from app.gateway.novel_migrated.api.settings import get_user_ai_service
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
-from app.gateway.novel_migrated.models.chapter import Chapter
-from app.gateway.novel_migrated.models.outline import Outline
-from app.gateway.novel_migrated.models.project import Project
 from app.gateway.novel_migrated.models.batch_generation_task import BatchGenerationTask
+from app.gateway.novel_migrated.models.chapter import Chapter
 from app.gateway.novel_migrated.models.regeneration_task import RegenerationTask
 from app.gateway.novel_migrated.services.ai_service import AIService
+from app.gateway.novel_migrated.services.recovery_service import recovery_service
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/chapters", tags=["chapters"])
@@ -28,17 +24,17 @@ class ChapterCreateRequest(BaseModel):
     title: str = ""
     summary: str = ""
     content: str = ""
-    outline_id: Optional[str] = None
-    chapter_number: Optional[int] = Field(default=None, ge=1)
-    sub_index: Optional[int] = None
-    expansion_plan: Optional[str] = None
+    outline_id: str | None = None
+    chapter_number: int | None = Field(default=None, ge=1)
+    sub_index: int | None = None
+    expansion_plan: str | None = None
 
 
 class ChapterUpdateRequest(BaseModel):
-    title: Optional[str] = None
-    summary: Optional[str] = None
-    content: Optional[str] = None
-    expansion_plan: Optional[str] = None
+    title: str | None = None
+    summary: str | None = None
+    content: str | None = None
+    expansion_plan: str | None = None
 
 
 class BatchGenerateRequest(BaseModel):
@@ -46,7 +42,7 @@ class BatchGenerateRequest(BaseModel):
     start_chapter_number: int
     chapter_count: int = 1
     target_word_count: int = 3000
-    style_id: Optional[int] = None
+    style_id: int | None = None
     enable_analysis: bool = False
 
 
@@ -56,8 +52,8 @@ class RegenerateRequest(BaseModel):
     modification_instructions: str = ""
     custom_instructions: str = ""
     target_word_count: int = 3000
-    focus_areas: Optional[list] = None
-    preserve_elements: Optional[dict] = None
+    focus_areas: list | None = None
+    preserve_elements: dict | None = None
 
 
 class PartialRegenerateRequest(BaseModel):
@@ -67,7 +63,7 @@ class PartialRegenerateRequest(BaseModel):
     context_before: str = ""
     context_after: str = ""
     user_instructions: str = ""
-    style_id: Optional[int] = None
+    style_id: int | None = None
 
 
 @router.get("/project/{project_id}")
@@ -75,8 +71,8 @@ async def list_chapters(
     project_id: str,
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
-    outline_id: Optional[str] = None,
-    status: Optional[str] = None,
+    outline_id: str | None = None,
+    status: str | None = None,
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
 ):
@@ -251,6 +247,20 @@ async def get_batch_task_status(
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Batch task not found")
+    await verify_project_access(task.project_id, user_id, db)
+
+    auto_recovered = recovery_service.recover_batch_task(task)
+    if auto_recovered:
+        await db.commit()
+        await db.refresh(task)
+
+    chapters_result = await db.execute(
+        select(Chapter)
+        .where(Chapter.project_id == task.project_id, Chapter.id.in_(task.chapter_ids or []))
+        .order_by(Chapter.chapter_number.asc())
+    )
+    chapters = list(chapters_result.scalars().all())
+    resume_plan = recovery_service.compute_batch_resume_plan(task=task, chapters=chapters)
     return {
         "task_id": task.id,
         "status": task.status,
@@ -259,6 +269,52 @@ async def get_batch_task_status(
         "current_chapter_number": task.current_chapter_number,
         "failed_chapters": task.failed_chapters,
         "error_message": task.error_message,
+        "auto_recovered": auto_recovered,
+        "resume_plan": resume_plan,
+    }
+
+
+@router.get("/project/{project_id}/batch-generate/active")
+async def get_active_batch_task(
+    project_id: str,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    await verify_project_access(project_id, user_id, db)
+    result = await db.execute(
+        select(BatchGenerationTask)
+        .where(
+            BatchGenerationTask.project_id == project_id,
+            BatchGenerationTask.user_id == user_id,
+            BatchGenerationTask.status.in_(["pending", "running", "failed"]),
+        )
+        .order_by(BatchGenerationTask.created_at.desc())
+        .limit(1)
+    )
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"has_active_task": False, "task": None}
+
+    auto_recovered = recovery_service.recover_batch_task(task)
+    if auto_recovered:
+        await db.commit()
+        await db.refresh(task)
+
+    return {
+        "has_active_task": True,
+        "task": {
+            "batch_id": task.id,
+            "status": task.status,
+            "total": task.total_chapters,
+            "completed": task.completed_chapters,
+            "current_chapter_id": task.current_chapter_id,
+            "current_chapter_number": task.current_chapter_number,
+            "error_message": task.error_message,
+            "auto_recovered": auto_recovered,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "started_at": task.started_at.isoformat() if task.started_at else None,
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        },
     }
 
 
@@ -305,6 +361,13 @@ async def get_regen_task_status(
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Regeneration task not found")
+    await verify_project_access(task.project_id, user_id, db)
+
+    auto_recovered = recovery_service.recover_regeneration_task(task)
+    if auto_recovered:
+        await db.commit()
+        await db.refresh(task)
+
     return {
         "task_id": task.id,
         "status": task.status,
@@ -312,6 +375,7 @@ async def get_regen_task_status(
         "original_word_count": task.original_word_count,
         "regenerated_word_count": task.regenerated_word_count,
         "error_message": task.error_message,
+        "auto_recovered": auto_recovered,
     }
 
 

@@ -4,6 +4,8 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from app.gateway.observability.context import ensure_trace_filter_on_handlers
+
 
 class UvicornFormatter(logging.Formatter):
     """Uvicorn风格的日志格式化器"""
@@ -39,13 +41,23 @@ class UvicornFormatter(logging.Formatter):
         else:
             colored_level = levelname
         
-        # 添加请求追踪ID（如果存在）
-        request_id = getattr(record, 'request_id', None)
-        request_id_str = f" [{request_id}]" if request_id else ""
+        # 添加链路追踪字段（如果存在）
+        trace_parts = []
+        for field, label in (
+            ("request_id", "request_id"),
+            ("thread_id", "thread_id"),
+            ("project_id", "project_id"),
+            ("session_key", "session_key"),
+            ("idempotency_key", "idempotency_key"),
+        ):
+            value = getattr(record, field, None)
+            if value:
+                trace_parts.append(f"{label}={value}")
+        trace_str = f" [{' '.join(trace_parts)}]" if trace_parts else ""
         
-        # Uvicorn风格格式: INFO:     module_name - message [request_id]
+        # Uvicorn风格格式: INFO:     module_name - message [trace_fields]
         # 注意：INFO后面有5个空格，保持对齐
-        return f"{colored_level}:     {record.name}{request_id_str} - {record.getMessage()}"
+        return f"{colored_level}:     {record.name}{trace_str} - {record.getMessage()}"
 
 
 # 全局标志，防止重复初始化
@@ -117,6 +129,7 @@ def setup_logging(
     
     # 标记为已配置
     _logging_configured = True
+    ensure_trace_filter_on_handlers()
     
     return root_logger
 

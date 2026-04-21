@@ -5,9 +5,8 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable
 from collections import deque
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -20,15 +19,19 @@ from app.gateway.novel_migrated.api.common import get_user_id, verify_project_ac
 from app.gateway.novel_migrated.api.settings import get_user_ai_service
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
+from app.gateway.novel_migrated.models.analysis_task import AnalysisTask
+from app.gateway.novel_migrated.models.batch_generation_task import BatchGenerationTask
 from app.gateway.novel_migrated.models.chapter import Chapter
 from app.gateway.novel_migrated.models.character import Character
+from app.gateway.novel_migrated.models.memory import PlotAnalysis
 from app.gateway.novel_migrated.models.outline import Outline
 from app.gateway.novel_migrated.models.project import Project
 from app.gateway.novel_migrated.models.project_default_style import ProjectDefaultStyle
 from app.gateway.novel_migrated.models.writing_style import WritingStyle
 from app.gateway.novel_migrated.services.ai_service import AIService
 from app.gateway.novel_migrated.services.book_import_service import book_import_service
-from app.gateway.novel_migrated.services.plot_analyzer import get_plot_analyzer
+from app.gateway.novel_migrated.services.orchestration_service import orchestration_service
+from app.gateway.novel_migrated.services.recovery_service import recovery_service
 from app.gateway.novel_migrated.utils.sse_response import SSEResponse, WizardProgressTracker, create_sse_response
 
 logger = get_logger(__name__)
@@ -115,6 +118,9 @@ class ChapterGenerateStreamRequest(BaseModel):
     model: str | None = None
     narrative_perspective: str | None = None
     max_tokens: int | None = Field(default=None, ge=512, le=16000)
+    auto_analysis: bool = False
+    auto_prepare_revision: bool = False
+    analysis_idempotency_key: str | None = None
 
 
 class ChapterContinueStreamRequest(BaseModel):
@@ -125,6 +131,8 @@ class ChapterContinueStreamRequest(BaseModel):
 
 
 class BatchGenerateStreamRequest(BaseModel):
+    task_id: str | None = None
+    idempotency_key: str | None = None
     chapter_ids: list[str] | None = None
     start_chapter_number: int | None = Field(default=None, ge=1)
     chapter_count: int = Field(default=1, ge=1, le=30)
@@ -134,6 +142,23 @@ class BatchGenerateStreamRequest(BaseModel):
     model: str | None = None
     narrative_perspective: str | None = None
     max_tokens: int | None = Field(default=None, ge=512, le=16000)
+    max_retries: int = Field(default=2, ge=0, le=6)
+    replay_failed_only: bool = False
+    auto_analysis: bool = False
+    auto_prepare_revision: bool = False
+
+
+class ChapterRevisionConfirmRequest(BaseModel):
+    selected_suggestion_indices: list[int] = Field(default_factory=list)
+    custom_instructions: str = ""
+    target_word_count: int = Field(default=3000, ge=500, le=12000)
+    idempotency_key: str | None = None
+    max_retries: int = Field(default=2, ge=1, le=6)
+
+
+class AnalyzeChapterRequest(BaseModel):
+    force: bool = False
+    idempotency_key: str | None = None
 
 
 class OutlineGenerateStreamRequest(BaseModel):
@@ -154,6 +179,16 @@ def _complete_event() -> str:
 
 def _error_event(message: str, code: int = 500) -> str:
     return SSEResponse.format_sse({"type": "error", "error": message, "code": code})
+
+
+def _build_analysis_idempotency_key(project: Project, chapter: Chapter) -> str:
+    chapter_updated_at = chapter.updated_at.isoformat() if chapter.updated_at else ""
+    return orchestration_service.make_idempotency_key(
+        project.id,
+        chapter.id,
+        str(chapter.word_count or 0),
+        chapter_updated_at,
+    )
 
 
 async def _stream_worker(
@@ -512,18 +547,69 @@ async def _generate_single_chapter_stream(
         append_mode=append_mode,
     )
 
+    analysis_task_id: str | None = None
+    revision_suggestions: list[dict[str, Any]] = []
+    analysis_error: str | None = None
+    auto_analysis_enabled = isinstance(request, ChapterGenerateStreamRequest) and request.auto_analysis
+    if auto_analysis_enabled:
+        try:
+            yield await tracker.saving("自动分析章节中...", 0.75)
+            analysis_idem_key = (
+                request.analysis_idempotency_key
+                or _build_analysis_idempotency_key(project, chapter)
+            )
+            analysis_result = await orchestration_service.run_analysis_pipeline(
+                db=db,
+                chapter=chapter,
+                project_id=project.id,
+                user_id=style_user_id or project.user_id,
+                ai_service=ai_service,
+                idempotency_key=analysis_idem_key,
+            )
+            analysis_task_id = analysis_result.task.id
+            _ANALYSIS_TASKS[chapter.id] = {
+                "task_id": analysis_result.task.id,
+                "chapter_id": chapter.id,
+                "status": analysis_result.task.status,
+                "progress": analysis_result.task.progress,
+                "error_message": analysis_result.task.error_message,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+            _ANALYSIS_RESULTS[chapter.id] = {
+                "project_id": project.id,
+                "chapter_id": chapter.id,
+                "analysis": analysis_result.analysis,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+            if request.auto_prepare_revision:
+                revision_suggestions = orchestration_service.normalize_revision_suggestions(
+                    analysis_result.analysis
+                )
+        except Exception as exc:  # pragma: no cover - defensive branch
+            logger.warning("auto analysis failed chapter=%s err=%s", chapter.id, exc, exc_info=True)
+            analysis_error = str(exc)
+
     action = "续写" if continue_mode else "生成"
     if emit_result:
-        yield await tracker.result(
-            {
-                "novel_id": project.id,
-                "chapter_id": chapter.id,
-                "chapter_number": chapter.chapter_number,
-                "title": chapter.title,
-                "word_count": chapter.word_count,
-                "status": chapter.status,
-                "action": action,
+        result_payload = {
+            "novel_id": project.id,
+            "chapter_id": chapter.id,
+            "chapter_number": chapter.chapter_number,
+            "title": chapter.title,
+            "word_count": chapter.word_count,
+            "status": chapter.status,
+            "action": action,
+        }
+        if auto_analysis_enabled:
+            result_payload["analysis"] = {
+                "enabled": True,
+                "task_id": analysis_task_id,
+                "status": "failed" if analysis_error else "completed",
+                "error_message": analysis_error,
+                "revision_suggestions": revision_suggestions,
             }
+        yield await tracker.result(
+            result_payload
         )
     yield await tracker.complete(f"章节{action}完成")
     if emit_complete:
@@ -569,6 +655,137 @@ async def _ensure_novel_chapter(
         db=db,
     )
     return project, chapter, _normalize_user_id_for_style(request, project)
+
+
+def _serialize_batch_task(task: BatchGenerationTask) -> dict[str, Any]:
+    return {
+        "task_id": task.id,
+        "status": task.status,
+        "total_chapters": task.total_chapters,
+        "completed_chapters": task.completed_chapters,
+        "current_chapter_id": task.current_chapter_id,
+        "current_chapter_number": task.current_chapter_number,
+        "current_retry_count": task.current_retry_count,
+        "max_retries": task.max_retries,
+        "failed_chapters": task.failed_chapters or [],
+        "error_message": task.error_message,
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+    }
+
+
+async def _query_batch_chapters(
+    *,
+    db: AsyncSession,
+    project: Project,
+    payload: BatchGenerateStreamRequest,
+) -> list[Chapter]:
+    if payload.chapter_ids:
+        result = await db.execute(
+            select(Chapter)
+            .where(Chapter.project_id == project.id, Chapter.id.in_(payload.chapter_ids))
+            .order_by(Chapter.chapter_number.asc())
+        )
+        return list(result.scalars().all())
+
+    start_number = payload.start_chapter_number or 1
+    end_number = start_number + payload.chapter_count - 1
+    result = await db.execute(
+        select(Chapter)
+        .where(
+            Chapter.project_id == project.id,
+            Chapter.chapter_number >= start_number,
+            Chapter.chapter_number <= end_number,
+        )
+        .order_by(Chapter.chapter_number.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def _load_or_create_batch_task(
+    *,
+    db: AsyncSession,
+    project: Project,
+    user_id: str,
+    payload: BatchGenerateStreamRequest,
+) -> tuple[BatchGenerationTask, list[Chapter], bool]:
+    if payload.task_id:
+        existing_result = await db.execute(
+            select(BatchGenerationTask).where(
+                BatchGenerationTask.id == payload.task_id,
+                BatchGenerationTask.project_id == project.id,
+                BatchGenerationTask.user_id == user_id,
+            )
+        )
+        task = existing_result.scalar_one_or_none()
+        if not task:
+            raise HTTPException(status_code=404, detail="批量任务不存在")
+        if recovery_service.recover_batch_task(task):
+            await db.commit()
+        chapters_result = await db.execute(
+            select(Chapter)
+            .where(Chapter.project_id == project.id, Chapter.id.in_(task.chapter_ids or []))
+            .order_by(Chapter.chapter_number.asc())
+        )
+        return task, list(chapters_result.scalars().all()), True
+
+    chapters = await _query_batch_chapters(db=db, project=project, payload=payload)
+    if not chapters:
+        raise HTTPException(status_code=404, detail="未找到可生成章节")
+
+    idempotency_key = (payload.idempotency_key or "").strip()
+    if idempotency_key:
+        consumed = await orchestration_service.consume_idempotency_key(
+            db,
+            key=idempotency_key,
+            user_id=user_id,
+            action=f"batch_generate:{project.id}",
+        )
+        if not consumed:
+            existing_result = await db.execute(
+                select(BatchGenerationTask)
+                .where(
+                    BatchGenerationTask.project_id == project.id,
+                    BatchGenerationTask.user_id == user_id,
+                    BatchGenerationTask.start_chapter_number == (payload.start_chapter_number or 1),
+                    BatchGenerationTask.chapter_count == len(chapters),
+                    BatchGenerationTask.target_word_count == payload.target_word_count,
+                )
+                .order_by(BatchGenerationTask.created_at.desc())
+                .limit(1)
+            )
+            existing = existing_result.scalar_one_or_none()
+            if existing:
+                chapters_result = await db.execute(
+                    select(Chapter)
+                    .where(Chapter.project_id == project.id, Chapter.id.in_(existing.chapter_ids or []))
+                    .order_by(Chapter.chapter_number.asc())
+                )
+                return existing, list(chapters_result.scalars().all()), True
+            raise HTTPException(status_code=409, detail="批量任务幂等键重复")
+
+    start_num = payload.start_chapter_number or (chapters[0].chapter_number if chapters else 1)
+    task = BatchGenerationTask(
+        project_id=project.id,
+        user_id=user_id,
+        start_chapter_number=start_num,
+        chapter_count=len(chapters),
+        chapter_ids=[chapter.id for chapter in chapters],
+        style_id=payload.style_id,
+        target_word_count=payload.target_word_count,
+        enable_analysis=payload.auto_analysis,
+        status="pending",
+        total_chapters=len(chapters),
+        completed_chapters=0,
+        failed_chapters=[],
+        current_retry_count=0,
+        max_retries=payload.max_retries,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    return task, chapters, False
 
 
 @router.post("/api/novels/{novel_id}/chapters/{chapter_id}/generate-stream", summary="流式生成章节")
@@ -720,39 +937,95 @@ async def batch_generate_chapters_stream(
         tracker = WizardProgressTracker("批量章节")
         yield await tracker.start()
         try:
-            if payload.chapter_ids:
-                chapters_result = await db.execute(
-                    select(Chapter)
-                    .where(Chapter.project_id == project.id, Chapter.id.in_(payload.chapter_ids))
-                    .order_by(Chapter.chapter_number.asc())
-                )
-                chapters = list(chapters_result.scalars().all())
-            else:
-                start_number = payload.start_chapter_number or 1
-                end_number = start_number + payload.chapter_count - 1
-                chapters_result = await db.execute(
-                    select(Chapter)
-                    .where(
-                        Chapter.project_id == project.id,
-                        Chapter.chapter_number >= start_number,
-                        Chapter.chapter_number <= end_number,
-                    )
-                    .order_by(Chapter.chapter_number.asc())
-                )
-                chapters = list(chapters_result.scalars().all())
-
+            task, chapters, reused = await _load_or_create_batch_task(
+                db=db,
+                project=project,
+                user_id=user_id,
+                payload=payload,
+            )
             if not chapters:
-                raise HTTPException(status_code=404, detail="未找到可生成章节")
+                raise HTTPException(status_code=404, detail="批量任务没有可执行章节")
 
-            total = len(chapters)
-            completed: list[dict[str, Any]] = []
-            for idx, chapter in enumerate(chapters, start=1):
-                progress_base = int(((idx - 1) / total) * 100)
+            if task.status == "cancelled":
+                raise HTTPException(status_code=409, detail="批量任务已取消，无法继续执行")
+
+            if task.status in {"completed"} and not payload.replay_failed_only:
+                yield await SSEResponse.send_result(
+                    {
+                        "novel_id": project.id,
+                        "task": _serialize_batch_task(task),
+                        "completed": [],
+                        "failed": task.failed_chapters or [],
+                        "message": "任务已完成，返回历史结果",
+                    }
+                )
+                yield await tracker.complete("批量章节生成已是完成态")
+                yield _complete_event()
+                return
+
+            if task.status in {"pending", "failed"}:
+                task.status = "running"
+                task.started_at = datetime.utcnow()
+                task.error_message = None
+
+            resume_plan = recovery_service.compute_batch_resume_plan(
+                task=task,
+                chapters=chapters,
+                replay_failed_only=payload.replay_failed_only,
+            )
+            already_completed_ids = set(resume_plan["completed_ids"])
+            task.total_chapters = len(chapters)
+            task.completed_chapters = len(already_completed_ids)
+            await db.commit()
+
+            chapter_map = {item.id: item for item in chapters}
+            pending_chapters = [chapter_map[cid] for cid in resume_plan["pending_ids"] if cid in chapter_map]
+            if not pending_chapters:
+                task.status = "completed"
+                task.completed_at = datetime.utcnow()
+                await db.commit()
+                yield await SSEResponse.send_result(
+                    {
+                        "novel_id": project.id,
+                        "task": _serialize_batch_task(task),
+                        "completed": [],
+                        "failed": task.failed_chapters or [],
+                        "message": "无待执行章节（可能已全部完成）",
+                    }
+                )
+                yield await tracker.complete("批量任务无需执行")
+                yield _complete_event()
+                return
+
+            completed_items: list[dict[str, Any]] = []
+            total_pending = len(pending_chapters)
+            for idx, chapter in enumerate(pending_chapters, start=1):
+                progress_base = int(((idx - 1) / max(1, total_pending)) * 100)
                 yield await SSEResponse.send_progress(
-                    f"正在生成第{chapter.chapter_number}章（{idx}/{total}）",
+                    f"正在生成第{chapter.chapter_number}章（{idx}/{total_pending}）",
                     min(progress_base, 95),
                     "processing",
                 )
+                task.current_chapter_id = chapter.id
+                task.current_chapter_number = chapter.chapter_number
+                task.current_retry_count = 0
+                await db.commit()
+
+                if chapter.status == "completed" and (chapter.content or "").strip():
+                    if chapter.id not in already_completed_ids:
+                        task.completed_chapters += 1
+                        already_completed_ids.add(chapter.id)
+                        await db.commit()
+                    completed_items.append(
+                        {
+                            "chapter_id": chapter.id,
+                            "chapter_number": chapter.chapter_number,
+                            "word_count": chapter.word_count,
+                            "status": chapter.status,
+                            "skipped": True,
+                        }
+                    )
+                    continue
 
                 req = ChapterGenerateStreamRequest(
                     target_word_count=payload.target_word_count,
@@ -761,22 +1034,66 @@ async def batch_generate_chapters_stream(
                     model=payload.model,
                     narrative_perspective=payload.narrative_perspective,
                     max_tokens=payload.max_tokens,
+                    auto_analysis=payload.auto_analysis,
+                    auto_prepare_revision=payload.auto_prepare_revision,
                 )
-                async for message in _generate_single_chapter_stream(
-                    db=db,
-                    project=project,
-                    chapter=chapter,
-                    ai_service=user_ai_service,
-                    request=req,
-                    append_mode=False,
-                    continue_mode=False,
-                    style_user_id=user_id,
-                    emit_result=False,
-                    emit_complete=False,
-                ):
-                    yield message
 
-                completed.append(
+                chapter_ok = False
+                last_error = ""
+                for retry in range(payload.max_retries + 1):
+                    task.current_retry_count = retry
+                    await db.commit()
+                    try:
+                        if retry > 0:
+                            yield await SSEResponse.send_progress(
+                                f"第{chapter.chapter_number}章重试中({retry}/{payload.max_retries})",
+                                min(progress_base + 5, 95),
+                                "retrying",
+                            )
+                        async for message in _generate_single_chapter_stream(
+                            db=db,
+                            project=project,
+                            chapter=chapter,
+                            ai_service=user_ai_service,
+                            request=req,
+                            append_mode=False,
+                            continue_mode=False,
+                            style_user_id=user_id,
+                            emit_result=False,
+                            emit_complete=False,
+                        ):
+                            yield message
+                        chapter_ok = True
+                        break
+                    except HTTPException as exc:
+                        last_error = str(exc.detail)
+                    except Exception as exc:  # pragma: no cover - defensive branch
+                        last_error = str(exc)
+
+                if not chapter_ok:
+                    recovery_service.record_batch_failure(
+                        task=task,
+                        chapter=chapter,
+                        stage="generation",
+                        error=last_error or "章节生成失败",
+                        retry_count=payload.max_retries,
+                    )
+                    task.status = "failed"
+                    task.error_message = (
+                        f"第{chapter.chapter_number}章失败，已进入补偿态，可重放：{last_error or '未知错误'}"
+                    )[:500]
+                    task.completed_at = datetime.utcnow()
+                    task.current_retry_count = 0
+                    await db.commit()
+                    break
+
+                if chapter.id not in already_completed_ids:
+                    task.completed_chapters += 1
+                    already_completed_ids.add(chapter.id)
+                recovery_service.mark_batch_replayed(task=task, chapter_id=chapter.id)
+                task.current_retry_count = 0
+                await db.commit()
+                completed_items.append(
                     {
                         "chapter_id": chapter.id,
                         "chapter_number": chapter.chapter_number,
@@ -785,14 +1102,37 @@ async def batch_generate_chapters_stream(
                     }
                 )
 
+            if task.status != "failed":
+                updated_plan = recovery_service.compute_batch_resume_plan(
+                    task=task,
+                    chapters=chapters,
+                    replay_failed_only=False,
+                )
+                if updated_plan["pending_ids"]:
+                    task.status = "failed"
+                    task.error_message = "任务提前终止，存在未完成章节，可继续断点续跑"
+                else:
+                    task.status = "completed"
+                    task.error_message = None
+                task.completed_at = datetime.utcnow()
+                task.current_chapter_id = None
+                task.current_chapter_number = None
+                task.current_retry_count = 0
+                await db.commit()
+
             yield await SSEResponse.send_result(
                 {
                     "novel_id": project.id,
-                    "total": total,
-                    "completed": completed,
+                    "task": _serialize_batch_task(task),
+                    "resumed": reused,
+                    "completed": completed_items,
+                    "failed": task.failed_chapters or [],
                 }
             )
-            yield await tracker.complete("批量章节生成完成")
+            if task.status == "completed":
+                yield await tracker.complete("批量章节生成完成")
+            else:
+                yield await tracker.complete("批量任务结束（含失败，可重放）")
             yield _complete_event()
         except HTTPException as exc:
             yield _error_event(str(exc.detail), exc.status_code)
@@ -874,6 +1214,8 @@ async def generate_novel_characters_stream(
 async def analyze_chapter(
     chapter_id: str,
     request: Request,
+    payload: AnalyzeChapterRequest | None = None,
+    force: bool = False,
     db: AsyncSession = Depends(get_db),
     user_ai_service: AIService = Depends(get_user_ai_service),
 ):
@@ -887,52 +1229,40 @@ async def analyze_chapter(
         db=db,
     )
 
-    if not (chapter.content or "").strip():
-        raise HTTPException(status_code=400, detail="章节内容为空，无法分析")
-
-    task_id = str(uuid.uuid4())
-    _ANALYSIS_TASKS[chapter_id] = {
-        "task_id": task_id,
-        "chapter_id": chapter_id,
-        "status": "running",
-        "progress": 10,
-        "error_message": None,
-        "updated_at": datetime.utcnow().isoformat(),
-    }
-
-    analyzer = get_plot_analyzer(user_ai_service)
-    result = await analyzer.analyze_chapter(
-        chapter_number=chapter.chapter_number,
-        title=chapter.title,
-        content=chapter.content or "",
-        word_count=chapter.word_count or len(chapter.content or ""),
-        user_id=user_id,
-        db=db,
-    )
-
-    if not result:
-        _ANALYSIS_TASKS[chapter_id] = {
-            "task_id": task_id,
-            "chapter_id": chapter_id,
-            "status": "failed",
-            "progress": 0,
-            "error_message": "AI 分析失败",
-            "updated_at": datetime.utcnow().isoformat(),
-        }
-        raise HTTPException(status_code=502, detail="章节分析失败")
+    try:
+        force_analysis = bool(force or (payload.force if payload else False))
+        payload_idem = (payload.idempotency_key or "").strip() if payload else ""
+        analysis_idem = payload_idem or _build_analysis_idempotency_key(project, chapter)
+        if force_analysis and not payload_idem:
+            analysis_idem = None
+        pipeline = await orchestration_service.run_analysis_pipeline(
+            db=db,
+            chapter=chapter,
+            project_id=project.id,
+            user_id=user_id,
+            ai_service=user_ai_service,
+            idempotency_key=analysis_idem,
+            force=force_analysis,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        msg = str(exc)
+        status_code = 409 if "重复" in msg else 502
+        raise HTTPException(status_code=status_code, detail=msg) from exc
 
     _ANALYSIS_RESULTS[chapter_id] = {
         "project_id": project.id,
         "chapter_id": chapter_id,
-        "analysis": result,
+        "analysis": pipeline.analysis,
         "updated_at": datetime.utcnow().isoformat(),
     }
     _ANALYSIS_TASKS[chapter_id] = {
-        "task_id": task_id,
+        "task_id": pipeline.task.id,
         "chapter_id": chapter_id,
-        "status": "completed",
-        "progress": 100,
-        "error_message": None,
+        "status": pipeline.task.status,
+        "progress": pipeline.task.progress,
+        "error_message": pipeline.task.error_message,
         "updated_at": datetime.utcnow().isoformat(),
     }
     return _ANALYSIS_TASKS[chapter_id]
@@ -952,6 +1282,16 @@ async def get_chapter_analysis(
         user_id=user_id,
         db=db,
     )
+
+    persisted_result = await db.execute(select(PlotAnalysis).where(PlotAnalysis.chapter_id == chapter_id))
+    persisted = persisted_result.scalar_one_or_none()
+    if persisted:
+        return {
+            "chapter_id": chapter_id,
+            "has_analysis": True,
+            "analysis": persisted.to_dict(),
+            "updated_at": persisted.created_at.isoformat() if persisted.created_at else None,
+        }
 
     result = _ANALYSIS_RESULTS.get(chapter_id)
     if not result:
@@ -983,6 +1323,31 @@ async def get_chapter_analysis_status(
         db=db,
     )
 
+    latest_result = await db.execute(
+        select(AnalysisTask)
+        .where(AnalysisTask.chapter_id == chapter_id)
+        .order_by(AnalysisTask.created_at.desc())
+        .limit(1)
+    )
+    latest_task = latest_result.scalar_one_or_none()
+    if latest_task:
+        auto_recovered = recovery_service.recover_analysis_task(latest_task)
+        if auto_recovered:
+            await db.commit()
+            await db.refresh(latest_task)
+        return {
+            "has_task": True,
+            "task_id": latest_task.id,
+            "chapter_id": chapter_id,
+            "status": latest_task.status,
+            "progress": latest_task.progress,
+            "error_message": latest_task.error_message,
+            "auto_recovered": auto_recovered,
+            "created_at": latest_task.created_at.isoformat() if latest_task.created_at else None,
+            "started_at": latest_task.started_at.isoformat() if latest_task.started_at else None,
+            "completed_at": latest_task.completed_at.isoformat() if latest_task.completed_at else None,
+        }
+
     task = _ANALYSIS_TASKS.get(chapter_id)
     if not task:
         return {
@@ -996,3 +1361,111 @@ async def get_chapter_analysis_status(
         "has_task": True,
         **task,
     }
+
+
+@router.post("/api/chapters/{chapter_id}/revision/confirm", summary="确认并执行章节修订")
+async def confirm_chapter_revision(
+    chapter_id: str,
+    payload: ChapterRevisionConfirmRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_ai_service: AIService = Depends(get_user_ai_service),
+):
+    user_id = get_user_id(request)
+    _enforce_stream_rate_limit(user_id=user_id, action="confirm_chapter_revision")
+    project, chapter = await _get_chapter_with_project_access(
+        chapter_id=chapter_id,
+        novel_id=None,
+        user_id=user_id,
+        db=db,
+    )
+
+    try:
+        revision = await orchestration_service.apply_revision_pipeline(
+            db=db,
+            chapter=chapter,
+            project=project,
+            user_id=user_id,
+            ai_service=user_ai_service,
+            selected_suggestion_indices=payload.selected_suggestion_indices,
+            custom_instructions=payload.custom_instructions,
+            target_word_count=payload.target_word_count,
+            idempotency_key=payload.idempotency_key,
+            max_retries=payload.max_retries,
+        )
+    except RuntimeError as exc:
+        msg = str(exc)
+        if "重复" in msg:
+            raise HTTPException(status_code=409, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
+
+    return {
+        "chapter_id": chapter.id,
+        "task_id": revision.task.id,
+        "status": revision.task.status,
+        "used_cached": revision.used_cached,
+        "word_count": chapter.word_count,
+        "diff_stats": revision.diff_stats,
+        "updated_at": chapter.updated_at.isoformat() if chapter.updated_at else None,
+    }
+
+
+@router.get("/api/novels/{novel_id}/chapters/batch-generate-tasks/{task_id}", summary="批量任务状态与恢复计划")
+async def get_batch_generate_task_status(
+    novel_id: str,
+    task_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = get_user_id(request)
+    project = await verify_project_access(novel_id, user_id, db)
+    task_result = await db.execute(
+        select(BatchGenerationTask).where(
+            BatchGenerationTask.id == task_id,
+            BatchGenerationTask.project_id == project.id,
+            BatchGenerationTask.user_id == user_id,
+        )
+    )
+    task = task_result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="批量任务不存在")
+
+    auto_recovered = recovery_service.recover_batch_task(task)
+    if auto_recovered:
+        await db.commit()
+        await db.refresh(task)
+
+    chapters_result = await db.execute(
+        select(Chapter)
+        .where(Chapter.project_id == project.id, Chapter.id.in_(task.chapter_ids or []))
+        .order_by(Chapter.chapter_number.asc())
+    )
+    chapters = list(chapters_result.scalars().all())
+    resume_plan = recovery_service.compute_batch_resume_plan(task=task, chapters=chapters)
+
+    return {
+        "auto_recovered": auto_recovered,
+        "task": _serialize_batch_task(task),
+        "resume_plan": resume_plan,
+    }
+
+
+@router.post(
+    "/api/novels/{novel_id}/chapters/batch-generate-tasks/{task_id}/replay-failed-stream",
+    summary="重放批量任务失败章节",
+)
+async def replay_failed_batch_chapters_stream(
+    novel_id: str,
+    task_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_ai_service: AIService = Depends(get_user_ai_service),
+):
+    payload = BatchGenerateStreamRequest(task_id=task_id, replay_failed_only=True)
+    return await batch_generate_chapters_stream(
+        novel_id=novel_id,
+        payload=payload,
+        request=request,
+        db=db,
+        user_ai_service=user_ai_service,
+    )

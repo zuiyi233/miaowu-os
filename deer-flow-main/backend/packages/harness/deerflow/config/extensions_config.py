@@ -1,5 +1,6 @@
 """Unified extensions configuration for MCP servers and skills."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -56,6 +57,9 @@ class FeatureFlagConfig(BaseModel):
     """Configuration for a feature flag."""
 
     enabled: bool = Field(default=True, description="Whether this feature is enabled")
+    rollout_percentage: int = Field(default=100, ge=0, le=100, description="Canary rollout percentage by user hash")
+    allow_users: list[str] = Field(default_factory=list, description="Always-enabled user IDs")
+    deny_users: list[str] = Field(default_factory=list, description="Always-disabled user IDs")
 
 
 class ExtensionsConfig(BaseModel):
@@ -219,6 +223,43 @@ class ExtensionsConfig(BaseModel):
         if flag is None:
             return default
         return flag.enabled
+
+    def is_feature_enabled_for_user(self, feature_name: str, *, user_id: str | None, default: bool = True) -> bool:
+        """Check if a feature flag is enabled for a specific user.
+
+        Evaluation order:
+        1. Missing flag -> `default`
+        2. `enabled=False` -> disabled
+        3. `deny_users` hit -> disabled
+        4. `allow_users` hit -> enabled
+        5. `rollout_percentage` deterministic hash bucket
+        """
+        flag = self.features.get(feature_name)
+        if flag is None:
+            return default
+        if not flag.enabled:
+            return False
+
+        normalized_user_id = (user_id or "").strip()
+        deny_set = {item.strip() for item in flag.deny_users if item and item.strip()}
+        if normalized_user_id and normalized_user_id in deny_set:
+            return False
+
+        allow_set = {item.strip() for item in flag.allow_users if item and item.strip()}
+        if normalized_user_id and normalized_user_id in allow_set:
+            return True
+
+        rollout = max(0, min(100, int(flag.rollout_percentage)))
+        if rollout >= 100:
+            return True
+        if rollout <= 0:
+            return False
+        if not normalized_user_id:
+            return False
+
+        digest = hashlib.sha256(f"{feature_name}:{normalized_user_id}".encode()).hexdigest()
+        bucket = int(digest[:8], 16) % 100
+        return bucket < rollout
 
 
 _extensions_config: ExtensionsConfig | None = None

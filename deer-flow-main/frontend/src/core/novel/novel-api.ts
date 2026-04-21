@@ -1,5 +1,4 @@
 import { getBackendBaseURL } from '@/core/config';
-import { parseSseStream } from './utils';
 
 import type {
   BookImportPreview,
@@ -18,6 +17,7 @@ import type {
   Setting,
   TimelineEvent,
 } from './schemas';
+import { parseSseStream } from './utils';
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
@@ -87,6 +87,14 @@ export interface NovelAuditEntry {
   reason?: string;
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;
+}
+
+export interface FinalizeGatePayload {
+  low_score_warn_threshold?: number;
+  low_score_block_threshold?: number;
+  min_chapter_length_warn?: number;
+  min_chapter_length_block?: number;
+  sensitive_words?: string[];
 }
 
 class ApiError extends Error {
@@ -1048,6 +1056,37 @@ export class NovelApiService {
 
   async getQualityReport(novelId: string) {
     return request(`/novels/${encodeURIComponent(novelId)}/quality-report`);
+  }
+
+  async getConsistencyReport(projectId: string) {
+    return request(`/polish/projects/${encodeURIComponent(projectId)}/consistency-report`);
+  }
+
+  async checkFinalizeGate(projectId: string, payload?: FinalizeGatePayload) {
+    return request(`/polish/projects/${encodeURIComponent(projectId)}/finalize-gate`, {
+      method: 'POST',
+      body: payload,
+    });
+  }
+
+  async finalizeProject(projectId: string, payload?: FinalizeGatePayload) {
+    try {
+      return await request(`/polish/projects/${encodeURIComponent(projectId)}/finalize`, {
+        method: 'POST',
+        body: payload,
+      });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409 && isRecord(error.details)) {
+        const detail = isRecord(error.details.detail) ? error.details.detail : null;
+        if (detail && 'gate_report' in detail) {
+          throw new ApiError(error.message, error.status, {
+            ...error.details,
+            gate_report: detail.gate_report,
+          });
+        }
+      }
+      throw error;
+    }
   }
 
   async getAudits(novelId: string, limit = 200): Promise<NovelAuditEntry[]> {

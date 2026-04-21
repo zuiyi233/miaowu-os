@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { type PromptInputMessage } from "@/components/ai-elements/prompt-input";
+import { Phase2StatusBar } from "@/components/novel/Phase2StatusBar";
 import { ArtifactTrigger } from "@/components/workspace/artifacts";
 import {
   ChatBox,
@@ -24,6 +25,7 @@ import { Welcome } from "@/components/workspace/welcome";
 import { useI18n } from "@/core/i18n/hooks";
 import { useModels } from "@/core/models/hooks";
 import { useNotification } from "@/core/notification/hooks";
+import { buildPhase2SnapshotFromThread } from "@/core/novel/phase2-status";
 import { useThreadSettings } from "@/core/settings";
 import { useThreadStream } from "@/core/threads/hooks";
 import { textOfMessage } from "@/core/threads/utils";
@@ -101,6 +103,19 @@ export default function ChatPage() {
     ? MESSAGE_LIST_DEFAULT_PADDING_BOTTOM +
       MESSAGE_LIST_FOLLOWUPS_EXTRA_PADDING_BOTTOM
     : undefined;
+  const phase2Snapshot = useMemo(
+    () => buildPhase2SnapshotFromThread(thread.values, thread.error),
+    [thread.error, thread.values],
+  );
+  const qualityReportHref = useMemo(() => {
+    if (phase2Snapshot?.reportUrl) {
+      return phase2Snapshot.reportUrl;
+    }
+    if (!phase2Snapshot?.novelId) {
+      return undefined;
+    }
+    return `/workspace/novel/${encodeURIComponent(phase2Snapshot.novelId)}/quality`;
+  }, [phase2Snapshot?.novelId, phase2Snapshot?.reportUrl]);
 
   return (
     <ThreadContext.Provider value={{ thread, isMock }}>
@@ -127,9 +142,22 @@ export default function ChatPage() {
             </div>
           </header>
           <main className="flex min-h-0 max-w-full grow flex-col">
+            {!isNewThread && phase2Snapshot ? (
+              <div className="px-4 pt-14 pb-2">
+                <Phase2StatusBar
+                  snapshot={phase2Snapshot}
+                  reportHref={qualityReportHref}
+                  compact
+                />
+              </div>
+            ) : null}
             <div className="flex size-full justify-center">
               <MessageList
-                className={cn("size-full", !isNewThread && "pt-10")}
+                className={cn(
+                  "size-full",
+                  !isNewThread && !phase2Snapshot && "pt-10",
+                  !isNewThread && phase2Snapshot && "pt-2",
+                )}
                 threadId={threadId}
                 thread={thread}
                 paddingBottom={messageListPaddingBottom}

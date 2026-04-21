@@ -128,6 +128,11 @@ FastAPI application providing REST endpoints for frontend integration:
 | `GET /api/threads/{id}/uploads/list` | List uploaded files |
 | `DELETE /api/threads/{id}` | Delete DeerFlow-managed local thread data after LangGraph thread deletion; unexpected failures are logged server-side and return a generic 500 detail |
 | `GET /api/threads/{id}/artifacts/{path}` | Serve generated artifacts |
+| `GET /api/features` | List gateway feature flags |
+| `PUT /api/features/{feature_name}` | Update feature flag (enabled + rollout strategy) |
+| `POST /api/features/{feature_name}/rollback` | Fast rollback (disable + rollout=0) |
+| `GET /api/features/{feature_name}/evaluate?user_id=...` | Evaluate user-scoped canary decision |
+| `GET /api/features/metrics/novel-pipeline` | Get in-process novel pipeline observability metrics |
 | `POST /api/ai/chat` | Global AI chat endpoint (uses server-side user settings; ignores client-provided plaintext api_key) |
 | `POST /api/ai/test-connection` | AI connectivity check (uses server-side user settings; ignores client-provided plaintext api_key) |
 | `GET /api/ai/providers` | List provider metadata for frontend selector |
@@ -144,6 +149,9 @@ FastAPI application providing REST endpoints for frontend integration:
 - For side-effect actions (create/update/delete and other writes), the middleware requires explicit confirmation before execution.
 - During intent sessions, skill context is loaded strictly from enabled entries in `extensions_config.json` (prioritized by novel relevance), and users can send `技能推荐` to force-refresh suggestions.
 - Guided/side-effect intent responses set `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches these intent-session workflow responses.
+- Request trace context is normalized across gateway logs via `request_id/thread_id/project_id/session_key/idempotency_key`.
+- Built-in in-process metrics are available at `/api/features/metrics/novel-pipeline`: success rate, failure rate, retry rate, P95 latency, duplicate-write interception rate.
+- Canary rollout is user-scoped and deterministic (`rollout_percentage` + allow/deny user lists), and rollback can be done by `POST /api/features/{feature_name}/rollback`.
 
 ### IM Channels
 
@@ -245,11 +253,13 @@ Scope:
 - In scope (Wave 2): no-auth closure for Wave 1 routes, inspiration API, project cover generation/download, and book import pipeline.
 - Wizard stream endpoints: `/api/wizard-stream/world-building|career-system|characters|outline`, plus `GET /api/projects/{id}` for resume state.
 - Novel stream endpoints (P0): `POST /api/novels/{novel_id}/chapters/{chapter_id}/generate-stream`, `POST /api/novels/{novel_id}/chapters/{chapter_id}/continue-stream`, `POST /api/novels/{novel_id}/chapters/batch-generate-stream`, `POST /api/novels/{novel_id}/outlines/generate-stream`, `POST /api/novels/{novel_id}/characters/generate-stream`.
-- Compatibility aliases: `POST /api/chapters/{chapter_id}/generate-stream|continue-stream|analyze`, `GET /api/chapters/{chapter_id}/analysis|analysis/status`.
+- Compatibility aliases: `POST /api/chapters/{chapter_id}/generate-stream|continue-stream|analyze`, `GET /api/chapters/{chapter_id}/analysis|analysis/status`, `POST /api/chapters/{chapter_id}/revision/confirm`.
+- Batch resume/replay endpoints: `GET /api/novels/{novel_id}/chapters/batch-generate-tasks/{task_id}`, `POST /api/novels/{novel_id}/chapters/batch-generate-tasks/{task_id}/replay-failed-stream`, `GET /chapters/project/{project_id}/batch-generate/active`.
 - Memory retrieval priority: local vector (when available) -> cloud embedding (OpenAI-compatible `/v1/embeddings`) -> keyword fallback.
 - Single-user fallback: `novel_migrated` routes resolve `request.state.user_id` first, then fallback to `local_single_user` (override via `NOVEL_MIGRATED_DEFAULT_USER_ID`).
 - `novel_stream` endpoints now include in-process request throttling (default `30` req/min per user+action, configurable via `NOVEL_STREAM_RATE_LIMIT_PER_MINUTE`).
 - Chapter analysis in-memory cache (`_ANALYSIS_TASKS` / `_ANALYSIS_RESULTS`) now performs TTL + size cleanup (`NOVEL_ANALYSIS_CACHE_TTL_SECONDS`, `NOVEL_ANALYSIS_CACHE_MAX_ENTRIES`).
+- Batch/analyze/regeneration long tasks now expose timeout auto-recovery + compensation metadata (`failed_chapters[].compensation`) for replayable recovery flows.
 - Out of scope: `auth/users/admin`, user-model chain, and non-novel gateway endpoints.
 
 ---

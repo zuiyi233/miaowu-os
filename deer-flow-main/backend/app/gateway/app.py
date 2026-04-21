@@ -10,6 +10,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.gateway.config import get_gateway_config
+from app.gateway.middleware.request_trace import RequestTraceMiddleware
+from app.gateway.observability.context import install_trace_log_filter
 
 # Configure logging
 logging.basicConfig(
@@ -19,6 +21,7 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+install_trace_log_filter()
 
 HARNESS_ROUTER_MODULES = (
     "app.gateway.routers.models",
@@ -308,6 +311,10 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
         logger.debug("PromptCacheMiddleware not available, skipping")
     except Exception as exc:
         logger.warning("Failed to initialize PromptCacheMiddleware: %s", exc)
+
+    # Keep request trace middleware outermost so every downstream log record
+    # can carry request-scoped observability fields.
+    app.add_middleware(RequestTraceMiddleware)
 
     @app.get("/health", tags=["health"])
     async def health_check() -> dict:

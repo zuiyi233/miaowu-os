@@ -1,7 +1,7 @@
 """批量生成任务数据模型"""
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, JSON, String
+from sqlalchemy import JSON, Boolean, Column, DateTime, Integer, String
 from sqlalchemy.sql import func
 
 from app.gateway.novel_migrated.core.database import Base
@@ -21,7 +21,11 @@ class BatchGenerationTask(Base):
     target_word_count = Column(Integer, default=3000, comment="目标字数")
     enable_analysis = Column(Boolean, default=False, comment="是否启用同步分析")
 
-    status = Column(String(20), default="pending", comment="任务状态: pending/running/completed/failed/cancelled")
+    status = Column(
+        String(20),
+        default="pending",
+        comment="任务状态: pending/running/completed/failed/cancelled",
+    )
     total_chapters = Column(Integer, default=0, comment="总章节数")
     completed_chapters = Column(Integer, default=0, comment="已完成章节数")
     failed_chapters = Column(JSON, default=list, comment="失败的章节信息列表")
@@ -38,3 +42,11 @@ class BatchGenerationTask(Base):
 
     def __repr__(self):
         return f"<BatchGenerationTask(id={self.id}, status={self.status}, completed={self.completed_chapters}/{self.total_chapters})>"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in {"completed", "failed", "cancelled"}
+
+    @property
+    def is_replayable(self) -> bool:
+        return self.status == "failed" and bool(self.failed_chapters)

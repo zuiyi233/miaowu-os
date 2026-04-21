@@ -22,6 +22,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.gateway.observability.context import extract_trace_fields_from_context, update_trace_context
+from app.gateway.observability.metrics import record_duplicate_write_intercept
 from deerflow.config.extensions_config import ExtensionsConfig
 from deerflow.skills import load_skills
 
@@ -301,7 +303,7 @@ class IntentRecognitionMiddleware:
         db_session: Any | None,
         ai_service: Any | None = None,
     ) -> IntentRecognitionResult:
-        if not self._is_feature_enabled():
+        if not self._is_feature_enabled(user_id=user_id):
             return IntentRecognitionResult(handled=False)
 
         messages = list(getattr(request, "messages", []) or [])
@@ -312,6 +314,10 @@ class IntentRecognitionMiddleware:
         await self._prune_expired_sessions()
         await self._prune_expired_idempotency_keys()
         session_key = self._resolve_session_key(request, user_id)
+        update_trace_context(
+            **extract_trace_fields_from_context(getattr(request, "context", None)),
+            session_key=session_key,
+        )
 
         session = await self._get_session(session_key)
         if session is not None:
@@ -547,6 +553,8 @@ class IntentRecognitionMiddleware:
             user_id=session.user_id,
             action="create_novel",
         ):
+            update_trace_context(idempotency_key=idem_key)
+            record_duplicate_write_intercept(action="create_novel")
             await self._remove_session(session.session_key)
             return IntentRecognitionResult(
                 handled=True,
@@ -1755,6 +1763,11 @@ class IntentRecognitionMiddleware:
             user_id=session.user_id,
             action=action.action,
         ):
+            update_trace_context(
+                idempotency_key=idem_key,
+                project_id=action.project_id,
+            )
+            record_duplicate_write_intercept(action=action.action)
             session.awaiting_confirm = False
             session.pending_action = None
             session.updated_at = datetime.now()
@@ -3278,7 +3291,6 @@ class IntentRecognitionMiddleware:
         if not normalized:
             return False
 
-        lowered = normalized.lower()
         if any(keyword in normalized for keyword in _PROJECT_LIST_KEYWORDS):
             return True
         if any(keyword in normalized for keyword in _PROJECT_SWITCH_KEYWORDS):
@@ -3877,10 +3889,16 @@ class IntentRecognitionMiddleware:
             if expired:
                 self._persist_state_best_effort_locked()
 
-    def _is_feature_enabled(self) -> bool:
+    def _is_feature_enabled(self, *, user_id: str | None = None) -> bool:
         try:
             from deerflow.config.extensions_config import get_extensions_config
             cfg = get_extensions_config()
+            if hasattr(cfg, "is_feature_enabled_for_user"):
+                return cfg.is_feature_enabled_for_user(
+                    self._INTENT_FEATURE_FLAG,
+                    user_id=user_id,
+                    default=True,
+                )
             return cfg.is_feature_enabled(self._INTENT_FEATURE_FLAG, default=True)
         except Exception:
             return True

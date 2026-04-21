@@ -1,11 +1,16 @@
 'use client';
 
+import { useQuery } from '@tanstack/react-query';
 import { BookOpen, Building2, Compass, Flag, GitBranch, PencilLine, Settings, Sparkles, Users } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useMemo } from 'react';
 import type { ReactNode } from 'react';
 
+import { Phase2StatusBar } from '@/components/novel/Phase2StatusBar';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { novelApiService } from '@/core/novel/novel-api';
+import { buildPhase2SnapshotFromQualityReport } from '@/core/novel/phase2-status';
 import { cn } from '@/lib/utils';
 
 type MatchMode = 'exact' | 'prefix';
@@ -37,6 +42,47 @@ function isActive(pathname: string, href: string, matchMode: MatchMode = 'exact'
 export function ProjectWorkspaceLayout({ novelId, children }: ProjectWorkspaceLayoutProps) {
   const pathname = usePathname();
   const basePath = `/workspace/novel/${encodeURIComponent(novelId)}`;
+  const reportHref = `${basePath}/quality`;
+
+  const {
+    data: qualityReport,
+    isLoading: isQualityReportLoading,
+    error: qualityReportError,
+  } = useQuery({
+    queryKey: ['quality-report', novelId],
+    queryFn: () => novelApiService.getQualityReport(novelId),
+    enabled: Boolean(novelId),
+    retry: false,
+    refetchInterval: 15000,
+  });
+
+  const phase2Snapshot = useMemo(() => {
+    if (qualityReportError) {
+      const message =
+        qualityReportError instanceof Error
+          ? qualityReportError.message
+          : '获取阶段二状态失败';
+      return {
+        status: 'failed' as const,
+        message: '阶段二状态同步失败',
+        novelId,
+        reportUrl: undefined,
+        blockers: [],
+        errors: [
+          {
+            severity: 'error' as const,
+            message,
+            source: 'quality-report',
+          },
+        ],
+        warnings: [],
+      };
+    }
+    if (qualityReport === undefined) {
+      return null;
+    }
+    return buildPhase2SnapshotFromQualityReport(qualityReport, novelId);
+  }, [novelId, qualityReport, qualityReportError]);
 
   const navGroups: NavGroup[] = [
     {
@@ -60,6 +106,7 @@ export function ProjectWorkspaceLayout({ novelId, children }: ProjectWorkspaceLa
     {
       title: '增强能力',
       items: [
+        { title: '一致性报告', href: reportHref, icon: <GitBranch className="h-4 w-4" /> },
         { title: '伏笔', href: `${basePath}/foreshadows`, icon: <Flag className="h-4 w-4" /> },
         { title: '写作风格', href: `${basePath}/writing-styles`, icon: <Sparkles className="h-4 w-4" /> },
         { title: 'Prompt 工坊', href: `${basePath}/prompt-workshop`, icon: <Sparkles className="h-4 w-4" /> },
@@ -107,7 +154,17 @@ export function ProjectWorkspaceLayout({ novelId, children }: ProjectWorkspaceLa
         </ScrollArea>
       </aside>
 
-      <main className="min-h-0 min-w-0 flex-1 overflow-hidden bg-background">{children}</main>
+      <main className="min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+        <div className="border-b bg-muted/20 px-3 py-2 md:px-4">
+          <Phase2StatusBar
+            snapshot={phase2Snapshot}
+            reportHref={reportHref}
+            compact
+            emptyText={isQualityReportLoading ? '正在同步阶段二状态…' : '暂无阶段二状态数据'}
+          />
+        </div>
+        <div className="min-h-0 h-full overflow-hidden">{children}</div>
+      </main>
     </div>
   );
 }

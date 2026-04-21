@@ -15,7 +15,12 @@ class AnalysisTask(Base):
     user_id = Column(String(50), nullable=False, comment="用户ID")
     project_id = Column(String(36), nullable=False, index=True, comment="项目ID")
 
-    status = Column(String(20), nullable=False, default="pending", comment="任务状态: pending/running/completed/failed")
+    status = Column(
+        String(20),
+        nullable=False,
+        default="pending",
+        comment="任务状态: pending/running/completed/failed",
+    )
     progress = Column(Integer, default=0, comment="进度 0-100")
     error_message = Column(Text, nullable=True, comment="错误信息")
 
@@ -30,3 +35,7 @@ class AnalysisTask(Base):
 
     def __repr__(self):
         return f"<AnalysisTask(id={self.id[:8]}..., chapter_id={self.chapter_id[:8]}..., status={self.status})>"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in {"completed", "failed"}

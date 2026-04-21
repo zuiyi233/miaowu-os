@@ -1,7 +1,7 @@
 """章节重新生成任务模型"""
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.sql import func
 
 from app.gateway.novel_migrated.core.database import Base
@@ -26,7 +26,11 @@ class RegenerationTask(Base):
     focus_areas = Column(JSON, comment="重点优化方向")
     preserve_elements = Column(JSON, comment="需要保留的元素配置")
 
-    status = Column(String(20), default="pending", comment="pending/running/completed/failed")
+    status = Column(
+        String(20),
+        default="pending",
+        comment="pending/running/completed/failed",
+    )
     progress = Column(Integer, default=0, comment="进度 0-100")
     error_message = Column(Text, nullable=True)
 
@@ -43,3 +47,7 @@ class RegenerationTask(Base):
 
     def __repr__(self):
         return f"<RegenerationTask(id={self.id[:8]}..., chapter_id={self.chapter_id[:8]}..., status={self.status})>"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in {"completed", "failed"}

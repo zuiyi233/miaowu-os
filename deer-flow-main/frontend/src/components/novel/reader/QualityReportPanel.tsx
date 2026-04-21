@@ -1,9 +1,10 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { AlertCircle, CheckCircle, Info, Loader2, Shield, Users, FileText, Calendar } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -40,6 +41,101 @@ interface QualityReportPanelProps {
   timelineEvents: TimelineEvent[];
 }
 
+interface GateCheckIssue {
+  message?: string;
+}
+
+interface GateCheckResult {
+  title?: string;
+  result?: 'pass' | 'warn' | 'block' | string;
+  issue_count?: number;
+  issues?: GateCheckIssue[];
+}
+
+export interface FinalizeGateReport {
+  result?: 'pass' | 'warn' | 'block' | string;
+  checked_at?: string;
+  can_finalize?: boolean;
+  summary?: {
+    block_checks?: number;
+    warn_checks?: number;
+    total_issues?: number;
+  };
+  checks?: GateCheckResult[];
+}
+
+export interface FinalizeGateFeedbackState {
+  gateReport: FinalizeGateReport | null;
+  gateMessage: string;
+  finalizeMessage: string;
+}
+
+export type FinalizeGateFeedbackEvent =
+  | { type: 'gate_success'; report: FinalizeGateReport | null }
+  | { type: 'gate_error'; message: string }
+  | { type: 'finalize_success' }
+  | { type: 'finalize_blocked'; report: FinalizeGateReport }
+  | { type: 'finalize_error'; message: string };
+
+export function reduceFinalizeGateFeedbackState(
+  previous: FinalizeGateFeedbackState,
+  event: FinalizeGateFeedbackEvent,
+): FinalizeGateFeedbackState {
+  switch (event.type) {
+    case 'gate_success':
+      if (!event.report) {
+        return {
+          ...previous,
+          gateReport: null,
+          gateMessage: '门禁结果为空，请重试',
+          finalizeMessage: '',
+        };
+      }
+      return {
+        ...previous,
+        gateReport: event.report,
+        gateMessage: event.report?.result === 'block' ? '门禁检查未通过，存在阻断项。' : '门禁检查已完成。',
+        finalizeMessage: '',
+      };
+    case 'gate_error':
+      return {
+        ...previous,
+        gateReport: null,
+        gateMessage: event.message,
+        finalizeMessage: '',
+      };
+    case 'finalize_success':
+      return {
+        ...previous,
+        gateReport: null,
+        gateMessage: '',
+        finalizeMessage: '定稿执行成功。',
+      };
+    case 'finalize_blocked':
+      return {
+        ...previous,
+        gateReport: event.report,
+        gateMessage: '门禁检查未通过，存在阻断项。',
+        finalizeMessage: '定稿被门禁阻断。',
+      };
+    case 'finalize_error':
+      return {
+        ...previous,
+        gateReport: null,
+        gateMessage: '',
+        finalizeMessage: event.message,
+      };
+    default:
+      return previous;
+  }
+}
+
+export function applyFinalizeSuccessTransition(
+  previous: FinalizeGateFeedbackState,
+): FinalizeGateFeedbackState {
+  return reduceFinalizeGateFeedbackState(previous, { type: 'finalize_success' });
+}
+
 async function fetchQualityReport(novelId: string): Promise<QualityReport> {
   const remote = await novelApiService.getQualityReport(novelId) as Partial<QualityReport>;
   return {
@@ -54,6 +150,64 @@ async function fetchQualityReport(novelId: string): Promise<QualityReport> {
     issues: Array.isArray(remote.issues) ? remote.issues : [],
     generatedAt: typeof remote.generatedAt === 'string' ? remote.generatedAt : new Date().toISOString(),
   };
+}
+
+function parseGateReportFromError(error: unknown): FinalizeGateReport | null {
+  if (typeof error !== 'object' || error === null) {
+    return null;
+  }
+  const apiError = error as { details?: unknown };
+  const details = apiError.details;
+  if (typeof details !== 'object' || details === null) {
+    return null;
+  }
+  const record = details as Record<string, unknown>;
+  const fromTopLevel = record.gate_report;
+  if (typeof fromTopLevel === 'object' && fromTopLevel !== null) {
+    return fromTopLevel as FinalizeGateReport;
+  }
+  const detail = record.detail;
+  if (typeof detail !== 'object' || detail === null) {
+    return null;
+  }
+  const nested = (detail as Record<string, unknown>).gate_report;
+  if (typeof nested !== 'object' || nested === null) {
+    return null;
+  }
+  return nested as FinalizeGateReport;
+}
+
+function parseErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return '请求失败，请稍后重试';
+}
+
+function summarizeGateReport(report: FinalizeGateReport | null): string[] {
+  if (!report) {
+    return [];
+  }
+  const checks = Array.isArray(report.checks) ? report.checks : [];
+  const blockMessages = checks
+    .filter((check) => check.result === 'block')
+    .flatMap((check) => {
+      const issues = Array.isArray(check.issues) ? check.issues : [];
+      const first = issues[0]?.message ?? '';
+      if (!first) {
+        return [];
+      }
+      return [`${check.title || '未命名检查'}：${first}`];
+    });
+  if (blockMessages.length > 0) {
+    return blockMessages.slice(0, 3);
+  }
+  const summary = report.summary;
+  return [
+    `阻断检查 ${summary?.block_checks ?? 0} 项`,
+    `告警检查 ${summary?.warn_checks ?? 0} 项`,
+    `总问题 ${summary?.total_issues ?? 0} 项`,
+  ];
 }
 
 const severityIcons: Record<string, React.ReactNode> = {
@@ -79,10 +233,46 @@ const severityLabels: Record<string, string> = {
 
 export function QualityReportPanel({ novelId, chapters, characters, timelineEvents }: QualityReportPanelProps) {
   const [activeTab, setActiveTab] = useState('overview');
+  const [feedbackState, setFeedbackState] = useState<FinalizeGateFeedbackState>({
+    gateReport: null,
+    gateMessage: '',
+    finalizeMessage: '',
+  });
+  const { gateReport, gateMessage, finalizeMessage } = feedbackState;
+
+  const setFeedbackStateByEvent = (event: FinalizeGateFeedbackEvent) => {
+    setFeedbackState((previous) => reduceFinalizeGateFeedbackState(previous, event));
+  };
 
   const { data: report, isLoading, refetch } = useQuery({
     queryKey: ['quality-report', novelId],
     queryFn: () => fetchQualityReport(novelId),
+  });
+
+  const gateMutation = useMutation({
+    mutationFn: async () => novelApiService.checkFinalizeGate(novelId),
+    onSuccess: (result) => {
+      const normalized = (result ?? null) as FinalizeGateReport | null;
+      setFeedbackStateByEvent({ type: 'gate_success', report: normalized });
+    },
+    onError: (error) => {
+      setFeedbackStateByEvent({ type: 'gate_error', message: parseErrorMessage(error) });
+    },
+  });
+
+  const finalizeMutation = useMutation({
+    mutationFn: async () => novelApiService.finalizeProject(novelId),
+    onSuccess: () => {
+      setFeedbackStateByEvent({ type: 'finalize_success' });
+    },
+    onError: (error) => {
+      const blockedReport = parseGateReportFromError(error);
+      if (blockedReport) {
+        setFeedbackStateByEvent({ type: 'finalize_blocked', report: blockedReport });
+        return;
+      }
+      setFeedbackStateByEvent({ type: 'finalize_error', message: parseErrorMessage(error) });
+    },
   });
 
   const localReport = useMemo((): QualityReport => {
@@ -179,15 +369,47 @@ export function QualityReportPanel({ novelId, chapters, characters, timelineEven
             <Shield className="h-5 w-5" />
             <CardTitle>质量评估</CardTitle>
           </div>
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
-            <Loader2 className={`mr-1 h-3 w-3 ${isLoading ? 'animate-spin' : ''}`} />
-            刷新
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => gateMutation.mutate()}
+              disabled={gateMutation.isPending || finalizeMutation.isPending}
+            >
+              <Loader2 className={`mr-1 h-3 w-3 ${gateMutation.isPending ? 'animate-spin' : ''}`} />
+              门禁检查
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => finalizeMutation.mutate()}
+              disabled={gateMutation.isPending || finalizeMutation.isPending}
+            >
+              <Loader2 className={`mr-1 h-3 w-3 ${finalizeMutation.isPending ? 'animate-spin' : ''}`} />
+              执行定稿
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              <Loader2 className={`mr-1 h-3 w-3 ${isLoading ? 'animate-spin' : ''}`} />
+              刷新
+            </Button>
+          </div>
         </div>
         <CardDescription>AI 自动检测内容质量和一致性问题</CardDescription>
       </CardHeader>
       <CardContent>
-        {/* Score circle */}
+        {(gateMessage || finalizeMessage || gateReport) && (
+          <Alert className="mb-4" variant={gateReport?.result === 'block' ? 'destructive' : 'default'}>
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>{gateReport?.result === 'block' ? '门禁阻断' : '定稿门禁状态'}</AlertTitle>
+            <AlertDescription className="space-y-1">
+              {gateMessage && <div>{gateMessage}</div>}
+              {finalizeMessage && <div>{finalizeMessage}</div>}
+              {summarizeGateReport(gateReport).map((line) => (
+                <div key={line}>{line}</div>
+              ))}
+            </AlertDescription>
+          </Alert>
+        )}
+
         <div className="flex items-center justify-center mb-6">
           <div className="relative w-32 h-32">
             <svg className="w-32 h-32 -rotate-90" viewBox="0 0 120 120">
@@ -257,7 +479,6 @@ export function QualityReportPanel({ novelId, chapters, characters, timelineEven
               </div>
             </div>
 
-            {/* Issue summary */}
             <div className="flex flex-wrap gap-2">
               {issueCounts.error > 0 && (
                 <Badge className={severityColors.error}>
