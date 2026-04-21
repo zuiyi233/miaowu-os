@@ -17,6 +17,7 @@ from threading import Lock
 from typing import Any, Literal
 
 from app.gateway.novel_migrated.core.logger import get_logger
+from deerflow.config.paths import get_paths
 
 logger = get_logger(__name__)
 
@@ -27,7 +28,7 @@ FeedbackSource = Literal["rule", "model", "fusion"]
 _SEVERITY_RANK: dict[GateLevel, int] = {"pass": 0, "warn": 1, "block": 2}
 _FEEDBACK_SOURCE_SET = {"rule", "model", "fusion"}
 _DEFAULT_FEEDBACK_STATE_FILE = (
-    Path(__file__).resolve().parents[4] / ".deer-flow" / "novel_state" / "quality_gate_feedback.json"
+    get_paths().base_dir / "novel_state" / "quality_gate_feedback.json"
 )
 
 

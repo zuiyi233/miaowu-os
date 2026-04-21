@@ -483,3 +483,20 @@ See the [LICENSE](../LICENSE) file in the project root.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
+
+
+## Desktop Gateway Runtime (Windows)
+
+Use the desktop build script to package the FastAPI gateway runtime with PyInstaller and run a health-check smoke test:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-desktop-backend.ps1
+```
+
+Defaults:
+
+- health URL: `http://127.0.0.1:8001/health`
+- smoke timeout: `30` seconds
+- build output: `..\.desktop-runtime\backend`
+
+The executable is built from `desktop/pyinstaller.spec`.

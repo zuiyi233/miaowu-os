@@ -64,6 +64,12 @@ pnpm build
 
 # Start production server
 pnpm start
+
+# Build standalone bundle for desktop runtime export
+pnpm build:desktop
+
+# Start standalone server directly (HOST/PORT supported, defaults 127.0.0.1:3000)
+pnpm start:desktop
 ```
 
 ## Site Map
@@ -150,3 +156,17 @@ src/
 ## License
 
 MIT License. See [LICENSE](../LICENSE) for details.
+
+
+### Desktop Runtime Export (Windows)
+
+```powershell
+# Build standalone frontend + export runtime files to .desktop-runtime/frontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-desktop-frontend.ps1
+```
+
+The script calls `scripts/export-desktop-runtime.ps1` in repo root and exports:
+
+- `.next/standalone`
+- `.next/static`
+- `public`

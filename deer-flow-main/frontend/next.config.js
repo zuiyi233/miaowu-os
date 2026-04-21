@@ -13,6 +13,7 @@ function getInternalServiceURL(envKey, fallbackURL) {
 import nextra from "nextra";
 
 const withNextra = nextra({});
+const isDesktopBuild = process.env.DEERFLOW_DESKTOP_BUILD === "1";
 
 /** @type {import("next").NextConfig} */
 const config = {
@@ -21,6 +22,7 @@ const config = {
     defaultLocale: "en",
   },
   devIndicators: false,
+  ...(isDesktopBuild ? { output: "standalone" } : {}),
   async rewrites() {
     const rewrites = [];
     const langgraphURL = getInternalServiceURL(

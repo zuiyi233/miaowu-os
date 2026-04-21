@@ -12,6 +12,7 @@ from typing import Any, Literal
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.observability.context import update_trace_context
 from deerflow.config.extensions_config import get_extensions_config
+from deerflow.config.paths import get_paths
 
 logger = get_logger(__name__)
 
@@ -21,7 +22,7 @@ EntityType = Literal["chapter", "project", "analysis_task", "revision_task", "un
 _LIFECYCLE_STATUSES: tuple[LifecycleStatus, ...] = ("draft", "analyzing", "revising", "gated", "finalized", "published")
 _LIFECYCLE_STATUS_SET = set(_LIFECYCLE_STATUSES)
 _DEFAULT_LIFECYCLE_STATE_FILE = (
-    Path(__file__).resolve().parents[4] / ".deer-flow" / "novel_state" / "lifecycle_tokens.json"
+    get_paths().base_dir / "novel_state" / "lifecycle_tokens.json"
 )
 _LEGACY_TO_LIFECYCLE: dict[str, LifecycleStatus] = {
     "draft": "draft",

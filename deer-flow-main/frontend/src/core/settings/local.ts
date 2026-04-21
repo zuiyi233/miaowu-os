@@ -35,6 +35,7 @@ export interface LocalSettings {
     model_name?: string | undefined;
     mode: "flash" | "thinking" | "pro" | "ultra" | undefined;
     reasoning_effort?: "minimal" | "low" | "medium" | "high";
+    media_draft_retention?: "24h" | "7d" | "never";
   };
 }
 
