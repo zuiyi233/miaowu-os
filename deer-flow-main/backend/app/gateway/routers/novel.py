@@ -366,6 +366,13 @@ class NovelStore:
             entities = [e for e in entities if e.get("type") == entity_type]
         return entities
 
+    async def get_entity_by_id(self, entity_id: str) -> dict | None:
+        async with self._lock:
+            entity = self._entities.get(entity_id)
+            if not isinstance(entity, dict):
+                return None
+            return dict(entity)
+
     async def create_entity(self, novel_id: str, data: dict) -> dict:
         async with self._lock:
             if novel_id not in self._novels:
@@ -415,6 +422,29 @@ class NovelStore:
             )
             self._persist_locked()
             return entity
+
+    async def update_entity_by_id(self, entity_id: str, updates: dict) -> dict | None:
+        async with self._lock:
+            entity = self._entities.get(entity_id)
+            if not entity:
+                return None
+            novel_id = entity.get("novelId")
+            if not isinstance(novel_id, str) or not novel_id:
+                return None
+            updates = {k: v for k, v in updates.items() if k not in {"id", "novelId"}}
+            entity.update(updates)
+            entity["updatedAt"] = datetime.now(timezone.utc).isoformat()
+            entity["version"] = entity.get("version", 1) + 1
+            self._record_audit_locked(
+                novel_id=novel_id,
+                action="entity.update",
+                entity_type="entity",
+                entity_id=entity_id,
+                author=self._extract_author(updates),
+                details={"updatedFields": sorted(updates.keys()), "version": entity["version"]},
+            )
+            self._persist_locked()
+            return dict(entity)
 
     async def delete_entity(self, novel_id: str, entity_id: str) -> bool:
         async with self._lock:
@@ -739,6 +769,16 @@ class NovelStore:
 
 
 _novel_store = NovelStore()
+
+
+async def get_legacy_entity_by_id(entity_id: str) -> dict | None:
+    """Read a legacy novel entity by ID."""
+    return await _novel_store.get_entity_by_id(entity_id)
+
+
+async def update_legacy_entity_by_id(entity_id: str, updates: dict[str, Any]) -> dict | None:
+    """Update a legacy novel entity by ID."""
+    return await _novel_store.update_entity_by_id(entity_id, updates)
 
 
 # ---------------------------------------------------------------------------

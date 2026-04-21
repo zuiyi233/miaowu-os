@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.gateway.deps import get_checkpointer, get_store
+from deerflow.media import draft_media_store
 from deerflow.config.paths import Paths, get_paths
 from deerflow.runtime import serialize_channel_values
 
@@ -225,6 +226,78 @@ def _to_iso_timestamp(value: Any) -> str:
             return value
         return ""
     return datetime.fromtimestamp(ts, tz=UTC).isoformat().replace("+00:00", "Z")
+
+
+def _parse_expiration_ts(value: Any) -> float | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.timestamp()
+
+
+def _filter_expired_draft_media(values: dict[str, Any]) -> dict[str, Any]:
+    draft_media = values.get("draft_media")
+    if not isinstance(draft_media, dict) or not draft_media:
+        return values
+
+    now = time.time()
+    filtered_draft_media: dict[str, Any] = {}
+    changed = False
+
+    for draft_id, draft_value in draft_media.items():
+        if not isinstance(draft_value, dict):
+            filtered_draft_media[draft_id] = draft_value
+            continue
+
+        expires_ts = _parse_expiration_ts(draft_value.get("expires_at"))
+        if expires_ts is not None and expires_ts <= now:
+            changed = True
+            continue
+
+        filtered_draft_media[draft_id] = draft_value
+
+    if not changed:
+        return values
+
+    filtered_values = dict(values)
+    if filtered_draft_media:
+        filtered_values["draft_media"] = filtered_draft_media
+    else:
+        filtered_values.pop("draft_media", None)
+    return filtered_values
+
+
+def _cleanup_expired_channel_values(thread_id: str, channel_values: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    try:
+        draft_media_store.cleanup_expired(thread_id=thread_id)
+    except Exception:
+        logger.debug("Failed to cleanup expired draft media for thread %s", thread_id, exc_info=True)
+    filtered_values = _filter_expired_draft_media(channel_values)
+    return filtered_values, filtered_values != channel_values
+
+
+async def _persist_cleaned_draft_media_checkpoint(
+    *,
+    checkpointer: Any,
+    thread_id: str,
+    checkpoint_tuple: Any,
+    channel_values: dict[str, Any],
+    as_node: str,
+) -> None:
+    checkpoint: dict[str, Any] = dict(getattr(checkpoint_tuple, "checkpoint", {}) or {})
+    metadata: dict[str, Any] = dict(getattr(checkpoint_tuple, "metadata", {}) or {})
+    checkpoint["channel_values"] = channel_values
+    metadata["updated_at"] = time.time()
+    metadata["source"] = "update"
+    metadata["step"] = metadata.get("step", 0) + 1
+    metadata["writes"] = {as_node: {"draft_media": {"_expired_removed": True}}}
+    config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+    await checkpointer.aput(config, checkpoint, metadata, {})
 
 
 def _derive_thread_status(checkpoint_tuple) -> str:
@@ -534,6 +607,20 @@ async def get_thread(thread_id: str, request: Request) -> ThreadResponse:
     status = _derive_thread_status(checkpoint_tuple) if checkpoint_tuple is not None else record.get("status", "idle")
     checkpoint = getattr(checkpoint_tuple, "checkpoint", {}) or {} if checkpoint_tuple is not None else {}
     channel_values = checkpoint.get("channel_values", {})
+    if not isinstance(channel_values, dict):
+        channel_values = {}
+    cleaned_channel_values, filtered_changed = _cleanup_expired_channel_values(thread_id, channel_values)
+    if filtered_changed and checkpoint_tuple is not None:
+        try:
+            await _persist_cleaned_draft_media_checkpoint(
+                checkpointer=checkpointer,
+                thread_id=thread_id,
+                checkpoint_tuple=checkpoint_tuple,
+                channel_values=cleaned_channel_values,
+                as_node="threads.get_thread.cleanup_expired_draft_media",
+            )
+        except Exception:
+            logger.debug("Failed to persist expired draft_media cleanup for thread %s", thread_id, exc_info=True)
 
     return ThreadResponse(
         thread_id=thread_id,
@@ -541,7 +628,7 @@ async def get_thread(thread_id: str, request: Request) -> ThreadResponse:
         created_at=_to_iso_timestamp(record.get("created_at")),
         updated_at=_to_iso_timestamp(record.get("updated_at")),
         metadata=record.get("metadata", {}),
-        values=serialize_channel_values(channel_values),
+        values=serialize_channel_values(cleaned_channel_values),
     )
 
 
@@ -572,6 +659,20 @@ async def get_thread_state(thread_id: str, request: Request) -> ThreadStateRespo
         checkpoint_id = ckpt_config.get("configurable", {}).get("checkpoint_id")
 
     channel_values = checkpoint.get("channel_values", {})
+    if not isinstance(channel_values, dict):
+        channel_values = {}
+    cleaned_channel_values, filtered_changed = _cleanup_expired_channel_values(thread_id, channel_values)
+    if filtered_changed:
+        try:
+            await _persist_cleaned_draft_media_checkpoint(
+                checkpointer=checkpointer,
+                thread_id=thread_id,
+                checkpoint_tuple=checkpoint_tuple,
+                channel_values=cleaned_channel_values,
+                as_node="threads.get_thread_state.cleanup_expired_draft_media",
+            )
+        except Exception:
+            logger.debug("Failed to persist expired draft_media cleanup for thread %s", thread_id, exc_info=True)
 
     parent_config = getattr(checkpoint_tuple, "parent_config", None)
     parent_checkpoint_id = None
@@ -583,7 +684,7 @@ async def get_thread_state(thread_id: str, request: Request) -> ThreadStateRespo
     tasks = [{"id": getattr(t, "id", ""), "name": getattr(t, "name", "")} for t in tasks_raw]
 
     return ThreadStateResponse(
-        values=serialize_channel_values(channel_values),
+        values=serialize_channel_values(cleaned_channel_values),
         next=next_tasks,
         metadata=metadata,
         checkpoint={"id": checkpoint_id, "ts": _to_iso_timestamp(metadata.get("created_at"))},

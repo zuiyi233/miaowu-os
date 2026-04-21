@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 
-from app.gateway.middleware.intent_recognition_middleware import IntentRecognitionMiddleware
+from app.gateway.middleware.intent_recognition_middleware import (
+    IntentRecognitionMiddleware,
+    _NovelCreationSession,
+    _PendingAction,
+)
 from app.gateway.novel_migrated.api.import_export import build_export_download_path
 
 
@@ -169,7 +174,7 @@ def test_session_auto_uses_enabled_skills_without_manual_trigger(monkeypatch):
     monkeypatch.setattr(
         middleware,
         "_load_enabled_novel_skills",
-        lambda force_refresh=False: [
+        lambda force_refresh=False, session=None, user_id=None: [
             {
                 "name": "novel-plot-skill",
                 "description": "剧情设计",
@@ -189,6 +194,67 @@ def test_session_auto_uses_enabled_skills_without_manual_trigger(monkeypatch):
 
     assert result.handled is True
     assert "技能建议" in result.content
+
+
+def test_load_enabled_novel_skills_uses_three_layer_governance_when_feature_on(monkeypatch, tmp_path):
+    middleware = IntentRecognitionMiddleware()
+
+    skill_a_file = tmp_path / "skill-a.md"
+    skill_a_file.write_text("plot planning for mystery novel", encoding="utf-8")
+    skill_b_file = tmp_path / "skill-b.md"
+    skill_b_file.write_text("character relationship design", encoding="utf-8")
+
+    class _FakeSkill:
+        def __init__(self, name: str, description: str, skill_file, category: str = "public"):
+            self.name = name
+            self.description = description
+            self.skill_file = skill_file
+            self.category = category
+
+    fake_skills = [
+        _FakeSkill("plot-skill", "剧情规划", skill_a_file),
+        _FakeSkill("character-skill", "角色关系", skill_b_file),
+    ]
+
+    class _FakeExtensionsConfig:
+        def is_skill_enabled(self, skill_name: str, skill_category: str) -> bool:
+            assert skill_category == "public"
+            return True
+
+        def is_feature_enabled_for_user(self, feature_name: str, *, user_id: str | None, default: bool = True) -> bool:
+            assert feature_name == "intent_skill_governance"
+            assert user_id == "governance-user"
+            return True
+
+    monkeypatch.setattr(
+        "app.gateway.middleware.intent_recognition_middleware.load_skills",
+        lambda enabled_only=False: fake_skills,
+    )
+    monkeypatch.setattr(
+        "app.gateway.middleware.intent_recognition_middleware.ExtensionsConfig.from_file",
+        lambda: _FakeExtensionsConfig(),
+    )
+    monkeypatch.setattr(
+        middleware,
+        "_derive_session_candidate_skills",
+        lambda *, all_entries, session: ["character-skill"],
+    )
+
+    session = _NovelCreationSession(
+        session_key="governance-session",
+        user_id="governance-user",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        mode="create",
+        fields={"theme": "角色冲突"},
+    )
+    result = middleware._load_enabled_novel_skills(
+        force_refresh=True,
+        session=session,
+        user_id=session.user_id,
+    )
+
+    assert [item["name"] for item in result] == ["character-skill"]
 
 
 def test_has_active_creation_session_is_scoped_by_user_and_session():
@@ -312,3 +378,137 @@ def test_export_project_archive_returns_real_download_path(monkeypatch):
     assert payload["project_id"] == project_id
     assert payload["file_name"].endswith(".zip")
     assert payload["download_path"] == build_export_download_path(project_id)
+
+
+def test_manage_session_returns_action_protocol_for_missing_slots(monkeypatch):
+    middleware = IntentRecognitionMiddleware()
+    session = _NovelCreationSession(
+        session_key="manage-missing",
+        user_id="user-6",
+        mode="manage",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        fields=middleware._initialize_fields({}),
+        active_project_id="proj-1",
+        active_project_title="测试项目",
+        idempotency_key="idem-manage-missing",
+    )
+
+    async def _fake_resolve_chapter(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(middleware, "_resolve_chapter_from_text", _fake_resolve_chapter)
+
+    result = asyncio.run(
+        middleware._handle_manage_session(
+            session=session,
+            user_message="修改第3章",
+            db_session=object(),
+            ai_service=None,
+            opening=False,
+        )
+    )
+
+    assert result.handled is True
+    assert result.session is not None
+    protocol = result.session["action_protocol"]
+    assert protocol["action_type"] == "update_chapter"
+    assert "chapter_selector" in protocol["missing_slots"]
+    assert "chapter_updates" in protocol["missing_slots"]
+    assert protocol["confirmation_required"] is False
+
+
+def test_manage_confirmation_step_exposes_confirmation_required_in_protocol(monkeypatch):
+    middleware = IntentRecognitionMiddleware()
+    action = _PendingAction(
+        action="update_chapter",
+        entity="chapter",
+        operation="update",
+        project_id="proj-2",
+        target_id="chapter-2",
+        target_label="第2章",
+        payload={"content": "新的正文"},
+    )
+    session = _NovelCreationSession(
+        session_key="manage-confirm",
+        user_id="user-7",
+        mode="manage",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        fields=middleware._initialize_fields({}),
+        awaiting_confirm=True,
+        active_project_id="proj-2",
+        active_project_title="测试项目2",
+        pending_action=action,
+        idempotency_key="idem-manage-confirm",
+    )
+
+    async def _noop_merge_pending_action(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(middleware, "_merge_pending_action_from_message", _noop_merge_pending_action)
+
+    result = asyncio.run(
+        middleware._handle_manage_confirmation_step(
+            session=session,
+            user_message="请再确认一次",
+            lowered="请再确认一次",
+            db_session=object(),
+        )
+    )
+
+    assert result.handled is True
+    assert result.session is not None
+    protocol = result.session["action_protocol"]
+    assert protocol["action_type"] == "update_chapter"
+    assert protocol["missing_slots"] == []
+    assert protocol["confirmation_required"] is True
+
+
+def test_execute_pending_action_returns_execute_result_in_protocol(monkeypatch):
+    middleware = IntentRecognitionMiddleware()
+    action = _PendingAction(
+        action="update_chapter",
+        entity="chapter",
+        operation="update",
+        project_id="proj-3",
+        target_id="chapter-3",
+        target_label="第3章",
+        payload={"content": "更新后的章节内容"},
+    )
+    session = _NovelCreationSession(
+        session_key="manage-execute",
+        user_id="user-8",
+        mode="manage",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        fields=middleware._initialize_fields({}),
+        awaiting_confirm=True,
+        active_project_id="proj-3",
+        active_project_title="测试项目3",
+        pending_action=action,
+        idempotency_key="idem-manage-execute",
+    )
+
+    async def _consume_once(*args, **kwargs):
+        return True
+
+    async def _fake_dispatch_manage_action(*args, **kwargs):
+        return {"id": "chapter-3", "updated": True}
+
+    monkeypatch.setattr(middleware, "_consume_idempotency_key", _consume_once)
+    monkeypatch.setattr(middleware, "_dispatch_manage_action", _fake_dispatch_manage_action)
+
+    result = asyncio.run(
+        middleware._execute_pending_action(
+            session=session,
+            db_session=object(),
+        )
+    )
+
+    assert result.handled is True
+    assert result.session is not None
+    protocol = result.session["action_protocol"]
+    assert protocol["action_type"] == "update_chapter"
+    assert protocol["execute_result"]["status"] == "success"
+    assert protocol["execute_result"]["target_id"] == "chapter-3"

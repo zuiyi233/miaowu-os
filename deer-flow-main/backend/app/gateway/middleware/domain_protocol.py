@@ -53,6 +53,14 @@ class Operation(str, Enum):
     SWITCH = "switch"
 
 
+class ExecuteStatus(str, Enum):
+    PENDING = "pending"
+    SUCCESS = "success"
+    FAILED = "failed"
+    DUPLICATE = "duplicate"
+    CANCELLED = "cancelled"
+
+
 @dataclass
 class DomainAction:
     action: str
@@ -97,6 +105,70 @@ class DomainToolCall:
             args=data.get("args", {}),
             id=data.get("id", f"call_{uuid.uuid4().hex[:12]}"),
         )
+
+
+@dataclass
+class ExecuteResult:
+    status: ExecuteStatus | str = ExecuteStatus.PENDING
+    message: str = ""
+    target_id: str | None = None
+    summary: dict[str, Any] | str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        status_value = self.status.value if isinstance(self.status, ExecuteStatus) else str(self.status)
+        payload: dict[str, Any] = {
+            "status": status_value,
+            "message": self.message,
+        }
+        if self.target_id:
+            payload["target_id"] = self.target_id
+        if self.summary is not None:
+            payload["summary"] = self.summary
+        return payload
+
+
+@dataclass
+class NovelActionProtocol:
+    action_type: str
+    slot_schema: dict[str, Any] = field(default_factory=dict)
+    missing_slots: list[str] = field(default_factory=list)
+    confirmation_required: bool = False
+    execute_result: ExecuteResult | dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "action_type": self.action_type,
+            "slot_schema": self.slot_schema,
+            "missing_slots": self.missing_slots,
+            "confirmation_required": self.confirmation_required,
+            "execute_result": (
+                self.execute_result.to_dict()
+                if isinstance(self.execute_result, ExecuteResult)
+                else self.execute_result
+            ),
+        }
+        # Keep legacy aliases for backward compatibility.
+        payload["action"] = payload["action_type"]
+        payload["requires_confirmation"] = payload["confirmation_required"]
+        return payload
+
+
+def build_action_protocol(
+    *,
+    action_type: str,
+    slot_schema: dict[str, Any] | None = None,
+    missing_slots: list[str] | None = None,
+    confirmation_required: bool = False,
+    execute_result: ExecuteResult | dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    protocol = NovelActionProtocol(
+        action_type=action_type,
+        slot_schema=slot_schema or {},
+        missing_slots=list(missing_slots or []),
+        confirmation_required=confirmation_required,
+        execute_result=execute_result,
+    )
+    return protocol.to_dict()
 
 
 @dataclass

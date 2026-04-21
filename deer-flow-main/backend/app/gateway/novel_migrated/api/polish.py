@@ -1,7 +1,9 @@
 """文本润色API"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Any, Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +39,37 @@ class FinalizeGateRequest(BaseModel):
     min_chapter_length_warn: int = Field(300, ge=1, description="章节长度告警阈值")
     min_chapter_length_block: int = Field(80, ge=1, description="章节长度阻断阈值")
     sensitive_words: list[str] = Field(default_factory=list, description="自定义敏感词列表，为空则使用系统默认")
+    idempotency_key: str = Field("", description="生命周期迁移幂等键（可选）")
+    quality_gate_fusion_feature_enabled: bool | None = Field(
+        default=None,
+        description="质量门禁融合开关（空值时走 feature flag）",
+    )
+    fusion_degraded_fallback_mode: Literal["rule_only", "warn_only"] | None = Field(
+        default=None,
+        description="融合降级模式",
+    )
+    apply_feedback_backflow: bool = Field(True, description="是否启用误报反馈回流")
+    feedback_evidence_key_prefix: str = Field(
+        "novel_finalize_gate",
+        description="误报反馈 evidence key 前缀",
+    )
+    model_gate_signals: dict[str, dict[str, Any] | str] = Field(
+        default_factory=dict,
+        description="模型门禁信号，key 为 check_id，value 为门禁级别或信号对象",
+    )
+
+
+class FalsePositiveFeedbackRequest(BaseModel):
+    decision_id: str = Field(..., min_length=1, description="融合决策 ID")
+    gate_key: str = Field(..., min_length=1, description="门禁主键")
+    evidence_key: str = Field(..., min_length=1, description="证据主键")
+    source: Literal["rule", "model", "fusion"] = Field("fusion", description="反馈来源")
+    original_level: Literal["pass", "warn", "block"] = Field(..., description="原判定级别")
+    corrected_level: Literal["pass", "warn", "block"] = Field(..., description="纠正后级别")
+    reason: str = Field(..., min_length=1, description="误报原因")
+    reporter: str = Field("", description="反馈人")
+    note: str = Field("", description="附加备注")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="附加元数据")
 
 
 class FinalizeActionResponse(BaseModel):
@@ -115,7 +148,7 @@ async def check_finalize_gate(
 ):
     """执行定稿门禁检查，返回标准化三级结果（pass/warn/block）。"""
     await verify_project_access(project_id, user_id, db)
-    config = req.model_dump() if req else None
+    config = req.model_dump(exclude_none=True) if req else None
     return await consistency_gate_service.build_finalize_gate_report(
         db=db,
         project_id=project_id,
@@ -133,7 +166,7 @@ async def finalize_project(
 ):
     """执行定稿：若门禁结果为 block 则返回 409 并阻断定稿。"""
     await verify_project_access(project_id, user_id, db)
-    config = req.model_dump() if req else None
+    config = req.model_dump(exclude_none=True) if req else None
     passed, gate_report = await consistency_gate_service.finalize_project(
         db=db,
         project_id=project_id,
@@ -153,6 +186,48 @@ async def finalize_project(
         finalized=True,
         status=gate_report.get("project_status", "finalized"),
         gate_report=gate_report,
+    )
+
+
+@legacy_router.post("/quality-gate/false-positive-feedback")
+@api_router.post("/quality-gate/false-positive-feedback")
+async def submit_false_positive_feedback(
+    req: FalsePositiveFeedbackRequest,
+    user_id: str = Depends(get_user_id),
+):
+    """记录质量门禁误报反馈，供后续融合回流使用。"""
+    try:
+        payload = consistency_gate_service.record_false_positive_feedback(
+            decision_id=req.decision_id,
+            gate_key=req.gate_key,
+            evidence_key=req.evidence_key,
+            source=req.source,
+            original_level=req.original_level,
+            corrected_level=req.corrected_level,
+            reason=req.reason,
+            reporter=req.reporter or user_id,
+            note=req.note,
+            metadata=req.metadata,
+        )
+        return payload
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@legacy_router.get("/quality-gate/false-positive-feedback")
+@api_router.get("/quality-gate/false-positive-feedback")
+async def list_false_positive_feedback(
+    gate_key: str | None = Query(default=None, description="按门禁主键过滤"),
+    evidence_key: str | None = Query(default=None, description="按证据主键过滤"),
+    limit: int = Query(default=50, ge=1, le=200, description="返回条数上限"),
+    user_id: str = Depends(get_user_id),
+):
+    """查询误报反馈回流视图。"""
+    _ = user_id  # explicit dependency for auth consistency
+    return consistency_gate_service.get_false_positive_backflow(
+        gate_key=gate_key,
+        evidence_key=evidence_key,
+        limit=limit,
     )
 
 

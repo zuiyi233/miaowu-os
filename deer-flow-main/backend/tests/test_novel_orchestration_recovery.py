@@ -17,6 +17,7 @@ from app.gateway.novel_migrated.models.project import Project
 from app.gateway.novel_migrated.models.regeneration_task import RegenerationTask
 from app.gateway.novel_migrated.services.orchestration_service import orchestration_service
 from app.gateway.novel_migrated.services.recovery_service import recovery_service
+from deerflow.config.extensions_config import ExtensionsConfig, FeatureFlagConfig
 
 
 def test_normalize_suggestions_and_build_instructions():
@@ -246,6 +247,150 @@ def test_analysis_pipeline_reuses_fresh_cache_and_recomputes_when_chapter_update
                 persisted = persisted_result.scalar_one()
                 assert persisted.plot_stage == "stage-2"
                 assert int(persisted.word_count or 0) == chapter.word_count
+
+    asyncio.run(_run())
+
+
+def test_analysis_pipeline_sets_revising_status_when_lifecycle_feature_enabled():
+    class _Analyzer:
+        async def analyze_chapter(self, **kwargs):
+            return {
+                "plot_stage": "enabled-lifecycle",
+                "conflict": {"level": 4, "types": ["人物"]},
+                "emotional_arc": {"primary_emotion": "紧张", "intensity": 7},
+                "hooks": [],
+                "foreshadows": [],
+                "plot_points": [],
+                "character_states": [],
+                "scenes": [],
+                "pacing": "fast",
+                "scores": {"overall": 8.2, "pacing": 8.0, "engagement": 8.2, "coherence": 8.0},
+                "suggestions": ["继续优化节奏"],
+                "dialogue_ratio": 0.2,
+                "description_ratio": 0.8,
+            }
+
+        def generate_analysis_summary(self, result):
+            return "enabled-lifecycle-summary"
+
+    async def _run() -> None:
+        await init_db_schema()
+        unique = uuid4().hex[:10]
+        project = Project(id=f"proj-{unique}", user_id="u-lifecycle-enable", title="生命周期启用测试")
+        chapter = Chapter(
+            id=f"chap-{unique}",
+            project_id=project.id,
+            chapter_number=1,
+            title="第一章",
+            content="用于生命周期状态机的章节内容",
+            word_count=len("用于生命周期状态机的章节内容"),
+            status="draft",
+        )
+
+        lifecycle_cfg = ExtensionsConfig(
+            features={"novel_lifecycle_v2": FeatureFlagConfig(enabled=True, rollout_percentage=100)}
+        )
+        async with AsyncSessionLocal() as db:
+            db.add(project)
+            await db.commit()
+            db.add(chapter)
+            await db.commit()
+            await db.refresh(chapter)
+
+            with (
+                patch(
+                    "app.gateway.novel_migrated.services.orchestration_service.get_plot_analyzer",
+                    return_value=_Analyzer(),
+                ),
+                patch(
+                    "app.gateway.novel_migrated.services.lifecycle_service.get_extensions_config",
+                    return_value=lifecycle_cfg,
+                ),
+            ):
+                result = await orchestration_service.run_analysis_pipeline(
+                    db=db,
+                    chapter=chapter,
+                    project_id=project.id,
+                    user_id="u-lifecycle-enable",
+                    ai_service=object(),
+                    idempotency_key=f"idem-{unique}",
+                )
+                assert result.task.status == "completed"
+
+            await db.refresh(chapter)
+            assert chapter.status == "revising"
+
+    asyncio.run(_run())
+
+
+def test_analysis_pipeline_keeps_legacy_status_when_lifecycle_feature_disabled():
+    class _Analyzer:
+        async def analyze_chapter(self, **kwargs):
+            return {
+                "plot_stage": "disabled-lifecycle",
+                "conflict": {"level": 3, "types": ["环境"]},
+                "emotional_arc": {"primary_emotion": "平静", "intensity": 5},
+                "hooks": [],
+                "foreshadows": [],
+                "plot_points": [],
+                "character_states": [],
+                "scenes": [],
+                "pacing": "moderate",
+                "scores": {"overall": 7.0, "pacing": 7.1, "engagement": 7.2, "coherence": 7.3},
+                "suggestions": ["保持稳定推进"],
+                "dialogue_ratio": 0.3,
+                "description_ratio": 0.7,
+            }
+
+        def generate_analysis_summary(self, result):
+            return "disabled-lifecycle-summary"
+
+    async def _run() -> None:
+        await init_db_schema()
+        unique = uuid4().hex[:10]
+        project = Project(id=f"proj-{unique}", user_id="u-lifecycle-disable", title="生命周期禁用测试")
+        chapter = Chapter(
+            id=f"chap-{unique}",
+            project_id=project.id,
+            chapter_number=1,
+            title="第一章",
+            content="用于验证 legacy status 回退行为",
+            word_count=len("用于验证 legacy status 回退行为"),
+            status="completed",
+        )
+        lifecycle_cfg = ExtensionsConfig(
+            features={"novel_lifecycle_v2": FeatureFlagConfig(enabled=False, rollout_percentage=100)}
+        )
+
+        async with AsyncSessionLocal() as db:
+            db.add(project)
+            await db.commit()
+            db.add(chapter)
+            await db.commit()
+            await db.refresh(chapter)
+
+            with (
+                patch(
+                    "app.gateway.novel_migrated.services.orchestration_service.get_plot_analyzer",
+                    return_value=_Analyzer(),
+                ),
+                patch(
+                    "app.gateway.novel_migrated.services.lifecycle_service.get_extensions_config",
+                    return_value=lifecycle_cfg,
+                ),
+            ):
+                result = await orchestration_service.run_analysis_pipeline(
+                    db=db,
+                    chapter=chapter,
+                    project_id=project.id,
+                    user_id="u-lifecycle-disable",
+                    ai_service=object(),
+                    idempotency_key=f"idem-{unique}",
+                )
+                assert result.task.status == "completed"
+
+            await db.refresh(chapter)
+            assert chapter.status == "completed"
 
     asyncio.run(_run())
 

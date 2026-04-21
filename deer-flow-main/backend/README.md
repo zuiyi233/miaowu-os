@@ -148,10 +148,25 @@ FastAPI application providing REST endpoints for frontend integration:
 - Set `DEERFLOW_INTENT_SESSION_BACKEND=file` to force legacy JSON-file storage (`DEERFLOW_INTENT_SESSION_STORE_PATH`).
 - For side-effect actions (create/update/delete and other writes), the middleware requires explicit confirmation before execution.
 - During intent sessions, skill context is loaded strictly from enabled entries in `extensions_config.json` (prioritized by novel relevance), and users can send `技能推荐` to force-refresh suggestions.
+- Intent skill loading now supports a three-layer governance policy (system defaults -> workspace enabled -> session candidates), guarded by feature flag `intent_skill_governance` with degraded fallback controlled by `DEERFLOW_INTENT_SKILL_GOVERNANCE_FALLBACK_MODE` (`workspace_only|system_only|intersection`).
+- Intent workflow session payloads include structured `action_protocol` fields (`action_type`, `slot_schema`, `missing_slots`, `confirmation_required`, `execute_result`) and keep legacy aliases for backward compatibility.
 - Guided/side-effect intent responses set `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches these intent-session workflow responses.
 - Request trace context is normalized across gateway logs via `request_id/thread_id/project_id/session_key/idempotency_key`.
+- Lifecycle traces additionally include `lifecycle_state/lifecycle_transition/lifecycle_mode/lifecycle_replay/lifecycle_token` to support replay and rollback diagnostics.
 - Built-in in-process metrics are available at `/api/features/metrics/novel-pipeline`: success rate, failure rate, retry rate, P95 latency, duplicate-write interception rate.
 - Canary rollout is user-scoped and deterministic (`rollout_percentage` + allow/deny user lists), and rollback can be done by `POST /api/features/{feature_name}/rollback`.
+
+Novel finalize-gate enhancements:
+- `POST /polish/projects/{project_id}/finalize-gate` and `/api/polish/...` accept optional fusion params (`model_gate_signals`, `quality_gate_fusion_feature_enabled`, `fusion_degraded_fallback_mode`, `apply_feedback_backflow`).
+- Gate reports now include per-check fusion metadata (`rule_result`, `fusion.*`) and top-level `gate_fusion` summary while preserving existing keys.
+- False-positive backflow endpoints:
+  - `POST /polish/quality-gate/false-positive-feedback` (and `/api/polish/...`) to record feedback
+  - `GET /polish/quality-gate/false-positive-feedback` (and `/api/polish/...`) to query aggregated backflow view
+- WS-D acceptance suites are codified under:
+  - `tests/novel_phase3/ws_d/` (targeted gate)
+  - `tests/contracts/novel_phase3/ws_d/`
+  - `tests/e2e/novel_phase3/ws_d/`
+  - `tests/load/novel_phase3/ws_d/`
 
 ### IM Channels
 

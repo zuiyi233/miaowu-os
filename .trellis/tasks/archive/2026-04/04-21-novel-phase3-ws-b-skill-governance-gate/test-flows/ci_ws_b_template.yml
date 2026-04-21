@@ -1,0 +1,50 @@
+name: novel-phase3-ws_b-template
+
+on:
+  workflow_dispatch:
+    inputs:
+      execute:
+        description: "是否执行测试（默认 false，避免误跑）"
+        required: true
+        default: "false"
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Backend flow (WS-B)
+        run: |
+          chmod +x .trellis/tasks/04-21-novel-phase3-ws-b-skill-governance-gate/test-flows/run_backend_ws_b.sh
+          if [ "${{ github.event.inputs.execute }}" = "true" ]; then
+            DRY_RUN=0 .trellis/tasks/04-21-novel-phase3-ws-b-skill-governance-gate/test-flows/run_backend_ws_b.sh
+          else
+            DRY_RUN=1 .trellis/tasks/04-21-novel-phase3-ws-b-skill-governance-gate/test-flows/run_backend_ws_b.sh
+          fi
+
+  frontend:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Frontend flow (WS-B)
+        shell: pwsh
+        run: |
+          if ("${{ github.event.inputs.execute }}" -eq "true") {
+            .\.trellis\tasks\04-21-novel-phase3-ws-b-skill-governance-gate\test-flows\run_frontend_ws_b.ps1 -Execute
+          } else {
+            .\.trellis\tasks\04-21-novel-phase3-ws-b-skill-governance-gate\test-flows\run_frontend_ws_b.ps1
+          }
+
+  contract_e2e:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Contract + E2E flow (WS-B)
+        run: |
+          chmod +x .trellis/tasks/04-21-novel-phase3-ws-b-skill-governance-gate/test-flows/run_contract_e2e_ws_b.sh
+          if [ "${{ github.event.inputs.execute }}" = "true" ]; then
+            DRY_RUN=0 .trellis/tasks/04-21-novel-phase3-ws-b-skill-governance-gate/test-flows/run_contract_e2e_ws_b.sh
+          else
+            DRY_RUN=1 .trellis/tasks/04-21-novel-phase3-ws-b-skill-governance-gate/test-flows/run_contract_e2e_ws_b.sh
+          fi

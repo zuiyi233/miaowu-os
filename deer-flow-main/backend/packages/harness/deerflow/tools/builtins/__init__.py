@@ -1,4 +1,5 @@
 from .clarification_tool import ask_clarification_tool
+from .media_draft_tools import generate_image_draft, generate_tts_draft
 from .novel_tools import create_novel
 from .present_file_tool import present_file_tool
 from .setup_agent_tool import setup_agent
@@ -10,6 +11,8 @@ __all__ = [
     "present_file_tool",
     "ask_clarification_tool",
     "create_novel",
+    "generate_image_draft",
+    "generate_tts_draft",
     "view_image_tool",
     "task_tool",
 ]

@@ -45,6 +45,28 @@ def merge_viewed_images(existing: dict[str, ViewedImageData] | None, new: dict[s
     return {**existing, **new}
 
 
+def merge_draft_media(existing: dict[str, dict] | None, new: dict[str, dict | None] | None) -> dict[str, dict]:
+    """Reducer for draft media map.
+
+    - Merges by id (key).
+    - When a value is ``None`` in the update, the key is removed.
+    - When *new* is an empty dict ``{}``, it clears all existing draft media.
+    """
+    if existing is None:
+        existing = {}
+    if new is None:
+        return existing
+    if len(new) == 0:
+        return {}
+    merged = dict(existing)
+    for key, value in new.items():
+        if value is None:
+            merged.pop(key, None)
+        else:
+            merged[key] = value
+    return merged
+
+
 class ThreadState(AgentState):
     sandbox: NotRequired[SandboxState | None]
     thread_data: NotRequired[ThreadDataState | None]
@@ -53,3 +75,4 @@ class ThreadState(AgentState):
     todos: NotRequired[list | None]
     uploaded_files: NotRequired[list[dict] | None]
     viewed_images: Annotated[dict[str, ViewedImageData], merge_viewed_images]  # image_path -> {base64, mime_type}
+    draft_media: Annotated[dict[str, dict], merge_draft_media]

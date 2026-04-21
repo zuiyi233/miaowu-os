@@ -1,4 +1,5 @@
 import type { BaseStream } from "@langchain/langgraph-sdk/react";
+import { useMemo } from "react";
 
 import {
   Conversation,
@@ -16,6 +17,7 @@ import {
   hasToolCalls,
 } from "@/core/messages/utils";
 import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
+import { normalizeDraftMediaMap } from "@/core/media/drafts";
 import type { Subtask } from "@/core/tasks";
 import { useUpdateSubtask } from "@/core/tasks/context";
 import type { AgentThreadState } from "@/core/threads";
@@ -24,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { ArtifactFileList } from "../artifacts/artifact-file-list";
 import { StreamingIndicator } from "../streaming-indicator";
 
+import { DraftMediaList } from "./draft-media-list";
 import { MarkdownContent } from "./markdown-content";
 import { MessageGroup } from "./message-group";
 import { MessageListItem } from "./message-list-item";
@@ -51,6 +54,33 @@ export function MessageList({
   const rehypePlugins = useRehypeSplitWordsIntoSpans(thread.isLoading);
   const updateSubtask = useUpdateSubtask();
   const messages = thread.messages;
+
+  const draftMedia = useMemo(() => {
+    const candidate = (thread.values as unknown as Record<string, unknown> | null)
+      ?.draft_media;
+    const normalized = normalizeDraftMediaMap(candidate);
+    return Object.keys(normalized).length > 0 ? normalized : null;
+  }, [thread.values]);
+
+  const defaultProjectId = useMemo(() => {
+    const record = thread.values as unknown as Record<string, unknown> | null;
+    if (!record) {
+      return undefined;
+    }
+    const pick = (key: string) => {
+      const value = record[key];
+      return typeof value === "string" && value.trim() ? value.trim() : undefined;
+    };
+    return (
+      pick("projectId") ??
+      pick("project_id") ??
+      pick("novelId") ??
+      pick("novel_id") ??
+      pick("bookId") ??
+      pick("book_id")
+    );
+  }, [thread.values]);
+
   if (thread.isThreadLoading && messages.length === 0) {
     return <MessageListSkeleton />;
   }
@@ -234,6 +264,14 @@ export function MessageList({
             </div>
           );
         })}
+        {draftMedia ? (
+          <DraftMediaList
+            className="pt-2"
+            threadId={threadId}
+            draftMedia={draftMedia}
+            defaultProjectId={defaultProjectId}
+          />
+        ) : null}
         {thread.isLoading && <StreamingIndicator className="my-4" />}
         <div style={{ height: `${paddingBottom}px` }} />
       </ConversationContent>

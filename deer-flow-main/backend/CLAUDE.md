@@ -237,11 +237,28 @@ FastAPI application on port 8001 with health check at `GET /health`.
 - Set `DEERFLOW_INTENT_SESSION_BACKEND=file` to force legacy JSON-file storage (`DEERFLOW_INTENT_SESSION_STORE_PATH`).
 - Side-effect actions (create/update/delete and other writes) require explicit confirmation before execution.
 - Intent-session skill loading follows enabled states in `extensions_config.json` (ranked by novel relevance), and `技能推荐` can force a refresh.
+- Intent skill loading can optionally run three-layer governance (`intent_skill_governance`): system defaults -> workspace enabled -> session candidates, with degraded fallback mode controlled by `DEERFLOW_INTENT_SKILL_GOVERNANCE_FALLBACK_MODE` (`workspace_only|system_only|intersection`).
+- Intent session payloads expose structured `action_protocol` contract (`action_type`, `slot_schema`, `missing_slots`, `confirmation_required`, `execute_result`) while preserving legacy aliases for compatibility.
 - Intent workflow responses include `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches these session replies.
 - Gateway request logs now carry unified trace fields via middleware/context filters: `request_id/thread_id/project_id/session_key/idempotency_key`.
+- Lifecycle-related traces also include: `lifecycle_state`, `lifecycle_transition`, `lifecycle_mode`, `lifecycle_replay`, `lifecycle_token`.
 - In-process novel pipeline metrics are exposed by `/api/features/metrics/novel-pipeline`: success rate, failure rate, retry rate, P95 latency, duplicate-write interception rate.
 - Feature flags support user-scoped canary release through `FeatureFlagConfig(enabled, rollout_percentage, allow_users, deny_users)` and deterministic hash bucketing.
 - Fast rollback runbook is implemented as one API step: `POST /api/features/{feature_name}/rollback` (forces `enabled=false`, `rollout_percentage=0`).
+
+Finalize gate (`/polish/projects/{project_id}/finalize-gate` and `/api/polish/...`) now supports optional rule+model fusion controls:
+- request fields: `model_gate_signals`, `quality_gate_fusion_feature_enabled`, `fusion_degraded_fallback_mode`, `apply_feedback_backflow`, `feedback_evidence_key_prefix`.
+- response includes per-check `fusion` metadata + top-level `gate_fusion` summary, and keeps existing fields (`result`, `checks`, `summary`, `lifecycle`) for backward compatibility.
+
+False-positive backflow endpoints (shared by legacy + `/api` prefixed routes):
+- `POST /polish/quality-gate/false-positive-feedback`
+- `GET /polish/quality-gate/false-positive-feedback`
+
+WS-D acceptance test suites live at:
+- `backend/tests/novel_phase3/ws_d/`
+- `backend/tests/contracts/novel_phase3/ws_d/`
+- `backend/tests/e2e/novel_phase3/ws_d/`
+- `backend/tests/load/novel_phase3/ws_d/`
 
 Novel Migrated Wave1+Wave2 APIs are registered through `app.gateway.routers.novel_migrated`, which is added to `CORE_ROUTER_MODULES` in `app/gateway/app.py`. That aggregator conditionally includes `app.gateway.novel_migrated.api.careers`, `app.gateway.novel_migrated.api.foreshadows`, `app.gateway.novel_migrated.api.memories`, `app.gateway.novel_migrated.api.inspiration`, `app.gateway.novel_migrated.api.wizard_stream`, `app.gateway.novel_migrated.api.novel_stream`, `app.gateway.novel_migrated.api.project_covers`, and `app.gateway.novel_migrated.api.book_import` when those modules exist.
 

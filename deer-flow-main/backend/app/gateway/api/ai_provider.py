@@ -228,6 +228,19 @@ def _extract_trace_from_intent_session(session: Any) -> dict[str, str]:
     return extracted
 
 
+def _extract_action_protocol(intent_result: Any) -> dict[str, Any] | None:
+    explicit = getattr(intent_result, "action_protocol", None)
+    if isinstance(explicit, Mapping):
+        return dict(explicit)
+
+    session = getattr(intent_result, "session", None)
+    if isinstance(session, Mapping):
+        from_session = session.get("action_protocol")
+        if isinstance(from_session, Mapping):
+            return dict(from_session)
+    return None
+
+
 async def _stream_response_builder(
     stream: AsyncGenerator[str, None],
     *,
@@ -370,6 +383,9 @@ async def chat_endpoint(
                 payload["novel"] = intent_result.novel
             if intent_result.session:
                 payload["session"] = intent_result.session
+            action_protocol = _extract_action_protocol(intent_result)
+            if action_protocol:
+                payload["action_protocol"] = action_protocol
             if context_fields:
                 payload["context"] = context_fields
 

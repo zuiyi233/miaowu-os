@@ -22,6 +22,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.gateway.middleware.domain_protocol import ExecuteResult, build_action_protocol
+from app.gateway.novel_migrated.services.skill_governance_service import (
+    DegradedFallbackMode,
+    resolve_skill_governance,
+)
 from app.gateway.observability.context import extract_trace_fields_from_context, update_trace_context
 from app.gateway.observability.metrics import record_duplicate_write_intercept
 from deerflow.config.extensions_config import ExtensionsConfig
@@ -35,6 +40,7 @@ _SKILL_CACHE_TTL = timedelta(minutes=5)
 _MAX_SKILL_ENTRIES = 12
 _SESSION_STORE_PATH_ENV = "DEERFLOW_INTENT_SESSION_STORE_PATH"
 _SESSION_BACKEND_ENV = "DEERFLOW_INTENT_SESSION_BACKEND"
+_SKILL_GOVERNANCE_FALLBACK_MODE_ENV = "DEERFLOW_INTENT_SKILL_GOVERNANCE_FALLBACK_MODE"
 _DATABASE_STORAGE_BACKENDS = {"database", "db", "sqlite"}
 _FILE_STORAGE_BACKENDS = {"file", "json"}
 _SESSION_CONTEXT_KEYS: tuple[str, ...] = (
@@ -241,6 +247,7 @@ class IntentRecognitionResult:
     tool_calls: list[dict[str, Any]] | None = None
     novel: dict[str, Any] | None = None
     session: dict[str, Any] | None = None
+    action_protocol: dict[str, Any] | None = None
 
 
 @dataclass
@@ -282,6 +289,7 @@ class IntentRecognitionMiddleware:
     """Guided intent recognition middleware for /api/ai/chat."""
 
     _INTENT_FEATURE_FLAG = "intent_recognition"
+    _SKILL_GOVERNANCE_FEATURE_FLAG = "intent_skill_governance"
 
     def __init__(self) -> None:
         self._sessions: dict[str, _NovelCreationSession] = {}
@@ -423,7 +431,19 @@ class IntentRecognitionMiddleware:
             return IntentRecognitionResult(
                 handled=True,
                 content="已退出创建小说流程。你可以随时说“创建小说”重新开始。",
-                session={"status": "cancelled", "mode": "create"},
+                session={
+                    "status": "cancelled",
+                    "mode": "create",
+                    "action_protocol": self._build_action_protocol_for_session(
+                        session=session,
+                        action_override="create_novel",
+                        confirmation_required=False,
+                        execute_result=ExecuteResult(
+                            status="cancelled",
+                            message="用户已取消创建流程",
+                        ),
+                    ),
+                },
             )
 
         if self._is_skill_assist_request(lowered):
@@ -559,7 +579,21 @@ class IntentRecognitionMiddleware:
             return IntentRecognitionResult(
                 handled=True,
                 content="该创建请求已被处理过，请勿重复提交。",
-                session={"status": "duplicate", "mode": "create", "idempotency_key": idem_key},
+                session={
+                    "status": "duplicate",
+                    "mode": "create",
+                    "idempotency_key": idem_key,
+                    "action_protocol": self._build_action_protocol_for_session(
+                        session=session,
+                        action_override="create_novel",
+                        missing_slots_override=[],
+                        confirmation_required=False,
+                        execute_result=ExecuteResult(
+                            status="duplicate",
+                            message="该创建请求已被处理过，请勿重复提交。",
+                        ),
+                    ),
+                },
             )
 
         payload: dict[str, Any] | None = None
@@ -597,7 +631,21 @@ class IntentRecognitionMiddleware:
                     )
                 ],
                 novel={"status": "error", "error": error_summary},
-                session={"status": "failed", "mode": "create"},
+                session={
+                    "status": "failed",
+                    "mode": "create",
+                    "action_protocol": self._build_action_protocol_for_session(
+                        session=session,
+                        action_override="create_novel",
+                        missing_slots_override=[],
+                        confirmation_required=False,
+                        execute_result=ExecuteResult(
+                            status="failed",
+                            message="创建失败，请稍后重试",
+                            summary={"error": error_summary},
+                        ),
+                    ),
+                },
             )
 
         content = (
@@ -619,7 +667,22 @@ class IntentRecognitionMiddleware:
             content=content,
             tool_calls=[tool_call],
             novel=payload,
-            session={"status": "completed", "mode": "create"},
+            session={
+                "status": "completed",
+                "mode": "create",
+                "action_protocol": self._build_action_protocol_for_session(
+                    session=session,
+                    action_override="create_novel",
+                    missing_slots_override=[],
+                    confirmation_required=False,
+                    execute_result=ExecuteResult(
+                        status="success",
+                        message=content,
+                        target_id=str(payload.get("id") or ""),
+                        summary={"title": payload.get("title"), "genre": payload.get("genre")},
+                    ),
+                ),
+            },
         )
 
     async def _handle_manage_session(
@@ -646,7 +709,18 @@ class IntentRecognitionMiddleware:
             return IntentRecognitionResult(
                 handled=True,
                 content="已退出小说管理会话。你可以随时说“管理小说”重新进入。",
-                session={"status": "cancelled", "mode": "manage"},
+                session={
+                    "status": "cancelled",
+                    "mode": "manage",
+                    "action_protocol": self._build_action_protocol_for_session(
+                        session=session,
+                        confirmation_required=False,
+                        execute_result=ExecuteResult(
+                            status="cancelled",
+                            message="用户已退出管理会话",
+                        ),
+                    ),
+                },
             )
 
         if self._is_skill_assist_request(lowered):
@@ -812,7 +886,7 @@ class IntentRecognitionMiddleware:
         if session.active_project_id:
             project_line = f"当前项目：{session.active_project_title or session.active_project_id}"
 
-        skill_hint = self._build_manage_skill_hint()
+        skill_hint = self._build_manage_skill_hint(session=session)
 
         content = (
             f"{header}\n"
@@ -1775,7 +1849,23 @@ class IntentRecognitionMiddleware:
             return IntentRecognitionResult(
                 handled=True,
                 content="该操作已被处理过，请勿重复提交。",
-                session={"status": "duplicate", "mode": "manage", "idempotency_key": idem_key},
+                session={
+                    "status": "duplicate",
+                    "mode": "manage",
+                    "idempotency_key": idem_key,
+                    "action_protocol": self._build_action_protocol_for_session(
+                        session=session,
+                        action_override=action.action,
+                        action_snapshot=action,
+                        missing_slots_override=[],
+                        confirmation_required=False,
+                        execute_result=ExecuteResult(
+                            status="duplicate",
+                            message="该操作已被处理过，请勿重复提交。",
+                            target_id=action.target_id,
+                        ),
+                    ),
+                },
             )
 
         try:
@@ -1801,7 +1891,19 @@ class IntentRecognitionMiddleware:
                         call_id=f"call_{action.action}_error",
                     )
                 ],
-                session=self._session_brief(session),
+                session=self._session_brief(
+                    session,
+                    action_override=action.action,
+                    action_snapshot=action,
+                    missing_slots_override=[],
+                    confirmation_required=False,
+                    execute_result=ExecuteResult(
+                        status="failed",
+                        message=f"执行失败：{message}",
+                        target_id=action.target_id,
+                        summary={"action": action.action},
+                    ),
+                ),
             )
 
         tool_call = self._build_wire_tool_call(
@@ -1840,7 +1942,27 @@ class IntentRecognitionMiddleware:
             content=content,
             tool_calls=[tool_call],
             novel=result_payload if isinstance(result_payload, dict) else {"result": result_payload},
-            session=self._session_brief(session),
+            session=self._session_brief(
+                session,
+                action_override=action.action,
+                action_snapshot=action,
+                missing_slots_override=[],
+                confirmation_required=False,
+                execute_result=ExecuteResult(
+                    status="success",
+                    message=content,
+                    target_id=str(
+                        action.target_id
+                        or (
+                            result_payload.get("id")
+                            if isinstance(result_payload, dict)
+                            else ""
+                        )
+                        or ""
+                    ),
+                    summary={"action": action.action},
+                ),
+            ),
         )
 
     async def _dispatch_manage_action(self, *, action: _PendingAction, session: _NovelCreationSession, db_session: Any) -> dict[str, Any]:
@@ -3053,8 +3175,12 @@ class IntentRecognitionMiddleware:
         role_type = IntentRecognitionMiddleware._extract_assignment(text, labels=("角色类型", "role_type"), max_len=40)
         return role_type
 
-    def _build_manage_skill_hint(self) -> str:
-        skills = self._load_enabled_novel_skills(force_refresh=False)
+    def _build_manage_skill_hint(self, *, session: _NovelCreationSession | None = None) -> str:
+        skills = self._load_enabled_novel_skills(
+            force_refresh=False,
+            session=session,
+            user_id=session.user_id if session is not None else None,
+        )
         if not skills:
             return ""
         top = "、".join(entry["name"] for entry in skills[:3])
@@ -3102,7 +3228,11 @@ class IntentRecognitionMiddleware:
         if cached and not force_refresh:
             return cached
 
-        skill_entries = self._load_enabled_novel_skills(force_refresh=force_refresh)
+        skill_entries = self._load_enabled_novel_skills(
+            force_refresh=force_refresh,
+            session=session,
+            user_id=session.user_id,
+        )
         if not skill_entries:
             return ""
 
@@ -3173,10 +3303,19 @@ class IntentRecognitionMiddleware:
             logger.warning("skill guidance generation failed: %s", exc)
             return ""
 
-    def _load_enabled_novel_skills(self, *, force_refresh: bool = False) -> list[dict[str, str]]:
+    def _load_enabled_novel_skills(
+        self,
+        *,
+        force_refresh: bool = False,
+        session: _NovelCreationSession | None = None,
+        user_id: str | None = None,
+    ) -> list[dict[str, str]]:
         now = datetime.now()
         config_mtime = self._get_extensions_config_mtime()
         can_reuse_cache = (
+            session is None
+            and not user_id
+            and
             not force_refresh
             and self._skills_cache_at is not None
             and now - self._skills_cache_at < _SKILL_CACHE_TTL
@@ -3188,9 +3327,21 @@ class IntentRecognitionMiddleware:
         entries: list[dict[str, str]] = []
         try:
             skills = load_skills(enabled_only=False)
+            workspace_states: dict[str, bool] = {}
+            governance_feature_enabled = False
+            degraded_fallback_mode = self._resolve_skill_governance_fallback_mode()
 
             try:
                 extensions_config = ExtensionsConfig.from_file()
+                governance_feature_enabled = self._is_skill_governance_enabled(
+                    user_id=user_id,
+                    extensions_config=extensions_config,
+                )
+                workspace_states = {
+                    skill.name.strip(): extensions_config.is_skill_enabled(skill.name, skill.category)
+                    for skill in skills
+                    if skill.name and skill.name.strip()
+                }
                 enabled_skills = [
                     skill
                     for skill in skills
@@ -3200,8 +3351,10 @@ class IntentRecognitionMiddleware:
                 logger.warning("failed to load extensions config for skill toggles: %s", config_exc)
                 # Follow deerflow fail-open behavior: keep skills available when config is unreadable.
                 enabled_skills = skills
+                workspace_states = {}
 
-            for skill in enabled_skills:
+            all_entries: list[dict[str, Any]] = []
+            for skill in skills:
                 name = skill.name.strip()
                 description = (skill.description or "").strip()
                 raw = skill.skill_file.read_text(encoding="utf-8", errors="ignore")
@@ -3209,7 +3362,7 @@ class IntentRecognitionMiddleware:
                 content_for_filter = f"{name}\n{description}\n{snippet}".lower()
                 relevance = sum(1 for keyword in _NOVEL_SKILL_KEYWORDS if keyword in content_for_filter)
 
-                entries.append(
+                all_entries.append(
                     {
                         "name": name,
                         "description": description,
@@ -3218,23 +3371,69 @@ class IntentRecognitionMiddleware:
                     }
                 )
 
-            entries.sort(
+            all_entries.sort(
                 key=lambda item: (
                     int(item.get("_relevance", 0)),
                     len(str(item.get("description", ""))),
                 ),
                 reverse=True,
             )
+
+            all_entries_by_name = {entry["name"]: entry for entry in all_entries}
+            enabled_names = [skill.name.strip() for skill in enabled_skills if skill.name and skill.name.strip()]
+            try:
+                if governance_feature_enabled:
+                    session_candidates = self._derive_session_candidate_skills(
+                        all_entries=all_entries,
+                        session=session,
+                    )
+                    governance_result = resolve_skill_governance(
+                        system_default_skills=[entry["name"] for entry in all_entries],
+                        workspace_skill_states=workspace_states,
+                        session_candidate_skills=session_candidates,
+                        feature_enabled=True,
+                        degraded_fallback_mode=degraded_fallback_mode,
+                        default_workspace_enabled=True,
+                    )
+                    selected_names = governance_result.final_enabled_skills
+                else:
+                    governance_result = resolve_skill_governance(
+                        system_default_skills=[entry["name"] for entry in all_entries],
+                        workspace_skill_states=workspace_states,
+                        session_candidate_skills=None,
+                        feature_enabled=False,
+                        degraded_fallback_mode=degraded_fallback_mode,
+                        default_workspace_enabled=True,
+                    )
+                    selected_names = governance_result.final_enabled_skills
+                    if not selected_names:
+                        selected_names = enabled_names
+            except Exception as governance_exc:  # pragma: no cover - defensive
+                logger.warning("skill governance resolve failed, fallback to legacy skill toggle: %s", governance_exc)
+                governance_result = None
+                selected_names = enabled_names
+
+            entries = [all_entries_by_name[name] for name in selected_names if name in all_entries_by_name]
             entries = entries[:_MAX_SKILL_ENTRIES]
             for item in entries:
                 item.pop("_relevance", None)
+
+            if governance_result is not None:
+                logger.info(
+                    "intent skill loading resolved via governance: mode=%s feature_enabled=%s total=%s final=%s",
+                    governance_result.governance_mode,
+                    governance_feature_enabled,
+                    len(all_entries),
+                    len(entries),
+                )
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("failed to load enabled skills for intent middleware: %s", exc)
             entries = []
 
-        self._skills_cache = entries
-        self._skills_cache_at = now
-        self._skills_cache_config_mtime = config_mtime
+        if session is None and not user_id:
+            self._skills_cache = entries
+            self._skills_cache_at = now
+            self._skills_cache_config_mtime = config_mtime
         return entries
 
     @staticmethod
@@ -3255,6 +3454,70 @@ class IntentRecognitionMiddleware:
             if len(parts) == 3:
                 text = parts[2].strip()
         return text
+
+    @classmethod
+    def _resolve_skill_governance_fallback_mode(cls) -> DegradedFallbackMode:
+        raw = str(os.getenv(_SKILL_GOVERNANCE_FALLBACK_MODE_ENV, "workspace_only") or "").strip().lower()
+        if raw in {"workspace_only", "system_only", "intersection"}:
+            return raw  # type: ignore[return-value]
+        return "workspace_only"
+
+    def _is_skill_governance_enabled(
+        self,
+        *,
+        user_id: str | None,
+        extensions_config: ExtensionsConfig | None = None,
+    ) -> bool:
+        cfg = extensions_config
+        if cfg is None:
+            try:
+                cfg = ExtensionsConfig.from_file()
+            except Exception:
+                return False
+
+        if hasattr(cfg, "is_feature_enabled_for_user"):
+            return cfg.is_feature_enabled_for_user(
+                self._SKILL_GOVERNANCE_FEATURE_FLAG,
+                user_id=user_id,
+                default=False,
+            )
+        return cfg.is_feature_enabled(self._SKILL_GOVERNANCE_FEATURE_FLAG, default=False)
+
+    def _derive_session_candidate_skills(
+        self,
+        *,
+        all_entries: list[dict[str, Any]],
+        session: _NovelCreationSession | None,
+    ) -> list[str]:
+        if session is None:
+            return []
+
+        tokens: list[str] = []
+        if session.last_prompted_field:
+            tokens.append(str(session.last_prompted_field).strip().lower())
+
+        for field_name, value in session.fields.items():
+            if value is None:
+                continue
+            normalized = str(value).strip().lower()
+            if not normalized:
+                continue
+            tokens.append(str(field_name).strip().lower())
+            tokens.append(normalized)
+
+        if not tokens:
+            return []
+
+        candidates: list[str] = []
+        for entry in all_entries:
+            haystack = (
+                f"{entry.get('name', '')}\n"
+                f"{entry.get('description', '')}\n"
+                f"{entry.get('snippet', '')}"
+            ).lower()
+            if any(token in haystack for token in tokens):
+                candidates.append(str(entry.get("name", "")).strip())
+        return [name for name in candidates if name]
 
     @staticmethod
     def _extract_latest_user_message(messages: list[Any]) -> str:
@@ -3514,7 +3777,130 @@ class IntentRecognitionMiddleware:
 
         return fields
 
-    def _session_brief(self, session: _NovelCreationSession) -> dict[str, Any]:
+    @staticmethod
+    def _has_slot_value(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return bool(value.strip())
+        if isinstance(value, (int, float)):
+            return value > 0
+        if isinstance(value, (list, tuple, set, dict)):
+            return bool(value)
+        return True
+
+    def _build_create_slot_schema(self, session: _NovelCreationSession) -> dict[str, Any]:
+        return {
+            field_name: {
+                "required": True,
+                "label": _FIELD_LABELS.get(field_name, field_name),
+                "value": session.fields.get(field_name),
+            }
+            for field_name in _FIELD_ORDER
+        }
+
+    def _build_manage_slot_schema(
+        self,
+        *,
+        session: _NovelCreationSession,
+        action: _PendingAction | None,
+    ) -> dict[str, Any]:
+        if action is None:
+            return {
+                "project_id": {
+                    "required": True,
+                    "label": "项目ID",
+                    "value": session.active_project_id,
+                }
+            }
+        return {
+            "project_id": {
+                "required": True,
+                "label": "项目ID",
+                "value": action.project_id or session.active_project_id,
+            },
+            "target_id": {
+                "required": action.operation in {"update", "delete"},
+                "label": "目标ID",
+                "value": action.target_id,
+            },
+            "payload": {
+                "required": action.operation in {"create", "update", "generate", "switch", "export"},
+                "label": "执行参数",
+                "value": action.payload,
+            },
+        }
+
+    def _build_action_protocol_for_session(
+        self,
+        *,
+        session: _NovelCreationSession,
+        execute_result: ExecuteResult | dict[str, Any] | None = None,
+        action_override: str | None = None,
+        missing_slots_override: list[str] | None = None,
+        confirmation_required: bool | None = None,
+        action_snapshot: _PendingAction | None = None,
+    ) -> dict[str, Any]:
+        action = action_snapshot if action_snapshot is not None else session.pending_action
+        action_type = action_override or (
+            "create_novel"
+            if session.mode == "create"
+            else (action.action if action is not None else "manage_session")
+        )
+
+        if session.mode == "create":
+            slot_schema = self._build_create_slot_schema(session)
+            missing_slots = (
+                list(missing_slots_override)
+                if missing_slots_override is not None
+                else [field_name for field_name in _FIELD_ORDER if not self._has_slot_value(session.fields.get(field_name))]
+            )
+        else:
+            slot_schema = self._build_manage_slot_schema(session=session, action=action)
+            missing_slots = (
+                list(missing_slots_override)
+                if missing_slots_override is not None
+                else list(action.missing_fields) if action is not None else []
+            )
+
+        requires_confirmation = (
+            bool(confirmation_required)
+            if confirmation_required is not None
+            else bool(session.awaiting_confirm or (not missing_slots and session.mode in {"create", "manage"}))
+        )
+
+        try:
+            return build_action_protocol(
+                action_type=action_type,
+                slot_schema=slot_schema,
+                missing_slots=missing_slots,
+                confirmation_required=requires_confirmation,
+                execute_result=execute_result,
+            )
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.warning("failed to build action protocol: %s", exc)
+            return {
+                "action_type": action_type,
+                "slot_schema": slot_schema,
+                "missing_slots": missing_slots,
+                "confirmation_required": requires_confirmation,
+                "execute_result": (
+                    execute_result.to_dict()
+                    if isinstance(execute_result, ExecuteResult)
+                    else execute_result
+                ),
+            }
+
+    def _session_brief(
+        self,
+        session: _NovelCreationSession,
+        *,
+        execute_result: ExecuteResult | dict[str, Any] | None = None,
+        action_override: str | None = None,
+        missing_slots_override: list[str] | None = None,
+        confirmation_required: bool | None = None,
+        action_snapshot: _PendingAction | None = None,
+    ) -> dict[str, Any]:
         base = {
             "mode": session.mode,
             "status": "collecting" if not session.awaiting_confirm else "awaiting_confirmation",
@@ -3523,6 +3909,14 @@ class IntentRecognitionMiddleware:
                 "title": session.active_project_title,
             },
         }
+        base["action_protocol"] = self._build_action_protocol_for_session(
+            session=session,
+            execute_result=execute_result,
+            action_override=action_override,
+            missing_slots_override=missing_slots_override,
+            confirmation_required=confirmation_required,
+            action_snapshot=action_snapshot,
+        )
 
         if session.idempotency_key:
             base["idempotency_key"] = session.idempotency_key

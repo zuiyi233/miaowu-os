@@ -30,6 +30,7 @@ HARNESS_ROUTER_MODULES = (
     "app.gateway.routers.memory",
     "app.gateway.routers.skills",
     "app.gateway.routers.artifacts",
+    "app.gateway.routers.media_drafts",
     "app.gateway.routers.uploads",
     "app.gateway.routers.threads",
     "app.gateway.routers.agents",

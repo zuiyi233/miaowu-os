@@ -29,6 +29,7 @@ from app.gateway.novel_migrated.models.project import Project
 from app.gateway.novel_migrated.models.regeneration_task import RegenerationTask
 from app.gateway.novel_migrated.services.ai_service import AIService
 from app.gateway.novel_migrated.services.chapter_regenerator import get_chapter_regenerator
+from app.gateway.novel_migrated.services.lifecycle_service import lifecycle_service
 from app.gateway.novel_migrated.services.plot_analyzer import get_plot_analyzer
 
 logger = get_logger(__name__)
@@ -358,10 +359,26 @@ class ChapterOrchestrationService:
                     analysis=existing_analysis,
                     task=latest_task,
                 )
-            if not consume_ok and latest_task and latest_task.status == "running":
-                raise RuntimeError("分析任务正在执行中，请稍后刷新任务状态")
-            if not consume_ok:
-                raise RuntimeError("分析请求重复提交，请稍后刷新任务状态")
+        if not consume_ok and latest_task and latest_task.status == "running":
+            raise RuntimeError("分析任务正在执行中，请稍后刷新任务状态")
+        if not consume_ok:
+            raise RuntimeError("分析请求重复提交，请稍后刷新任务状态")
+
+        lifecycle_begin = lifecycle_service.transition_status(
+            status_holder=chapter,
+            entity_type="chapter",
+            entity_id=chapter_id,
+            target_status="analyzing",
+            user_id=user_id,
+            idempotency_token=normalized_idempotency_key,
+        )
+        if lifecycle_begin.degraded or not lifecycle_begin.valid:
+            logger.warning(
+                "analysis lifecycle begin degraded chapter=%s reason=%s target=%s",
+                chapter_id,
+                lifecycle_begin.reason,
+                lifecycle_begin.target_status,
+            )
 
         task = AnalysisTask(
             chapter_id=chapter_id,
@@ -393,6 +410,21 @@ class ChapterOrchestrationService:
                 on_retry=on_retry,
             )
         except Exception as exc:
+            lifecycle_fail = lifecycle_service.transition_status(
+                status_holder=chapter,
+                entity_type="chapter",
+                entity_id=chapter_id,
+                target_status="draft",
+                user_id=user_id,
+                idempotency_token=normalized_idempotency_key,
+            )
+            if lifecycle_fail.degraded or not lifecycle_fail.valid:
+                logger.warning(
+                    "analysis lifecycle failure degraded chapter=%s reason=%s target=%s",
+                    chapter_id,
+                    lifecycle_fail.reason,
+                    lifecycle_fail.target_status,
+                )
             task.status = "failed"
             task.progress = 0
             task.error_message = f"AI 分析异常: {exc}"
@@ -408,6 +440,21 @@ class ChapterOrchestrationService:
             raise RuntimeError("章节分析失败") from exc
 
         if not result:
+            lifecycle_empty = lifecycle_service.transition_status(
+                status_holder=chapter,
+                entity_type="chapter",
+                entity_id=chapter_id,
+                target_status="draft",
+                user_id=user_id,
+                idempotency_token=normalized_idempotency_key,
+            )
+            if lifecycle_empty.degraded or not lifecycle_empty.valid:
+                logger.warning(
+                    "analysis lifecycle empty-result degraded chapter=%s reason=%s target=%s",
+                    chapter_id,
+                    lifecycle_empty.reason,
+                    lifecycle_empty.target_status,
+                )
             task.status = "failed"
             task.progress = 0
             task.error_message = "AI 分析失败"
@@ -471,6 +518,22 @@ class ChapterOrchestrationService:
                 )
             )
 
+        lifecycle_complete = lifecycle_service.transition_status(
+            status_holder=chapter,
+            entity_type="chapter",
+            entity_id=chapter_id,
+            target_status="revising",
+            user_id=user_id,
+            idempotency_token=normalized_idempotency_key,
+        )
+        if lifecycle_complete.degraded or not lifecycle_complete.valid:
+            logger.warning(
+                "analysis lifecycle complete degraded chapter=%s reason=%s target=%s",
+                chapter_id,
+                lifecycle_complete.reason,
+                lifecycle_complete.target_status,
+            )
+
         task.status = "completed"
         task.progress = 100
         task.error_message = None
@@ -510,6 +573,22 @@ class ChapterOrchestrationService:
 
         idem_key = (idempotency_key or "").strip()
         version_note = f"idem:{idem_key}" if idem_key else None
+
+        lifecycle_revision_begin = lifecycle_service.transition_status(
+            status_holder=chapter,
+            entity_type="chapter",
+            entity_id=chapter.id,
+            target_status="revising",
+            user_id=user_id,
+            idempotency_token=idem_key,
+        )
+        if lifecycle_revision_begin.degraded or not lifecycle_revision_begin.valid:
+            logger.warning(
+                "revision lifecycle begin degraded chapter=%s reason=%s target=%s",
+                chapter.id,
+                lifecycle_revision_begin.reason,
+                lifecycle_revision_begin.target_status,
+            )
 
         if idem_key:
             existing_task_result = await db.execute(
@@ -605,6 +684,21 @@ class ChapterOrchestrationService:
                 )
 
         if not generated.strip():
+            lifecycle_revision_fail = lifecycle_service.transition_status(
+                status_holder=chapter,
+                entity_type="chapter",
+                entity_id=chapter.id,
+                target_status="draft",
+                user_id=user_id,
+                idempotency_token=idem_key,
+            )
+            if lifecycle_revision_fail.degraded or not lifecycle_revision_fail.valid:
+                logger.warning(
+                    "revision lifecycle failure degraded chapter=%s reason=%s target=%s",
+                    chapter.id,
+                    lifecycle_revision_fail.reason,
+                    lifecycle_revision_fail.target_status,
+                )
             task.status = "failed"
             task.progress = 0
             task.error_message = f"修订失败: {last_error}" if last_error else "修订失败"
@@ -615,7 +709,25 @@ class ChapterOrchestrationService:
         old_word_count = chapter.word_count or 0
         chapter.content = generated.strip()
         chapter.word_count = len(chapter.content)
-        chapter.status = "completed"
+        if lifecycle_service.is_enabled(user_id=user_id):
+            lifecycle_revision_done = lifecycle_service.transition_status(
+                status_holder=chapter,
+                entity_type="chapter",
+                entity_id=chapter.id,
+                target_status="revising",
+                user_id=user_id,
+                idempotency_token=idem_key,
+                legacy_target_status="completed",
+            )
+            if lifecycle_revision_done.degraded or not lifecycle_revision_done.valid:
+                logger.warning(
+                    "revision lifecycle complete degraded chapter=%s reason=%s target=%s",
+                    chapter.id,
+                    lifecycle_revision_done.reason,
+                    lifecycle_revision_done.target_status,
+                )
+        else:
+            chapter.status = "completed"
         project.current_words = max(0, int(project.current_words or 0) - old_word_count + chapter.word_count)
 
         task.status = "completed"

@@ -14,6 +14,11 @@ TRACE_FIELDS: tuple[str, ...] = (
     "project_id",
     "session_key",
     "idempotency_key",
+    "lifecycle_state",
+    "lifecycle_transition",
+    "lifecycle_mode",
+    "lifecycle_replay",
+    "lifecycle_token",
 )
 
 _DEFAULT_TRACE_CONTEXT: dict[str, str | None] = {field: None for field in TRACE_FIELDS}
@@ -29,12 +34,22 @@ _CONTEXT_ALIAS_MAP: dict[str, tuple[str, ...]] = {
     "project_id": ("project_id", "projectId"),
     "session_key": ("session_key", "sessionKey"),
     "idempotency_key": ("idempotency_key", "idempotencyKey"),
+    "lifecycle_state": ("lifecycle_state", "lifecycleState"),
+    "lifecycle_transition": ("lifecycle_transition", "lifecycleTransition"),
+    "lifecycle_mode": ("lifecycle_mode", "lifecycleMode"),
+    "lifecycle_replay": ("lifecycle_replay", "lifecycleReplay"),
+    "lifecycle_token": ("lifecycle_token", "lifecycleToken"),
 }
 _HEADER_ALIAS_MAP: dict[str, tuple[str, ...]] = {
     "thread_id": ("x-thread-id",),
     "project_id": ("x-project-id",),
     "session_key": ("x-session-key",),
     "idempotency_key": ("idempotency-key", "x-idempotency-key"),
+    "lifecycle_state": ("x-lifecycle-state",),
+    "lifecycle_transition": ("x-lifecycle-transition",),
+    "lifecycle_mode": ("x-lifecycle-mode",),
+    "lifecycle_replay": ("x-lifecycle-replay",),
+    "lifecycle_token": ("x-lifecycle-token",),
 }
 
 

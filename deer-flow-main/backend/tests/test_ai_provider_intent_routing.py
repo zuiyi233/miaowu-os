@@ -61,6 +61,17 @@ def test_chat_returns_intent_result_and_bypass_headers(monkeypatch):
             content="已创建小说",
             tool_calls=[{"function": {"name": "create_novel"}}],
             novel={"id": "novel-1", "title": "测试", "genre": "科幻"},
+            session={
+                "mode": "create",
+                "status": "awaiting_confirmation",
+                "action_protocol": {
+                    "action_type": "create_novel",
+                    "slot_schema": {"title": {"required": True, "value": "测试"}},
+                    "missing_slots": ["genre"],
+                    "confirmation_required": False,
+                    "execute_result": None,
+                },
+            },
         )
 
     monkeypatch.setattr(ai_provider._INTENT_RECOGNITION_MIDDLEWARE, "process_request", _fake_process_request)
@@ -78,6 +89,8 @@ def test_chat_returns_intent_result_and_bypass_headers(monkeypatch):
     assert data["content"] == "已创建小说"
     assert data["tool_calls"][0]["function"]["name"] == "create_novel"
     assert data["novel"]["id"] == "novel-1"
+    assert data["session"]["action_protocol"]["action_type"] == "create_novel"
+    assert data["action_protocol"]["missing_slots"] == ["genre"]
     assert response.headers.get("x-prompt-cache") == "bypass"
     assert response.headers.get("cache-control") == "no-store"
 

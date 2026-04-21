@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
@@ -14,6 +15,8 @@ from app.gateway.novel_migrated.models.foreshadow import Foreshadow
 from app.gateway.novel_migrated.models.memory import PlotAnalysis
 from app.gateway.novel_migrated.models.project import Project
 from app.gateway.novel_migrated.services.consistency_gate_service import consistency_gate_service
+from app.gateway.novel_migrated.services.quality_gate_fusion_service import quality_gate_fusion_service
+from deerflow.config.extensions_config import ExtensionsConfig, FeatureFlagConfig
 
 
 async def _cleanup_project(project_id: str) -> None:
@@ -272,3 +275,185 @@ async def test_finalize_endpoint_allows_warn_result() -> None:
         assert refreshed.status == "finalized"
 
     await _cleanup_project(project.id)
+
+
+@pytest.mark.anyio
+async def test_finalize_project_lifecycle_strategy_transitions_when_feature_enabled() -> None:
+    await init_db_schema()
+    user_id = f"gate-lifecycle-user-{uuid.uuid4()}"
+    chapter_content = (
+        "晨雾尚未散去，旧城墙上的风铃被北风吹得清响。"
+        "主角沿着石阶反复确认前夜留下的符号，逐步拼出敌方行军路线。"
+        "他在驿站与同伴会合后决定分头追踪，确保下一章能无缝推进主线。"
+        "这一章以新的调查目标收束，同时保留必要悬念。"
+    )
+
+    async with AsyncSessionLocal() as session:
+        project = Project(user_id=user_id, title="生命周期门禁测试")
+        session.add(project)
+        await session.flush()
+
+        chapter = Chapter(
+            project_id=project.id,
+            chapter_number=1,
+            title="第一章",
+            content=chapter_content,
+            word_count=len(chapter_content),
+            status="completed",
+        )
+        session.add(chapter)
+        await session.flush()
+
+        analysis = PlotAnalysis(
+            project_id=project.id,
+            chapter_id=chapter.id,
+            overall_quality_score=8.0,
+        )
+        session.add(analysis)
+        await session.commit()
+
+    lifecycle_cfg = ExtensionsConfig(
+        features={"novel_lifecycle_v2": FeatureFlagConfig(enabled=True, rollout_percentage=100)}
+    )
+
+    async with AsyncSessionLocal() as session:
+        with patch(
+            "app.gateway.novel_migrated.services.lifecycle_service.get_extensions_config",
+            return_value=lifecycle_cfg,
+        ):
+            passed, report = await consistency_gate_service.finalize_project(
+                db=session,
+                project_id=project.id,
+                config={},
+            )
+            assert passed is True
+            assert report["project_status"] == "finalized"
+            assert report["lifecycle"]["feature_enabled"] is True
+            transitions = report["lifecycle"]["transitions"]
+            assert len(transitions) >= 2
+            assert transitions[0]["target_status"] == "gated"
+            assert transitions[1]["target_status"] == "finalized"
+            assert report["lifecycle"]["publish_strategy"]["can_publish"] is True
+
+    async with AsyncSessionLocal() as verify_session:
+        result = await verify_session.execute(select(Project).where(Project.id == project.id))
+        refreshed = result.scalar_one()
+        assert refreshed.status == "finalized"
+
+    await _cleanup_project(project.id)
+
+
+@pytest.mark.anyio
+async def test_finalize_gate_applies_rule_model_fusion_when_feature_enabled() -> None:
+    await init_db_schema()
+    user_id = f"gate-fusion-user-{uuid.uuid4()}"
+    chapter_content = (
+        "夜雾贴着河岸缓慢蔓延，主角在废弃码头找到残破航图。"
+        "他意识到线索并不完整，决定暂时按兵不动并回收更多证据。"
+    )
+
+    async with AsyncSessionLocal() as session:
+        project = Project(user_id=user_id, title="融合门禁测试")
+        session.add(project)
+        await session.flush()
+
+        chapter = Chapter(
+            project_id=project.id,
+            chapter_number=1,
+            title="第一章",
+            content=chapter_content,
+            word_count=len(chapter_content),
+            status="completed",
+        )
+        session.add(chapter)
+        await session.flush()
+        session.add(
+            PlotAnalysis(
+                project_id=project.id,
+                chapter_id=chapter.id,
+                overall_quality_score=6.0,
+            )
+        )
+        await session.commit()
+
+    fusion_cfg = ExtensionsConfig(
+        features={"novel_quality_gate_fusion": FeatureFlagConfig(enabled=True, rollout_percentage=100)}
+    )
+
+    async with AsyncSessionLocal() as session:
+        with patch(
+            "app.gateway.novel_migrated.services.consistency_gate_service.get_extensions_config",
+            return_value=fusion_cfg,
+        ):
+            report = await consistency_gate_service.build_finalize_gate_report(
+                db=session,
+                project_id=project.id,
+                config={
+                    "min_chapter_length_warn": 1,
+                    "min_chapter_length_block": 1,
+                    "model_gate_signals": {
+                        "low_score_chapters": {
+                            "level": "block",
+                            "evidence": ["model:结构风险过高"],
+                        }
+                    },
+                    "apply_feedback_backflow": False,
+                },
+            )
+
+    try:
+        low_score_check = next(item for item in report["checks"] if item["check_id"] == "low_score_chapters")
+        assert low_score_check["rule_result"] == "warn"
+        assert low_score_check["result"] == "block"
+        assert low_score_check["fusion"]["model_level"] == "block"
+        assert report["result"] == "block"
+        assert report["gate_fusion"]["feature_enabled"] is True
+        assert report["gate_fusion"]["degraded_fallback_mode"] in {"rule_only", "warn_only"}
+    finally:
+        await _cleanup_project(project.id)
+
+
+@pytest.mark.anyio
+async def test_quality_gate_feedback_endpoints_roundtrip() -> None:
+    quality_gate_fusion_service.clear_feedback_records()
+
+    app = FastAPI()
+    app.include_router(polish.router)
+    app.dependency_overrides[polish.get_user_id] = lambda: "feedback-user"
+
+    payload = {
+        "decision_id": "decision-001",
+        "gate_key": "novel_finalize:low_score_chapters",
+        "evidence_key": "novel_finalize_gate:proj-1:low_score_chapters",
+        "source": "fusion",
+        "original_level": "block",
+        "corrected_level": "warn",
+        "reason": "人工复核确认误报",
+        "reporter": "",
+        "note": "允许继续修订流程",
+    }
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        submit = await client.post("/polish/quality-gate/false-positive-feedback", json=payload)
+        assert submit.status_code == 200
+        submit_data = submit.json()
+        assert submit_data["feedback_id"] == 1
+        assert submit_data["reporter"] == "feedback-user"
+
+        submit_api = await client.post("/api/polish/quality-gate/false-positive-feedback", json=payload)
+        assert submit_api.status_code == 200
+        assert submit_api.json()["feedback_id"] == 2
+
+        read_back = await client.get(
+            "/api/polish/quality-gate/false-positive-feedback",
+            params={
+                "gate_key": "novel_finalize:low_score_chapters",
+                "limit": 10,
+            },
+        )
+        assert read_back.status_code == 200
+        body = read_back.json()
+        assert body["total"] >= 2
+        assert body["by_source"]["fusion"] >= 2
+        assert body["records"][0]["gate_key"] == "novel_finalize:low_score_chapters"

@@ -17,6 +17,7 @@ export interface AgentThreadContext extends Record<string, unknown> {
   subagent_enabled: boolean;
   reasoning_effort?: "minimal" | "low" | "medium" | "high";
   agent_name?: string;
+  media_draft_retention?: "24h" | "7d" | "never";
 }
 
 export interface AgentThread extends Thread<AgentThreadState> {

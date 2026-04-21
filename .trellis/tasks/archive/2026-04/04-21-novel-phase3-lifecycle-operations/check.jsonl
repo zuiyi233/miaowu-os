@@ -1,0 +1,5 @@
+{"file": ".agents/skills/check/SKILL.md", "reason": "Code quality and verification checklist"}
+{"file": ".agents/skills/finish-work/SKILL.md", "reason": "Pre-merge quality gates and completion checklist"}
+{"file": ".trellis/tasks/archive/2026-04/04-21-novel-phase3-lifecycle-operations/test-flows/run_backend_phase3.sh", "reason": "Backend test workflow script for staged validation"}
+{"file": ".trellis/tasks/archive/2026-04/04-21-novel-phase3-lifecycle-operations/test-flows/run_frontend_phase3.ps1", "reason": "Frontend Win-only test workflow script"}
+{"file": ".trellis/tasks/archive/2026-04/04-21-novel-phase3-lifecycle-operations/test-flows/run_contract_e2e_phase3.sh", "reason": "Contract and E2E scenario test workflow script"}

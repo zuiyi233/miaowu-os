@@ -8,6 +8,7 @@ import {
   PaletteIcon,
   SparklesIcon,
   WrenchIcon,
+  ClockIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -23,6 +24,7 @@ import { AiProviderSettingsPage } from "@/components/workspace/settings/ai-provi
 import { AppearanceSettingsPage } from "@/components/workspace/settings/appearance-settings-page";
 import { MemorySettingsPage } from "@/components/workspace/settings/memory-settings-page";
 import { NotificationSettingsPage } from "@/components/workspace/settings/notification-settings-page";
+import { DraftSettingsPage } from "@/components/workspace/settings/draft-settings-page";
 import { SkillSettingsPage } from "@/components/workspace/settings/skill-settings-page";
 import { ToolSettingsPage } from "@/components/workspace/settings/tool-settings-page";
 import { useI18n } from "@/core/i18n/hooks";
@@ -32,6 +34,7 @@ type SettingsSection =
   | "appearance"
   | "memory"
   | "tools"
+  | "drafts"
   | "skills"
   | "ai-providers"
   | "notification"
@@ -71,6 +74,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
         id: "notification",
         label: t.settings.sections.notification,
         icon: BellIcon,
+      },
+      {
+        id: "drafts",
+        label: "草稿",
+        icon: ClockIcon,
       },
       {
         id: "memory",
@@ -134,6 +142,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
             <div className="space-y-8 p-6">
               {activeSection === "appearance" && <AppearanceSettingsPage />}
               {activeSection === "ai-providers" && <AiProviderSettingsPage />}
+              {activeSection === "drafts" && <DraftSettingsPage />}
               {activeSection === "memory" && <MemorySettingsPage />}
               {activeSection === "tools" && <ToolSettingsPage />}
               {activeSection === "skills" && (

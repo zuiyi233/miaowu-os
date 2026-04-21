@@ -300,6 +300,7 @@ async def start_run(
             "max_concurrent_subagents",
             "agent_name",
             "is_bootstrap",
+            "media_draft_retention",
         }
         configurable = config.setdefault("configurable", {})
         for key in _CONTEXT_CONFIGURABLE_KEYS:
