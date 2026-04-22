@@ -1,5 +1,7 @@
 import { env } from "@/env";
 
+const isDesktopBuild = process.env.NEXT_PUBLIC_DEERFLOW_DESKTOP_BUILD === "1";
+
 function getBaseOrigin() {
   if (typeof window !== "undefined") {
     return window.location.origin;
@@ -9,6 +11,10 @@ function getBaseOrigin() {
 }
 
 export function getBackendBaseURL() {
+  if (isDesktopBuild) {
+    // Desktop managed mode always goes through local frontend origin + Next rewrites.
+    return "";
+  }
   if (env.NEXT_PUBLIC_BACKEND_BASE_URL) {
     return new URL(env.NEXT_PUBLIC_BACKEND_BASE_URL, getBaseOrigin())
       .toString()
@@ -19,6 +25,13 @@ export function getBackendBaseURL() {
 }
 
 export function getLangGraphBaseURL(isMock?: boolean) {
+  if (isDesktopBuild && !isMock) {
+    if (typeof window !== "undefined") {
+      return `${window.location.origin}/api/langgraph`;
+    }
+    return "http://localhost:2026/api/langgraph";
+  }
+
   if (env.NEXT_PUBLIC_LANGGRAPH_BASE_URL) {
     return new URL(
       env.NEXT_PUBLIC_LANGGRAPH_BASE_URL,
