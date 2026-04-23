@@ -34,7 +34,29 @@
   "graphs": {},
   "recommendations": {},
   "interactions": {},
-  "quality_reports": {},
+  "quality_reports": {
+    "novel-1483b1229933": {
+      "novelId": "novel-1483b1229933",
+      "score": 65,
+      "metrics": {
+        "wordCount": 0,
+        "chapterCount": 1,
+        "characterCount": 0,
+        "timelineEventCount": 0
+      },
+      "issues": [
+        {
+          "type": "low_word_count",
+          "severity": "warning",
+          "message": "小说总字数较少，建议继续完善内容。",
+          "details": {
+            "wordCount": 0
+          }
+        }
+      ],
+      "generatedAt": "2026-04-23T19:49:15.459281+00:00"
+    }
+  },
   "audits": {
     "novel-1483b1229933": [
       {

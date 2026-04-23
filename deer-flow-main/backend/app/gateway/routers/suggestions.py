@@ -1,11 +1,12 @@
 import json
 import logging
 
-from fastapi import APIRouter
-from langchain_core.messages import HumanMessage, SystemMessage
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from deerflow.models import create_chat_model
+from app.gateway.novel_migrated.api.settings import get_user_ai_service
+from app.gateway.novel_migrated.schemas.ai_message import AiMessage
+from app.gateway.novel_migrated.services.ai_service import AIService
 
 logger = logging.getLogger(__name__)
 
@@ -98,12 +99,16 @@ def _format_conversation(messages: list[SuggestionMessage]) -> str:
     summary="Generate Follow-up Questions",
     description="Generate short follow-up questions a user might ask next, based on recent conversation context.",
 )
-async def generate_suggestions(thread_id: str, request: SuggestionsRequest) -> SuggestionsResponse:
-    if not request.messages:
+async def generate_suggestions(
+    thread_id: str,
+    body: SuggestionsRequest,
+    ai_service: AIService = Depends(get_user_ai_service),
+) -> SuggestionsResponse:
+    if not body.messages:
         return SuggestionsResponse(suggestions=[])
 
-    n = request.n
-    conversation = _format_conversation(request.messages)
+    n = body.n
+    conversation = _format_conversation(body.messages)
     if not conversation:
         return SuggestionsResponse(suggestions=[])
 
@@ -120,9 +125,19 @@ async def generate_suggestions(thread_id: str, request: SuggestionsRequest) -> S
     user_content = f"Conversation Context:\n{conversation}\n\nGenerate {n} follow-up questions"
 
     try:
-        model = create_chat_model(name=request.model_name, thinking_enabled=False)
-        response = await model.ainvoke([SystemMessage(content=system_instruction), HumanMessage(content=user_content)])
-        raw = _extract_response_text(response.content)
+        # IMPORTANT: Always use the same user AI settings (Settings DB) as the main chat flow.
+        # This prevents drift where suggestions use config.yaml/env keys while chat uses /api/user/ai-settings.
+        result = await ai_service.generate_text_with_messages(
+            messages=[
+                AiMessage(role="system", content=system_instruction),
+                AiMessage(role="user", content=user_content),
+            ],
+            model=body.model_name,
+            temperature=0.2,
+            max_tokens=256,
+            auto_mcp=False,
+        )
+        raw = _extract_response_text(result.get("content"))
         suggestions = _parse_json_string_list(raw) or []
         cleaned = [s.replace("\n", " ").strip() for s in suggestions if s.strip()]
         cleaned = cleaned[:n]

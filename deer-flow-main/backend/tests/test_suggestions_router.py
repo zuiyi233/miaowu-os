@@ -1,6 +1,9 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from app.gateway.routers import suggestions
 
 
@@ -42,11 +45,12 @@ def test_generate_suggestions_parses_and_limits(monkeypatch):
         n=3,
         model_name=None,
     )
-    fake_model = MagicMock()
-    fake_model.ainvoke = AsyncMock(return_value=MagicMock(content='```json\n["Q1", "Q2", "Q3", "Q4"]\n```'))
-    monkeypatch.setattr(suggestions, "create_chat_model", lambda **kwargs: fake_model)
+    fake_ai_service = MagicMock()
+    fake_ai_service.generate_text_with_messages = AsyncMock(
+        return_value={"content": '```json\n["Q1", "Q2", "Q3", "Q4"]\n```'}
+    )
 
-    result = asyncio.run(suggestions.generate_suggestions("t1", req))
+    result = asyncio.run(suggestions.generate_suggestions("t1", req, ai_service=fake_ai_service))
 
     assert result.suggestions == ["Q1", "Q2", "Q3"]
 
@@ -60,11 +64,12 @@ def test_generate_suggestions_parses_list_block_content(monkeypatch):
         n=2,
         model_name=None,
     )
-    fake_model = MagicMock()
-    fake_model.ainvoke = AsyncMock(return_value=MagicMock(content=[{"type": "text", "text": '```json\n["Q1", "Q2"]\n```'}]))
-    monkeypatch.setattr(suggestions, "create_chat_model", lambda **kwargs: fake_model)
+    fake_ai_service = MagicMock()
+    fake_ai_service.generate_text_with_messages = AsyncMock(
+        return_value={"content": [{"type": "text", "text": '```json\n["Q1", "Q2"]\n```'}]}
+    )
 
-    result = asyncio.run(suggestions.generate_suggestions("t1", req))
+    result = asyncio.run(suggestions.generate_suggestions("t1", req, ai_service=fake_ai_service))
 
     assert result.suggestions == ["Q1", "Q2"]
 
@@ -78,11 +83,12 @@ def test_generate_suggestions_parses_output_text_block_content(monkeypatch):
         n=2,
         model_name=None,
     )
-    fake_model = MagicMock()
-    fake_model.ainvoke = AsyncMock(return_value=MagicMock(content=[{"type": "output_text", "text": '```json\n["Q1", "Q2"]\n```'}]))
-    monkeypatch.setattr(suggestions, "create_chat_model", lambda **kwargs: fake_model)
+    fake_ai_service = MagicMock()
+    fake_ai_service.generate_text_with_messages = AsyncMock(
+        return_value={"content": [{"type": "output_text", "text": '```json\n["Q1", "Q2"]\n```'}]}
+    )
 
-    result = asyncio.run(suggestions.generate_suggestions("t1", req))
+    result = asyncio.run(suggestions.generate_suggestions("t1", req, ai_service=fake_ai_service))
 
     assert result.suggestions == ["Q1", "Q2"]
 
@@ -93,10 +99,37 @@ def test_generate_suggestions_returns_empty_on_model_error(monkeypatch):
         n=2,
         model_name=None,
     )
-    fake_model = MagicMock()
-    fake_model.ainvoke = AsyncMock(side_effect=RuntimeError("boom"))
-    monkeypatch.setattr(suggestions, "create_chat_model", lambda **kwargs: fake_model)
+    fake_ai_service = MagicMock()
+    fake_ai_service.generate_text_with_messages = AsyncMock(side_effect=RuntimeError("boom"))
 
-    result = asyncio.run(suggestions.generate_suggestions("t1", req))
+    result = asyncio.run(suggestions.generate_suggestions("t1", req, ai_service=fake_ai_service))
 
     assert result.suggestions == []
+
+
+def test_suggestions_route_uses_user_ai_service_dependency_override():
+    app = FastAPI()
+    app.include_router(suggestions.router)
+
+    fake_ai_service = MagicMock()
+    fake_ai_service.generate_text_with_messages = AsyncMock(return_value={"content": '["Q1", "Q2", "Q3"]'})
+
+    async def _override_user_ai_service():
+        return fake_ai_service
+
+    app.dependency_overrides[suggestions.get_user_ai_service] = _override_user_ai_service
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/threads/t1/suggestions",
+            json={
+                "messages": [
+                    {"role": "user", "content": "Hi"},
+                    {"role": "assistant", "content": "Hello"},
+                ],
+                "n": 3,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["suggestions"] == ["Q1", "Q2", "Q3"]
