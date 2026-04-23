@@ -65,6 +65,7 @@ async def init_db_schema() -> None:
         career,
         chapter,
         character,
+        dual_write_log,
         foreshadow,
         generation_history,
         intent_session,

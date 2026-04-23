@@ -14,6 +14,7 @@ from app.gateway.novel_migrated.models.batch_generation_task import BatchGenerat
 from app.gateway.novel_migrated.models.chapter import Chapter
 from app.gateway.novel_migrated.models.regeneration_task import RegenerationTask
 from app.gateway.novel_migrated.services.ai_service import AIService
+from app.gateway.novel_migrated.services.optimistic_lock import optimistic_update
 from app.gateway.novel_migrated.services.recovery_service import recovery_service
 
 logger = get_logger(__name__)
@@ -157,20 +158,27 @@ async def update_chapter(
         raise HTTPException(status_code=404, detail="Chapter not found")
     await verify_project_access(chapter.project_id, user_id, db)
 
+    updates = {}
     if req.title is not None:
-        chapter.title = req.title
+        updates["title"] = req.title
     if req.summary is not None:
-        chapter.summary = req.summary
+        updates["summary"] = req.summary
     if req.content is not None:
-        chapter.content = req.content
-        chapter.word_count = len(req.content)
+        updates["content"] = req.content
+        updates["word_count"] = len(req.content)
         if chapter.status == "planned":
-            chapter.status = "draft"
+            updates["status"] = "draft"
     if req.expansion_plan is not None:
-        chapter.expansion_plan = req.expansion_plan
+        updates["expansion_plan"] = req.expansion_plan
 
-    await db.commit()
-    await db.refresh(chapter)
+    if updates:
+        try:
+            await optimistic_update(Chapter, chapter_id, updates)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+
+    result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
+    chapter = result.scalar_one_or_none()
     return _serialize_chapter(chapter)
 
 

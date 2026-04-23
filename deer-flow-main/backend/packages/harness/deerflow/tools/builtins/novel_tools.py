@@ -209,6 +209,30 @@ async def create_novel(
 
     try:
         project = await _post_json(modern_url, modern_payload)
+        legacy_payload = {
+            "title": normalized_title,
+            "metadata": {
+                "genre": normalized_genre,
+                "description": normalized_description,
+                "created_by": "deerflow_create_novel_tool_dual_write",
+                "modern_project_id": project.get("id"),
+            },
+        }
+        if project.get("id"):
+            legacy_payload["id"] = project["id"]
+        try:
+            await _post_json(f"{base_url}/api/novels", legacy_payload)
+        except Exception as legacy_sync_exc:
+            logger.warning("create_novel dual-write to legacy endpoint failed: %s", legacy_sync_exc)
+            try:
+                from app.gateway.novel_migrated.services.dual_write_service import record_dual_write_failure
+                await record_dual_write_failure(
+                    modern_project_id=project.get("id", ""),
+                    legacy_payload=legacy_payload,
+                    error=str(legacy_sync_exc),
+                )
+            except Exception as record_exc:
+                logger.warning("create_novel dual-write compensation record failed: %s", record_exc)
         return {
             "success": True,
             "source": "novel_migrated.projects",

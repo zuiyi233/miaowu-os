@@ -19,6 +19,7 @@ from app.gateway.novel_migrated.models.character import Character
 from app.gateway.novel_migrated.models.outline import Outline
 from app.gateway.novel_migrated.models.career import Career
 from app.gateway.novel_migrated.services.ai_service import AIService
+from app.gateway.novel_migrated.services.optimistic_lock import optimistic_update
 from app.gateway.novel_migrated.services.prompt_service import PromptService
 
 logger = get_logger(__name__)
@@ -152,13 +153,21 @@ async def update_project(
                       'chapter_count', 'narrative_perspective', 'outline_mode',
                       'world_time_period', 'world_location', 'world_atmosphere',
                       'world_rules', 'status', 'wizard_status', 'wizard_step']
+    updates = {}
     for field_name in update_fields:
         value = getattr(req, field_name, None)
         if value is not None:
-            setattr(project, field_name, value)
+            updates[field_name] = value
 
-    await db.commit()
-    await db.refresh(project)
+    if updates:
+        try:
+            lock_result = await optimistic_update(Project, project_id, updates)
+            logger.info("Project %s updated with optimistic lock (attempts=%d)", project_id, lock_result["attempts"])
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
     return _serialize_project(project)
 
 
@@ -301,13 +310,20 @@ async def update_wizard_status(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    updates = {}
     if wizard_status is not None:
-        project.wizard_status = wizard_status
+        updates["wizard_status"] = wizard_status
     if wizard_step is not None:
-        project.wizard_step = wizard_step
+        updates["wizard_step"] = wizard_step
 
-    await db.commit()
-    await db.refresh(project)
+    if updates:
+        try:
+            await optimistic_update(Project, project_id, updates)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
     return _serialize_project(project)
 
 

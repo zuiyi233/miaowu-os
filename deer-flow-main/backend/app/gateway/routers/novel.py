@@ -860,8 +860,59 @@ def _convert_messages(raw: list[ChatMessage]) -> list:
 @router.get("/novels")
 @router.get("/novel/novels", deprecated=True)
 async def list_novels(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)):
-    """List novels with pagination."""
-    return await _novel_store.list_novels(page=page, page_size=page_size)
+    """List novels with pagination, merging legacy and modern store results."""
+    legacy_result = await _novel_store.list_novels(page=page, page_size=page_size)
+
+    modern_items: list[dict] = []
+    try:
+        from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+        from app.gateway.novel_migrated.models.project import Project
+        from sqlalchemy import select
+
+        await init_db_schema()
+        async with AsyncSessionLocal() as modern_db:
+            result = await modern_db.execute(select(Project).order_by(Project.created_at.desc()))
+            projects = result.scalars().all()
+            for p in projects:
+                modern_items.append({
+                    "id": p.id,
+                    "title": p.title,
+                    "outline": p.description or "",
+                    "coverImage": p.cover_image_url,
+                    "metadata": {
+                        "genre": p.genre or "",
+                        "theme": p.theme or "",
+                        "status": p.status or "",
+                        "target_words": p.target_words or 0,
+                        "source": "novel_migrated.projects",
+                    },
+                    "volumesCount": 0,
+                    "chaptersCount": p.chapter_count or 0,
+                    "wordCount": p.current_words or 0,
+                    "createdAt": p.created_at.isoformat() if p.created_at else None,
+                    "updatedAt": p.updated_at.isoformat() if p.updated_at else None,
+                })
+    except Exception as exc:
+        logger.debug("list_novels: modern store query skipped (%s)", exc)
+
+    if not modern_items:
+        return legacy_result
+
+    legacy_items = legacy_result.get("items", []) if isinstance(legacy_result, dict) else []
+    legacy_ids = {str(item.get("id", "")) for item in legacy_items if isinstance(item, dict)}
+    legacy_titles = {str(item.get("title", "")) for item in legacy_items if isinstance(item, dict)}
+
+    merged = list(legacy_items)
+    for mi in modern_items:
+        if str(mi.get("id", "")) not in legacy_ids and str(mi.get("title", "")) not in legacy_titles:
+            merged.append(mi)
+
+    merged.sort(key=lambda x: x.get("updatedAt") or x.get("createdAt") or "", reverse=True)
+
+    total = len(merged)
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {"items": merged[start:end], "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/novels/{novel_id}")
@@ -869,9 +920,43 @@ async def list_novels(page: int = Query(1, ge=1), page_size: int = Query(20, ge=
 async def get_novel(novel_id: str):
     """Get a novel with its chapters, characters, entities, timeline, graph."""
     novel = await _novel_store.get_novel(novel_id)
-    if not novel:
-        raise HTTPException(status_code=404, detail="Novel not found")
-    return novel
+    if novel:
+        return novel
+
+    try:
+        from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+        from app.gateway.novel_migrated.models.project import Project
+        from sqlalchemy import select
+
+        await init_db_schema()
+        async with AsyncSessionLocal() as modern_db:
+            result = await modern_db.execute(select(Project).where(Project.id == novel_id))
+            project = result.scalar_one_or_none()
+            if project:
+                return {
+                    "id": project.id,
+                    "title": project.title,
+                    "outline": project.description or "",
+                    "coverImage": project.cover_image_url,
+                    "metadata": {
+                        "genre": project.genre or "",
+                        "theme": project.theme or "",
+                        "status": project.status or "",
+                        "target_words": project.target_words or 0,
+                        "source": "novel_migrated.projects",
+                    },
+                    "chapters": [],
+                    "characters": [],
+                    "entities": [],
+                    "timeline": [],
+                    "graph": None,
+                    "createdAt": project.created_at.isoformat() if project.created_at else None,
+                    "updatedAt": project.updated_at.isoformat() if project.updated_at else None,
+                }
+    except Exception as exc:
+        logger.debug("get_novel: modern store fallback query skipped (%s)", exc)
+
+    raise HTTPException(status_code=404, detail="Novel not found")
 
 
 @router.post("/novels")

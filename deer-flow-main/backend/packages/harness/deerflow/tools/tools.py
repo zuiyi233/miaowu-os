@@ -6,25 +6,64 @@ from deerflow.config import get_app_config
 from deerflow.reflection import resolve_variable
 from deerflow.sandbox.security import is_host_bash_allowed
 from deerflow.tools.builtins import (
+    analyze_chapter,
     ask_clarification_tool,
+    build_world,
+    check_consistency,
     create_novel,
+    expand_outline,
+    finalize_project,
+    generate_career_system,
+    generate_chapter,
+    generate_characters,
     generate_image_draft,
+    generate_outline,
     generate_tts_draft,
+    import_book,
+    manage_foreshadow,
+    partial_regenerate,
+    polish_text,
     present_file_tool,
+    regenerate_chapter,
+    search_memories,
     task_tool,
+    update_character_states,
     view_image_tool,
 )
 from deerflow.tools.builtins.tool_search import reset_deferred_registry
 
 logger = logging.getLogger(__name__)
 
-BUILTIN_TOOLS = [
+NOVEL_TOOLS = [
+    create_novel,
+    build_world,
+    generate_characters,
+    generate_outline,
+    expand_outline,
+    generate_chapter,
+    generate_career_system,
+    analyze_chapter,
+    manage_foreshadow,
+    search_memories,
+    check_consistency,
+    polish_text,
+    regenerate_chapter,
+    partial_regenerate,
+    finalize_project,
+    import_book,
+    update_character_states,
+]
+
+NOVEL_TOOL_NAMES: set[str] = {t.name for t in NOVEL_TOOLS}
+
+CORE_TOOLS = [
     present_file_tool,
     ask_clarification_tool,
-    create_novel,
     generate_image_draft,
     generate_tts_draft,
 ]
+
+BUILTIN_TOOLS = CORE_TOOLS + NOVEL_TOOLS
 
 SUBAGENT_TOOLS = [
     task_tool,
@@ -48,6 +87,7 @@ def get_available_tools(
     include_mcp: bool = True,
     model_name: str | None = None,
     subagent_enabled: bool = False,
+    include_novel: bool = True,
 ) -> list[BaseTool]:
     """Get all available tools from config.
 
@@ -59,6 +99,8 @@ def get_available_tools(
         include_mcp: Whether to include tools from MCP servers (default: True).
         model_name: Optional model name to determine if vision tools should be included.
         subagent_enabled: Whether to include subagent tools (task, task_status).
+        include_novel: Whether to include novel-specific tools (default: True).
+                       Set to False for non-novel conversations to reduce token usage.
 
     Returns:
         List of available tools.
@@ -73,7 +115,9 @@ def get_available_tools(
     loaded_tools = [resolve_variable(tool.use, BaseTool) for tool in tool_configs]
 
     # Conditionally add tools based on config
-    builtin_tools = BUILTIN_TOOLS.copy()
+    builtin_tools = BUILTIN_TOOLS.copy() if include_novel else CORE_TOOLS.copy()
+    if not include_novel:
+        logger.info("Novel tools excluded from this session")
     skill_evolution_config = getattr(config, "skill_evolution", None)
     if getattr(skill_evolution_config, "enabled", False):
         from deerflow.tools.skill_manage_tool import skill_manage_tool

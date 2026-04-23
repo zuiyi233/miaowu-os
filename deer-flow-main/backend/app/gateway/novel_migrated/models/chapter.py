@@ -27,6 +27,8 @@ class Chapter(Base):
     # 大纲展开规划数据（JSON格式）
     expansion_plan = Column(Text, comment="展开规划详情(JSON): 包含key_events, character_focus, emotional_tone等")
     
+    version = Column(Integer, default=1, nullable=False, comment="乐观锁版本号")
+    
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")
 

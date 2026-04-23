@@ -419,11 +419,11 @@ class AIService:
         max_iterations: int = 5,
     ) -> tuple[str, list]:
         """
-        处理 tool_calls 循环（真实执行版）
+        处理 tool_calls 循环（并行执行版）
 
         当模型返回 tool_calls 时：
         1. 在已绑定的工具中查找对应名称的工具
-        2. 执行工具并获取真实结果
+        2. 并行执行所有工具（asyncio.gather）并获取结果
         3. 将 ToolMessage 回填给模型继续推理
         4. 重复直到模型完成或达到最大迭代次数
 
@@ -437,6 +437,8 @@ class AIService:
         Returns:
             (最终文本内容, 所有工具调用记录)
         """
+        import asyncio
+
         from langchain_core.messages import ToolMessage
 
         all_tool_calls = []
@@ -456,62 +458,59 @@ class AIService:
             iteration_stats["total_iterations"] = iteration + 1
             all_tool_calls.extend(tool_calls)
             logger.info(
-                "🔧 第 %s 次工具调用循环，共 %s 个工具需要执行",
+                "🔧 第 %s 次工具调用循环，共 %s 个工具并行执行",
                 iteration + 1,
                 len(tool_calls),
             )
 
-            # 执行每个工具调用
-            for tool_call in tool_calls:
-                start_time = time.time()
-                tool_name = tool_call.get("name", "unknown")
-                tool_args = tool_call.get("args", {})
-                tool_id = tool_call.get("id", f"call_{iteration}_{tool_name}")
+            iteration_start = time.time()
 
+            async def _run_single_tool(tc: dict) -> tuple[str, str, Any, bool]:
+                tool_name = tc.get("name", "unknown")
+                tool_args = tc.get("args", {})
+                tool_id = tc.get("id", f"call_{iteration}_{tool_name}")
+                start = time.time()
                 try:
-                    # 在已绑定工具中查找并执行
-                    tool_result = await self._execute_tool_call(
+                    result = await self._execute_tool_call(
                         tool_name=tool_name,
                         tool_args=tool_args,
                         tools=tools,
                     )
-
-                    execution_time_ms = (time.time() - start_time) * 1000
-                    iteration_stats["successful_calls"] += 1
-                    iteration_stats["total_execution_time_ms"] += execution_time_ms
-
+                    elapsed = (time.time() - start) * 1000
                     logger.info(
                         "✅ 工具 [%s] 执行成功 (耗时 %.0fms): %s",
                         tool_name,
-                        execution_time_ms,
-                        str(tool_result)[:100] + ("..." if len(str(tool_result)) > 100 else ""),
+                        elapsed,
+                        str(result)[:100] + ("..." if len(str(result)) > 100 else ""),
                     )
-
-                    current_messages.append(
-                        ToolMessage(content=str(tool_result), tool_call_id=tool_id)
-                    )
-
+                    return tool_id, tool_name, result, True
                 except Exception as exc:
-                    execution_time_ms = (time.time() - start_time) * 1000
-                    iteration_stats["failed_calls"] += 1
-                    iteration_stats["total_execution_time_ms"] += execution_time_ms
-
+                    elapsed = (time.time() - start) * 1000
                     error_msg = f"Error executing {tool_name}: {str(exc)}"
-                    logger.warning(
-                        "❌ 工具 [%s] 执行失败 (耗时 %.0fms): %s",
-                        tool_name,
-                        execution_time_ms,
-                        str(exc),
-                    )
+                    logger.warning("❌ 工具 [%s] 执行失败 (耗时 %.0fms): %s", tool_name, elapsed, str(exc))
+                    return tool_id, tool_name, error_msg, False
 
+            results = await asyncio.gather(
+                *[_run_single_tool(tc) for tc in tool_calls],
+                return_exceptions=False,
+            )
+
+            for tool_id, tool_name, result_or_error, success in results:
+                if success:
+                    iteration_stats["successful_calls"] += 1
                     current_messages.append(
-                        ToolMessage(content=error_msg, tool_call_id=tool_id)
+                        ToolMessage(content=str(result_or_error), tool_call_id=tool_id)
+                    )
+                else:
+                    iteration_stats["failed_calls"] += 1
+                    current_messages.append(
+                        ToolMessage(content=str(result_or_error), tool_call_id=tool_id)
                     )
 
-            # 再次调用模型，继续推理
+            iteration_stats["total_execution_time_ms"] += (time.time() - iteration_start) * 1000
+
             last_response = await llm.ainvoke(current_messages)
 
-        # 输出统计日志
         logger.info(
             "📊 工具调用循环完成: %s 次迭代, %s 成功/%s 失败, 总耗时 %.0fms",
             iteration_stats["total_iterations"],

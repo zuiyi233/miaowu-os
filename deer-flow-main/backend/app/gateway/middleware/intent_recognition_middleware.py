@@ -248,6 +248,7 @@ class IntentRecognitionResult:
     novel: dict[str, Any] | None = None
     session: dict[str, Any] | None = None
     action_protocol: dict[str, Any] | None = None
+    is_novel_intent: bool = False
 
 
 @dataclass
@@ -332,20 +333,24 @@ class IntentRecognitionMiddleware:
             if session.mode == "normal":
                 pass
             elif session.mode == "create":
-                return await self._handle_active_creation_session(
+                result = await self._handle_active_creation_session(
                     session=session,
                     user_message=user_message,
                     db_session=db_session,
                     ai_service=ai_service,
                 )
+                result.is_novel_intent = True
+                return result
             elif session.mode == "manage":
-                return await self._handle_manage_session(
+                result = await self._handle_manage_session(
                     session=session,
                     user_message=user_message,
                     db_session=db_session,
                     ai_service=ai_service,
                     opening=False,
                 )
+                result.is_novel_intent = True
+                return result
 
         intent = self._detect_novel_creation_intent(user_message)
         if intent is not None:
@@ -360,11 +365,13 @@ class IntentRecognitionMiddleware:
                 idempotency_key=idem_key,
             )
             await self._save_session(session)
-            return await self._ask_next_field(
+            result = await self._ask_next_field(
                 session=session,
                 ai_service=ai_service,
                 opening=True,
             )
+            result.is_novel_intent = True
+            return result
 
         if self._detect_novel_management_intent(user_message):
             idem_key = self._generate_idempotency_key(user_id, "manage_novel")
@@ -378,13 +385,15 @@ class IntentRecognitionMiddleware:
                 idempotency_key=idem_key,
             )
             await self._save_session(session)
-            return await self._handle_manage_session(
+            result = await self._handle_manage_session(
                 session=session,
                 user_message=user_message,
                 db_session=db_session,
                 ai_service=ai_service,
                 opening=True,
             )
+            result.is_novel_intent = True
+            return result
 
         return IntentRecognitionResult(handled=False)
 
@@ -612,6 +621,11 @@ class IntentRecognitionMiddleware:
             except Exception as exc:  # pragma: no cover - defensive fallback
                 logger.error("legacy novel creation failed: %s", exc, exc_info=True)
                 errors.append(f"legacy:{exc}")
+        else:
+            try:
+                await self._sync_to_legacy_store(session=session, modern_id=payload.get("id"))
+            except Exception as sync_exc:
+                logger.warning("dual-write to legacy store failed: %s", sync_exc, exc_info=True)
 
         await self._remove_session(session.session_key)
 
@@ -4410,3 +4424,27 @@ class IntentRecognitionMiddleware:
             "target_words": normalized_target_words,
             "source": "legacy.novel_store",
         }
+
+    async def _sync_to_legacy_store(
+        self,
+        *,
+        session: _NovelCreationSession,
+        modern_id: str | None = None,
+    ) -> None:
+        from app.gateway.routers.novel import _novel_store
+
+        data: dict[str, Any] = {
+            "title": str(session.fields.get("title") or ""),
+            "metadata": {
+                "genre": str(session.fields.get("genre") or _DEFAULT_GENRE),
+                "theme": str(session.fields.get("theme") or ""),
+                "audience": str(session.fields.get("audience") or ""),
+                "target_words": int(session.fields.get("target_words") or 100000),
+                "description": self._compose_description(session.fields),
+                "created_by": "intent_recognition_dual_write",
+                "modern_project_id": modern_id,
+            },
+        }
+        if modern_id:
+            data["id"] = modern_id
+        await _novel_store.create_novel(data)

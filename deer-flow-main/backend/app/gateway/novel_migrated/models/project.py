@@ -42,6 +42,8 @@ class Project(Base):
     cover_error = Column(Text, comment="最近一次封面生成失败原因")
     cover_updated_at = Column(DateTime, comment="最近一次封面生成成功时间")
     
+    version = Column(Integer, default=1, nullable=False, comment="乐观锁版本号")
+    
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")
     

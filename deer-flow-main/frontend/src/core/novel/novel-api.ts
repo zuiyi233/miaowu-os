@@ -383,8 +383,13 @@ function normalizeNovelSummaries(raw: unknown): NovelSummary[] {
     return raw as NovelSummary[];
   }
 
-  if (isRecord(raw) && Array.isArray(raw.items)) {
-    return raw.items.map((item) => {
+  if (isRecord(raw)) {
+    const items = Array.isArray(raw.items) ? raw.items : Array.isArray(raw.projects) ? raw.projects : null;
+    if (!items) {
+      return [];
+    }
+
+    return items.map((item) => {
       if (!isRecord(item)) {
         return {
           id: '',
@@ -398,11 +403,11 @@ function normalizeNovelSummaries(raw: unknown): NovelSummary[] {
       return {
         id: toStringOr(item.id),
         title: toStringOr(item.title),
-        outline: toOptionalString(item.outline),
-        coverImage: toOptionalString(item.coverImage),
+        outline: toOptionalString(item.outline ?? item.description),
+        coverImage: toOptionalString(item.coverImage ?? item.cover_image_url),
         volumesCount: Number(item.volumesCount ?? 0),
-        chaptersCount: Number(item.chaptersCount ?? 0),
-        wordCount: Number(item.wordCount ?? 0),
+        chaptersCount: Number(item.chaptersCount ?? item.chapter_count ?? 0),
+        wordCount: Number(item.wordCount ?? item.current_words ?? 0),
       };
     });
   }

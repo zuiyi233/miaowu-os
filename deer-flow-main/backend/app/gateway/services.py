@@ -161,6 +161,10 @@ def build_run_config(
             if not normalized or not re.fullmatch(r"[a-z0-9-]+", normalized):
                 raise ValueError(f"Invalid assistant_id {assistant_id!r}: must contain only letters, digits, and hyphens after normalization.")
             config["configurable"]["agent_name"] = normalized
+
+    if "configurable" in config and "include_novel" not in config["configurable"]:
+        config["configurable"]["include_novel"] = True
+
     if metadata:
         config.setdefault("metadata", {}).update(metadata)
     return config
