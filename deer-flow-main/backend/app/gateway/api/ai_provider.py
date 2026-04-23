@@ -42,6 +42,7 @@ _RATE_LIMIT_ENV = "DEERFLOW_AI_PROVIDER_RATE_LIMIT_PER_MINUTE"
 _REQUEST_WINDOWS: dict[str, deque[float]] = {}
 _USE_MESSAGES_FORMAT_ENV = "USE_MESSAGES_FORMAT"
 _STREAM_EXPOSE_RAW_ERROR_ENV = "DEERFLOW_AI_PROVIDER_STREAM_EXPOSE_RAW_ERROR"
+_CHAT_HARD_TIMEOUT_ENV = "DEERFLOW_AI_CHAT_HARD_TIMEOUT_SECONDS"
 _STREAMING_RESPONSE_HEADERS = {
     "Cache-Control": "no-cache",
     "Connection": "keep-alive",
@@ -183,6 +184,23 @@ def _should_expose_raw_stream_error() -> bool:
 def _is_messages_format_enabled() -> bool:
     value = os.getenv(_USE_MESSAGES_FORMAT_ENV, "1")
     return value.strip().lower() not in _DISABLED_BOOL_ENV_VALUES
+
+
+def _get_chat_hard_timeout() -> float | None:
+    raw = (os.getenv(_CHAT_HARD_TIMEOUT_ENV) or "").strip()
+    if not raw:
+        # Default hard timeout should be conservative to avoid tying up gateway workers
+        # for too long when upstream providers hang.
+        #
+        # If you need longer generations locally, set:
+        #   DEERFLOW_AI_CHAT_HARD_TIMEOUT_SECONDS=<seconds>
+        return 300.0
+    try:
+        val = float(raw)
+        return val if val > 0 else None
+    except ValueError:
+        logger.warning("Invalid %s=%s, fallback to 300.0s", _CHAT_HARD_TIMEOUT_ENV, raw)
+        return 300.0
 
 
 def _to_non_negative_int(raw: Any) -> int | None:
@@ -358,17 +376,15 @@ async def chat_endpoint(
                 db_session=getattr(ai_service, "db_session", None),
                 ai_service=ai_service,
             )
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            logger.error("Intent recognition failed: %s", exc)
-            error_payload: dict[str, Any] = {
-                "content": "意图识别服务暂时不可用，请稍后重试。"
-            }
-            if body.stream:
-                return _build_streaming_response(
-                    _stream_single_payload(error_payload),
-                    extra_headers=_ACTION_RESPONSE_HEADERS,
-                )
-            return JSONResponse(content=error_payload, headers=_ACTION_RESPONSE_HEADERS.copy())
+            logger.error(
+                "Intent recognition failed, falling back to normal chat: %s",
+                exc,
+                exc_info=True,
+            )
+            intent_result = None
 
         if intent_result and intent_result.handled:
             if intent_result.session:
@@ -403,6 +419,11 @@ async def chat_endpoint(
             "temperature": body.provider_config.temperature,
             "max_tokens": body.provider_config.max_tokens,
         }
+        runtime_base_url_raw = body.provider_config.base_url
+        runtime_base_url = runtime_base_url_raw.strip() if isinstance(runtime_base_url_raw, str) else None
+        runtime_base_url = runtime_base_url or None
+        if runtime_base_url:
+            provider_config_params["base_url"] = runtime_base_url
 
         if use_messages_format:
             if body.stream:
@@ -422,7 +443,14 @@ async def chat_endpoint(
                     )
                 )
 
-            result = await ai_service.generate_text_with_messages(messages=body.messages, **provider_config_params)
+            hard_timeout = _get_chat_hard_timeout()
+            if hard_timeout:
+                result = await asyncio.wait_for(
+                    ai_service.generate_text_with_messages(messages=body.messages, **provider_config_params),
+                    timeout=hard_timeout,
+                )
+            else:
+                result = await ai_service.generate_text_with_messages(messages=body.messages, **provider_config_params)
             request_succeeded = True
             return JSONResponse(content=_build_chat_json_payload(result))
 
@@ -445,13 +473,23 @@ async def chat_endpoint(
                 )
             )
 
-        result = await ai_service.generate_text(prompt=prompt, **provider_config_params)
+        hard_timeout = _get_chat_hard_timeout()
+        if hard_timeout:
+            result = await asyncio.wait_for(
+                ai_service.generate_text(prompt=prompt, **provider_config_params),
+                timeout=hard_timeout,
+            )
+        else:
+            result = await ai_service.generate_text(prompt=prompt, **provider_config_params)
         request_succeeded = True
         return JSONResponse(content=_build_chat_json_payload(result))
 
     except ValueError as exc:
         logger.error("AI service configuration error: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc))
+    except asyncio.TimeoutError:
+        logger.error("AI request timed out (hard timeout)")
+        raise HTTPException(status_code=504, detail="AI 请求超时，请稍后重试或减少请求内容")
     except HTTPException:
         raise
     except Exception as exc:
@@ -474,6 +512,40 @@ async def chat_endpoint(
             )
 
 
+_STREAM_CHUNK_TIMEOUT_ENV = "DEERFLOW_AI_STREAM_CHUNK_TIMEOUT_SECONDS"
+
+
+def _get_stream_chunk_timeout() -> float:
+    raw = (os.getenv(_STREAM_CHUNK_TIMEOUT_ENV) or "").strip()
+    if not raw:
+        return 120.0
+    try:
+        val = float(raw)
+        return val if val > 0 else 120.0
+    except ValueError:
+        return 120.0
+
+
+async def _apply_chunk_timeout(
+    stream: AsyncGenerator[str, None],
+    timeout_seconds: float,
+) -> AsyncGenerator[str, None]:
+    """为流式生成器添加 chunk 间隔超时保护。
+
+    如果等待下一个 chunk 超过 timeout_seconds，抛出 asyncio.TimeoutError。
+    """
+    stream_aiter = stream.__aiter__()
+    while True:
+        try:
+            chunk = await asyncio.wait_for(stream_aiter.__anext__(), timeout=timeout_seconds)
+        except StopAsyncIteration:
+            break
+        except asyncio.TimeoutError:
+            logger.error("Stream chunk wait timed out after %.1fs", timeout_seconds)
+            raise
+        yield chunk
+
+
 async def _stream_generator_with_messages(
     ai_service: AIService,
     messages: list[AiMessage],
@@ -485,18 +557,31 @@ async def _stream_generator_with_messages(
 
     直接传递完整的messages数组到LLM Provider，保留多轮对话结构。
     使用SSE (Server-Sent Events) 格式返回流式数据。
+    包含 chunk 级超时保护，避免单个 chunk 长时间阻塞。
     """
+    stream_kwargs: dict[str, Any] = {
+        "model": config.model_name,
+        "temperature": config.temperature,
+        "max_tokens": config.max_tokens,
+    }
+    runtime_base_url_raw = config.base_url
+    runtime_base_url = runtime_base_url_raw.strip() if isinstance(runtime_base_url_raw, str) else None
+    runtime_base_url = runtime_base_url or None
+    if runtime_base_url:
+        stream_kwargs["base_url"] = runtime_base_url
+
     stream = ai_service.generate_text_stream_with_messages(
         messages=messages,
-        model=config.model_name,
-        temperature=config.temperature,
-        max_tokens=config.max_tokens,
+        **stream_kwargs,
     )
     if stream_state is not None:
         stream = _mark_stream_failure(stream, stream_state=stream_state)
 
+    chunk_timeout = _get_stream_chunk_timeout()
+    timed_stream = _apply_chunk_timeout(stream, chunk_timeout)
+
     async for payload in _stream_response_builder(
-        stream,
+        timed_stream,
         error_log_prefix="Stream generation error (messages format)",
         expose_raw_error=_should_expose_raw_stream_error(),
     ):
@@ -514,17 +599,29 @@ async def _stream_generator(
 
     @deprecated: 使用 _stream_generator_with_messages() 替代
     """
+    stream_kwargs: dict[str, Any] = {
+        "model": config.model_name,
+        "temperature": config.temperature,
+        "max_tokens": config.max_tokens,
+    }
+    runtime_base_url_raw = config.base_url
+    runtime_base_url = runtime_base_url_raw.strip() if isinstance(runtime_base_url_raw, str) else None
+    runtime_base_url = runtime_base_url or None
+    if runtime_base_url:
+        stream_kwargs["base_url"] = runtime_base_url
+
     stream = ai_service.generate_text_stream(
         prompt=prompt,
-        model=config.model_name,
-        temperature=config.temperature,
-        max_tokens=config.max_tokens,
+        **stream_kwargs,
     )
     if stream_state is not None:
         stream = _mark_stream_failure(stream, stream_state=stream_state)
 
+    chunk_timeout = _get_stream_chunk_timeout()
+    timed_stream = _apply_chunk_timeout(stream, chunk_timeout)
+
     async for payload in _stream_response_builder(
-        stream,
+        timed_stream,
         error_log_prefix="Stream generation error",
         expose_raw_error=_should_expose_raw_stream_error(),
     ):

@@ -1,4 +1,5 @@
 import { getBackendBaseURL } from "@/core/config";
+
 import { useAiProviderStore, type AiProviderConfig } from "./ai-provider-store";
 
 const API_BASE_URL = getBackendBaseURL();
@@ -182,6 +183,59 @@ function mergeAbortSignals(
   return fallbackController.signal;
 }
 
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === "AbortError") ||
+    (error instanceof Error && error.name === "AbortError")
+  );
+}
+
+type SseErrorPayload = {
+  error: unknown;
+  message?: unknown;
+  [key: string]: unknown;
+};
+
+function buildSseError(payload: SseErrorPayload): Error {
+  const rawError = payload.error;
+  let message = "";
+
+  if (typeof rawError === "string") {
+    message = rawError;
+  } else if (rawError && typeof rawError === "object") {
+    const nestedMessage = (rawError as Record<string, unknown>).message;
+    if (typeof nestedMessage === "string" && nestedMessage.trim()) {
+      message = nestedMessage;
+    } else {
+      try {
+        message = JSON.stringify(rawError);
+      } catch {
+        message = "Unknown SSE error payload";
+      }
+    }
+  }
+
+  if (!message.trim()) {
+    const fallbackMessage = payload.message;
+    if (typeof fallbackMessage === "string" && fallbackMessage.trim()) {
+      message = fallbackMessage;
+    }
+  }
+
+  const error = new Error(message.trim() || "SSE stream returned an error");
+  Object.assign(error, { details: payload });
+  return error;
+}
+
+function isSseErrorPayload(value: unknown): value is SseErrorPayload {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.prototype.hasOwnProperty.call(value, "error")
+  );
+}
+
 async function fetchWithTimeout(
   url: string,
   options: RequestInit,
@@ -222,6 +276,10 @@ async function fetchWithRetry(
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
 
+      if (isAbortError(error)) {
+        throw lastError;
+      }
+
       if (error instanceof AiServiceError && !error.info.retryable) {
         throw error;
       }
@@ -238,7 +296,7 @@ async function fetchWithRetry(
     }
   }
 
-  throw lastError || new Error("Unknown error after retries");
+  throw lastError ?? new Error("Unknown error after retries");
 }
 
 const HARD_AUTH_PATTERNS = [
@@ -347,7 +405,10 @@ function classifyHttpError(
       return {
         code: "SERVER_ERROR",
         message: `服务器错误 (${status})`,
-        retryable: true,
+        // 504 on chat requests often means the backend already spent time
+        // processing the prompt. Retrying blindly can create duplicate chat
+        // requests and visible retry storms, so treat it as terminal here.
+        retryable: status === 504 ? false : true,
         severity: "high",
         suggestion: ERROR_CATALOG.SERVER_ERROR.suggestion,
       };
@@ -365,21 +426,7 @@ function validateProviderConfig(provider: AiProviderConfig | null | undefined): 
   if (!provider) {
     throw new AiServiceError(
       "No active AI provider configured",
-      ERROR_CATALOG.NO_PROVIDER!
-    );
-  }
-
-  if (!provider.apiKey || provider.apiKey.trim() === "") {
-    throw new AiServiceError(
-      "API key is missing",
-      {
-        code: "NO_API_KEY",
-        message: `供应商 "${provider.name}" 的API密钥未配置`,
-        provider: provider.name,
-        retryable: false,
-        severity: "high",
-        suggestion: ERROR_CATALOG.NO_API_KEY?.suggestion,
-      }
+      ERROR_CATALOG.NO_PROVIDER
     );
   }
 
@@ -399,16 +446,31 @@ function validateProviderConfig(provider: AiProviderConfig | null | undefined): 
 }
 
 function _extractStructuredResponse(data: Record<string, unknown>): AiStructuredResponse {
+  const contentValue = data.content;
   const result: AiStructuredResponse = {
-    content: (data.content as string) || "",
+    content: typeof contentValue === "string" ? contentValue : "",
   };
 
   if (Array.isArray(data.tool_calls) && data.tool_calls.length > 0) {
-    result.tool_calls = data.tool_calls.map((tc: Record<string, unknown>) => ({
-      name: String(tc.name || ""),
-      args: (tc.args as Record<string, unknown>) || {},
-      id: String(tc.id || ""),
-    }));
+    result.tool_calls = data.tool_calls
+      .filter(
+        (tc): tc is Record<string, unknown> =>
+          typeof tc === "object" && tc !== null
+      )
+      .map((tc) => {
+        const toolName = tc.name;
+        const toolId = tc.id;
+        const toolArgs = tc.args;
+
+        return {
+          name: typeof toolName === "string" ? toolName : "",
+          args:
+            toolArgs && typeof toolArgs === "object" && !Array.isArray(toolArgs)
+              ? (toolArgs as Record<string, unknown>)
+              : {},
+          id: typeof toolId === "string" ? toolId : "",
+        };
+      });
   }
 
   if (data.novel && typeof data.novel === "object") {
@@ -442,12 +504,12 @@ export class GlobalAiService {
     const store = useAiProviderStore.getState();
 
     return {
-      provider: store.getActiveProvider(),
-      providers: store.providers,
-      enableStreamMode: store.enableStreamMode,
-      globalSystemPrompt: store.globalSystemPrompt,
-      requestTimeout: store.requestTimeout,
-      maxRetries: store.maxRetries,
+      provider: store.getEffectiveActiveProvider(),
+      providers: store.effective.providers,
+      enableStreamMode: store.effective.enableStreamMode,
+      globalSystemPrompt: store.effective.globalSystemPrompt,
+      requestTimeout: store.effective.requestTimeout,
+      maxRetries: store.effective.maxRetries,
     };
   }
 
@@ -456,9 +518,23 @@ export class GlobalAiService {
     callbacks?: AiStreamCallbacks,
     serviceContext?: AiServiceContext
   ): Promise<string> {
+    if (!serviceContext) {
+      try {
+        await useAiProviderStore.getState().ensureHydrated();
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "AI settings hydration failed";
+        throw new AiServiceError("AI settings hydration failed", {
+          code: "SERVER_ERROR",
+          message: `AI 设置加载失败：${message}`,
+          retryable: false,
+          severity: "critical",
+        });
+      }
+    }
     const ctx = this.getContext(serviceContext);
     const provider =
-      ctx.providers.find((p) => p.id === options.providerId) ||
+      ctx.providers.find((p) => p.id === options.providerId) ??
       ctx.provider;
 
     validateProviderConfig(provider);
@@ -483,7 +559,7 @@ export class GlobalAiService {
 
       let messages = [...options.messages];
 
-      if (ctx.globalSystemPrompt && ctx.globalSystemPrompt.trim()) {
+      if (ctx.globalSystemPrompt?.trim()) {
         const hasSystemMessage = messages.some(
           (msg) => msg.role === "system"
         );
@@ -540,8 +616,18 @@ export class GlobalAiService {
       );
 
       if (!stream) {
-        const data = await response.json();
-        const content = data.content || data.message?.content || "";
+        const data = await response.json() as Record<string, unknown>;
+        const messageObj =
+          data.message && typeof data.message === "object"
+            ? (data.message as Record<string, unknown>)
+            : undefined;
+        const directContent =
+          typeof data.content === "string" ? data.content : undefined;
+        const messageContent =
+          typeof messageObj?.content === "string"
+            ? messageObj.content
+            : undefined;
+        const content = directContent ?? messageContent ?? "";
         const structured = _extractStructuredResponse(data);
         if (structured && (structured.tool_calls || structured.session || structured.novel)) {
           callbacks?.onStructured?.(structured);
@@ -573,7 +659,7 @@ export class GlobalAiService {
   private async processStreamResponse(
     response: Response,
     callbacks?: AiStreamCallbacks,
-    timeoutMs: number = 30000
+    timeoutMs = 30000
   ): Promise<string> {
     const reader = response.body?.getReader();
     if (!reader) {
@@ -615,49 +701,75 @@ export class GlobalAiService {
       }
 
       try {
-        const parsed = JSON.parse(data);
+        const parsed = JSON.parse(data) as Record<string, unknown>;
+
+        if (isSseErrorPayload(parsed)) {
+          throw buildSseError(parsed);
+        }
 
         if (parsed.tool_calls || parsed.session || parsed.novel || parsed.context) {
           lastStructured = _extractStructuredResponse(parsed);
           callbacks?.onStructured?.(lastStructured);
         }
 
+        const deltaRecord =
+          parsed.delta && typeof parsed.delta === "object"
+            ? (parsed.delta as Record<string, unknown>)
+            : undefined;
+        const firstChoice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
+        const firstChoiceRecord =
+          firstChoice && typeof firstChoice === "object"
+            ? (firstChoice as Record<string, unknown>)
+            : undefined;
+        const choiceDeltaRecord =
+          firstChoiceRecord?.delta && typeof firstChoiceRecord.delta === "object"
+            ? (firstChoiceRecord.delta as Record<string, unknown>)
+            : undefined;
+
+        const contentCandidate =
+          parsed.content ?? deltaRecord?.content ?? choiceDeltaRecord?.content;
         const content =
-          parsed.content ||
-          parsed.delta?.content ||
-          parsed.choices?.[0]?.delta?.content ||
-          "";
+          typeof contentCandidate === "string" ? contentCandidate : "";
         if (content) {
           fullText += content;
           callbacks?.onChunk?.(content);
         }
-      } catch {
-        if (data.trim()) {
-          fullText += data;
-          callbacks?.onChunk?.(data);
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          if (data.trim()) {
+            fullText += data;
+            callbacks?.onChunk?.(data);
+          }
+          return;
         }
+
+        throw error;
       }
     };
 
-    while (true) {
-      const { done, value } = await readWithTimeout();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await readWithTimeout();
+        if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
 
-      for (const line of lines) {
-        processLine(line);
+        for (const line of lines) {
+          processLine(line);
+        }
       }
-    }
 
-    if (buffer.trim()) {
-      processLine(buffer);
-    }
+      if (buffer.trim()) {
+        processLine(buffer);
+      }
 
-    callbacks?.onComplete?.(fullText, lastStructured);
-    return fullText;
+      callbacks?.onComplete?.(fullText, lastStructured);
+      return fullText;
+    } finally {
+      await reader.cancel().catch(() => undefined);
+    }
   }
 
   abort(): void {
@@ -673,6 +785,18 @@ export class GlobalAiService {
     message: string;
     latency?: number;
   }> {
+    if (!serviceContext) {
+      try {
+        await useAiProviderStore.getState().ensureHydrated();
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "AI settings hydration failed";
+        return {
+          success: false,
+          message: `AI 设置加载失败：${message}`,
+        };
+      }
+    }
     const ctx = this.getContext(serviceContext);
     const provider = ctx.providers.find((p) => p.id === providerId);
 
@@ -706,9 +830,13 @@ export class GlobalAiService {
       }
 
       const errorData = await response.json().catch(() => ({}));
+      const errorMessage =
+        typeof errorData?.message === "string"
+          ? errorData.message
+          : undefined;
       return {
         success: false,
-        message: errorData.message || `连接失败: ${response.status}`,
+        message: errorMessage ?? `连接失败: ${response.status}`,
         latency,
       };
     } catch (error) {

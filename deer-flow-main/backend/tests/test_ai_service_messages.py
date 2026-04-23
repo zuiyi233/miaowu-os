@@ -10,6 +10,7 @@ Also verifies backward compatibility with existing string-prompt methods.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -106,6 +107,22 @@ class TestBuildMessagesFromArray:
         assert isinstance(result[0], HumanMessage)
 
 
+async def _async_iter(items):
+    for item in items:
+        yield item
+
+
+def _make_mock_llm(*, ainvoke_return=None, astream_items=None):
+    mock_llm = MagicMock()
+    mock_llm.bind_tools.return_value = mock_llm
+    mock_llm.model_copy.return_value = mock_llm
+    if ainvoke_return is not None:
+        mock_llm.ainvoke = AsyncMock(return_value=ainvoke_return)
+    if astream_items is not None:
+        mock_llm.astream = MagicMock(return_value=_async_iter(astream_items))
+    return mock_llm
+
+
 class TestGenerateTextWithMessages:
     """Test cases for generate_text_with_messages() method."""
 
@@ -130,14 +147,11 @@ class TestGenerateTextWithMessages:
             AiMessage(role="user", content="Hello"),
         ]
 
-        with patch.object(ai_service, "_resolve_model_name", return_value="gpt-4o"), \
-             patch("app.gateway.novel_migrated.services.ai_service.create_chat_model") as mock_create, \
-             patch.object(ai_service, "_prepare_mcp_tools", new_callable=AsyncMock, return_value=None):
+        mock_llm = _make_mock_llm(ainvoke_return=mock_response)
 
-            mock_llm = MagicMock()
-            mock_llm.bind_tools.return_value = mock_llm
-            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-            mock_create.return_value = mock_llm
+        with patch.object(ai_service, "_resolve_model_name", return_value="gpt-4o"), \
+             patch("app.gateway.novel_migrated.services.ai_service._get_cached_model", return_value=mock_llm), \
+             patch.object(ai_service, "_prepare_mcp_tools", new_callable=AsyncMock, return_value=None):
 
             result = await ai_service.generate_text_with_messages(
                 messages=messages,
@@ -171,14 +185,11 @@ class TestGenerateTextWithMessages:
 
         messages = [AiMessage(role="user", content="Use tools")]
 
-        with patch.object(ai_service, "_resolve_model_name", return_value="gpt-4o"), \
-             patch("app.gateway.novel_migrated.services.ai_service.create_chat_model") as mock_create, \
-             patch.object(ai_service, "_prepare_mcp_tools", new_callable=AsyncMock, return_value=mock_tools):
+        mock_llm = _make_mock_llm(ainvoke_return=mock_response)
 
-            mock_llm = MagicMock()
-            mock_llm.bind_tools.return_value = mock_llm
-            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-            mock_create.return_value = mock_llm
+        with patch.object(ai_service, "_resolve_model_name", return_value="gpt-4o"), \
+             patch("app.gateway.novel_migrated.services.ai_service._get_cached_model", return_value=mock_llm), \
+             patch.object(ai_service, "_prepare_mcp_tools", new_callable=AsyncMock, return_value=mock_tools):
 
             await ai_service.generate_text_with_messages(messages=messages)
 
@@ -211,14 +222,11 @@ class TestGenerateTextStreamWithMessages:
             LCAIMessage(content="!"),
         ]
 
-        with patch.object(ai_service, "_resolve_model_name", return_value="gpt-4o"), \
-             patch("app.gateway.novel_migrated.services.ai_service.create_chat_model") as mock_create, \
-             patch.object(ai_service, "_prepare_mcp_tools", new_callable=AsyncMock, return_value=None):
+        mock_llm = _make_mock_llm(astream_items=mock_chunks)
 
-            mock_llm = MagicMock()
-            mock_llm.bind_tools.return_value = mock_llm
-            mock_llm.astream = AsyncMock(return_value=iter(mock_chunks))
-            mock_create.return_value = mock_llm
+        with patch.object(ai_service, "_resolve_model_name", return_value="gpt-4o"), \
+             patch("app.gateway.novel_migrated.services.ai_service._get_cached_model", return_value=mock_llm), \
+             patch.object(ai_service, "_prepare_mcp_tools", new_callable=AsyncMock, return_value=None):
 
             collected_chunks = []
             async for chunk in ai_service.generate_text_stream_with_messages(
@@ -243,14 +251,11 @@ class TestGenerateTextStreamWithMessages:
 
         messages = [AiMessage(role="user", content="Test")]
 
-        with patch.object(ai_service, "_resolve_model_name", return_value="gpt-4o"), \
-             patch("app.gateway.novel_migrated.services.ai_service.create_chat_model") as mock_create, \
-             patch.object(ai_service, "_prepare_mcp_tools", new_callable=AsyncMock, return_value=None):
+        mock_llm = _make_mock_llm(astream_items=[LCAIMessage(content="")])
 
-            mock_llm = MagicMock()
-            mock_llm.bind_tools.return_value = mock_llm
-            mock_llm.astream = AsyncMock(return_value=iter([LCAIMessage(content="")]))
-            mock_create.return_value = mock_llm
+        with patch.object(ai_service, "_resolve_model_name", return_value="gpt-4o"), \
+             patch("app.gateway.novel_migrated.services.ai_service._get_cached_model", return_value=mock_llm), \
+             patch.object(ai_service, "_prepare_mcp_tools", new_callable=AsyncMock, return_value=None):
 
             collected_chunks = []
             async for chunk in ai_service.generate_text_stream_with_messages(messages=messages):
@@ -278,14 +283,11 @@ class TestBackwardCompatibility:
         mock_response.content = "Traditional response"
         mock_response.tool_calls = []
 
-        with patch.object(ai_service, "_resolve_model_name", return_value="gpt-4o"), \
-             patch("app.gateway.novel_migrated.services.ai_service.create_chat_model") as mock_create, \
-             patch.object(ai_service, "_prepare_mcp_tools", new_callable=AsyncMock, return_value=None):
+        mock_llm = _make_mock_llm(ainvoke_return=mock_response)
 
-            mock_llm = MagicMock()
-            mock_llm.bind_tools.return_value = mock_llm
-            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-            mock_create.return_value = mock_llm
+        with patch.object(ai_service, "_resolve_model_name", return_value="gpt-4o"), \
+             patch("app.gateway.novel_migrated.services.ai_service._get_cached_model", return_value=mock_llm), \
+             patch.object(ai_service, "_prepare_mcp_tools", new_callable=AsyncMock, return_value=None):
 
             result = await ai_service.generate_text(prompt="Hello")
 
@@ -304,14 +306,11 @@ class TestBackwardCompatibility:
             default_max_tokens=2000,
         )
 
-        with patch.object(ai_service, "_resolve_model_name", return_value="gpt-4o"), \
-             patch("app.gateway.novel_migrated.services.ai_service.create_chat_model") as mock_create, \
-             patch.object(ai_service, "_prepare_mcp_tools", new_callable=AsyncMock, return_value=None):
+        mock_llm = _make_mock_llm(astream_items=[LCAIMessage(content="Stream")])
 
-            mock_llm = MagicMock()
-            mock_llm.bind_tools.return_value = mock_llm
-            mock_llm.astream = AsyncMock(return_value=iter([LCAIMessage(content="Stream")]))
-            mock_create.return_value = mock_llm
+        with patch.object(ai_service, "_resolve_model_name", return_value="gpt-4o"), \
+             patch("app.gateway.novel_migrated.services.ai_service._get_cached_model", return_value=mock_llm), \
+             patch.object(ai_service, "_prepare_mcp_tools", new_callable=AsyncMock, return_value=None):
 
             chunks = []
             async for chunk in ai_service.generate_text_stream(prompt="Test"):

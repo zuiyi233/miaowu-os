@@ -16,6 +16,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.gateway.novel_migrated.api.common import verify_project_access
+from app.gateway.novel_migrated.core.crypto import safe_decrypt
 from app.gateway.novel_migrated.core.database import get_engine
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.career import Career, CharacterCareer
@@ -1601,7 +1602,7 @@ class BookImportService:
 
         return create_user_ai_service_with_mcp(
             api_provider=user_settings.api_provider or "openai",
-            api_key=user_settings.api_key or "",
+            api_key=safe_decrypt(user_settings.api_key) or "",
             api_base_url=user_settings.api_base_url or "",
             model_name=user_settings.llm_model or "gpt-4",
             temperature=user_settings.temperature if user_settings.temperature is not None else 0.7,

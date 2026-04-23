@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 from sqlalchemy import select
 
+from app.gateway.novel_migrated.core.crypto import safe_decrypt
 from app.gateway.novel_migrated.core.database import AsyncSessionLocal
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.settings import Settings
@@ -235,7 +236,7 @@ class MemoryService:
             if settings and settings.api_key:
                 base_url = self._normalize_base_url(settings.api_base_url)
                 config = {
-                    "api_key": settings.api_key,
+                    "api_key": safe_decrypt(settings.api_key) or "",
                     "base_url": base_url,
                     "model": self._resolve_embedding_model_name(settings),
                 }

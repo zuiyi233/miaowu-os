@@ -6,6 +6,7 @@ from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
+from app.gateway.novel_migrated.core.crypto import safe_decrypt
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.chapter import Chapter
@@ -65,7 +66,7 @@ async def analyze_chapter(
         # 创建AI服务
         ai_service = create_user_ai_service(
             api_provider=settings.api_provider,
-            api_key=settings.api_key,
+            api_key=safe_decrypt(settings.api_key) or "",
             api_base_url=settings.api_base_url,
             model_name=settings.llm_model,
             temperature=settings.temperature,

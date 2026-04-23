@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.gateway.novel_migrated.models.settings import Settings
+from app.gateway.novel_migrated.core.crypto import safe_decrypt, encrypt_secret, is_encryption_enabled
 from app.gateway.novel_migrated.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -53,7 +54,7 @@ class AIConfigService:
             return {"api_provider": "openai", "llm_model": "gpt-4o", "temperature": 0.7}
         return {
             "api_provider": settings.api_provider,
-            "api_key": "***" if settings.api_key else None,
+            "api_key": "***" if safe_decrypt(settings.api_key) else None,
             "api_base_url": settings.api_base_url,
             "llm_model": settings.llm_model,
             "temperature": settings.temperature,
@@ -72,7 +73,10 @@ class AIConfigService:
                             'temperature', 'max_tokens', 'system_prompt']
         for field_name in updatable_fields:
             if field_name in config:
-                setattr(settings, field_name, config[field_name])
+                value = config[field_name]
+                if field_name == 'api_key' and value and is_encryption_enabled():
+                    value = encrypt_secret(str(value))
+                setattr(settings, field_name, value)
 
         await db.commit()
         await db.refresh(settings)

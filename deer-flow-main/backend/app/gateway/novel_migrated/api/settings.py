@@ -23,9 +23,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id
+from app.gateway.novel_migrated.core.crypto import safe_decrypt, encrypt_secret, is_encryption_enabled
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.models.settings import Settings
 from app.gateway.novel_migrated.services.ai_service import AIService, create_user_ai_service
+from app.gateway.novel_migrated.services.ai_settings_service import get_ai_settings_service
 from app.gateway.novel_migrated.services.cover_generation_service import cover_generation_service
 
 logger = logging.getLogger(__name__)
@@ -139,6 +141,21 @@ class SMTPTestRequest(BaseModel):
 
 # ==================== 辅助函数 ====================
 
+_SENSITIVE_FIELDS = {"api_key", "cover_api_key"}
+
+
+def _encrypt_if_needed(field_name: str, value: Any) -> Any:
+    if value is None:
+        return None
+    if field_name not in _SENSITIVE_FIELDS:
+        return value
+    if not is_encryption_enabled():
+        return value
+    str_val = str(value).strip()
+    if not str_val:
+        return value
+    return encrypt_secret(str_val)
+
 async def get_user_ai_service(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -157,7 +174,7 @@ async def get_user_ai_service(
 
     return create_user_ai_service(
         api_provider=settings.api_provider,
-        api_key=settings.api_key or "",
+        api_key=safe_decrypt(settings.api_key) or "",
         api_base_url=settings.api_base_url or "",
         model_name=settings.llm_model,
         temperature=settings.temperature,
@@ -206,18 +223,20 @@ def _get_presets(preferences: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _settings_to_response(settings: Settings) -> dict[str, Any]:
     """将 Settings ORM 对象转为兼容参考项目核心字段的响应结构。"""
+    raw_api_key = safe_decrypt(settings.api_key)
+    raw_cover_api_key = safe_decrypt(settings.cover_api_key)
     return {
         "id": settings.id,
         "user_id": settings.user_id,
         "api_provider": settings.api_provider,
-        "api_key": settings.api_key,
+        "api_key": "***" if raw_api_key else None,
         "api_base_url": settings.api_base_url,
         "llm_model": settings.llm_model,
         "temperature": settings.temperature,
         "max_tokens": settings.max_tokens,
         "system_prompt": settings.system_prompt,
         "cover_api_provider": settings.cover_api_provider,
-        "cover_api_key": settings.cover_api_key,
+        "cover_api_key": "***" if raw_cover_api_key else None,
         "cover_api_base_url": settings.cover_api_base_url,
         "cover_image_model": settings.cover_image_model,
         "cover_enabled": settings.cover_enabled,
@@ -251,13 +270,28 @@ async def save_settings(
     result = await db.execute(select(Settings).where(Settings.user_id == user_id))
     settings = result.scalar_one_or_none()
     payload = data.model_dump(exclude_unset=True)
+    ai_field_keys = {
+        "api_provider",
+        "api_key",
+        "api_base_url",
+        "llm_model",
+        "temperature",
+        "max_tokens",
+        "system_prompt",
+    }
 
     if settings:
         for key, value in payload.items():
-            setattr(settings, key, value)
+            setattr(settings, key, _encrypt_if_needed(key, value))
     else:
-        settings = Settings(user_id=user_id, **payload)
+        encrypted_payload = {k: _encrypt_if_needed(k, v) for k, v in payload.items()}
+        settings = Settings(user_id=user_id, **encrypted_payload)
         db.add(settings)
+
+    # Keep canonical provider bundle in sync when legacy fields are written.
+    ai_payload = {k: payload[k] for k in payload.keys() if k in ai_field_keys}
+    if ai_payload:
+        get_ai_settings_service().sync_preferences_from_settings_payload(settings, ai_payload)
 
     await db.commit()
     await db.refresh(settings)
@@ -279,8 +313,22 @@ async def update_settings(
         raise HTTPException(status_code=404, detail="设置不存在，请先创建设置")
 
     payload = data.model_dump(exclude_unset=True)
+    ai_field_keys = {
+        "api_provider",
+        "api_key",
+        "api_base_url",
+        "llm_model",
+        "temperature",
+        "max_tokens",
+        "system_prompt",
+    }
     for key, value in payload.items():
-        setattr(settings, key, value)
+        setattr(settings, key, _encrypt_if_needed(key, value))
+
+    # Keep canonical provider bundle in sync when legacy fields are written.
+    ai_payload = {k: payload[k] for k in payload.keys() if k in ai_field_keys}
+    if ai_payload:
+        get_ai_settings_service().sync_preferences_from_settings_payload(settings, ai_payload)
 
     await db.commit()
     await db.refresh(settings)
@@ -692,7 +740,7 @@ async def activate_preset(
         if preset_config.get("api_provider") is not None:
             settings.api_provider = str(preset_config.get("api_provider") or settings.api_provider)
         if preset_config.get("api_key") is not None:
-            settings.api_key = str(preset_config.get("api_key") or "")
+            settings.api_key = _encrypt_if_needed("api_key", str(preset_config.get("api_key") or ""))
         if preset_config.get("api_base_url") is not None:
             settings.api_base_url = str(preset_config.get("api_base_url") or "")
         if preset_config.get("llm_model") is not None:
@@ -739,7 +787,7 @@ async def test_preset(
     config = target_preset.get("config") if isinstance(target_preset.get("config"), dict) else {}
     ai_service = create_user_ai_service(
         api_provider=str(config.get("api_provider") or settings.api_provider or "openai"),
-        api_key=str(config.get("api_key") or settings.api_key or ""),
+        api_key=safe_decrypt(str(config.get("api_key") or "")) or safe_decrypt(settings.api_key) or "",
         api_base_url=str(config.get("api_base_url") or settings.api_base_url or ""),
         model_name=str(config.get("llm_model") or settings.llm_model or "gpt-4"),
         temperature=float(config.get("temperature") if config.get("temperature") is not None else (settings.temperature or 0.7)),
@@ -808,7 +856,7 @@ async def create_preset_from_current(
         "created_at": datetime.utcnow().isoformat(),
         "config": {
             "api_provider": settings.api_provider,
-            "api_key": settings.api_key,
+            "api_key": safe_decrypt(settings.api_key),
             "api_base_url": settings.api_base_url,
             "llm_model": settings.llm_model,
             "temperature": settings.temperature,

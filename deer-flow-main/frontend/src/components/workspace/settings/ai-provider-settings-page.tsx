@@ -15,14 +15,13 @@ import {
   Globe,
   Cpu,
 } from "lucide-react";
-import React, { useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
-import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -30,17 +29,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useAiProviderStore, type AiProviderConfig, type AiProviderType } from "@/core/ai/ai-provider-store";
+import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import {
+  useAiProviderStore,
+  type AiProviderConfig,
+  type AiProviderType,
+} from "@/core/ai/ai-provider-store";
 import { globalAiService } from "@/core/ai/global-ai-service";
+
 import { SettingsSection } from "./settings-section";
 
 export function AiProviderSettingsPage() {
   const {
-    providers,
-    globalSystemPrompt,
-    enableStreamMode,
-    requestTimeout,
-    maxRetries,
+    hydrated,
+    hydrating,
+    hydrationError,
+    draft,
+    isDirty,
+    ensureHydrated,
+    refreshFromServer,
+    resetDraftToEffective,
+    saveDraftToServer,
     addProvider,
     updateProvider,
     deleteProvider,
@@ -58,14 +68,31 @@ export function AiProviderSettingsPage() {
     success: boolean;
     message: string;
   } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    ensureHydrated().catch(() => undefined);
+  }, [ensureHydrated]);
 
   const handleSave = useCallback(async () => {
     if (editingId) {
       updateProvider(editingId, formData);
-      setEditingId(null);
-      setFormData({});
+      setSaving(true);
+      setSaveError(null);
+      try {
+        await saveDraftToServer();
+        setEditingId(null);
+        setFormData({});
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "保存失败，请检查后端服务";
+        setSaveError(message);
+      } finally {
+        setSaving(false);
+      }
     }
-  }, [editingId, formData, updateProvider]);
+  }, [editingId, formData, saveDraftToServer, updateProvider]);
 
   const handleAdd = useCallback(() => {
     const id = crypto.randomUUID();
@@ -77,6 +104,8 @@ export function AiProviderSettingsPage() {
       baseUrl: "",
       models: [],
       isActive: false,
+      hasApiKey: false,
+      clearApiKey: false,
     };
     addProvider(newProvider);
     setEditingId(id);
@@ -84,26 +113,66 @@ export function AiProviderSettingsPage() {
   }, [addProvider]);
 
   const handleDelete = useCallback(
-    (id: string) => {
+    async (id: string) => {
       deleteProvider(id);
       if (editingId === id) {
         setEditingId(null);
         setFormData({});
       }
+      setSaving(true);
+      setSaveError(null);
+      try {
+        await saveDraftToServer();
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "删除后保存失败，请检查后端服务";
+        setSaveError(message);
+      } finally {
+        setSaving(false);
+      }
     },
-    [deleteProvider, editingId]
+    [deleteProvider, editingId, saveDraftToServer]
   );
 
   const handleSetActive = useCallback(
-    (id: string) => {
+    async (id: string) => {
       setActiveProvider(id);
+      setSaving(true);
+      setSaveError(null);
+      try {
+        await saveDraftToServer();
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "切换供应商后保存失败，请检查后端服务";
+        setSaveError(message);
+      } finally {
+        setSaving(false);
+      }
     },
-    [setActiveProvider]
+    [saveDraftToServer, setActiveProvider]
   );
 
   const handleTestConnection = useCallback(async (id: string) => {
     setTestingId(id);
     setTestResult(null);
+
+    // Ensure we test the saved server config (single source of truth).
+    setSaving(true);
+    setSaveError(null);
+    try {
+      if (isDirty) {
+        await saveDraftToServer();
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "保存失败，无法测试连接";
+      setSaving(false);
+      setTestingId(null);
+      setTestResult({ success: false, message });
+      return;
+    } finally {
+      setSaving(false);
+    }
 
     const result = await globalAiService.testConnection(id);
 
@@ -112,7 +181,7 @@ export function AiProviderSettingsPage() {
       success: result.success,
       message: result.message,
     });
-  }, []);
+  }, [isDirty, saveDraftToServer]);
 
   const handleExport = useCallback(() => {
     try {
@@ -159,6 +228,24 @@ export function AiProviderSettingsPage() {
 
   return (
     <div className="space-y-8">
+      {hydrationError && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>AI 设置加载失败</AlertTitle>
+          <AlertDescription>
+            {hydrationError}（严格以后端为准，已禁用本地回退编辑）
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {saveError && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>保存失败</AlertTitle>
+          <AlertDescription>{saveError}</AlertDescription>
+        </Alert>
+      )}
+
       <SettingsSection
         title="AI 供应商管理"
         description="配置和管理 AI 模型供应商，支持 OpenAI、Anthropic、Google 等多种服务"
@@ -173,6 +260,30 @@ export function AiProviderSettingsPage() {
                 </CardDescription>
               </div>
               <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSaveError(null);
+                    refreshFromServer().catch((err) => {
+                      const message =
+                        err instanceof Error ? err.message : "刷新失败";
+                      setSaveError(message);
+                    });
+                  }}
+                  disabled={hydrating || saving}
+                >
+                  <RefreshCw className={`h-4 w-4 mr-1 ${hydrating ? "animate-spin" : ""}`} />
+                  刷新
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={resetDraftToEffective}
+                  disabled={saving || !hydrated}
+                >
+                  撤销未保存
+                </Button>
                 <Button variant="outline" size="sm" onClick={handleExport}>
                   <Download className="h-4 w-4 mr-1" />
                   导出
@@ -185,7 +296,7 @@ export function AiProviderSettingsPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {providers.length === 0 ? (
+            {draft.providers.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
                 <Bot className="h-12 w-12 mb-3 opacity-50" />
                 <p className="text-sm">暂未配置任何 AI 供应商</p>
@@ -193,7 +304,7 @@ export function AiProviderSettingsPage() {
               </div>
             ) : (
               <div className="space-y-3">
-                {providers.map((provider) => (
+                {draft.providers.map((provider) => (
                   <ProviderCard
                     key={provider.id}
                     provider={provider}
@@ -203,19 +314,30 @@ export function AiProviderSettingsPage() {
                     formData={formData}
                     onEdit={() => {
                       setEditingId(provider.id);
-                      setFormData(provider);
+                      setFormData({
+                        ...provider,
+                        apiKey: "",
+                        clearApiKey: false,
+                      });
                     }}
                     onSave={handleSave}
-                    onDelete={() => handleDelete(provider.id)}
-                    onSetActive={() => handleSetActive(provider.id)}
+                    onDelete={() => void handleDelete(provider.id)}
+                    onSetActive={() => void handleSetActive(provider.id)}
                     onTestConnection={() => handleTestConnection(provider.id)}
-                    onFormChange={(data) => setFormData(data)}
+                    onFormChange={(data) => {
+                      setFormData(data);
+                    }}
                   />
                 ))}
               </div>
             )}
 
-            <Button variant="outline" onClick={handleAdd} className="w-full">
+            <Button
+              variant="outline"
+              onClick={handleAdd}
+              className="w-full"
+              disabled={Boolean(hydrationError) || saving}
+            >
               <Plus className="h-4 w-4 mr-2" />
               添加供应商
             </Button>
@@ -235,11 +357,12 @@ export function AiProviderSettingsPage() {
               <div className="space-y-2">
                 <Label>系统提示词</Label>
                 <Input
-                  value={globalSystemPrompt}
+                  value={draft.globalSystemPrompt}
                   onChange={(e) =>
                     updateGlobalSettings({ globalSystemPrompt: e.target.value })
                   }
                   placeholder="可选的全局系统提示词"
+                  disabled={Boolean(hydrationError) || saving}
                 />
               </div>
 
@@ -247,12 +370,15 @@ export function AiProviderSettingsPage() {
                 <Label>请求超时时间（毫秒）</Label>
                 <Input
                   type="number"
-                  value={requestTimeout}
+                  value={draft.requestTimeout}
                   onChange={(e) =>
                     updateGlobalSettings({
-                      requestTimeout: parseInt(e.target.value) || 120000,
+                      requestTimeout: Number.isFinite(Number.parseInt(e.target.value))
+                        ? Number.parseInt(e.target.value)
+                        : 120000,
                     })
                   }
+                  disabled={Boolean(hydrationError) || saving}
                 />
               </div>
 
@@ -260,14 +386,17 @@ export function AiProviderSettingsPage() {
                 <Label>最大重试次数</Label>
                 <Input
                   type="number"
-                  value={maxRetries}
+                  value={draft.maxRetries}
                   onChange={(e) =>
                     updateGlobalSettings({
-                      maxRetries: parseInt(e.target.value) || 2,
+                      maxRetries: Number.isFinite(Number.parseInt(e.target.value))
+                        ? Number.parseInt(e.target.value)
+                        : 2,
                     })
                   }
                   min={0}
                   max={5}
+                  disabled={Boolean(hydrationError) || saving}
                 />
               </div>
 
@@ -279,15 +408,45 @@ export function AiProviderSettingsPage() {
                   </p>
                 </div>
                 <Switch
-                  checked={enableStreamMode}
+                  checked={draft.enableStreamMode}
                   onCheckedChange={(checked) =>
                     updateGlobalSettings({ enableStreamMode: checked })
                   }
+                  disabled={Boolean(hydrationError) || saving}
                 />
               </div>
             </div>
 
             <div className="flex justify-end pt-2">
+              <Button
+                className="mr-2"
+                onClick={async () => {
+                  setSaving(true);
+                  setSaveError(null);
+                  try {
+                    await saveDraftToServer();
+                  } catch (err) {
+                    const message =
+                      err instanceof Error ? err.message : "保存失败";
+                    setSaveError(message);
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                disabled={Boolean(hydrationError) || saving || !isDirty}
+              >
+                {saving ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    保存中...
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4 mr-2" />
+                    保存更改
+                  </>
+                )}
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => {
@@ -297,6 +456,7 @@ export function AiProviderSettingsPage() {
                     resetToDefaults();
                   }
                 }}
+                disabled={Boolean(hydrationError) || saving}
               >
                 重置为默认值
               </Button>
@@ -340,7 +500,7 @@ function ProviderCard({
     custom: Key,
   };
 
-  const Icon = providerIcons[provider.provider] || Bot;
+  const Icon = providerIcons[provider.provider] ?? Bot;
 
   return (
     <div
@@ -415,7 +575,7 @@ function ProviderCard({
             <div className="space-y-1.5">
               <Label className="text-xs">名称</Label>
               <Input
-                value={formData.name || ""}
+                value={formData.name ?? ""}
                 onChange={(e) =>
                   onFormChange({ ...formData, name: e.target.value })
                 }
@@ -426,7 +586,7 @@ function ProviderCard({
             <div className="space-y-1.5">
               <Label className="text-xs">提供商类型</Label>
               <Select
-                value={formData.provider || "openai"}
+                value={formData.provider ?? "openai"}
                 onValueChange={(v) =>
                   onFormChange({
                     ...formData,
@@ -448,20 +608,45 @@ function ProviderCard({
 
             <div className="space-y-1.5 md:col-span-2">
               <Label className="text-xs">API Key</Label>
+              {provider.hasApiKey ? (
+                <p className="text-xs text-muted-foreground">
+                  已保存 API Key（留空将保留；如需清空请点击“清空已保存”）
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  未检测到已保存 API Key（可留空以使用后端环境变量/默认配置）
+                </p>
+              )}
               <Input
                 type="password"
-                value={formData.apiKey || ""}
+                value={formData.apiKey ?? ""}
                 onChange={(e) =>
-                  onFormChange({ ...formData, apiKey: e.target.value })
+                  onFormChange({
+                    ...formData,
+                    apiKey: e.target.value,
+                    clearApiKey: false,
+                  })
                 }
                 placeholder="sk-..."
               />
+              {provider.hasApiKey && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    onFormChange({ ...formData, apiKey: "", clearApiKey: true })
+                  }
+                >
+                  清空已保存
+                </Button>
+              )}
             </div>
 
             <div className="space-y-1.5 md:col-span-2">
               <Label className="text-xs">Base URL</Label>
               <Input
-                value={formData.baseUrl || ""}
+                value={formData.baseUrl ?? ""}
                 onChange={(e) =>
                   onFormChange({ ...formData, baseUrl: e.target.value })
                 }
@@ -478,7 +663,7 @@ function ProviderCard({
             <div className="space-y-1.5 md:col-span-2">
               <Label className="text-xs">模型列表（逗号分隔）</Label>
               <Input
-                value={formData.models?.join(", ") || ""}
+                value={formData.models?.join(", ") ?? ""}
                 onChange={(e) =>
                   onFormChange({
                     ...formData,
@@ -515,12 +700,14 @@ function ProviderCard({
                 type="number"
                 value={formData.maxTokens ?? 2000}
                 onChange={(e) =>
-                  onFormChange({
-                    ...formData,
-                    maxTokens: parseInt(e.target.value) || 2000,
-                  })
-                }
-              />
+                    onFormChange({
+                      ...formData,
+                      maxTokens: Number.isFinite(Number.parseInt(e.target.value))
+                        ? Number.parseInt(e.target.value)
+                        : 2000,
+                    })
+                  }
+                />
             </div>
           </div>
 
@@ -532,7 +719,7 @@ function ProviderCard({
               variant="outline"
               size="sm"
               onClick={onTestConnection}
-              disabled={isTesting || !formData.apiKey}
+              disabled={isTesting}
             >
               {isTesting ? (
                 <>

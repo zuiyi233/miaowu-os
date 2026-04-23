@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 import time
@@ -96,31 +97,53 @@ async def resolve_agent_model_config(
 
 # ==================== 模型实例缓存 ====================
 
-_model_cache: dict[str, Any] = {}
+_model_cache: dict[tuple[str, ...], Any] = {}
 _model_cache_stats: dict[str, dict] = defaultdict(lambda: {"hits": 0, "misses": 0, "created_at": 0})
 _model_cache_lock = threading.Lock()
+_MODEL_CACHE_MAX_SIZE = 64
 
 
-def _get_cached_model(model_name: str) -> Any:
+def _hash_api_key_for_cache(api_key: str) -> str:
+    """Hash the API key so cache keys never store plaintext secrets.
+
+    NOTE: This is only used for in-process cache keying (not persisted).
     """
-    获取缓存的模型实例
-    
-    使用说明：
-    - 按 model_name 缓存模型实例，避免重复创建
-    - 缓存命中时直接返回，未命中时创建并缓存
-    - 适用于高频调用的场景（如批量章节生成）
-    - 线程安全：使用 threading.Lock 保护所有缓存操作
-    """
+    if not api_key:
+        return ""
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+
+
+def _make_cache_key(model_name: str, base_url: str | None = None, api_key: str | None = None) -> tuple[str, ...]:
+    model_name_key = (model_name or "").strip()
+    base_url_key = (base_url or "").strip()
+    api_key_raw = (api_key or "").strip()
+    if base_url_key or api_key_raw:
+        return (model_name_key, base_url_key, _hash_api_key_for_cache(api_key_raw))
+    return (model_name_key,)
+
+
+def _get_cached_model(model_name: str, base_url: str | None = None, api_key: str | None = None) -> Any:
+    model_name = (model_name or "").strip()
+    cache_key = _make_cache_key(model_name, base_url, api_key)
     with _model_cache_lock:
-        if model_name in _model_cache:
+        if cache_key in _model_cache:
             _model_cache_stats[model_name]["hits"] += 1
-            return _model_cache[model_name]
+            return _model_cache[cache_key]
+
+        if len(_model_cache) >= _MODEL_CACHE_MAX_SIZE:
+            oldest_key = min(_model_cache, key=lambda k: _model_cache_stats.get(k[0], {}).get("created_at", 0))
+            _model_cache.pop(oldest_key, None)
 
         _model_cache_stats[model_name]["misses"] += 1
-        model = create_chat_model(name=model_name)
-        _model_cache[model_name] = model
+        overrides: dict[str, Any] = {}
+        if base_url and base_url.strip():
+            overrides["base_url"] = base_url.strip()
+        if api_key and api_key.strip():
+            overrides["api_key"] = api_key.strip()
+        model = create_chat_model(name=model_name, **overrides)
+        _model_cache[cache_key] = model
         _model_cache_stats[model_name]["created_at"] = time.time()
-        logger.info("📦 模型缓存未命中，创建新实例: %s", model_name)
+        logger.info("📦 模型缓存未命中，创建新实例: %s (overrides=%s)", model_name, list(overrides.keys()) if overrides else "none")
         return model
 
 
@@ -209,6 +232,18 @@ class AIService:
         self._cached_tools = None
         self._tools_loaded = False
 
+    def _get_model_instance(
+        self,
+        model_name: str | None = None,
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ) -> Any:
+        resolved_name = self._resolve_model_name(model_name)
+        effective_base_url = base_url or self.api_base_url
+        effective_api_key = api_key or self.api_key
+        return _get_cached_model(resolved_name, base_url=effective_base_url, api_key=effective_api_key)
+
     def _resolve_model_name(self, model_name: str | None = None) -> str:
         config = get_app_config()
         wanted = model_name or self.default_model
@@ -216,8 +251,13 @@ class AIService:
             return wanted
         if config.models:
             fallback = config.models[0].name
-            if wanted != fallback:
-                logger.warning("模型 %s 未在 deerflow 配置中找到，回退到 %s", wanted, fallback)
+            if wanted and wanted != fallback:
+                logger.warning(
+                    "模型 %s 未在 deerflow 配置中找到，回退到 %s。"
+                    "若搭配自定义 base_url/api_key，请确认该模型在目标 API 端点可用。",
+                    wanted,
+                    fallback,
+                )
             return fallback
         raise ValueError("deerflow 未配置任何可用模型")
 
@@ -314,6 +354,8 @@ class AIService:
         max_tokens: int | None = None,
         system_prompt: str | None = None,
         auto_mcp: bool = True,
+        base_url: str | None = None,
+        api_key: str | None = None,
         **_: Any,
     ) -> dict[str, Any]:
         """非流式文本生成，返回与历史接口兼容的 dict。"""
@@ -321,7 +363,7 @@ class AIService:
         model_name = self._resolve_model_name(model)
 
         try:
-            llm = _get_cached_model(model_name)  # 使用缓存
+            llm = self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
             llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
             logger.info(
@@ -590,6 +632,8 @@ class AIService:
         system_prompt: str | None = None,
         auto_mcp: bool = True,
         agent_type: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
         **_: Any,
     ) -> AsyncGenerator[str, None]:
         """流式文本生成；保持与 careers/memories/plot_analyzer 调用兼容。
@@ -610,7 +654,7 @@ class AIService:
         )
 
         model_name = self._resolve_model_name(model)
-        llm = _get_cached_model(model_name)  # 使用缓存
+        llm = self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
         llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
         logger.info(
@@ -648,12 +692,14 @@ class AIService:
         temperature: float | None = None,
         max_tokens: int | None = None,
         auto_mcp: bool = True,
+        base_url: str | None = None,
+        api_key: str | None = None,
         **_: Any,
     ) -> dict[str, Any]:
         """非流式文本生成（messages数组直传版本）。"""
         start_time = time.time()
         model_name = self._resolve_model_name(model)
-        llm = _get_cached_model(model_name)  # 使用缓存
+        llm = self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
         llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
         tools = await self._prepare_mcp_tools(auto_mcp=auto_mcp)
@@ -694,11 +740,13 @@ class AIService:
         temperature: float | None = None,
         max_tokens: int | None = None,
         auto_mcp: bool = True,
+        base_url: str | None = None,
+        api_key: str | None = None,
         **_: Any,
     ) -> AsyncGenerator[str, None]:
         """流式文本生成（messages数组直传版本）。"""
         model_name = self._resolve_model_name(model)
-        llm = _get_cached_model(model_name)  # 使用缓存
+        llm = self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
         llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
         tools = await self._prepare_mcp_tools(auto_mcp=auto_mcp)

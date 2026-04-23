@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.novel_migrated.core.crypto import safe_decrypt
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.project import Project
 from app.gateway.novel_migrated.models.settings import Settings
@@ -271,7 +272,7 @@ class CoverGenerationService:
     def _build_provider(self, settings: Settings) -> BaseCoverProvider:
         return self._build_provider_from_values(
             provider=settings.cover_api_provider or "",
-            api_key=settings.cover_api_key or "",
+            api_key=safe_decrypt(settings.cover_api_key) or "",
             api_base_url=settings.cover_api_base_url,
         )
 
