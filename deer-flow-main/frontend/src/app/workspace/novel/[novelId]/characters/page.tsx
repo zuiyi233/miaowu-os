@@ -1,8 +1,8 @@
 'use client';
 
 import { Plus, Users } from 'lucide-react';
-import { useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { useMemo, useState } from 'react';
 
 import { CharacterCard } from '@/components/novel/CharacterCard';
 import { CharacterEditForm } from '@/components/novel/forms/CharacterEditForm';

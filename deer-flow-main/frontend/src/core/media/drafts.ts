@@ -31,6 +31,34 @@ export interface DraftAttachResponse {
   target_update_error?: string | null;
 }
 
+export function applyOptimisticDraftHide(
+  hiddenIds: Record<string, true>,
+  draftId: string
+): Record<string, true> {
+  if (!draftId) {
+    return hiddenIds;
+  }
+  if (hiddenIds[draftId]) {
+    return hiddenIds;
+  }
+  return {
+    ...hiddenIds,
+    [draftId]: true,
+  };
+}
+
+export function rollbackOptimisticDraftHide(
+  hiddenIds: Record<string, true>,
+  draftId: string
+): Record<string, true> {
+  if (!draftId || !hiddenIds[draftId]) {
+    return hiddenIds;
+  }
+  const next = { ...hiddenIds };
+  delete next[draftId];
+  return next;
+}
+
 function withBackendBase(url: string): string {
   if (!url) {
     return url;
@@ -55,6 +83,24 @@ function isDraftMediaKind(value: unknown): value is DraftMediaKind {
 
 function isStringRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function extractErrorDetail(payload: unknown): string {
+  if (!isStringRecord(payload) || !("detail" in payload)) {
+    return "";
+  }
+
+  const detail = payload.detail;
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (detail === null || detail === undefined) {
+    return "";
+  }
+  if (typeof detail === "number" || typeof detail === "boolean") {
+    return String(detail);
+  }
+  return "";
 }
 
 export function isDraftMediaItem(value: unknown): value is DraftMediaItem {
@@ -111,10 +157,7 @@ export async function deleteDraftMedia(
   );
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    const detail =
-      payload && typeof payload === "object" && "detail" in payload
-        ? String((payload as { detail?: unknown }).detail ?? "")
-        : "";
+    const detail = extractErrorDetail(payload);
     throw new Error(detail || "Failed to delete draft.");
   }
 }
@@ -136,10 +179,7 @@ export async function attachDraftMedia(
   );
   const payload = (await response.json().catch(() => null)) as unknown;
   if (!response.ok) {
-    const detail =
-      payload && typeof payload === "object" && "detail" in payload
-        ? String((payload as { detail?: unknown }).detail ?? "")
-        : "";
+    const detail = extractErrorDetail(payload);
     throw new Error(detail || "Failed to attach draft.");
   }
   return payload as DraftAttachResponse;

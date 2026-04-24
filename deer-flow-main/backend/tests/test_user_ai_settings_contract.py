@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.gateway.novel_migrated.api import settings as legacy_settings
 from app.gateway.novel_migrated.api import user_settings
 from app.gateway.novel_migrated.core import crypto
+from app.gateway.novel_migrated.models.settings import Settings
 
 
 def _enable_encryption_for_test() -> None:
@@ -92,6 +93,10 @@ def test_put_ai_settings_encrypts_key_and_mirrors_active_provider() -> None:
             "request_timeout": 123456,
             "max_retries": 3,
         },
+        "feature_routing_settings": {
+            "create_novel": {"provider_id": "p1", "model": "gpt-4o-mini"},
+            "novel_tools": {"provider_id": "p2"},
+        },
         "providers": [
             {
                 "id": "p1",
@@ -125,6 +130,7 @@ def test_put_ai_settings_encrypts_key_and_mirrors_active_provider() -> None:
     data = resp.json()
     assert data["default_provider_id"] == "p1"
     assert data["client_settings"]["max_retries"] == 3
+    assert data["feature_routing_settings"] == payload["feature_routing_settings"]
     assert data["api_provider"] == "openai"
     assert data["api_base_url"] == "https://api.openai.com/v1"
     assert data["llm_model"] == "gpt-4o-mini"
@@ -146,6 +152,67 @@ def test_put_ai_settings_encrypts_key_and_mirrors_active_provider() -> None:
     stored = prefs["ai_provider_settings"]["providers"]
     stored_p1 = next(item for item in stored if item["id"] == "p1")
     assert stored_p1["api_key_encrypted"] == fake_db.settings.api_key
+    assert prefs["ai_provider_settings"]["feature_routing_settings"] == payload["feature_routing_settings"]
+
+
+def test_put_ai_settings_keeps_feature_routing_settings_when_omitted() -> None:
+    fake_db = _FakeDB()
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        first = client.put(
+            "/api/user/ai-settings",
+            json={
+                "default_provider_id": "p1",
+                "feature_routing_settings": {
+                    "create_novel": {"provider_id": "p1", "model": "gpt-4o-mini"},
+                },
+                "providers": [
+                    {
+                        "id": "p1",
+                        "name": "OpenAI",
+                        "provider": "openai",
+                        "base_url": "https://api.openai.com/v1",
+                        "models": ["gpt-4o-mini"],
+                        "is_active": True,
+                    }
+                ],
+            },
+        )
+        assert first.status_code == 200
+        assert first.json()["feature_routing_settings"] == {
+            "create_novel": {"provider_id": "p1", "model": "gpt-4o-mini"}
+        }
+
+        second = client.put(
+            "/api/user/ai-settings",
+            json={
+                # Explicitly omit feature_routing_settings: should keep previous value.
+                "default_provider_id": "p1",
+                "providers": [
+                    {
+                        "id": "p1",
+                        "name": "OpenAI",
+                        "provider": "openai",
+                        "base_url": "https://api.openai.com/v1",
+                        "models": ["gpt-4o-mini"],
+                        "is_active": True,
+                    }
+                ],
+                "system_prompt": "keep-routing",
+            },
+        )
+        assert second.status_code == 200
+        data = second.json()
+        assert data["system_prompt"] == "keep-routing"
+        assert data["feature_routing_settings"] == {
+            "create_novel": {"provider_id": "p1", "model": "gpt-4o-mini"}
+        }
+
+    prefs = json.loads(fake_db.settings.preferences or "{}")
+    assert prefs["ai_provider_settings"]["feature_routing_settings"] == {
+        "create_novel": {"provider_id": "p1", "model": "gpt-4o-mini"}
+    }
 
 
 def test_put_ai_settings_preserves_key_when_omitted_and_clears_when_requested() -> None:
@@ -266,6 +333,89 @@ def test_put_ai_settings_allows_empty_providers_bundle_without_recreating_placeh
         assert data["system_prompt"] == "after-delete"
 
 
+def test_put_ai_settings_persists_explicit_empty_models_and_base_url() -> None:
+    fake_db = _FakeDB()
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        first = client.put(
+            "/api/user/ai-settings",
+            json={
+                "default_provider_id": "p1",
+                "providers": [
+                    {
+                        "id": "p1",
+                        "name": "OpenAI",
+                        "provider": "openai",
+                        "base_url": "https://api.openai.com/v1",
+                        "models": ["gpt-4o-mini"],
+                        "is_active": True,
+                    }
+                ],
+            },
+        )
+        assert first.status_code == 200
+
+        second = client.put(
+            "/api/user/ai-settings",
+            json={
+                "default_provider_id": "p1",
+                "providers": [
+                    {
+                        "id": "p1",
+                        "name": "OpenAI",
+                        "provider": "openai",
+                        "base_url": "",
+                        "models": [],
+                        "is_active": True,
+                    }
+                ],
+            },
+        )
+        assert second.status_code == 200
+        data = second.json()
+        assert data["providers"][0]["base_url"] == ""
+        assert data["providers"][0]["models"] == []
+
+    prefs = json.loads(fake_db.settings.preferences or "{}")
+    bundle = prefs.get("ai_provider_settings") or {}
+    stored = bundle.get("providers") or []
+    assert stored and stored[0]["base_url"] == ""
+    assert stored[0]["models"] == []
+
+
+def test_get_ai_settings_keeps_zero_temperature_and_max_tokens() -> None:
+    fake_db = _FakeDB()
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        put_resp = client.put(
+            "/api/user/ai-settings",
+            json={
+                "default_provider_id": "p1",
+                "providers": [
+                    {
+                        "id": "p1",
+                        "name": "OpenAI",
+                        "provider": "openai",
+                        "base_url": "https://api.openai.com/v1",
+                        "models": ["gpt-4o-mini"],
+                        "is_active": True,
+                        "temperature": 0.0,
+                        "max_tokens": 0,
+                    }
+                ],
+            },
+        )
+        assert put_resp.status_code == 200
+
+        get_resp = client.get("/api/user/ai-settings")
+        assert get_resp.status_code == 200
+        data = get_resp.json()
+        assert data["temperature"] == 0.0
+        assert data["max_tokens"] == 0
+
+
 def test_settings_endpoint_syncs_preferences_bundle() -> None:
     _enable_encryption_for_test()
     fake_db = _FakeDB()
@@ -297,3 +447,119 @@ def test_settings_endpoint_syncs_preferences_bundle() -> None:
     assert active["base_url"] == "https://api.openai.com/v1"
     assert active["models"] == ["gpt-4o-mini"]
     assert active["api_key_encrypted"] == fake_db.settings.api_key
+
+
+def test_get_presets_redacts_plaintext_keys() -> None:
+    _enable_encryption_for_test()
+    fake_db = _FakeDB()
+    encrypted_key = crypto.encrypt_secret("sk-cipher-only")
+    fake_db.settings = Settings(
+        user_id="default_user",
+        preferences=json.dumps(
+            {
+                "presets": [
+                    {
+                        "id": "p1",
+                        "name": "secure-preset",
+                        "config": {
+                            "api_provider": "openai",
+                            "api_key": "sk-plaintext-should-not-leak",
+                            "cover_api_key": "cover-plaintext-should-not-leak",
+                            "api_key_encrypted": encrypted_key,
+                            "cover_api_key_encrypted": encrypted_key,
+                            "llm_model": "gpt-4o-mini",
+                        },
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+    )
+    app = _build_legacy_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.get("/settings/presets")
+
+    assert resp.status_code == 200
+    payload = resp.json()["data"]["presets"][0]
+    config = payload["config"]
+    assert "api_key" not in config
+    assert "cover_api_key" not in config
+    assert "api_key_encrypted" not in config
+    assert "cover_api_key_encrypted" not in config
+    assert config["has_api_key"] is True
+    assert config["has_cover_api_key"] is True
+
+
+def test_create_preset_from_current_omits_plaintext_key_in_response_and_storage() -> None:
+    _enable_encryption_for_test()
+    fake_db = _FakeDB()
+    existing_api_key = crypto.encrypt_secret("sk-live-secret")
+    fake_db.settings = Settings(
+        user_id="default_user",
+        api_provider="openai",
+        api_key=existing_api_key,
+        api_base_url="https://api.openai.com/v1",
+        llm_model="gpt-4o-mini",
+        temperature=0.2,
+        max_tokens=256,
+        system_prompt="secure",
+        preferences="{}",
+    )
+    app = _build_legacy_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/settings/presets/from-current",
+            json={"name": "from-current", "description": "secure snapshot"},
+        )
+
+    assert resp.status_code == 200
+    config = resp.json()["data"]["config"]
+    assert "api_key" not in config
+    assert "api_key_encrypted" not in config
+    assert config["has_api_key"] is True
+
+    stored_preferences = json.loads(fake_db.settings.preferences or "{}")
+    stored_preset = stored_preferences["presets"][0]
+    stored_config = stored_preset["config"]
+    assert "api_key" not in stored_config
+    assert stored_config["api_key_encrypted"] == existing_api_key
+    assert "sk-live-secret" not in json.dumps(stored_preferences, ensure_ascii=False)
+
+
+def test_activate_preset_supports_encrypted_secret_field() -> None:
+    _enable_encryption_for_test()
+    fake_db = _FakeDB()
+    encrypted_active_key = crypto.encrypt_secret("sk-new-active")
+    fake_db.settings = Settings(
+        user_id="default_user",
+        api_provider="openai",
+        api_key=crypto.encrypt_secret("sk-old"),
+        preferences=json.dumps(
+            {
+                "presets": [
+                    {
+                        "id": "p1",
+                        "name": "encrypted-preset",
+                        "config": {
+                            "api_provider": "openai",
+                            "api_key_encrypted": encrypted_active_key,
+                            "api_base_url": "https://api.openai.com/v1",
+                            "llm_model": "gpt-4o-mini",
+                        },
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+    )
+    app = _build_legacy_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.post("/settings/presets/p1/activate")
+
+    assert resp.status_code == 200
+    assert crypto.safe_decrypt(fake_db.settings.api_key) == "sk-new-active"
+    stored_preferences = json.loads(fake_db.settings.preferences or "{}")
+    assert stored_preferences["presets"][0]["is_active"] is True

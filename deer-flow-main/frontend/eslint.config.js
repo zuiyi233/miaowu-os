@@ -11,6 +11,8 @@ export default tseslint.config(
       ".next",
       "src/components/ui/**",
       "src/components/ai-elements/**",
+      "playwright.config.ts",
+      "tests/e2e/**",
       "*.js",
     ],
   },

@@ -10,7 +10,8 @@
   ✓ 保留 UserPassword 用于密码管理（如果需要）
   ✗ 不强制要求 OAuth 字段（linuxdo_id 等），按需扩展
 """
-from sqlalchemy import Column, String, Integer, Boolean, DateTime
+
+from sqlalchemy import Boolean, Column, DateTime, Integer, String
 from sqlalchemy.sql import func
 
 from app.gateway.novel_migrated.core.database import Base
@@ -21,6 +22,7 @@ class User(Base):
     用户模型 - 最小兼容版本
     兼容参考项目的 User 模型接口，但适配 deer-flow 认证体系
     """
+
     __tablename__ = "users"
 
     user_id = Column(String(100), primary_key=True, index=True, comment="用户ID")
@@ -56,6 +58,7 @@ class User(Base):
 
 class UserPassword(Base):
     """用户密码模型 - 存储用户密码信息"""
+
     __tablename__ = "user_passwords"
 
     user_id = Column(String(100), primary_key=True, index=True, comment="用户ID")
@@ -64,3 +67,10 @@ class UserPassword(Base):
     has_custom_password = Column(Boolean, default=False, comment="是否为自定义密码")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), comment="更新时间")
+
+    def __init__(self, **kwargs):
+        # SQLAlchemy Column(default=...) is applied at INSERT time, not instance creation.
+        # Provide python-side defaults so in-memory objects behave predictably (and match unit tests).
+        super().__init__(**kwargs)
+        if self.has_custom_password is None:
+            self.has_custom_password = False

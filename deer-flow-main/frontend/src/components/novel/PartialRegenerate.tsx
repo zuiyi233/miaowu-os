@@ -1,7 +1,5 @@
 'use client';
 
-import { useState } from 'react';
-import { toast } from 'sonner';
 import {
   Wand2,
   Loader2,
@@ -11,12 +9,12 @@ import {
   Target,
   PenLine,
 } from 'lucide-react';
+import { useState } from 'react';
+import { toast } from 'sonner';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
@@ -25,6 +23,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 
 export interface PartialRegenerateConfig {

@@ -24,7 +24,9 @@ from deerflow.config import get_app_config
 
 logger = logging.getLogger(__name__)
 
-_RETRIABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+# NOTE: keep 4xx retries conservative. Most client errors (400/401/403/404/422...)
+# should not be retried. 429 is handled explicitly as transient below.
+_RETRIABLE_STATUS_CODES = {500, 502, 503, 504}
 _HARD_AUTH_PATTERNS = (
     "invalid api key",
     "invalid_api_key",
@@ -172,11 +174,11 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         if _matches_any(lowered, _HARD_AUTH_PATTERNS) or error_code in {401} or status_code == 401 or _matches_any(str(error_code).lower(), _HARD_AUTH_PATTERNS):
             return False, "auth"
 
-        if status_code in {402, 403}:
-            return True, "transient"
-
-        if _matches_any(lowered, _QUOTA_PATTERNS) or error_code in {402} or _matches_any(str(error_code).lower(), _QUOTA_PATTERNS):
+        if status_code == 402 or _matches_any(lowered, _QUOTA_PATTERNS) or error_code in {402} or _matches_any(str(error_code).lower(), _QUOTA_PATTERNS):
             return False, "quota"
+
+        if status_code == 403:
+            return False, "auth"
 
         if _matches_any(lowered, _AUTH_PATTERNS) and not _matches_any(lowered, ("timeout", "timed out")):
             return False, "auth"
@@ -192,7 +194,7 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
             return True, "transient"
         if status_code in _RETRIABLE_STATUS_CODES:
             return True, "transient"
-        if status_code is not None and status_code >= 400 and status_code < 500:
+        if status_code == 429:
             return True, "transient"
         if _matches_any(lowered, _BUSY_PATTERNS):
             return True, "busy"
@@ -242,6 +244,23 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         except Exception:
             logger.debug("Failed to emit llm_retry event", exc_info=True)
 
+    def _sync_retry_wait(self, wait_ms: int) -> None:
+        """Wait in sync path without blocking an active event loop thread."""
+        seconds = max(0.0, wait_ms / 1000.0)
+        if seconds <= 0:
+            return
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            time.sleep(seconds)
+            return
+
+        logger.warning(
+            "Detected running event loop in sync retry path; skipping blocking sleep (%dms).",
+            wait_ms,
+        )
+
     @override
     def wrap_model_call(
         self,
@@ -275,7 +294,7 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
                         _extract_error_detail(exc),
                     )
                     self._emit_retry_event(attempt, wait_ms, reason)
-                    time.sleep(wait_ms / 1000)
+                    self._sync_retry_wait(wait_ms)
                     attempt += 1
                     continue
                 logger.warning(

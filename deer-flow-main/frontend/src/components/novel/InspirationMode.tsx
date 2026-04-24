@@ -1,20 +1,20 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { toast } from 'sonner';
 import { Send, ArrowLeft, RefreshCcw, Sparkles, Loader2, RotateCcw, MessageSquare } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { useRouter } from 'next/navigation';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { toast } from 'sonner';
 
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-
+import { Textarea } from '@/components/ui/textarea';
 import { novelApiService } from '@/core/novel/novel-api';
 import type { InspirationOption, InspirationWizardData } from '@/core/novel/schemas';
+import { cn } from '@/lib/utils';
+
 import { AIProjectGenerator } from './AIProjectGenerator';
 import type { GenerationConfig } from './AIProjectGenerator';
 

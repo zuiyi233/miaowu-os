@@ -11,6 +11,7 @@ compatibility with already-merged chains and avoid schema-heavy refactors.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime
@@ -288,47 +289,70 @@ class ChapterOrchestrationService:
                 # Recovery path for poisoned key window:
                 # key consumed successfully in a previous crashed attempt,
                 # but task row was never written.
-                released = await self.release_idempotency_key(
-                    db,
-                    key=normalized_idempotency_key,
-                    user_id=user_id,
-                    action=self.ANALYSIS_ACTION,
-                )
-                if not released:
-                    owner_result = await db.execute(
-                        select(IntentIdempotencyKey).where(
-                            IntentIdempotencyKey.key == normalized_idempotency_key
-                        )
+                # Concurrency guard: another request may have just consumed the key
+                # but hasn't committed the task row yet. Poll briefly before treating
+                # it as a poisoned-key recovery case.
+                poll_attempts = 4
+                poll_delay_sec = 0.05
+                for _ in range(poll_attempts):
+                    await asyncio.sleep(poll_delay_sec)
+                    latest_task_result = await db.execute(
+                        select(AnalysisTask)
+                        .where(AnalysisTask.chapter_id == chapter_id)
+                        .order_by(AnalysisTask.created_at.desc())
+                        .limit(1)
                     )
-                    owner = owner_result.scalar_one_or_none()
-                    if owner is None:
-                        released = True
-                    elif owner.user_id == user_id and owner.action == self.ANALYSIS_ACTION:
-                        await db.execute(
-                            delete(IntentIdempotencyKey).where(
-                                IntentIdempotencyKey.key == normalized_idempotency_key,
-                                IntentIdempotencyKey.user_id == user_id,
-                                IntentIdempotencyKey.action == self.ANALYSIS_ACTION,
-                            )
-                        )
-                        await db.commit()
-                        released = True
-                    else:
-                        logger.warning(
-                            "idempotency_key conflict owner mismatch: key=%s owner_user=%s owner_action=%s current_user=%s current_action=%s",
-                            self._mask_idempotency_key(normalized_idempotency_key),
-                            owner.user_id,
-                            owner.action,
-                            user_id,
-                            self.ANALYSIS_ACTION,
-                        )
-                if released:
-                    consume_ok = await self.consume_idempotency_key(
+                    latest_task = latest_task_result.scalar_one_or_none()
+                    if latest_task is not None:
+                        break
+
+                if latest_task is not None:
+                    logger.info(
+                        "idempotency_key conflict resolved after polling (task row appeared): key=%s",
+                        self._mask_idempotency_key(normalized_idempotency_key),
+                    )
+                else:
+                    released = await self.release_idempotency_key(
                         db,
                         key=normalized_idempotency_key,
                         user_id=user_id,
                         action=self.ANALYSIS_ACTION,
                     )
+                    if not released:
+                        owner_result = await db.execute(
+                            select(IntentIdempotencyKey).where(
+                                IntentIdempotencyKey.key == normalized_idempotency_key
+                            )
+                        )
+                        owner = owner_result.scalar_one_or_none()
+                        if owner is None:
+                            released = True
+                        elif owner.user_id == user_id and owner.action == self.ANALYSIS_ACTION:
+                            await db.execute(
+                                delete(IntentIdempotencyKey).where(
+                                    IntentIdempotencyKey.key == normalized_idempotency_key,
+                                    IntentIdempotencyKey.user_id == user_id,
+                                    IntentIdempotencyKey.action == self.ANALYSIS_ACTION,
+                                )
+                            )
+                            await db.commit()
+                            released = True
+                        else:
+                            logger.warning(
+                                "idempotency_key conflict owner mismatch: key=%s owner_user=%s owner_action=%s current_user=%s current_action=%s",
+                                self._mask_idempotency_key(normalized_idempotency_key),
+                                owner.user_id,
+                                owner.action,
+                                user_id,
+                                self.ANALYSIS_ACTION,
+                            )
+                    if released:
+                        consume_ok = await self.consume_idempotency_key(
+                            db,
+                            key=normalized_idempotency_key,
+                            user_id=user_id,
+                            action=self.ANALYSIS_ACTION,
+                        )
 
             if latest_task and latest_task.status == "failed":
                 # Failed requests should be retryable with the same key.

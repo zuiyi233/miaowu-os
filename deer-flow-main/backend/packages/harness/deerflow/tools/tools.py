@@ -6,62 +6,20 @@ from deerflow.config import get_app_config
 from deerflow.reflection import resolve_variable
 from deerflow.sandbox.security import is_host_bash_allowed
 from deerflow.tools.builtins import (
-    analyze_chapter,
-    ask_clarification_tool,
-    build_world,
-    check_consistency,
-    create_novel,
-    expand_outline,
-    finalize_project,
-    generate_career_system,
-    generate_chapter,
-    generate_characters,
-    generate_image_draft,
-    generate_outline,
-    generate_tts_draft,
-    import_book,
-    manage_foreshadow,
-    partial_regenerate,
-    polish_text,
-    present_file_tool,
-    regenerate_chapter,
-    search_memories,
+    CORE_BUILTIN_TOOLS,
+    NOVEL_BUILTIN_TOOLS,
     task_tool,
-    update_character_states,
     view_image_tool,
 )
 from deerflow.tools.builtins.tool_search import reset_deferred_registry
 
 logger = logging.getLogger(__name__)
 
-NOVEL_TOOLS = [
-    create_novel,
-    build_world,
-    generate_characters,
-    generate_outline,
-    expand_outline,
-    generate_chapter,
-    generate_career_system,
-    analyze_chapter,
-    manage_foreshadow,
-    search_memories,
-    check_consistency,
-    polish_text,
-    regenerate_chapter,
-    partial_regenerate,
-    finalize_project,
-    import_book,
-    update_character_states,
-]
+NOVEL_TOOLS = list(NOVEL_BUILTIN_TOOLS)
 
 NOVEL_TOOL_NAMES: set[str] = {t.name for t in NOVEL_TOOLS}
 
-CORE_TOOLS = [
-    present_file_tool,
-    ask_clarification_tool,
-    generate_image_draft,
-    generate_tts_draft,
-]
+CORE_TOOLS = list(CORE_BUILTIN_TOOLS)
 
 BUILTIN_TOOLS = CORE_TOOLS + NOVEL_TOOLS
 

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import text
 
 Base = declarative_base()
 
@@ -27,18 +28,21 @@ engine = create_async_engine(
     },
 )
 
-_WAL_INITIALIZED = False
+_WAL_INITIALIZED = asyncio.Event()
+_WAL_INIT_LOCK = asyncio.Lock()
 
 
 async def _ensure_wal_and_pragma(conn) -> None:
-    global _WAL_INITIALIZED
-    if _WAL_INITIALIZED:
+    if _WAL_INITIALIZED.is_set():
         return
-    await conn.execute(text("PRAGMA journal_mode=WAL"))
-    await conn.execute(text("PRAGMA synchronous=NORMAL"))
-    await conn.execute(text("PRAGMA cache_size=-64000"))
-    await conn.execute(text("PRAGMA foreign_keys=ON"))
-    _WAL_INITIALIZED = True
+    async with _WAL_INIT_LOCK:
+        if _WAL_INITIALIZED.is_set():
+            return
+        await conn.execute(text("PRAGMA journal_mode=WAL"))
+        await conn.execute(text("PRAGMA synchronous=NORMAL"))
+        await conn.execute(text("PRAGMA cache_size=-64000"))
+        await conn.execute(text("PRAGMA foreign_keys=ON"))
+        _WAL_INITIALIZED.set()
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
@@ -48,46 +52,51 @@ AsyncSessionLocal = async_sessionmaker(
     autocommit=False,
 )
 
-_schema_initialized = False
+async_session_factory = AsyncSessionLocal
+
+_schema_initialized = asyncio.Event()
+_SCHEMA_INIT_LOCK = asyncio.Lock()
 
 
 async def init_db_schema() -> None:
     """Initialize migrated novel tables once."""
-    global _schema_initialized
-    if _schema_initialized:
+    if _schema_initialized.is_set():
         return
+    async with _SCHEMA_INIT_LOCK:
+        if _schema_initialized.is_set():
+            return
 
-    # Ensure all mapped tables are registered on Base.metadata before create_all.
-    from app.gateway.novel_migrated.models import (  # noqa: F401
-        ai_metric,
-        analysis_task,
-        batch_generation_task,
-        career,
-        chapter,
-        character,
-        dual_write_log,
-        foreshadow,
-        generation_history,
-        intent_session,
-        mcp_plugin,
-        memory,
-        novel_agent_config,
-        outline,
-        project,
-        project_default_style,
-        prompt_template,
-        prompt_workshop,
-        regeneration_task,
-        relationship,
-        settings,
-        user,
-        writing_style,
-    )
+        # Ensure all mapped tables are registered on Base.metadata before create_all.
+        from app.gateway.novel_migrated.models import (  # noqa: F401
+            ai_metric,
+            analysis_task,
+            batch_generation_task,
+            career,
+            chapter,
+            character,
+            dual_write_log,
+            foreshadow,
+            generation_history,
+            intent_session,
+            mcp_plugin,
+            memory,
+            novel_agent_config,
+            outline,
+            project,
+            project_default_style,
+            prompt_template,
+            prompt_workshop,
+            regeneration_task,
+            relationship,
+            settings,
+            user,
+            writing_style,
+        )
 
-    async with engine.begin() as conn:
-        await _ensure_wal_and_pragma(conn)
-        await conn.run_sync(Base.metadata.create_all)
-    _schema_initialized = True
+        async with engine.begin() as conn:
+            await _ensure_wal_and_pragma(conn)
+            await conn.run_sync(Base.metadata.create_all)
+        _schema_initialized.set()
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

@@ -1,11 +1,5 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { toast } from 'sonner';
-import {
-  Network, User, Building2, X, Trophy, Save, RotateCcw,
-} from 'lucide-react';
-import dagre from 'dagre';
 import {
   ReactFlow,
   Background,
@@ -17,12 +11,19 @@ import {
   type Edge,
   MarkerType,
 } from '@xyflow/react';
+import dagre from 'dagre';
+import {
+  Network, User, Building2, X, Trophy, Save, RotateCcw,
+} from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { toast } from 'sonner';
 import '@xyflow/react/dist/style.css';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
   SelectContent,
@@ -30,10 +31,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { cn } from '@/lib/utils';
 import { getBackendBaseURL } from '@/core/config';
+import { cn } from '@/lib/utils';
 
 interface GraphNode {
   id: string; name: string; type: string; role_type?: string; is_organization?: boolean;
@@ -294,7 +294,7 @@ export function RelationshipGraph({ projectId }: RelationshipGraphProps) {
 
     const categoryCounter: Record<string, number> = {};
     flowEdges.forEach((e) => {
-      const cat = String(e.data?.category || 'default');
+      const cat = typeof e.data?.category === 'string' ? e.data.category : 'default';
       categoryCounter[cat] = (categoryCounter[cat] || 0) + 1;
     });
     setEdgeVisibilityMap((prev) => {
@@ -355,7 +355,7 @@ export function RelationshipGraph({ projectId }: RelationshipGraphProps) {
 
   const visibleEdges = useMemo(() =>
     edges.filter((e) => {
-      const cat = String(e.data?.category || 'default');
+      const cat = typeof e.data?.category === 'string' ? e.data.category : 'default';
       if (edgeVisibilityMap[cat] === false) return false;
       if (filteredNodeIds.size === 0) return true;
       const isCareerEdge = e.source.startsWith('__cg_') || e.source.startsWith('career-') || e.target.startsWith('__cg_') || e.target.startsWith('career-');

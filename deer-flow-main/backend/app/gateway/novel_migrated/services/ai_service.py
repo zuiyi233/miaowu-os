@@ -17,7 +17,7 @@ import hashlib
 import json
 import threading
 import time
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any, TypedDict
@@ -25,8 +25,8 @@ from typing import Any, TypedDict
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.gateway.novel_migrated.core.logger import get_logger
-from app.gateway.novel_migrated.services.mcp_tools_loader import mcp_tools_loader
 from app.gateway.novel_migrated.schemas.ai_message import AiMessage
+from app.gateway.novel_migrated.services.mcp_tools_loader import mcp_tools_loader
 from deerflow.config import get_app_config
 from deerflow.models import create_chat_model
 
@@ -97,8 +97,8 @@ async def resolve_agent_model_config(
 
 # ==================== 模型实例缓存 ====================
 
-_model_cache: dict[tuple[str, ...], Any] = {}
-_model_cache_stats: dict[str, dict] = defaultdict(lambda: {"hits": 0, "misses": 0, "created_at": 0})
+_model_cache: OrderedDict[tuple[str, ...], Any] = OrderedDict()
+_model_cache_meta: dict[tuple[str, ...], dict[str, Any]] = {}
 _model_cache_lock = threading.Lock()
 _MODEL_CACHE_MAX_SIZE = 64
 
@@ -122,19 +122,50 @@ def _make_cache_key(model_name: str, base_url: str | None = None, api_key: str |
     return (model_name_key,)
 
 
+def _format_cache_key(cache_key: tuple[str, ...]) -> str:
+    if len(cache_key) == 1:
+        return cache_key[0]
+    return "|".join(cache_key)
+
+
 def _get_cached_model(model_name: str, base_url: str | None = None, api_key: str | None = None) -> Any:
     model_name = (model_name or "").strip()
     cache_key = _make_cache_key(model_name, base_url, api_key)
+    now = time.time()
     with _model_cache_lock:
         if cache_key in _model_cache:
-            _model_cache_stats[model_name]["hits"] += 1
+            meta = _model_cache_meta.setdefault(
+                cache_key,
+                {
+                    "model_name": model_name,
+                    "hits": 0,
+                    "misses": 0,
+                    "created_at": now,
+                    "last_accessed_at": now,
+                },
+            )
+            meta["hits"] += 1
+            meta["last_accessed_at"] = now
+            _model_cache.move_to_end(cache_key)
             return _model_cache[cache_key]
 
-        if len(_model_cache) >= _MODEL_CACHE_MAX_SIZE:
-            oldest_key = min(_model_cache, key=lambda k: _model_cache_stats.get(k[0], {}).get("created_at", 0))
-            _model_cache.pop(oldest_key, None)
+        meta = _model_cache_meta.setdefault(
+            cache_key,
+            {
+                "model_name": model_name,
+                "hits": 0,
+                "misses": 0,
+                "created_at": now,
+                "last_accessed_at": now,
+            },
+        )
+        meta["misses"] += 1
+        meta["last_accessed_at"] = now
 
-        _model_cache_stats[model_name]["misses"] += 1
+        if len(_model_cache) >= _MODEL_CACHE_MAX_SIZE:
+            evicted_key, _ = _model_cache.popitem(last=False)
+            _model_cache_meta.pop(evicted_key, None)
+
         overrides: dict[str, Any] = {}
         if base_url and base_url.strip():
             overrides["base_url"] = base_url.strip()
@@ -142,27 +173,48 @@ def _get_cached_model(model_name: str, base_url: str | None = None, api_key: str
             overrides["api_key"] = api_key.strip()
         model = create_chat_model(name=model_name, **overrides)
         _model_cache[cache_key] = model
-        _model_cache_stats[model_name]["created_at"] = time.time()
         logger.info("📦 模型缓存未命中，创建新实例: %s (overrides=%s)", model_name, list(overrides.keys()) if overrides else "none")
         return model
 
 
 def clear_model_cache() -> None:
     """清空模型缓存（用于配置变更后刷新）"""
-    global _model_cache, _model_cache_stats
+    global _model_cache, _model_cache_meta
     with _model_cache_lock:
         count = len(_model_cache)
         _model_cache.clear()
-        _model_cache_stats.clear()
+        _model_cache_meta.clear()
     logger.info("🗑️ 已清空模型缓存（共 %s 个实例）", count)
 
 
 def get_model_cache_stats() -> dict:
     """获取模型缓存统计信息"""
     with _model_cache_lock:
+        models: dict[str, dict[str, Any]] = defaultdict(
+            lambda: {"hits": 0, "misses": 0, "created_at": 0.0, "last_accessed_at": 0.0, "cache_entries": 0}
+        )
+        entries: dict[str, dict[str, Any]] = {}
+        for cache_key, meta in _model_cache_meta.items():
+            key_str = _format_cache_key(cache_key)
+            entries[key_str] = dict(meta)
+
+            model_name = str(meta.get("model_name") or "")
+            aggregated = models[model_name]
+            aggregated["hits"] += int(meta.get("hits", 0))
+            aggregated["misses"] += int(meta.get("misses", 0))
+            aggregated["cache_entries"] += 1
+
+            created_at = float(meta.get("created_at", 0.0) or 0.0)
+            last_accessed_at = float(meta.get("last_accessed_at", 0.0) or 0.0)
+            if aggregated["created_at"] == 0.0 or (created_at and created_at < aggregated["created_at"]):
+                aggregated["created_at"] = created_at
+            if last_accessed_at > aggregated["last_accessed_at"]:
+                aggregated["last_accessed_at"] = last_accessed_at
+
         return {
             "cache_size": len(_model_cache),
-            "models": {name: stats.copy() for name, stats in _model_cache_stats.items()},
+            "models": {name: stats.copy() for name, stats in models.items()},
+            "entries": entries,
         }
 
 
@@ -285,10 +337,25 @@ class AIService:
         if not updates:
             return llm
 
+        model_copy = getattr(llm, "model_copy", None)
+        if not callable(model_copy):
+            logger.warning(
+                "model_copy 设置运行时参数不可用，降级使用原始模型: model=%s updates=%s",
+                type(llm).__name__,
+                updates,
+            )
+            return llm
+
         try:
-            return llm.model_copy(update=updates)
+            return model_copy(update=updates)
         except Exception as exc:
-            logger.warning("model_copy 设置运行时参数失败，使用原始模型: %s", exc)
+            logger.warning(
+                "model_copy 设置运行时参数失败，降级使用原始模型: model=%s updates=%s error=%s",
+                type(llm).__name__,
+                updates,
+                exc,
+                exc_info=True,
+            )
             return llm
 
     async def _prepare_mcp_tools(self, auto_mcp: bool = True, force_refresh: bool = False) -> list[Any] | None:
@@ -465,10 +532,10 @@ class AIService:
 
             iteration_start = time.time()
 
-            async def _run_single_tool(tc: dict) -> tuple[str, str, Any, bool]:
+            async def _run_single_tool(tool_index: int, tc: dict) -> tuple[str, str, Any, bool]:
                 tool_name = tc.get("name", "unknown")
                 tool_args = tc.get("args", {})
-                tool_id = tc.get("id", f"call_{iteration}_{tool_name}")
+                tool_id = str(tc.get("id") or "").strip() or f"call_{iteration}_{tool_index}_{tool_name}"
                 start = time.time()
                 try:
                     result = await self._execute_tool_call(
@@ -491,7 +558,7 @@ class AIService:
                     return tool_id, tool_name, error_msg, False
 
             results = await asyncio.gather(
-                *[_run_single_tool(tc) for tc in tool_calls],
+                *[_run_single_tool(idx, tc) for idx, tc in enumerate(tool_calls)],
                 return_exceptions=False,
             )
 
@@ -796,6 +863,15 @@ class AIService:
             return candidate
         return cleaned
 
+    @classmethod
+    def clean_json_response(cls, text: str) -> str:
+        """Public wrapper for JSON cleaning.
+
+        Keeps compatibility with existing `_clean_json_response` behavior while
+        avoiding private-method coupling from router/service layers.
+        """
+        return cls._clean_json_response(text)
+
     async def call_with_json_retry(
         self,
         *,
@@ -811,7 +887,7 @@ class AIService:
         for attempt in range(1, max_retries + 1):
             result = await self.generate_text(prompt=prompt, **kwargs)
             raw_content = str(result.get("content") or "")
-            cleaned = self._clean_json_response(raw_content)
+            cleaned = self.clean_json_response(raw_content)
 
             try:
                 data = json.loads(cleaned)
@@ -863,27 +939,12 @@ def create_user_ai_service(
     )
 
 
-def create_user_ai_service_with_mcp(
-    api_provider: str,
-    api_key: str,
-    api_base_url: str,
-    model_name: str,
-    temperature: float,
-    max_tokens: int,
-    system_prompt: str | None = None,
-    user_id: str | None = None,
-    db_session: Any | None = None,
-    enable_mcp: bool = True,
-) -> AIService:
+def create_user_ai_service_with_mcp(*args: Any, **kwargs: Any) -> AIService:
+    """Backward-compatible alias for create_user_ai_service.
+
+    Keeps legacy call-sites working while avoiding duplicated parameter plumbing.
+    """
     return create_user_ai_service(
-        api_provider=api_provider,
-        api_key=api_key,
-        api_base_url=api_base_url,
-        model_name=model_name,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        system_prompt=system_prompt,
-        user_id=user_id,
-        db_session=db_session,
-        enable_mcp=enable_mcp,
+        *args,
+        **kwargs,
     )

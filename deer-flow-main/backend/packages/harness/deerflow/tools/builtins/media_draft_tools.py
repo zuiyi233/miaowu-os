@@ -11,7 +11,7 @@ from langgraph.types import Command
 from langgraph.typing import ContextT
 
 from deerflow.agents.thread_state import ThreadState
-from deerflow.media import draft_media_store
+from deerflow.media import DraftMediaRetention, draft_media_store
 
 logger = logging.getLogger(__name__)
 

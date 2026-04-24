@@ -123,34 +123,32 @@ async def generate_outline(
     if dup["is_duplicate"]:
         return _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.outline")
     base_url = get_base_url()
-    if continue_from:
-        payload: dict[str, Any] = {
-            "project_id": project_id,
-            "chapter_count": chapter_count,
-        }
-        if requirements:
-            payload["requirements"] = requirements
-        try:
-            data = await post_json(f"{base_url}/outlines/continue", payload)
-            return _ok(data, source="novel_migrated.outline_continue")
-        except Exception as exc:
-            logger.error("generate_outline (continue) failed: %s", exc)
-            return _fail(str(exc), source="novel_migrated.outline_continue")
-
-    payload = {
+    payload: dict[str, Any] = {
         "project_id": project_id,
-        "title": "",
-        "content": "",
         "chapter_count": chapter_count,
     }
+    endpoint = f"{base_url}/outlines/continue"
+    source = "novel_migrated.outline_continue"
+
+    if not continue_from:
+        payload.update(
+            {
+                "title": "",
+                "content": "",
+            }
+        )
+        endpoint = f"{base_url}/outlines/project/{project_id}"
+        source = "novel_migrated.outline_create"
+
     if requirements:
         payload["requirements"] = requirements
+
     try:
-        data = await post_json(f"{base_url}/outlines/project/{project_id}", payload)
-        return _ok(data, source="novel_migrated.outline_create")
+        data = await post_json(endpoint, payload)
+        return _ok(data, source=source)
     except Exception as exc:
-        logger.error("generate_outline failed: %s", exc)
-        return _fail(str(exc), source="novel_migrated.outline_create")
+        logger.error("generate_outline failed (%s): %s", source, exc)
+        return _fail(str(exc), source=source)
 
 
 @tool("expand_outline", parse_docstring=True)

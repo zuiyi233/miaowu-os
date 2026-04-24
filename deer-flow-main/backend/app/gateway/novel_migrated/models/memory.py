@@ -1,10 +1,47 @@
 """长期记忆数据模型 - 支持向量检索和剧情分析"""
 import uuid
+from collections.abc import Sequence
+from typing import Any
 
 from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy.orm import validates
 from sqlalchemy.sql import func
 
 from app.gateway.novel_migrated.core.database import Base
+
+
+def _ensure_json_list(value: Any) -> list[Any] | None:
+    """将 JSON 列表字段规范为 list，保持兼容输入。"""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    if isinstance(value, (set, tuple)):
+        return list(value)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return list(value)
+    return [value]
+
+
+def _clamp_number(value: Any, *, minimum: float, maximum: float) -> float | None:
+    if value is None:
+        return None
+    number = float(value)
+    if number < minimum:
+        return minimum
+    if number > maximum:
+        return maximum
+    return number
+
+
+def _normalize_json_object(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return {"items": list(value)}
+    return {"value": value}
 
 
 class StoryMemory(Base):
@@ -61,6 +98,32 @@ class StoryMemory(Base):
         Index("idx_memory_project_type", "project_id", "memory_type"),
         Index("idx_memory_project_timeline", "project_id", "story_timeline"),
     )
+
+    @validates("memory_type")
+    def _validate_memory_type(self, key: str, value: Any) -> str:
+        if value is None:
+            raise ValueError(f"{key} cannot be null")
+        normalized = str(value).strip()
+        if not normalized:
+            raise ValueError(f"{key} cannot be empty")
+        return normalized
+
+    @validates("related_characters", "related_locations", "tags")
+    def _validate_json_list_fields(self, _key: str, value: Any) -> list[Any] | None:
+        return _ensure_json_list(value)
+
+    @validates("importance_score", "foreshadow_strength")
+    def _validate_probability_fields(self, _key: str, value: Any) -> float | None:
+        return _clamp_number(value, minimum=0.0, maximum=1.0)
+
+    @validates("is_foreshadow")
+    def _validate_is_foreshadow(self, key: str, value: Any) -> int | None:
+        if value is None:
+            return None
+        normalized = int(value)
+        if normalized not in (0, 1, 2):
+            raise ValueError(f"{key} must be one of 0/1/2")
+        return normalized
 
     def __repr__(self):
         return f"<StoryMemory(id={self.id[:8]}, type={self.memory_type}, title={self.title})>"
@@ -171,6 +234,33 @@ class PlotAnalysis(Base):
     description_ratio = Column(Float, comment="描写占比 0.0-1.0")
     
     created_at = Column(DateTime, server_default=func.now(), comment="分析时间")
+
+    @validates("conflict_types", "hooks", "foreshadows", "plot_points", "character_states", "scenes", "suggestions")
+    def _validate_json_array_fields(self, _key: str, value: Any) -> list[Any] | None:
+        return _ensure_json_list(value)
+
+    @validates("emotional_curve")
+    def _validate_emotional_curve(self, _key: str, value: Any) -> dict[str, Any] | None:
+        return _normalize_json_object(value)
+
+    @validates("conflict_level")
+    def _validate_conflict_level(self, _key: str, value: Any) -> int | None:
+        if value is None:
+            return None
+        level = int(value)
+        if level < 1:
+            return 1
+        if level > 10:
+            return 10
+        return level
+
+    @validates("overall_quality_score", "pacing_score", "engagement_score", "coherence_score")
+    def _validate_score_fields(self, _key: str, value: Any) -> float | None:
+        return _clamp_number(value, minimum=0.0, maximum=10.0)
+
+    @validates("emotional_intensity", "dialogue_ratio", "description_ratio")
+    def _validate_ratio_fields(self, _key: str, value: Any) -> float | None:
+        return _clamp_number(value, minimum=0.0, maximum=1.0)
     
     def __repr__(self):
         return f"<PlotAnalysis(chapter_id={self.chapter_id[:8]}, stage={self.plot_stage}, quality={self.overall_quality_score})>"

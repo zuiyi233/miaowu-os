@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useCallback } from 'react';
 import { MessageSquare, Sparkles, Network, BarChart3 } from 'lucide-react';
+import { useState, useCallback } from 'react';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useI18n } from '@/core/i18n/hooks';

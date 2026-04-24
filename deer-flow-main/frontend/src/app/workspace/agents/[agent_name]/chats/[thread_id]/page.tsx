@@ -50,7 +50,12 @@ export default function AgentChatPage() {
   const { showNotification } = useNotification();
   const [thread, sendMessage] = useThreadStream({
     threadId: isNewThread ? undefined : threadId,
-    context: { ...settings.context, agent_name: agent_name },
+    context: {
+      ...settings.context,
+      agent_name: agent_name,
+      moduleId: "agent-chat",
+      module_id: "agent-chat",
+    },
     onStart: (createdThreadId) => {
       setThreadId(createdThreadId);
       setIsNewThread(false);
@@ -102,7 +107,11 @@ export default function AgentChatPage() {
 
   const handleSubmit = useCallback(
     (message: PromptInputMessage) => {
-      void sendMessage(threadId, message, { agent_name });
+      void sendMessage(threadId, message, {
+        agent_name,
+        moduleId: "agent-chat",
+        module_id: "agent-chat",
+      });
     },
     [sendMessage, threadId, agent_name],
   );

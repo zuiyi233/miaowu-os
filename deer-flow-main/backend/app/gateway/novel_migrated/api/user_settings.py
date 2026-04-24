@@ -57,6 +57,7 @@ class AiSettingsResponse(BaseModel):
     providers: list[ProviderRecordResponse] = Field(default_factory=list)
     default_provider_id: str | None = None
     client_settings: ClientSettings = Field(default_factory=ClientSettings)
+    feature_routing_settings: dict[str, object] | None = None
 
     # legacy-compatible fields (mirrored from active provider / Settings top-level)
     api_provider: str
@@ -72,6 +73,7 @@ class AiSettingsUpdateRequest(BaseModel):
     providers: list[ProviderRecordUpdate] | None = None
     default_provider_id: str | None = None
     client_settings: ClientSettings | None = None
+    feature_routing_settings: dict[str, object] | None = None
 
     # legacy fields (supported)
     api_provider: str | None = None

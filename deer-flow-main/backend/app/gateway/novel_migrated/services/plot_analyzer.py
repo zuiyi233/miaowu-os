@@ -160,20 +160,16 @@ class PlotAnalyzer:
                 if not accumulated_text or len(accumulated_text.strip()) < 10:
                     logger.warning(f"⚠️ AI响应为空或过短(长度: {len(accumulated_text)}), 尝试 {attempt}/{max_retries}")
                     last_error = "AI响应为空或过短"
-                    if attempt < max_retries:
-                        wait_time = min(2 ** attempt, 10)
-                        logger.info(f"  ⏳ 等待 {wait_time} 秒后重试...")
-                        # 调用重试回调，通知调用方正在重试
-                        if on_retry:
-                            try:
-                                await on_retry(attempt, max_retries, wait_time, last_error)
-                            except Exception as callback_error:
-                                logger.warning(f"⚠️ 重试回调执行失败: {callback_error}")
-                        await asyncio.sleep(wait_time)
-                        continue
-                    else:
-                        logger.error(f"❌ 第{chapter_number}章分析失败: AI响应为空，已达最大重试次数")
+                    if not await self._schedule_retry_or_stop(
+                        chapter_number=chapter_number,
+                        attempt=attempt,
+                        max_retries=max_retries,
+                        on_retry=on_retry,
+                        reason=last_error,
+                        final_error_message=f"❌ 第{chapter_number}章分析失败: AI响应为空，已达最大重试次数",
+                    ):
                         return None
+                    continue
                 
                 # 提取内容
                 response_text = accumulated_text
@@ -193,43 +189,68 @@ class PlotAnalyzer:
                     # JSON解析失败，重试
                     logger.warning(f"⚠️ JSON解析失败, 尝试 {attempt}/{max_retries}")
                     last_error = "JSON解析失败"
-                    if attempt < max_retries:
-                        wait_time = min(2 ** attempt, 10)
-                        logger.info(f"  ⏳ 等待 {wait_time} 秒后重试...")
-                        # 调用重试回调，通知调用方正在重试
-                        if on_retry:
-                            try:
-                                await on_retry(attempt, max_retries, wait_time, last_error)
-                            except Exception as callback_error:
-                                logger.warning(f"⚠️ 重试回调执行失败: {callback_error}")
-                        await asyncio.sleep(wait_time)
-                        continue
-                    else:
-                        logger.error(f"❌ 第{chapter_number}章分析失败: JSON解析错误，已达最大重试次数")
+                    if not await self._schedule_retry_or_stop(
+                        chapter_number=chapter_number,
+                        attempt=attempt,
+                        max_retries=max_retries,
+                        on_retry=on_retry,
+                        reason=last_error,
+                        final_error_message=f"❌ 第{chapter_number}章分析失败: JSON解析错误，已达最大重试次数",
+                    ):
                         return None
+                    continue
                     
             except Exception as e:
                 last_error = str(e)
                 logger.error(f"❌ 章节分析异常(尝试 {attempt}/{max_retries}): {last_error}")
-                
-                if attempt < max_retries:
-                    wait_time = min(2 ** attempt, 10)
-                    logger.info(f"  ⏳ 等待 {wait_time} 秒后重试...")
-                    # 调用重试回调，通知调用方正在重试
-                    if on_retry:
-                        try:
-                            await on_retry(attempt, max_retries, wait_time, last_error)
-                        except Exception as callback_error:
-                            logger.warning(f"⚠️ 重试回调执行失败: {callback_error}")
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    logger.error(f"❌ 第{chapter_number}章分析失败: {last_error}，已达最大重试次数")
+                if not await self._schedule_retry_or_stop(
+                    chapter_number=chapter_number,
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    on_retry=on_retry,
+                    reason=last_error,
+                    final_error_message=f"❌ 第{chapter_number}章分析失败: {last_error}，已达最大重试次数",
+                ):
                     return None
+                continue
         
         # 不应该到达这里，但作为安全措施
         logger.error(f"❌ 第{chapter_number}章分析失败: {last_error}")
         return None
+
+    async def _schedule_retry_or_stop(
+        self,
+        *,
+        chapter_number: int,
+        attempt: int,
+        max_retries: int,
+        on_retry: OnRetryCallback | None,
+        reason: str,
+        final_error_message: str,
+    ) -> bool:
+        """
+        统一处理重试调度，降低 analyze_chapter 内重复逻辑。
+
+        Returns:
+            True: 已安排重试，调用方应 continue
+            False: 已达到最大重试次数，调用方应返回失败
+        """
+        if attempt >= max_retries:
+            logger.error(final_error_message)
+            return False
+
+        wait_time = min(2 ** attempt, 10)
+        logger.info(f"  ⏳ 等待 {wait_time} 秒后重试...")
+
+        if on_retry:
+            try:
+                await on_retry(attempt, max_retries, wait_time, reason)
+            except Exception as callback_error:
+                logger.warning(f"⚠️ 重试回调执行失败: {callback_error}")
+
+        await asyncio.sleep(wait_time)
+        logger.debug("章节分析将执行下一次重试: chapter=%s attempt=%s/%s", chapter_number, attempt + 1, max_retries)
+        return True
     
     def _format_existing_foreshadows(self, foreshadows: list[dict[str, Any]] | None) -> str:
         """

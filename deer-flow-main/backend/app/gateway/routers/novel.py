@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
+
+from app.gateway.novel_migrated.services.novel_query_service import novel_query_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["novel"])
@@ -83,7 +85,7 @@ class NovelStore:
             self._quality_reports = {}
             self._audits = {}
 
-    def _persist_locked(self) -> None:
+    async def _persist_locked(self) -> None:
         payload = {
             "novels": self._novels,
             "chapters": self._chapters,
@@ -98,8 +100,9 @@ class NovelStore:
         }
         self._storage_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self._storage_path.with_suffix(".tmp")
-        tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp_path.replace(self._storage_path)
+        serialized = json.dumps(payload, ensure_ascii=False, indent=2)
+        await asyncio.to_thread(tmp_path.write_text, serialized, encoding="utf-8")
+        await asyncio.to_thread(tmp_path.replace, self._storage_path)
 
     @staticmethod
     def _extract_author(payload: dict[str, Any] | None) -> str | None:
@@ -129,7 +132,7 @@ class NovelStore:
             "entityId": entity_id,
             "author": author or "system",
             "details": details or {},
-            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "createdAt": datetime.now(UTC).isoformat(),
         }
         self._audits.setdefault(novel_id, []).append(entry)
         return entry
@@ -199,7 +202,7 @@ class NovelStore:
     async def create_novel(self, data: dict) -> dict:
         async with self._lock:
             novel_id = data.get("id") or f"novel-{uuid.uuid4().hex[:12]}"
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             novel = {
                 "id": novel_id,
                 "title": data.get("title", "Untitled"),
@@ -220,7 +223,7 @@ class NovelStore:
                 author=self._extract_author(data),
                 details={"title": novel.get("title"), "version": novel.get("version", 1)},
             )
-            self._persist_locked()
+            await self._persist_locked()
             return novel
 
     async def update_novel(self, novel_id: str, updates: dict) -> dict | None:
@@ -230,7 +233,7 @@ class NovelStore:
                 return None
             sanitized_updates = {k: v for k, v in updates.items() if k != "id"}
             novel.update(sanitized_updates)
-            novel["updatedAt"] = datetime.now(timezone.utc).isoformat()
+            novel["updatedAt"] = datetime.now(UTC).isoformat()
             novel["version"] = novel.get("version", 1) + 1
             self._record_audit_locked(
                 novel_id=novel_id,
@@ -240,7 +243,7 @@ class NovelStore:
                 author=self._extract_author(updates),
                 details={"updatedFields": sorted(sanitized_updates.keys()), "version": novel["version"]},
             )
-            self._persist_locked()
+            await self._persist_locked()
             return novel
 
     async def delete_novel(self, novel_id: str) -> bool:
@@ -276,7 +279,7 @@ class NovelStore:
             self._recommendations.pop(novel_id, None)
             self._interactions.pop(novel_id, None)
             self._quality_reports.pop(novel_id, None)
-            self._persist_locked()
+            await self._persist_locked()
             return True
 
     # -- Chapter CRUD --
@@ -290,12 +293,12 @@ class NovelStore:
     async def get_chapter(self, chapter_id: str) -> dict | None:
         return self._chapters.get(chapter_id)
 
-    async def create_chapter(self, novel_id: str, data: dict) -> dict:
+    async def create_chapter(self, novel_id: str, data: dict, *, idempotency_key: str | None = None) -> dict:
         async with self._lock:
             if novel_id not in self._novels:
                 raise HTTPException(status_code=404, detail="Novel not found")
             chapter_id = data.get("id") or f"chapter-{uuid.uuid4().hex[:12]}"
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             chapter = {
                 "id": chapter_id,
                 "novelId": novel_id,
@@ -317,19 +320,19 @@ class NovelStore:
                 entity_type="chapter",
                 entity_id=chapter_id,
                 author=self._extract_author(data),
-                details={"title": chapter.get("title"), "order": chapter.get("order", 0)},
+                details={"title": chapter.get("title"), "order": chapter.get("order", 0), "idempotencyKey": idempotency_key},
             )
-            self._persist_locked()
+            await self._persist_locked()
             return chapter
 
-    async def update_chapter(self, novel_id: str, chapter_id: str, updates: dict) -> dict | None:
+    async def update_chapter(self, novel_id: str, chapter_id: str, updates: dict, *, idempotency_key: str | None = None) -> dict | None:
         async with self._lock:
             chapter = self._chapters.get(chapter_id)
             if not chapter or chapter.get("novelId") != novel_id:
                 return None
-            updates = {k: v for k, v in updates.items() if k not in {"id", "novelId"}}
+            updates = {k: v for k, v in updates.items() if k not in {"id", "novelId", "idempotencyKey", "idempotency_key"}}
             chapter.update(updates)
-            chapter["updatedAt"] = datetime.now(timezone.utc).isoformat()
+            chapter["updatedAt"] = datetime.now(UTC).isoformat()
             chapter["version"] = chapter.get("version", 1) + 1
             self._record_audit_locked(
                 novel_id=novel_id,
@@ -337,12 +340,12 @@ class NovelStore:
                 entity_type="chapter",
                 entity_id=chapter_id,
                 author=self._extract_author(updates),
-                details={"updatedFields": sorted(updates.keys()), "version": chapter["version"]},
+                details={"updatedFields": sorted(updates.keys()), "version": chapter["version"], "idempotencyKey": idempotency_key},
             )
-            self._persist_locked()
+            await self._persist_locked()
             return chapter
 
-    async def delete_chapter(self, novel_id: str, chapter_id: str) -> bool:
+    async def delete_chapter(self, novel_id: str, chapter_id: str, *, idempotency_key: str | None = None) -> bool:
         async with self._lock:
             chapter = self._chapters.get(chapter_id)
             if chapter and chapter.get("novelId") == novel_id:
@@ -351,10 +354,10 @@ class NovelStore:
                     action="chapter.delete",
                     entity_type="chapter",
                     entity_id=chapter_id,
-                    details={"title": chapter.get("title")},
+                    details={"title": chapter.get("title"), "idempotencyKey": idempotency_key},
                 )
                 del self._chapters[chapter_id]
-                self._persist_locked()
+                await self._persist_locked()
                 return True
             return False
 
@@ -378,7 +381,7 @@ class NovelStore:
             if novel_id not in self._novels:
                 raise HTTPException(status_code=404, detail="Novel not found")
             entity_id = data.get("id") or f"entity-{uuid.uuid4().hex[:12]}"
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             entity = {
                 "id": entity_id,
                 "novelId": novel_id,
@@ -400,7 +403,7 @@ class NovelStore:
                 author=self._extract_author(data),
                 details={"name": entity.get("name"), "type": entity.get("type")},
             )
-            self._persist_locked()
+            await self._persist_locked()
             return entity
 
     async def update_entity(self, novel_id: str, entity_id: str, updates: dict) -> dict | None:
@@ -410,7 +413,7 @@ class NovelStore:
                 return None
             updates = {k: v for k, v in updates.items() if k not in {"id", "novelId"}}
             entity.update(updates)
-            entity["updatedAt"] = datetime.now(timezone.utc).isoformat()
+            entity["updatedAt"] = datetime.now(UTC).isoformat()
             entity["version"] = entity.get("version", 1) + 1
             self._record_audit_locked(
                 novel_id=novel_id,
@@ -420,7 +423,7 @@ class NovelStore:
                 author=self._extract_author(updates),
                 details={"updatedFields": sorted(updates.keys()), "version": entity["version"]},
             )
-            self._persist_locked()
+            await self._persist_locked()
             return entity
 
     async def update_entity_by_id(self, entity_id: str, updates: dict) -> dict | None:
@@ -433,7 +436,7 @@ class NovelStore:
                 return None
             updates = {k: v for k, v in updates.items() if k not in {"id", "novelId"}}
             entity.update(updates)
-            entity["updatedAt"] = datetime.now(timezone.utc).isoformat()
+            entity["updatedAt"] = datetime.now(UTC).isoformat()
             entity["version"] = entity.get("version", 1) + 1
             self._record_audit_locked(
                 novel_id=novel_id,
@@ -443,7 +446,7 @@ class NovelStore:
                 author=self._extract_author(updates),
                 details={"updatedFields": sorted(updates.keys()), "version": entity["version"]},
             )
-            self._persist_locked()
+            await self._persist_locked()
             return dict(entity)
 
     async def delete_entity(self, novel_id: str, entity_id: str) -> bool:
@@ -458,7 +461,7 @@ class NovelStore:
                     details={"name": entity.get("name"), "type": entity.get("type")},
                 )
                 del self._entities[entity_id]
-                self._persist_locked()
+                await self._persist_locked()
                 return True
             return False
 
@@ -482,7 +485,7 @@ class NovelStore:
                 "relatedEntityIds": data.get("relatedEntityIds", []),
                 "relatedChapterId": data.get("relatedChapterId"),
                 "type": data.get("type", "plot"),
-                "createdAt": datetime.now(timezone.utc).isoformat(),
+                "createdAt": datetime.now(UTC).isoformat(),
             }
             self._timeline.setdefault(novel_id, []).append(event)
             self._record_audit_locked(
@@ -493,7 +496,7 @@ class NovelStore:
                 author=self._extract_author(data),
                 details={"title": event.get("title"), "type": event.get("type")},
             )
-            self._persist_locked()
+            await self._persist_locked()
             return event
 
     async def update_timeline_event(self, novel_id: str, event_id: str, updates: dict) -> dict | None:
@@ -511,7 +514,7 @@ class NovelStore:
                         author=self._extract_author(updates),
                         details={"updatedFields": sorted(updates.keys())},
                     )
-                    self._persist_locked()
+                    await self._persist_locked()
                     return event
             return None
 
@@ -528,7 +531,7 @@ class NovelStore:
                     entity_type="timeline",
                     entity_id=event_id,
                 )
-                self._persist_locked()
+                await self._persist_locked()
             return deleted
 
     # -- Graph layout --
@@ -538,7 +541,7 @@ class NovelStore:
 
     async def save_graph(self, novel_id: str, data: dict) -> dict:
         async with self._lock:
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             is_create = novel_id not in self._graphs
             graph = {
                 "id": data.get("id", novel_id),
@@ -556,7 +559,7 @@ class NovelStore:
                 author=self._extract_author(data),
                 details={"nodeCount": len(graph.get("nodePositions", {})), "isLocked": graph.get("isLocked", False)},
             )
-            self._persist_locked()
+            await self._persist_locked()
             return graph
 
     # -- Recommendations --
@@ -583,7 +586,7 @@ class NovelStore:
                 "reason": "基于章节数量分析，情节节奏可能需要新的张力点。",
                 "targetType": "chapter",
                 "priority": "medium",
-                "createdAt": datetime.now(timezone.utc).isoformat(),
+                "createdAt": datetime.now(UTC).isoformat(),
             })
 
         if len(characters) >= 3:
@@ -595,7 +598,7 @@ class NovelStore:
                 "reason": "多角色小说容易出现动机不一致问题。",
                 "targetType": "character",
                 "priority": "low",
-                "createdAt": datetime.now(timezone.utc).isoformat(),
+                "createdAt": datetime.now(UTC).isoformat(),
             })
 
         recommendations.append({
@@ -606,7 +609,7 @@ class NovelStore:
             "reason": "节奏断点会降低读者沉浸感。",
             "targetType": "chapter",
             "priority": "medium",
-            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "createdAt": datetime.now(UTC).isoformat(),
         })
 
         async with self._lock:
@@ -618,7 +621,7 @@ class NovelStore:
                 author=self._extract_author(context),
                 details={"generatedCount": len(recommendations)},
             )
-            self._persist_locked()
+            await self._persist_locked()
         return recommendations
 
     async def accept_recommendation(self, novel_id: str, rec_id: str) -> dict | None:
@@ -634,7 +637,7 @@ class NovelStore:
                         entity_id=rec_id,
                         details={"title": rec.get("title")},
                     )
-                    self._persist_locked()
+                    await self._persist_locked()
                     return rec
             return None
 
@@ -648,7 +651,7 @@ class NovelStore:
             if novel_id not in self._novels:
                 raise HTTPException(status_code=404, detail="Novel not found")
             interaction_id = data.get("id") or f"interaction-{uuid.uuid4().hex[:12]}"
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             interaction = {
                 "id": interaction_id,
                 "novelId": novel_id,
@@ -674,7 +677,7 @@ class NovelStore:
                 author=self._extract_author(data),
                 details={"type": interaction.get("type"), "status": interaction.get("status")},
             )
-            self._persist_locked()
+            await self._persist_locked()
             return interaction
 
     async def update_interaction(self, novel_id: str, interaction_id: str, updates: dict) -> dict | None:
@@ -684,7 +687,7 @@ class NovelStore:
                 if interaction["id"] == interaction_id and interaction.get("novelId") == novel_id:
                     updates = {k: v for k, v in updates.items() if k not in {"id", "novelId"}}
                     interaction.update(updates)
-                    interaction["updatedAt"] = datetime.now(timezone.utc).isoformat()
+                    interaction["updatedAt"] = datetime.now(UTC).isoformat()
                     self._record_audit_locked(
                         novel_id=novel_id,
                         action="interaction.update",
@@ -693,7 +696,7 @@ class NovelStore:
                         author=self._extract_author(updates),
                         details={"updatedFields": sorted(updates.keys()), "status": interaction.get("status")},
                     )
-                    self._persist_locked()
+                    await self._persist_locked()
                     return interaction
             return None
 
@@ -712,7 +715,7 @@ class NovelStore:
                     entity_type="interaction",
                     entity_id=interaction_id,
                 )
-                self._persist_locked()
+                await self._persist_locked()
             return deleted
 
     # -- Quality report --
@@ -760,11 +763,11 @@ class NovelStore:
                 "timelineEventCount": len(timeline),
             },
             "issues": issues,
-            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "generatedAt": datetime.now(UTC).isoformat(),
         }
         async with self._lock:
             self._quality_reports[novel_id] = report
-            self._persist_locked()
+            await self._persist_locked()
         return report
 
 
@@ -852,6 +855,43 @@ def _convert_messages(raw: list[ChatMessage]) -> list:
     return result
 
 
+_IDEMPOTENCY_BODY_KEYS = ("idempotencyKey", "idempotency_key")
+_IDEMPOTENCY_HEADER_KEYS = ("x-idempotency-key", "idempotency-key")
+
+
+def _normalize_idempotency_key(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _extract_idempotency_key(request: Request, payload: dict[str, Any] | None = None) -> str | None:
+    for key in _IDEMPOTENCY_HEADER_KEYS:
+        normalized = _normalize_idempotency_key(request.headers.get(key))
+        if normalized:
+            return normalized
+
+    if payload:
+        for key in _IDEMPOTENCY_BODY_KEYS:
+            normalized = _normalize_idempotency_key(payload.get(key))
+            if normalized:
+                return normalized
+
+    for key in _IDEMPOTENCY_BODY_KEYS:
+        normalized = _normalize_idempotency_key(request.query_params.get(key))
+        if normalized:
+            return normalized
+
+    return None
+
+
+def _strip_idempotency_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    if not payload:
+        return {}
+    return {k: v for k, v in payload.items() if k not in _IDEMPOTENCY_BODY_KEYS}
+
+
 # ---------------------------------------------------------------------------
 # Novel CRUD endpoints
 # ---------------------------------------------------------------------------
@@ -862,57 +902,7 @@ def _convert_messages(raw: list[ChatMessage]) -> list:
 async def list_novels(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)):
     """List novels with pagination, merging legacy and modern store results."""
     legacy_result = await _novel_store.list_novels(page=page, page_size=page_size)
-
-    modern_items: list[dict] = []
-    try:
-        from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
-        from app.gateway.novel_migrated.models.project import Project
-        from sqlalchemy import select
-
-        await init_db_schema()
-        async with AsyncSessionLocal() as modern_db:
-            result = await modern_db.execute(select(Project).order_by(Project.created_at.desc()))
-            projects = result.scalars().all()
-            for p in projects:
-                modern_items.append({
-                    "id": p.id,
-                    "title": p.title,
-                    "outline": p.description or "",
-                    "coverImage": p.cover_image_url,
-                    "metadata": {
-                        "genre": p.genre or "",
-                        "theme": p.theme or "",
-                        "status": p.status or "",
-                        "target_words": p.target_words or 0,
-                        "source": "novel_migrated.projects",
-                    },
-                    "volumesCount": 0,
-                    "chaptersCount": p.chapter_count or 0,
-                    "wordCount": p.current_words or 0,
-                    "createdAt": p.created_at.isoformat() if p.created_at else None,
-                    "updatedAt": p.updated_at.isoformat() if p.updated_at else None,
-                })
-    except Exception as exc:
-        logger.debug("list_novels: modern store query skipped (%s)", exc)
-
-    if not modern_items:
-        return legacy_result
-
-    legacy_items = legacy_result.get("items", []) if isinstance(legacy_result, dict) else []
-    legacy_ids = {str(item.get("id", "")) for item in legacy_items if isinstance(item, dict)}
-    legacy_titles = {str(item.get("title", "")) for item in legacy_items if isinstance(item, dict)}
-
-    merged = list(legacy_items)
-    for mi in modern_items:
-        if str(mi.get("id", "")) not in legacy_ids and str(mi.get("title", "")) not in legacy_titles:
-            merged.append(mi)
-
-    merged.sort(key=lambda x: x.get("updatedAt") or x.get("createdAt") or "", reverse=True)
-
-    total = len(merged)
-    start = (page - 1) * page_size
-    end = start + page_size
-    return {"items": merged[start:end], "total": total, "page": page, "page_size": page_size}
+    return await novel_query_service.list_novels(legacy_result=legacy_result, page=page, page_size=page_size)
 
 
 @router.get("/novels/{novel_id}")
@@ -924,9 +914,10 @@ async def get_novel(novel_id: str):
         return novel
 
     try:
+        from sqlalchemy import select
+
         from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
         from app.gateway.novel_migrated.models.project import Project
-        from sqlalchemy import select
 
         await init_db_schema()
         async with AsyncSessionLocal() as modern_db:
@@ -1015,7 +1006,8 @@ async def get_chapter(novel_id: str, chapter_id: str):
 async def create_chapter(novel_id: str, request: Request):
     """Create a new chapter."""
     data = await request.json()
-    return await _novel_store.create_chapter(novel_id, data)
+    idempotency_key = _extract_idempotency_key(request, data)
+    return await _novel_store.create_chapter(novel_id, _strip_idempotency_fields(data), idempotency_key=idempotency_key)
 
 
 @router.put("/novels/{novel_id}/chapters/{chapter_id}")
@@ -1023,7 +1015,8 @@ async def create_chapter(novel_id: str, request: Request):
 async def update_chapter(novel_id: str, chapter_id: str, request: Request):
     """Update a chapter's content."""
     data = await request.json()
-    chapter = await _novel_store.update_chapter(novel_id, chapter_id, data)
+    idempotency_key = _extract_idempotency_key(request, data)
+    chapter = await _novel_store.update_chapter(novel_id, chapter_id, _strip_idempotency_fields(data), idempotency_key=idempotency_key)
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
     return chapter
@@ -1031,9 +1024,10 @@ async def update_chapter(novel_id: str, chapter_id: str, request: Request):
 
 @router.delete("/novels/{novel_id}/chapters/{chapter_id}")
 @router.delete("/novel/novels/{novel_id}/chapters/{chapter_id}", deprecated=True)
-async def delete_chapter(novel_id: str, chapter_id: str):
+async def delete_chapter(novel_id: str, chapter_id: str, request: Request):
     """Delete a chapter."""
-    ok = await _novel_store.delete_chapter(novel_id, chapter_id)
+    idempotency_key = _extract_idempotency_key(request)
+    ok = await _novel_store.delete_chapter(novel_id, chapter_id, idempotency_key=idempotency_key)
     if not ok:
         raise HTTPException(status_code=404, detail="Chapter not found")
     return {"deleted": True}
@@ -1288,3 +1282,4 @@ async def chat(request: ChatRequest, fastapi_request: Request, novel_id: str | N
             yield {"event": "error", "data": json.dumps({"error": "Stream interrupted"})}
 
     return EventSourceResponse(event_generator())
+

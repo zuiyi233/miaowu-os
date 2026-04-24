@@ -24,15 +24,15 @@ import { useNovelStore } from '@/core/novel';
 import { useMediaQuery } from '@/core/novel/useMediaQuery';
 
 import { AiPanel } from './AiPanel';
+import { CareersView } from './CareersView';
 import { NovelEditor } from './Editor';
+import { ForeshadowsView } from './ForeshadowsView';
 import { NovelSelector } from './NovelSelector';
 import { OutlineView } from './outline/OutlineView';
 import { ReaderWorkspaceView } from './reader/ReaderWorkspaceView';
 import { RelationshipGraph } from './RelationshipGraph';
 import { NovelSettings } from './settings/NovelSettings';
 import { TimelineView } from './timeline/TimelineView';
-import { CareersView } from './CareersView';
-import { ForeshadowsView } from './ForeshadowsView';
 
 export function NovelWorkspace({ novelId }: { novelId: string }) {
   const { t } = useI18n();

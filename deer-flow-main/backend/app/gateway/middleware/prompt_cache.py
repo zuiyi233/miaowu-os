@@ -36,6 +36,7 @@ logger = get_logger(__name__)
 _ENABLE_PROMPT_CACHE_ENV = "ENABLE_PROMPT_CACHE"
 _TTL_ENV = "PROMPT_CACHE_TTL"
 _MAX_ENTRIES_ENV = "PROMPT_CACHE_MAX_ENTRIES"
+_MAX_REQUEST_BYTES_ENV = "PROMPT_CACHE_MAX_REQUEST_BYTES"
 
 
 @dataclass
@@ -75,11 +76,13 @@ class PromptCacheMiddleware(BaseHTTPMiddleware):
         self._cache: dict[str, CacheEntry] = {}
         self._stats = {"hits": 0, "misses": 0}
         self._enabled = os.getenv(_ENABLE_PROMPT_CACHE_ENV, "true").lower() in ("1", "true", "yes")
+        self._max_request_bytes = int(os.getenv(_MAX_REQUEST_BYTES_ENV, str(2 * 1024 * 1024)))
         logger.info(
-            "PromptCacheMiddleware initialized: enabled=%s, ttl=%ds, max_entries=%d",
+            "PromptCacheMiddleware initialized: enabled=%s, ttl=%ds, max_entries=%d, max_request_bytes=%d",
             self._enabled,
             self.ttl,
             self.max_entries,
+            self._max_request_bytes,
         )
 
     @property
@@ -120,6 +123,8 @@ class PromptCacheMiddleware(BaseHTTPMiddleware):
             HTTP response (cached or fresh)
         """
         if not self._should_cache(request):
+            return await call_next(request)
+        if not self._is_safe_body_read_request(request):
             return await call_next(request)
 
         body = b""
@@ -191,8 +196,75 @@ class PromptCacheMiddleware(BaseHTTPMiddleware):
         if marker in {"bypass", "skip", "no-store"}:
             return True
 
+        content_type = (response.headers.get("content-type") or "").strip().lower()
+        if "text/event-stream" in content_type:
+            return True
+
         cache_control = (response.headers.get("Cache-Control") or "").strip().lower()
         return "no-store" in cache_control
+
+    @staticmethod
+    def _header_value(request: Request, key: str) -> str:
+        headers = getattr(request, "headers", None)
+        if headers is None:
+            return ""
+        getter = getattr(headers, "get", None)
+        if not callable(getter):
+            return ""
+        value = getter(key)
+        if isinstance(value, str):
+            return value
+        return ""
+
+    def _is_safe_body_read_request(self, request: Request) -> bool:
+        """Read request body only for safe JSON scenarios (M-22)."""
+        content_type = self._header_value(request, "content-type").lower()
+        if content_type and "json" not in content_type:
+            return False
+
+        transfer_encoding = self._header_value(request, "transfer-encoding").lower()
+        if "chunked" in transfer_encoding:
+            return False
+
+        content_length = self._header_value(request, "content-length").strip()
+        if content_length:
+            try:
+                if int(content_length) > self._max_request_bytes:
+                    return False
+            except ValueError:
+                return False
+
+        return True
+
+    @staticmethod
+    def _to_json_compatible(value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, list):
+            return [PromptCacheMiddleware._to_json_compatible(item) for item in value]
+        if isinstance(value, tuple):
+            return [PromptCacheMiddleware._to_json_compatible(item) for item in value]
+        if isinstance(value, dict):
+            return {
+                str(key): PromptCacheMiddleware._to_json_compatible(item)
+                for key, item in value.items()
+            }
+        return str(value)
+
+    @staticmethod
+    def _normalize_context_for_key(data: dict[str, Any]) -> dict[str, Any]:
+        context = data.get("context")
+        if not isinstance(context, dict):
+            context = {}
+
+        return {
+            "context": PromptCacheMiddleware._to_json_compatible(context),
+            "thread_id": PromptCacheMiddleware._to_json_compatible(data.get("thread_id") or data.get("threadId")),
+            "conversation_id": PromptCacheMiddleware._to_json_compatible(
+                data.get("conversation_id") or data.get("conversationId")
+            ),
+            "workspace_id": PromptCacheMiddleware._to_json_compatible(data.get("workspace_id") or data.get("workspaceId")),
+        }
 
     def _compute_cache_key(self, data: dict[str, Any]) -> str:
         """Generate SHA256 hash key from normalized request data.
@@ -211,6 +283,7 @@ class PromptCacheMiddleware(BaseHTTPMiddleware):
             "model": data.get("provider_config", {}).get("model_name", ""),
             "temperature": round(data.get("provider_config", {}).get("temperature", 0.7), 2),
             "max_tokens": data.get("provider_config", {}).get("max_tokens", 2000),
+            "routing_context": self._normalize_context_for_key(data),
         }
 
         serialized = json.dumps(normalized, sort_keys=True, ensure_ascii=False)

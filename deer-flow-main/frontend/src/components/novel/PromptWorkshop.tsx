@@ -1,23 +1,31 @@
 'use client';
 
+import { Sparkles, Heart, Download, Eye, RefreshCw, Trash2, Plus } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
-import { Sparkles, Heart, Download, Eye, RefreshCw, Trash2, Plus } from 'lucide-react';
 
+import {
+  buildPromptTemplateCreatePayload,
+  buildPromptTemplateDeleteUrl,
+  buildPromptTemplatesUrl,
+  buildPromptWorkshopItemsUrl,
+  buildPromptWorkshopLikeUrl,
+  extractPromptTemplates,
+  extractWorkshopItems,
+} from '@/components/novel/prompt-workshop-api';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
   SelectContent,
@@ -26,11 +34,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Switch } from '@/components/ui/switch';
-import { Separator } from '@/components/ui/separator';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { cn } from '@/lib/utils';
+import { Textarea } from '@/components/ui/textarea';
 import { getBackendBaseURL } from '@/core/config';
+import { cn } from '@/lib/utils';
 
 interface PromptTemplate {
   id: string; template_name: string; template_content: string;
@@ -40,6 +46,16 @@ interface PromptTemplate {
 
 interface PromptWorkshopProps {
   projectId?: string;
+}
+
+function pickString(source: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 export function PromptWorkshop({ projectId }: PromptWorkshopProps) {
@@ -58,36 +74,44 @@ export function PromptWorkshop({ projectId }: PromptWorkshopProps) {
   const loadCommunity = useCallback(async () => {
     try {
       setLoading(true);
-      const params = new URLSearchParams();
-      if (searchTerm) params.set('q', searchTerm);
-      if (categoryFilter !== 'all') params.set('category', categoryFilter);
-      const res = await fetch(`${backendBase}/api/prompts/community?${params}`, { credentials: 'include' });
-      if (res.ok) setItems(((await res.json()).items || []).map(normalize));
+      const res = await fetch(
+        buildPromptWorkshopItemsUrl(backendBase, { searchTerm, categoryFilter }),
+        { credentials: 'include' },
+      );
+      if (res.ok) {
+        const payload = await res.json();
+        setItems(extractWorkshopItems(payload).map(normalize));
+      }
     } catch {} finally { setLoading(false); }
   }, [backendBase, searchTerm, categoryFilter]);
 
   const loadMyPrompts = useCallback(async () => {
     try {
-      const res = await fetch(`${backendBase}/api/prompts/mine?project_id=${projectId || ''}`, { credentials: 'include' });
-      if (res.ok) setMyItems(((await res.json()).items || []).map(normalize));
+      const res = await fetch(buildPromptTemplatesUrl(backendBase), { credentials: 'include' });
+      if (res.ok) {
+        const payload = await res.json();
+        setMyItems(extractPromptTemplates(payload).map(normalize));
+      }
     } catch {}
-  }, [backendBase, projectId]);
+  }, [backendBase]);
 
   useEffect(() => { if (tab === 'community') loadCommunity(); else loadMyPrompts(); }, [tab, loadCommunity, loadMyPrompts]);
 
   const normalize = (t: Record<string, unknown>): PromptTemplate => ({
-    id: String(t.id), template_name: String(t.template_name || t.name || ''),
-    template_content: String(t.template_content || t.content || ''),
-    description: String(t.description || ''), category: String(t.category || 'general'),
-    parameters: t.parameters ? String(t.parameters) : undefined,
+    id: pickString(t, 'template_key', 'id') ?? '',
+    template_name: pickString(t, 'template_name', 'name') ?? '',
+    template_content: pickString(t, 'template_content', 'prompt_content', 'content') ?? '',
+    description: pickString(t, 'description') ?? '',
+    category: pickString(t, 'category') ?? 'general',
+    parameters: pickString(t, 'parameters'),
     is_active: Boolean(t.is_active ?? true), is_system_default: Boolean(t.is_system_default),
   });
 
   const handleCreate = async () => {
     try {
-      const res = await fetch(`${backendBase}/api/prompts`, {
+      const res = await fetch(buildPromptTemplatesUrl(backendBase), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ ...form, project_id: projectId }),
+        body: JSON.stringify(buildPromptTemplateCreatePayload(form, projectId)),
       });
       if (!res.ok) throw new Error('创建失败');
       toast.success('Prompt已创建'); setIsCreateOpen(false);
@@ -97,7 +121,7 @@ export function PromptWorkshop({ projectId }: PromptWorkshopProps) {
 
   const handleToggleFavorite = async (id: string) => {
     try {
-      await fetch(`${backendBase}/api/prompts/${id}/favorite`, { method: 'POST', credentials: 'include' });
+      await fetch(buildPromptWorkshopLikeUrl(backendBase, id), { method: 'POST', credentials: 'include' });
       loadCommunity();
     } catch {}
   };
@@ -105,7 +129,11 @@ export function PromptWorkshop({ projectId }: PromptWorkshopProps) {
   const handleDelete = async (id: string) => {
     if (!window.confirm('确定删除该模板吗？')) return;
     try {
-      const res = await fetch(`${backendBase}/api/prompts/${id}`, { method: 'DELETE', credentials: 'include' });
+      const template = myItems.find((item) => item.id === id);
+      const res = await fetch(buildPromptTemplateDeleteUrl(backendBase, template?.id || id), {
+        method: 'DELETE',
+        credentials: 'include',
+      });
       if (!res.ok) throw new Error('删除失败'); toast.success('已删除'); loadMyPrompts();
     } catch (err) { toast.error(err instanceof Error ? err.message : '删除失败'); }
   };

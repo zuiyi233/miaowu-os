@@ -1,81 +1,83 @@
 """章节上下文构建服务 - 实现RTCO框架的智能上下文构建"""
-from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, List
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
-import json
+# ruff: noqa: E701, UP006, UP035, UP045
 
-from app.gateway.novel_migrated.models.chapter import Chapter
-from app.gateway.novel_migrated.models.project import Project
-from app.gateway.novel_migrated.models.outline import Outline
-from app.gateway.novel_migrated.models.character import Character
+import json
+from dataclasses import dataclass, field
+from typing import Any, ClassVar, Dict, List, Optional
+
+from sqlalchemy import or_, select
+
+from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.career import Career, CharacterCareer
+from app.gateway.novel_migrated.models.chapter import Chapter
+from app.gateway.novel_migrated.models.character import Character
 from app.gateway.novel_migrated.models.memory import StoryMemory
 from app.gateway.novel_migrated.models.relationship import CharacterRelationship, Organization, OrganizationMember
-from app.gateway.novel_migrated.core.logger import get_logger
 
 logger = get_logger(__name__)
 
 
 @dataclass
-class OneToManyContext:
+class BaseChapterContext:
+    chapter_outline: str = ""
+    target_word_count: int = 3000
+    narrative_perspective: str = "第三人称"
+    chapter_number: int = 1
+    chapter_title: str = ""
+    title: str = ""
+    genre: str = ""
+    theme: str = ""
+    chapter_characters: str = ""
+    chapter_careers: Optional[str] = None
+    foreshadow_reminders: Optional[str] = None
+    relevant_memories: Optional[str] = None
+    context_stats: Dict[str, Any] = field(default_factory=dict)
+
+    _LENGTH_FIELDS: ClassVar[tuple[str, ...]] = ()
+
+    def get_total_context_length(self) -> int:
+        total = 0
+        for field_name in self._LENGTH_FIELDS:
+            field_value = getattr(self, field_name, None)
+            if field_value:
+                total += len(field_value)
+        return total
+
+
+@dataclass
+class OneToManyContext(BaseChapterContext):
     chapter_outline: str = ""
     recent_chapters_context: Optional[str] = None
     continuation_point: Optional[str] = None
     previous_chapter_summary: Optional[str] = None
     previous_chapter_events: Optional[List[str]] = None
-    target_word_count: int = 3000
-    narrative_perspective: str = "第三人称"
-    chapter_number: int = 1
-    chapter_title: str = ""
-    title: str = ""
-    genre: str = ""
-    theme: str = ""
-    chapter_characters: str = ""
-    chapter_careers: Optional[str] = None
     emotional_tone: str = ""
-    relevant_memories: Optional[str] = None
-    foreshadow_reminders: Optional[str] = None
-    context_stats: Dict[str, Any] = field(default_factory=dict)
-
-    def get_total_context_length(self) -> int:
-        total = 0
-        for fn in ['chapter_outline', 'recent_chapters_context', 'continuation_point',
-                    'chapter_characters', 'chapter_careers', 'relevant_memories',
-                    'foreshadow_reminders', 'previous_chapter_summary']:
-            v = getattr(self, fn, None)
-            if v:
-                total += len(v)
-        return total
+    _LENGTH_FIELDS: ClassVar[tuple[str, ...]] = (
+        "chapter_outline",
+        "recent_chapters_context",
+        "continuation_point",
+        "chapter_characters",
+        "chapter_careers",
+        "relevant_memories",
+        "foreshadow_reminders",
+        "previous_chapter_summary",
+    )
 
 
 @dataclass
-class OneToOneContext:
+class OneToOneContext(BaseChapterContext):
     chapter_outline: str = ""
-    target_word_count: int = 3000
-    narrative_perspective: str = "第三人称"
-    chapter_number: int = 1
-    chapter_title: str = ""
-    title: str = ""
-    genre: str = ""
-    theme: str = ""
     continuation_point: Optional[str] = None
     previous_chapter_summary: Optional[str] = None
-    chapter_characters: str = ""
-    chapter_careers: Optional[str] = None
-    foreshadow_reminders: Optional[str] = None
-    relevant_memories: Optional[str] = None
-    context_stats: Dict[str, Any] = field(default_factory=dict)
-
-    def get_total_context_length(self) -> int:
-        total = 0
-        for fn in ['chapter_outline', 'continuation_point', 'previous_chapter_summary',
-                    'chapter_characters', 'chapter_careers', 'foreshadow_reminders',
-                    'relevant_memories']:
-            v = getattr(self, fn, None)
-            if v:
-                total += len(v)
-        return total
+    _LENGTH_FIELDS: ClassVar[tuple[str, ...]] = (
+        "chapter_outline",
+        "continuation_point",
+        "previous_chapter_summary",
+        "chapter_characters",
+        "chapter_careers",
+        "foreshadow_reminders",
+        "relevant_memories",
+    )
 
 
 class OneToManyContextBuilder:

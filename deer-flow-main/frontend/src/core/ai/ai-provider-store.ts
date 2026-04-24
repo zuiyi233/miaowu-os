@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import { decryptApiKeyWithStatus } from "./crypto";
+import type { AiFeatureRoutingState } from "./feature-routing";
 import {
   fetchUserAiSettings,
   putUserAiSettings,
@@ -40,6 +41,7 @@ export interface AiGlobalSettings {
   enableStreamMode: boolean;
   requestTimeout: number;
   maxRetries: number;
+  featureRoutingSettings: AiFeatureRoutingState | null;
 }
 
 interface AiSettingsState {
@@ -62,6 +64,9 @@ interface AiSettingsState {
   refreshFromServer: () => Promise<void>;
   resetDraftToEffective: () => void;
   saveDraftToServer: () => Promise<void>;
+  saveFeatureRoutingToServer: (
+    featureRoutingSettings: AiFeatureRoutingState | null
+  ) => Promise<AiFeatureRoutingState | null>;
 
   addProvider: (provider: AiProviderConfig) => void;
   updateProvider: (id: string, config: Partial<AiProviderConfig>) => void;
@@ -85,6 +90,7 @@ const DEFAULT_SETTINGS: AiGlobalSettings = {
   enableStreamMode: true,
   requestTimeout: 660000,
   maxRetries: 2,
+  featureRoutingSettings: null,
 };
 
 function coerceProviderType(provider: string): AiProviderType {
@@ -119,6 +125,7 @@ function mapServerSettingsToGlobal(settings: UserAiSettings): AiGlobalSettings {
     enableStreamMode: Boolean(settings.client_settings?.enable_stream_mode),
     requestTimeout: Number(settings.client_settings?.request_timeout ?? DEFAULT_SETTINGS.requestTimeout),
     maxRetries: Number(settings.client_settings?.max_retries ?? DEFAULT_SETTINGS.maxRetries),
+    featureRoutingSettings: settings.feature_routing_settings ?? null,
   };
 }
 
@@ -130,7 +137,12 @@ function normalizeDraftSettings(draft: AiGlobalSettings): AiGlobalSettings {
     enableStreamMode: Boolean(draft.enableStreamMode),
     globalSystemPrompt: draft.globalSystemPrompt ?? "",
     providers: Array.isArray(draft.providers) ? draft.providers : [],
+    featureRoutingSettings: draft.featureRoutingSettings ?? null,
   };
+}
+
+function isAiProviderConfigArray(value: unknown): value is AiProviderConfig[] {
+  return Array.isArray(value);
 }
 
 function buildPutPayloadFromDraft(draft: AiGlobalSettings): UserAiSettingsUpdate {
@@ -163,6 +175,7 @@ function buildPutPayloadFromDraft(draft: AiGlobalSettings): UserAiSettingsUpdate
       max_retries: draft.maxRetries,
     },
     system_prompt: draft.globalSystemPrompt,
+    feature_routing_settings: draft.featureRoutingSettings,
   };
 }
 
@@ -189,8 +202,11 @@ function readPersistedState<T = unknown>(key: string): T | null {
   const raw = window.localStorage.getItem(key);
   if (!raw) return null;
   const parsed = safeParseJson(raw);
-  if (parsed && typeof parsed === "object" && "state" in (parsed as any)) {
-    return (parsed as any).state as T;
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const container = parsed as { state?: unknown };
+    if ("state" in container) {
+      return container.state as T;
+    }
   }
   return parsed as T;
 }
@@ -208,9 +224,12 @@ function removeLocalProviderPersistenceAfterMigration(): void {
     const raw = window.localStorage.getItem("novelist-settings-storage");
     if (!raw) return;
     const parsed = safeParseJson(raw);
-    if (!parsed || typeof parsed !== "object") return;
-    const container = parsed as any;
-    const state = typeof container.state === "object" && container.state ? container.state : container;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+    const container = parsed as Record<string, unknown> & { state?: unknown };
+    const state =
+      typeof container.state === "object" && container.state && !Array.isArray(container.state)
+        ? (container.state as Record<string, unknown>)
+        : container;
     state.llmProviders = [];
     state.apiKey = "";
     state.customBaseUrl = "";
@@ -225,94 +244,105 @@ function removeLocalProviderPersistenceAfterMigration(): void {
   }
 }
 
+function generateMigrationProviderId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `provider-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function parseMigrationString(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function parseMigrationNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" ? value : fallback;
+}
+
+function parseMigrationBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function pickLegacyProviders(source: Record<string, unknown>): unknown[] {
+  if (Array.isArray(source.providers)) {
+    return source.providers;
+  }
+  if (Array.isArray(source.llmProviders)) {
+    return source.llmProviders;
+  }
+  return [];
+}
+
+function mapLegacyProviderToUpdate(provider: Record<string, unknown>): UserAiProviderRecordUpdate {
+  const id = parseMigrationString(provider.id, "").trim() || generateMigrationProviderId();
+  const apiKeyRaw = parseMigrationString(provider.apiKey ?? provider.api_key, "");
+  const decrypted = decryptApiKeyWithStatus(apiKeyRaw);
+
+  const record: UserAiProviderRecordUpdate = {
+    id,
+    name: parseMigrationString(provider.name, "Provider"),
+    provider: parseMigrationString(provider.provider, "openai"),
+    base_url: parseMigrationString(provider.baseUrl ?? provider.base_url, ""),
+    models: Array.isArray(provider.models) ? provider.models : [],
+    is_active: Boolean(provider.isActive ?? provider.is_active),
+    temperature: typeof provider.temperature === "number" ? provider.temperature : null,
+    max_tokens:
+      typeof provider.maxTokens === "number"
+        ? provider.maxTokens
+        : typeof provider.max_tokens === "number"
+          ? provider.max_tokens
+          : null,
+  };
+
+  if (decrypted.issue) {
+    console.warn(`Skipping provider apiKey migration for ${id}: ${decrypted.issue.message}`);
+  } else if (decrypted.value?.trim()) {
+    record.api_key = decrypted.value.trim();
+  }
+
+  return record;
+}
+
+export function buildMigrationPayloadFromLegacySource(
+  source: Record<string, unknown>
+): UserAiSettingsUpdate | null {
+  const rawProviders = pickLegacyProviders(source);
+  if (!rawProviders.length) {
+    return null;
+  }
+
+  const providers = rawProviders
+    .filter((provider): provider is Record<string, unknown> => Boolean(provider) && typeof provider === "object")
+    .map(mapLegacyProviderToUpdate);
+  if (!providers.length) {
+    return null;
+  }
+
+  return {
+    providers,
+    default_provider_id:
+      typeof source.defaultProviderId === "string" ? source.defaultProviderId : null,
+    client_settings: {
+      enable_stream_mode: parseMigrationBoolean(source.enableStreamMode, true),
+      request_timeout: parseMigrationNumber(source.requestTimeout, DEFAULT_SETTINGS.requestTimeout),
+      max_retries: parseMigrationNumber(source.maxRetries, DEFAULT_SETTINGS.maxRetries),
+    },
+    system_prompt: parseMigrationString(source.globalSystemPrompt, ""),
+  };
+}
+
 async function tryMigrateLocalAiSettingsToServer(): Promise<boolean> {
   if (typeof window === "undefined") return false;
   const migratedFlag = window.localStorage.getItem("ai_settings_migrated_v1");
   if (migratedFlag === "true") return false;
 
-  const globalState = readPersistedState<any>("ai-provider-global-settings");
-  const novelistState = readPersistedState<any>("novelist-settings-storage");
-
+  const globalState = readPersistedState<Record<string, unknown>>("ai-provider-global-settings");
+  const novelistState = readPersistedState<Record<string, unknown>>("novelist-settings-storage");
   const source = globalState ?? novelistState;
   if (!source || typeof source !== "object") return false;
 
-  const sourceProviders: any[] =
-    Array.isArray(source.providers) ? source.providers :
-      Array.isArray(source.llmProviders) ? source.llmProviders : [];
-
-  if (!sourceProviders.length) return false;
-
-  const defaultProviderId: string | null =
-    typeof source.defaultProviderId === "string"
-      ? source.defaultProviderId
-      : null;
-
-  const enableStreamMode = typeof source.enableStreamMode === "boolean"
-    ? source.enableStreamMode
-    : true;
-  const requestTimeout = typeof source.requestTimeout === "number"
-    ? source.requestTimeout
-    : DEFAULT_SETTINGS.requestTimeout;
-  const maxRetries = typeof source.maxRetries === "number"
-    ? source.maxRetries
-    : DEFAULT_SETTINGS.maxRetries;
-  const systemPrompt = typeof source.globalSystemPrompt === "string"
-    ? source.globalSystemPrompt
-    : "";
-
-  const providers: UserAiProviderRecordUpdate[] = sourceProviders
-    .filter((p) => p && typeof p === "object")
-    .map((p) => {
-      const id = typeof p.id === "string" && p.id.trim() ? p.id.trim() : crypto.randomUUID();
-      const name = typeof p.name === "string" ? p.name : "Provider";
-      const provider = typeof p.provider === "string" ? p.provider : "openai";
-      const baseUrl = typeof p.baseUrl === "string"
-        ? p.baseUrl
-        : typeof p.base_url === "string"
-          ? p.base_url
-          : "";
-      const models = Array.isArray(p.models) ? p.models : [];
-      const isActive = Boolean(p.isActive ?? p.is_active);
-      const temperature = typeof p.temperature === "number" ? p.temperature : null;
-      const maxTokens = typeof p.maxTokens === "number"
-        ? p.maxTokens
-        : typeof p.max_tokens === "number"
-          ? p.max_tokens
-          : null;
-
-      const apiKeyRaw = typeof p.apiKey === "string" ? p.apiKey : typeof p.api_key === "string" ? p.api_key : "";
-      const decrypted = decryptApiKeyWithStatus(apiKeyRaw);
-
-      const record: UserAiProviderRecordUpdate = {
-        id,
-        name,
-        provider,
-        base_url: baseUrl,
-        models,
-        is_active: isActive,
-        temperature,
-        max_tokens: maxTokens,
-      };
-
-      if (decrypted.issue) {
-        console.warn(`Skipping provider apiKey migration for ${id}: ${decrypted.issue.message}`);
-      } else if (decrypted.value && decrypted.value.trim()) {
-        record.api_key = decrypted.value.trim();
-      }
-
-      return record;
-    });
-
-  const payload: UserAiSettingsUpdate = {
-    providers,
-    default_provider_id: defaultProviderId,
-    client_settings: {
-      enable_stream_mode: enableStreamMode,
-      request_timeout: requestTimeout,
-      max_retries: maxRetries,
-    },
-    system_prompt: systemPrompt,
-  };
+  const payload = buildMigrationPayloadFromLegacySource(source);
+  if (!payload) return false;
 
   try {
     await putUserAiSettings(payload);
@@ -406,6 +436,26 @@ export const useAiProviderStore = create<AiSettingsState>()((set, get) => ({
     });
   },
 
+  saveFeatureRoutingToServer: async (featureRoutingSettings) => {
+    const server = await putUserAiSettings({
+      feature_routing_settings: featureRoutingSettings,
+    });
+    const persisted = server.feature_routing_settings ?? null;
+    set((state) => ({
+      hydrated: true,
+      hydrationError: null,
+      effective: {
+        ...state.effective,
+        featureRoutingSettings: persisted,
+      },
+      draft: {
+        ...state.draft,
+        featureRoutingSettings: persisted,
+      },
+    }));
+    return persisted;
+  },
+
   addProvider: (provider) =>
     set((state) => ({
       draft: {
@@ -483,11 +533,11 @@ export const useAiProviderStore = create<AiSettingsState>()((set, get) => ({
     const parsed = safeParseJson(jsonText);
     if (!parsed || typeof parsed !== "object") return false;
     const obj = parsed as Partial<AiGlobalSettings>;
-    if (!Array.isArray(obj.providers)) return false;
+    if (!isAiProviderConfigArray(obj.providers)) return false;
     const draft: AiGlobalSettings = normalizeDraftSettings({
       ...DEFAULT_SETTINGS,
       ...obj,
-      providers: obj.providers as AiProviderConfig[],
+      providers: obj.providers,
     });
     set({ draft, isDirty: true });
     return true;
@@ -497,4 +547,3 @@ export const useAiProviderStore = create<AiSettingsState>()((set, get) => ({
     set({ draft: { ...DEFAULT_SETTINGS }, isDirty: true });
   },
 }));
-

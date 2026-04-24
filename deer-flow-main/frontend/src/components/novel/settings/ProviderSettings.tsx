@@ -21,31 +21,34 @@ import {
   type AiProviderType,
 } from '@/core/ai/ai-provider-store';
 
-export const ProviderSettings: React.FC = () => {
-  const {
-    hydrated,
-    hydrating,
-    hydrationError,
-    draft,
-    isDirty,
-    ensureHydrated,
-    refreshFromServer,
-    resetDraftToEffective,
-    saveDraftToServer,
-    addProvider,
-    updateProvider,
-    deleteProvider,
-    setActiveProvider,
-  } = useAiProviderStore();
+export const createDefaultProvider = (id: string): AiProviderConfig => ({
+  id,
+  name: 'New Provider',
+  provider: 'openai',
+  apiKey: '',
+  baseUrl: '',
+  models: [],
+  isActive: false,
+  hasApiKey: false,
+  clearApiKey: false,
+});
 
+export const parseModelsInput = (value: string): string[] =>
+  value
+    .split(',')
+    .map((m) => m.trim())
+    .filter(Boolean);
+
+type ProviderSettingsActions = Pick<
+  ReturnType<typeof useAiProviderStore>,
+  'addProvider' | 'updateProvider' | 'deleteProvider' | 'setActiveProvider' | 'saveDraftToServer'
+>;
+
+const useProviderEditor = ({ addProvider, updateProvider, deleteProvider, setActiveProvider, saveDraftToServer }: ProviderSettingsActions) => {
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [formData, setFormData] = React.useState<Partial<AiProviderConfig>>({});
   const [saving, setSaving] = React.useState(false);
   const [saveError, setSaveError] = React.useState<string | null>(null);
-
-  useEffect(() => {
-    ensureHydrated().catch(() => undefined);
-  }, [ensureHydrated]);
 
   const handleSave = useCallback(async () => {
     if (!editingId) return;
@@ -67,17 +70,7 @@ export const ProviderSettings: React.FC = () => {
 
   const handleAdd = useCallback(() => {
     const id = crypto.randomUUID();
-    const newProvider: AiProviderConfig = {
-      id,
-      name: 'New Provider',
-      provider: 'openai',
-      apiKey: '',
-      baseUrl: '',
-      models: [],
-      isActive: false,
-      hasApiKey: false,
-      clearApiKey: false,
-    };
+    const newProvider = createDefaultProvider(id);
     addProvider(newProvider);
     setEditingId(id);
     setFormData(newProvider);
@@ -121,6 +114,64 @@ export const ProviderSettings: React.FC = () => {
     },
     [saveDraftToServer, setActiveProvider],
   );
+
+  return {
+    editingId,
+    setEditingId,
+    formData,
+    setFormData,
+    saving,
+    setSaving,
+    saveError,
+    setSaveError,
+    handleSave,
+    handleAdd,
+    handleDelete,
+    handleSetActive,
+  };
+};
+
+export const ProviderSettings: React.FC = () => {
+  const {
+    hydrated,
+    hydrating,
+    hydrationError,
+    draft,
+    isDirty,
+    ensureHydrated,
+    refreshFromServer,
+    resetDraftToEffective,
+    saveDraftToServer,
+    addProvider,
+    updateProvider,
+    deleteProvider,
+    setActiveProvider,
+  } = useAiProviderStore();
+
+  const {
+    editingId,
+    setEditingId,
+    formData,
+    setFormData,
+    saving,
+    setSaving,
+    saveError,
+    setSaveError,
+    handleSave,
+    handleAdd,
+    handleDelete,
+    handleSetActive,
+  } = useProviderEditor({
+    addProvider,
+    updateProvider,
+    deleteProvider,
+    setActiveProvider,
+    saveDraftToServer,
+  });
+
+  useEffect(() => {
+    ensureHydrated().catch(() => undefined);
+  }, [ensureHydrated]);
 
   return (
     <Card>
@@ -323,10 +374,7 @@ export const ProviderSettings: React.FC = () => {
                       onChange={(e) =>
                         setFormData({
                           ...formData,
-                          models: e.target.value
-                            .split(',')
-                            .map((m) => m.trim())
-                            .filter(Boolean),
+                          models: parseModelsInput(e.target.value),
                         })
                       }
                       placeholder="gpt-4o, gpt-4o-mini"
@@ -361,4 +409,3 @@ export const ProviderSettings: React.FC = () => {
     </Card>
   );
 };
-

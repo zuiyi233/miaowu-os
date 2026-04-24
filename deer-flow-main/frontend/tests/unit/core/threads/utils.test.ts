@@ -1,5 +1,5 @@
-import { expect, test } from "vitest";
 import type { Message } from "@langchain/langgraph-sdk";
+import { expect, test } from "vitest";
 
 import { pathOfThread, withOptimisticMessages } from "@/core/threads/utils";
 

@@ -39,6 +39,8 @@ DeerFlow is a LangGraph-based AI super agent with sandbox execution, persistent 
 - `/api/*` (other) → Gateway API - models, MCP, skills, memory, artifacts, uploads, thread-local cleanup
 - `/` (non-API) → Frontend - Next.js web interface
 
+> **Miaowu local-dev note**: in this fork (`D:\miaowu-os\deer-flow-main`) local development pins gateway to `http://127.0.0.1:8551` (frontend `4560`). Keep fallback/default proxy targets aligned with `8551`.
+
 ---
 
 ## Core Components
@@ -144,15 +146,24 @@ FastAPI application providing REST endpoints for frontend integration:
 - `POST /api/ai/chat` includes session-based intent middleware for novel workflows and currently supports two conversation tracks:
   - Novel creation session: guided field collection (title/genre/theme/audience/target_words), then persistence only after explicit confirmation.
   - Novel lifecycle management session: project/chapter/outline/character/relationship/organization/item mapping operations inside the same conversational flow.
+- Intent middleware internals are now split into explicit components (`app.gateway.middleware.intent_components`): `IntentDetector`, `SessionPersistence`, `SessionManager`, `ManageActionRouter` (middleware keeps compatibility wrappers for existing call sites/tests).
+- `ManageActionRouter` now owns manage-flow action building/merging/dispatch and missing-slot rules, reducing `intent_recognition_middleware.py` single-file responsibility.
 - Intent session state and idempotency keys are persisted in shared `novel_migrated` database tables (`intent_session_states`, `intent_idempotency_keys`) by default for cross-worker consistency.
 - Set `DEERFLOW_INTENT_SESSION_BACKEND=file` to force legacy JSON-file storage (`DEERFLOW_INTENT_SESSION_STORE_PATH`).
 - For side-effect actions (create/update/delete and other writes), the middleware requires explicit confirmation before execution.
+- If a manage-action dispatch fails and the request `db_session` still has an active transaction, `ManageActionRouter` now performs best-effort rollback before returning the failure response (transactional consistency guard).
 - During intent sessions, skill context is loaded strictly from enabled entries in `extensions_config.json` (prioritized by novel relevance), and users can send `技能推荐` to force-refresh suggestions.
 - Intent skill loading now supports a three-layer governance policy (system defaults -> workspace enabled -> session candidates), guarded by feature flag `intent_skill_governance` with degraded fallback controlled by `DEERFLOW_INTENT_SKILL_GOVERNANCE_FALLBACK_MODE` (`workspace_only|system_only|intersection`).
 - Intent workflow session payloads include structured `action_protocol` fields (`action_type`, `slot_schema`, `missing_slots`, `confirmation_required`, `execute_result`) and keep legacy aliases for backward compatibility.
 - Guided/side-effect intent responses set `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches these intent-session workflow responses.
 - Request trace context is normalized across gateway logs via `request_id/thread_id/project_id/session_key/idempotency_key`.
 - Lifecycle traces additionally include `lifecycle_state/lifecycle_transition/lifecycle_mode/lifecycle_replay/lifecycle_token` to support replay and rollback diagnostics.
+- Gateway logging now uses unified logger setup and supports optional rotating-file output via:
+  - `DEERFLOW_GATEWAY_LOG_TO_FILE=1`
+  - `DEERFLOW_GATEWAY_LOG_FILE_PATH=<path>`
+  - `DEERFLOW_GATEWAY_LOG_MAX_BYTES` (default `10485760`)
+  - `DEERFLOW_GATEWAY_LOG_BACKUP_COUNT` (default `30`)
+  - `DEERFLOW_GATEWAY_LOG_LEVEL` (default `INFO`)
 - Built-in in-process metrics are available at `/api/features/metrics/novel-pipeline`: success rate, failure rate, retry rate, P95 latency, duplicate-write interception rate.
 - Canary rollout is user-scoped and deterministic (`rollout_percentage` + allow/deny user lists), and rollback can be done by `POST /api/features/{feature_name}/rollback`.
 

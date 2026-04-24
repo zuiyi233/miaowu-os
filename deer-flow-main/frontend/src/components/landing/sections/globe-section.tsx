@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useEffect, useState } from "react";
 import { Globe } from "lucide-react";
+import { useRef, useEffect, useState } from "react";
+
 import {
   useAnimeEntrance,
   useSpringEntrance,

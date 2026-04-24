@@ -97,6 +97,28 @@ export interface FinalizeGatePayload {
   sensitive_words?: string[];
 }
 
+export interface CareerSystemGenerationParams {
+  mainCareerCount?: number;
+  subCareerCount?: number;
+  userRequirements?: string;
+  enableMcp?: boolean;
+}
+
+export interface CareerSystemGenerationData {
+  mainCareersCount: number;
+  subCareersCount: number;
+  mainCareers: string[];
+  subCareers: string[];
+}
+
+export interface CareerSystemGenerationResult extends CareerSystemGenerationData {
+  events: NovelStreamEvent[];
+  rawResponse: Response;
+  body: ReadableStream<Uint8Array> | null;
+  ok: boolean;
+  status: number;
+}
+
 class ApiError extends Error {
   constructor(
     message: string,
@@ -164,6 +186,18 @@ function buildBookImportUrl(path: string, query?: Record<string, QueryValue>) {
   return buildUrlWithPrefix(getBookImportApiPrefix(), path, query);
 }
 
+function parseJsonOrText(responseText: string): unknown {
+  if (!responseText || !responseText.trim()) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(responseText);
+  } catch {
+    return responseText;
+  }
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const response = await fetch(buildUrl(path, options.query), {
     method: options.method ?? 'GET',
@@ -173,7 +207,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
 
-  const responseText = await response.text();
+  const responseText = await response.text().catch(() => '');
   let payload = null;
   if (responseText && responseText.trim()) {
     try {
@@ -201,7 +235,7 @@ async function requestBookImport<T>(path: string, options: RequestOptions = {}):
   });
 
   const responseText = await response.text();
-  const payload = responseText ? JSON.parse(responseText) : null;
+  const payload = parseJsonOrText(responseText);
 
   if (!response.ok) {
     throw new ApiError(`Book import request failed: ${response.status}`, response.status, payload);
@@ -547,6 +581,158 @@ function normalizeAuditEntries(novelId: string, raw: unknown): NovelAuditEntry[]
   return items
     .map((item, index) => normalizeAuditEntry(novelId, item, index))
     .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+}
+
+const careerSystemResultKeys = [
+  'main_careers_count',
+  'mainCareersCount',
+  'sub_careers_count',
+  'subCareersCount',
+  'main_careers',
+  'mainCareers',
+  'sub_careers',
+  'subCareers',
+] as const;
+
+function hasCareerSystemResultKeys(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return careerSystemResultKeys.some((key) => key in value);
+}
+
+function toNumberOr(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeCareerNameList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      const direct = toOptionalString(item);
+      if (direct !== undefined) {
+        return direct;
+      }
+
+      if (!isRecord(item)) {
+        return '';
+      }
+
+      return toStringOr(item.name ?? item.title ?? item.id);
+    })
+    .filter((name) => Boolean(name.trim()));
+}
+
+function normalizeCareerSystemGenerationData(raw: unknown): CareerSystemGenerationData {
+  if (!isRecord(raw)) {
+    return {
+      mainCareersCount: 0,
+      subCareersCount: 0,
+      mainCareers: [],
+      subCareers: [],
+    };
+  }
+
+  const mainCareers = normalizeCareerNameList(raw.main_careers ?? raw.mainCareers);
+  const subCareers = normalizeCareerNameList(raw.sub_careers ?? raw.subCareers);
+
+  return {
+    mainCareersCount: toNumberOr(raw.main_careers_count ?? raw.mainCareersCount, mainCareers.length),
+    subCareersCount: toNumberOr(raw.sub_careers_count ?? raw.subCareersCount, subCareers.length),
+    mainCareers,
+    subCareers,
+  };
+}
+
+function parseCareerSystemGenerationResponseText(responseText: string): {
+  data: CareerSystemGenerationData;
+  events: NovelStreamEvent[];
+} {
+  const trimmed = responseText.trim();
+  if (!trimmed) {
+    return {
+      data: normalizeCareerSystemGenerationData(null),
+      events: [],
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (isRecord(parsed)) {
+      const payload = isRecord(parsed.data) ? parsed.data : parsed;
+      return {
+        data: normalizeCareerSystemGenerationData(payload),
+        events: [parsed as NovelStreamEvent],
+      };
+    }
+  } catch {
+    // Ignore and continue with SSE text parsing.
+  }
+
+  const events: NovelStreamEvent[] = [];
+  let resultPayload: unknown = null;
+
+  for (const line of trimmed.split('\n')) {
+    const normalizedLine = line.trim();
+    if (!normalizedLine.startsWith('data:')) {
+      continue;
+    }
+
+    const payloadText = normalizedLine.slice(5).trim();
+    if (!payloadText || payloadText === '[DONE]') {
+      continue;
+    }
+
+    let parsedLine: unknown = null;
+    try {
+      parsedLine = JSON.parse(payloadText);
+    } catch {
+      continue;
+    }
+
+    if (!isRecord(parsedLine)) {
+      continue;
+    }
+
+    events.push(parsedLine as NovelStreamEvent);
+
+    const nestedPayload = isRecord(parsedLine.data) ? parsedLine.data : null;
+    if (nestedPayload && hasCareerSystemResultKeys(nestedPayload)) {
+      resultPayload = nestedPayload;
+    } else if (hasCareerSystemResultKeys(parsedLine)) {
+      resultPayload = parsedLine;
+    }
+  }
+
+  return {
+    data: normalizeCareerSystemGenerationData(resultPayload),
+    events,
+  };
+}
+
+function getResponseContentType(response: Response): string {
+  const headers = response.headers;
+  if (!headers || typeof headers.get !== 'function') {
+    return '';
+  }
+  return headers.get('content-type') ?? '';
+}
+
+function shouldEagerlyParseCareerSystemResponse(response: Response): boolean {
+  const contentType = getResponseContentType(response).toLowerCase();
+  if (contentType.includes('text/event-stream')) {
+    return false;
+  }
+
+  if (!response.body) {
+    return true;
+  }
+
+  return contentType.includes('application/json');
 }
 
 function toEntityPayload(entity: Character | Setting | Faction | Item, type: string) {
@@ -1138,13 +1324,56 @@ export class NovelApiService {
     await request(`/careers/${encodeURIComponent(careerId)}`, { method: 'DELETE' });
   }
 
-  async generateCareerSystem(projectId: string, params?: { mainCareerCount?: number; subCareerCount?: number; userRequirements?: string; enableMcp?: boolean }): Promise<Response> {
+  async generateCareerSystem(
+    projectId: string,
+    params?: CareerSystemGenerationParams,
+  ): Promise<CareerSystemGenerationResult> {
     const query: Record<string, QueryValue> = { project_id: projectId };
-    if (params?.mainCareerCount) query.main_career_count = params.mainCareerCount;
-    if (params?.subCareerCount) query.sub_career_count = params.subCareerCount;
+    if (params?.mainCareerCount !== undefined) query.main_career_count = params.mainCareerCount;
+    if (params?.subCareerCount !== undefined) query.sub_career_count = params.subCareerCount;
     if (params?.userRequirements) query.user_requirements = params.userRequirements;
     if (params?.enableMcp !== undefined) query.enable_mcp = params.enableMcp;
-    return fetch(buildUrl('/careers/generate-system', query));
+
+    const response = await fetch(buildUrl('/careers/generate-system', query), { method: 'GET' });
+    const shouldEagerlyParse = shouldEagerlyParseCareerSystemResponse(response);
+    let cachedText: string | null = null;
+    const readResponseText = async () => {
+      if (cachedText !== null) {
+        return cachedText;
+      }
+      const parseSource = typeof response.clone === 'function' ? response.clone() : response;
+      cachedText = await parseSource.text().catch(() => '');
+      return cachedText;
+    };
+
+    if (!response.ok) {
+      const responseText = await readResponseText();
+      let details: unknown = responseText;
+      if (responseText && responseText.trim()) {
+        try {
+          details = JSON.parse(responseText);
+        } catch {
+          details = responseText;
+        }
+      }
+      throw new ApiError(`Novel API request failed: ${response.status}`, response.status, details);
+    }
+
+    const parsed =
+      shouldEagerlyParse
+        ? parseCareerSystemGenerationResponseText(await readResponseText())
+        : {
+          data: normalizeCareerSystemGenerationData(null),
+          events: [],
+        };
+    return {
+      ...parsed.data,
+      events: parsed.events,
+      rawResponse: response,
+      body: response.body,
+      ok: response.ok,
+      status: response.status,
+    };
   }
 
   async getForeshadows(projectId: string, params?: Record<string, QueryValue>): Promise<{ items: Foreshadow[]; total: number; stats?: ForeshadowStats }> {
@@ -1283,11 +1512,22 @@ export class NovelApiService {
   }
 
   async applyBookImportStream(taskId: string, payload: Record<string, unknown>): Promise<Response> {
-    return fetch(buildBookImportUrl(`/tasks/${encodeURIComponent(taskId)}/apply-stream`), {
+    const response = await fetch(buildBookImportUrl(`/tasks/${encodeURIComponent(taskId)}/apply-stream`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+
+    if (!response.ok) {
+      const responseText = await response.text().catch(() => '');
+      throw new ApiError(
+        `Book import stream request failed: ${response.status}`,
+        response.status,
+        parseJsonOrText(responseText),
+      );
+    }
+
+    return response;
   }
 
   async cancelBookImportTask(taskId: string): Promise<void> {
@@ -1295,11 +1535,22 @@ export class NovelApiService {
   }
 
   async retryBookImportStepsStream(taskId: string, steps: string[]): Promise<Response> {
-    return fetch(buildBookImportUrl(`/tasks/${encodeURIComponent(taskId)}/retry-stream`), {
+    const response = await fetch(buildBookImportUrl(`/tasks/${encodeURIComponent(taskId)}/retry-stream`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ steps }),
     });
+
+    if (!response.ok) {
+      const responseText = await response.text().catch(() => '');
+      throw new ApiError(
+        `Book import stream request failed: ${response.status}`,
+        response.status,
+        parseJsonOrText(responseText),
+      );
+    }
+
+    return response;
   }
 }
 

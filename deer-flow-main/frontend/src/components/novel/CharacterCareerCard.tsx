@@ -1,13 +1,12 @@
 'use client';
 
+import { Edit, Plus, Trash2, Trophy, AlertTriangle } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
-import { Edit, Plus, Trash2, Trophy, AlertTriangle } from 'lucide-react';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import {
   Dialog,
   DialogContent,
@@ -17,8 +16,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
 import {
   Select,
   SelectContent,
@@ -27,10 +26,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
-import { cn } from '@/lib/utils';
-
+import { Textarea } from '@/components/ui/textarea';
 import { getBackendBaseURL, getAuthHeaders } from '@/core/config';
 import type { Career, CharacterCareer } from '@/core/novel/schemas';
+import { cn } from '@/lib/utils';
 
 interface CareerDetail extends CharacterCareer {
   career_name: string;
@@ -199,7 +198,7 @@ export function CharacterCareerCard({ characterId, projectId, editable = false, 
     setIsProgressModalOpen(true);
   };
 
-  const renderCareerInfo = (career: CareerDetail, isMain: boolean = false) => (
+  const renderCareerInfo = (career: CareerDetail, isMain = false) => (
     <div key={career.id} className="mb-4 last:mb-0">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">

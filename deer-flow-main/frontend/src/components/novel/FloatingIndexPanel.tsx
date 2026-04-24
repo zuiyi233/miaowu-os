@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useMemo } from 'react';
 import { Search, BookOpen } from 'lucide-react';
+import { useState, useMemo } from 'react';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Sheet,

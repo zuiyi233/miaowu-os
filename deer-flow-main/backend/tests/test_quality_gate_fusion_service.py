@@ -65,8 +65,8 @@ def test_feature_flag_disabled_can_fall_back_to_warn_only() -> None:
     assert "fallback=warn_only" in decision.decision_path
 
 
-def test_false_positive_feedback_can_relax_followup_decision_and_expose_backflow_view() -> None:
-    service = QualityGateFusionService()
+def test_false_positive_feedback_can_relax_followup_decision_and_expose_backflow_view(tmp_path) -> None:
+    service = QualityGateFusionService(persistence_file=tmp_path / "quality_gate_feedback.json")
     gate_key = "novel:chapter:quality"
     evidence_key = "chapter-12:sensitive-word"
 

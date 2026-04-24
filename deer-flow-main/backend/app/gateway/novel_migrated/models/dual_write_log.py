@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime
 
 from sqlalchemy import Column, DateTime, Integer, String, Text
 from sqlalchemy.sql import func
@@ -24,3 +23,14 @@ class DualWriteLog(Base):
     __table_args__ = (
         {"comment": "双写补偿日志：modern 写入成功但 legacy 写入失败时记录，后台任务重试"},
     )
+
+    def __repr__(self) -> str:
+        return (
+            "DualWriteLog("
+            f"id={self.id!r}, "
+            f"modern_project_id={self.modern_project_id!r}, "
+            f"status={self.status!r}, "
+            f"retry_count={self.retry_count!r}, "
+            f"max_retries={self.max_retries!r}"
+            ")"
+        )

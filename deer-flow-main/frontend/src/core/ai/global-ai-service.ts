@@ -1,6 +1,14 @@
 import { getBackendBaseURL } from "@/core/config";
 
 import { useAiProviderStore, type AiProviderConfig } from "./ai-provider-store";
+import {
+  loadFeatureRoutingState,
+  normalizeFeatureRoutingState,
+  resolveModuleRoutingTarget,
+  saveFeatureRoutingState,
+  switchModuleToBackupWithLog,
+} from "./feature-routing";
+import { putUserAiSettings } from "./useAiSettingsApi";
 
 const API_BASE_URL = getBackendBaseURL();
 
@@ -45,6 +53,7 @@ export interface AiRequestOptions {
   messages: AiMessage[];
   context?: Record<string, unknown>;
   novelId?: string;
+  moduleId?: string;
   stream?: boolean;
   temperature?: number;
   maxTokens?: number;
@@ -445,6 +454,71 @@ function validateProviderConfig(provider: AiProviderConfig | null | undefined): 
   }
 }
 
+export function mergeSystemPromptIntoMessages(
+  messages: AiMessage[],
+  globalSystemPrompt: string
+): AiMessage[] {
+  if (!globalSystemPrompt.trim()) {
+    return messages;
+  }
+
+  const hasSystemMessage = messages.some((msg) => msg.role === "system");
+  if (hasSystemMessage) {
+    return messages.map((msg) =>
+      msg.role === "system"
+        ? {
+            ...msg,
+            content: `${globalSystemPrompt}\n\n${msg.content}`,
+          }
+        : msg
+    );
+  }
+
+  return [
+    {
+      role: "system",
+      content: globalSystemPrompt,
+    },
+    ...messages,
+  ];
+}
+
+export function buildChatRequestContext(
+  context: Record<string, unknown> | undefined,
+  novelId: string | undefined,
+  moduleId?: string
+): Record<string, unknown> | undefined {
+  const merged: Record<string, unknown> = {
+    ...(context ?? {}),
+  };
+
+  if (novelId) {
+    merged.novelId = novelId;
+    merged.novel_id = novelId;
+  }
+
+  if (moduleId) {
+    merged.moduleId = moduleId;
+    merged.module_id = moduleId;
+  }
+
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+export function resolveNonStreamContent(data: Record<string, unknown>): string {
+  const messageObj =
+    data.message && typeof data.message === "object"
+      ? (data.message as Record<string, unknown>)
+      : undefined;
+  const directContent =
+    typeof data.content === "string" ? data.content : undefined;
+  const messageContent =
+    typeof messageObj?.content === "string"
+      ? messageObj.content
+      : undefined;
+  return directContent ?? messageContent ?? "";
+}
+
 function _extractStructuredResponse(data: Record<string, unknown>): AiStructuredResponse {
   const contentValue = data.content;
   const result: AiStructuredResponse = {
@@ -486,6 +560,29 @@ function _extractStructuredResponse(data: Record<string, unknown>): AiStructured
   }
 
   return result;
+}
+
+function updateStoreFeatureRoutingState(nextState: ReturnType<typeof normalizeFeatureRoutingState>): void {
+  useAiProviderStore.setState((state) => ({
+    effective: {
+      ...state.effective,
+      featureRoutingSettings: nextState,
+    },
+    draft: {
+      ...state.draft,
+      featureRoutingSettings: nextState,
+    },
+  }));
+}
+
+function syncFeatureRoutingStateToServerBestEffort(
+  nextState: ReturnType<typeof normalizeFeatureRoutingState>
+): void {
+  void putUserAiSettings({
+    feature_routing_settings: nextState,
+  }).catch((err) => {
+    console.warn("[FeatureRouting] 回写后端 feature_routing_settings 失败:", err);
+  });
 }
 
 export class GlobalAiService {
@@ -533,8 +630,37 @@ export class GlobalAiService {
       }
     }
     const ctx = this.getContext(serviceContext);
+    const hasExplicitProvider = Boolean(options.providerId);
+    const hasExplicitModel = Boolean(options.model);
+    const contextModuleId =
+      typeof options.context?.moduleId === "string"
+        ? options.context.moduleId
+        : typeof options.context?.module_id === "string"
+        ? options.context.module_id
+        : undefined;
+    const moduleId = options.moduleId ?? contextModuleId;
+
+    const serverFeatureRoutingState =
+      moduleId ? useAiProviderStore.getState().effective.featureRoutingSettings : null;
+    const routingState = moduleId
+      ? normalizeFeatureRoutingState(
+          serverFeatureRoutingState ?? loadFeatureRoutingState(ctx.providers),
+          ctx.providers
+        )
+      : null;
+    const routedTarget =
+      moduleId && !hasExplicitProvider && !hasExplicitModel && routingState
+        ? resolveModuleRoutingTarget(routingState, moduleId)
+        : null;
+    const routedModelTarget = routedTarget?.target ?? null;
+
     const provider =
-      ctx.providers.find((p) => p.id === options.providerId) ??
+      (options.providerId
+        ? ctx.providers.find((p) => p.id === options.providerId)
+        : undefined) ??
+      (routedModelTarget
+        ? ctx.providers.find((p) => p.id === routedModelTarget.providerId)
+        : undefined) ??
       ctx.provider;
 
     validateProviderConfig(provider);
@@ -543,7 +669,7 @@ export class GlobalAiService {
       stream = ctx.enableStreamMode,
       temperature = provider?.temperature ?? 0.7,
       maxTokens = provider?.maxTokens ?? 2000,
-      model = provider?.models[0],
+      model = routedModelTarget?.model ?? provider?.models[0],
     } = options;
 
     this.abortController = new AbortController();
@@ -556,78 +682,100 @@ export class GlobalAiService {
 
     try {
       const endpoint = `${API_BASE_URL}/api/ai/chat`;
+      const messages = mergeSystemPromptIntoMessages(
+        [...options.messages],
+        ctx.globalSystemPrompt
+      );
+      const requestContext = buildChatRequestContext(
+        options.context,
+        options.novelId,
+        moduleId
+      );
 
-      let messages = [...options.messages];
+      const callChatApi = async (
+        targetProvider: AiProviderConfig,
+        targetModel: string
+      ): Promise<Response> => {
+        const requestBody = {
+          messages,
+          stream,
+          context: requestContext,
+          provider_config: {
+            provider: targetProvider.provider,
+            base_url: targetProvider.baseUrl,
+            model_name: targetModel,
+            temperature,
+            max_tokens: maxTokens,
+          },
+        };
 
-      if (ctx.globalSystemPrompt?.trim()) {
-        const hasSystemMessage = messages.some(
-          (msg) => msg.role === "system"
+        return fetchWithRetry(
+          endpoint,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(requestBody),
+            signal,
+          },
+          ctx.maxRetries,
+          ctx.requestTimeout,
+          1000
         );
-
-        if (hasSystemMessage) {
-          messages = messages.map((msg) =>
-            msg.role === "system"
-              ? {
-                  ...msg,
-                  content: `${ctx.globalSystemPrompt}\n\n${msg.content}`,
-                }
-              : msg
-          );
-        } else {
-          messages.unshift({
-            role: "system",
-            content: ctx.globalSystemPrompt,
-          });
-        }
-      }
-
-      const requestContext = options.novelId
-        ? {
-            ...(options.context ?? {}),
-            novelId: options.novelId,
-            novel_id: options.novelId,
-          }
-        : options.context;
-
-      const requestBody = {
-        messages,
-        stream,
-        context: requestContext,
-        provider_config: {
-          provider: provider!.provider,
-          base_url: provider!.baseUrl,
-          model_name: model,
-          temperature,
-          max_tokens: maxTokens,
-        },
       };
 
-      const response = await fetchWithRetry(
-        endpoint,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(requestBody),
-          signal,
-        },
-        ctx.maxRetries,
-        ctx.requestTimeout,
-        1000
-      );
+      let response: Response;
+      try {
+        response = await callChatApi(provider!, model!);
+      } catch (primaryError) {
+        const canAutoFailover =
+          Boolean(moduleId) &&
+          Boolean(routingState) &&
+          Boolean(routedTarget) &&
+          routedTarget?.moduleRoute.currentMode === "primary" &&
+          routedTarget?.moduleRoute.autoFailover &&
+          Boolean(routedTarget?.moduleRoute.backupTarget);
+
+        if (!canAutoFailover || isAbortError(primaryError)) {
+          throw primaryError;
+        }
+
+        const backupTarget = routedTarget.moduleRoute.backupTarget!;
+        const backupProvider = ctx.providers.find(
+          (item) => item.id === backupTarget.providerId
+        );
+
+        if (!backupProvider) {
+          throw primaryError;
+        }
+
+        validateProviderConfig(backupProvider);
+
+        const errorMessage =
+          primaryError instanceof Error
+            ? primaryError.message
+            : String(primaryError);
+        console.warn(
+          `[FeatureRouting] 模块 ${moduleId} 主链路失败，切换到备用模型重试: ${errorMessage}`
+        );
+
+        response = await callChatApi(backupProvider, backupTarget.model);
+
+        const reason = `主模型请求失败，自动切换备用模型：${errorMessage}`;
+        const switchedState = switchModuleToBackupWithLog(
+          routingState!,
+          moduleId!,
+          reason,
+          true
+        );
+        const normalizedSwitchedState = normalizeFeatureRoutingState(switchedState, ctx.providers);
+        saveFeatureRoutingState(normalizedSwitchedState);
+        updateStoreFeatureRoutingState(normalizedSwitchedState);
+        syncFeatureRoutingStateToServerBestEffort(normalizedSwitchedState);
+      }
 
       if (!stream) {
         const data = await response.json() as Record<string, unknown>;
-        const messageObj =
-          data.message && typeof data.message === "object"
-            ? (data.message as Record<string, unknown>)
-            : undefined;
-        const directContent =
-          typeof data.content === "string" ? data.content : undefined;
-        const messageContent =
-          typeof messageObj?.content === "string"
-            ? messageObj.content
-            : undefined;
-        const content = directContent ?? messageContent ?? "";
+        const content = resolveNonStreamContent(data);
         const structured = _extractStructuredResponse(data);
         if (structured && (structured.tool_calls || structured.session || structured.novel)) {
           callbacks?.onStructured?.(structured);

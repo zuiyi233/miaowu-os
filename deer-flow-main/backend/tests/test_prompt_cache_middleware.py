@@ -87,6 +87,22 @@ class TestComputeCacheKey:
         assert key.startswith("prompt_cache:")
         assert len(key) == len("prompt_cache:") + 64  # SHA256 = 64 hex chars
 
+    def test_context_changes_cache_key(self):
+        data1 = {
+            "messages": [{"role": "user", "content": "same prompt"}],
+            "provider_config": {"model_name": "gpt-4o", "temperature": 0.7, "max_tokens": 2000},
+            "context": {"thread_id": "thread-a", "workspace_id": "ws-1"},
+        }
+        data2 = {
+            "messages": [{"role": "user", "content": "same prompt"}],
+            "provider_config": {"model_name": "gpt-4o", "temperature": 0.7, "max_tokens": 2000},
+            "context": {"thread_id": "thread-b", "workspace_id": "ws-1"},
+        }
+
+        key1 = self.middleware._compute_cache_key(data1)
+        key2 = self.middleware._compute_cache_key(data2)
+        assert key1 != key2
+
 
 class TestCacheHitMiss:
     """Test cache hit and miss scenarios."""
@@ -276,6 +292,22 @@ class TestErrorHandling:
 
         await middleware.dispatch(mock_request, call_next)
 
+        call_next.assert_awaited_once()
+
+    def test_non_json_content_type_skips_body_read(self):
+        middleware = PromptCacheMiddleware(app=MagicMock(), ttl=300, max_entries=1000)
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.method = "POST"
+        mock_request.url.path = "/api/ai/chat"
+        mock_request.headers = {"content-type": "multipart/form-data; boundary=abc"}
+        mock_request.body = AsyncMock(return_value=b"unused")
+
+        call_next = AsyncMock(return_value=JSONResponse(content={"ok": True}))
+
+        asyncio.run(middleware.dispatch(mock_request, call_next))
+
+        mock_request.body.assert_not_awaited()
         call_next.assert_awaited_once()
 
 
@@ -523,6 +555,9 @@ class TestResponseHeaderBypass:
 
         normal = JSONResponse(content={"ok": True})
         assert middleware._should_bypass_response_cache(normal) is False
+
+        sse = JSONResponse(content={"ok": True}, headers={"content-type": "text/event-stream"})
+        assert middleware._should_bypass_response_cache(sse) is True
 
 
 if __name__ == "__main__":

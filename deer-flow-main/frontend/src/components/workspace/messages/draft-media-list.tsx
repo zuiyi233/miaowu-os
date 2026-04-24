@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -22,14 +22,61 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  applyOptimisticDraftHide,
   attachDraftMedia,
   deleteDraftMedia,
+  rollbackOptimisticDraftHide,
   resolveDraftContentUrl,
   type DraftAttachTargetType,
   type DraftMediaItem,
   type DraftMediaMap,
 } from "@/core/media/drafts";
 import { cn } from "@/lib/utils";
+
+const DRAFT_MEDIA_VIRTUAL_ROW_ESTIMATE = 420;
+const DRAFT_MEDIA_VIRTUAL_OVERSCAN = 2;
+const DRAFT_MEDIA_VIRTUAL_THRESHOLD = 12;
+const DRAFT_MEDIA_VIRTUAL_MAX_HEIGHT = 720;
+
+export interface DraftMediaVirtualSlice {
+  startIndex: number;
+  endIndex: number;
+  paddingTop: number;
+  paddingBottom: number;
+}
+
+export function computeDraftMediaVirtualSlice({
+  total,
+  scrollTop,
+  viewportHeight,
+  rowEstimate = DRAFT_MEDIA_VIRTUAL_ROW_ESTIMATE,
+  overscan = DRAFT_MEDIA_VIRTUAL_OVERSCAN,
+}: {
+  total: number;
+  scrollTop: number;
+  viewportHeight: number;
+  rowEstimate?: number;
+  overscan?: number;
+}): DraftMediaVirtualSlice {
+  if (total <= 0) {
+    return { startIndex: 0, endIndex: 0, paddingTop: 0, paddingBottom: 0 };
+  }
+
+  const safeRowEstimate = rowEstimate > 0 ? rowEstimate : DRAFT_MEDIA_VIRTUAL_ROW_ESTIMATE;
+  const safeViewportHeight = viewportHeight > 0 ? viewportHeight : DRAFT_MEDIA_VIRTUAL_MAX_HEIGHT;
+  const safeOverscan = Math.max(0, overscan);
+  const rawStart = Math.floor(Math.max(0, scrollTop) / safeRowEstimate) - safeOverscan;
+  const startIndex = Math.max(0, rawStart);
+  const visibleCount = Math.ceil(safeViewportHeight / safeRowEstimate) + safeOverscan * 2;
+  const endIndex = Math.min(total, startIndex + visibleCount);
+
+  return {
+    startIndex,
+    endIndex,
+    paddingTop: startIndex * safeRowEstimate,
+    paddingBottom: Math.max(0, (total - endIndex) * safeRowEstimate),
+  };
+}
 
 function isExpired(item: DraftMediaItem): boolean {
   if (!item.expires_at) {
@@ -81,6 +128,9 @@ export function DraftMediaList({
     useState<DraftAttachTargetType>("project");
   const [attachTargetId, setAttachTargetId] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(DRAFT_MEDIA_VIRTUAL_MAX_HEIGHT);
+  const listContainerRef = useRef<HTMLDivElement | null>(null);
   const attachTargetOptions = [
     { value: "project", label: "项目" },
     { value: "character", label: "角色" },
@@ -96,6 +146,38 @@ export function DraftMediaList({
     });
     return values.filter((item) => !hiddenIds[item.id] && !isExpired(item));
   }, [draftMedia, hiddenIds]);
+  const enableVirtualization = items.length > DRAFT_MEDIA_VIRTUAL_THRESHOLD;
+
+  useEffect(() => {
+    if (!enableVirtualization) {
+      if (scrollTop !== 0) {
+        setScrollTop(0);
+      }
+      return;
+    }
+    const container = listContainerRef.current;
+    if (!container) {
+      return;
+    }
+    const nextHeight = container.clientHeight || DRAFT_MEDIA_VIRTUAL_MAX_HEIGHT;
+    if (nextHeight !== viewportHeight) {
+      setViewportHeight(nextHeight);
+    }
+  }, [enableVirtualization, items.length, scrollTop, viewportHeight]);
+
+  const virtualSlice = useMemo(
+    () =>
+      computeDraftMediaVirtualSlice({
+        total: items.length,
+        scrollTop,
+        viewportHeight,
+      }),
+    [items.length, scrollTop, viewportHeight]
+  );
+
+  const visibleItems = enableVirtualization
+    ? items.slice(virtualSlice.startIndex, virtualSlice.endIndex)
+    : items;
 
   if (items.length === 0) {
     return null;
@@ -105,8 +187,29 @@ export function DraftMediaList({
     <div className={cn("w-full space-y-4", className)}>
       <div className="text-muted-foreground text-sm">草稿产物（确认后才会挂载）</div>
 
-      <div className="flex flex-col gap-4">
-        {items.map((item) => {
+      <div
+        ref={listContainerRef}
+        onScroll={
+          enableVirtualization
+            ? (event) => setScrollTop(event.currentTarget.scrollTop)
+            : undefined
+        }
+        className={cn(
+          enableVirtualization ? "max-h-[720px] overflow-y-auto pr-1" : "flex flex-col gap-4"
+        )}
+      >
+        <div
+          className="flex flex-col gap-4"
+          style={
+            enableVirtualization
+              ? {
+                  paddingTop: virtualSlice.paddingTop,
+                  paddingBottom: virtualSlice.paddingBottom,
+                }
+              : undefined
+          }
+        >
+          {visibleItems.map((item) => {
           const url = resolveDraftContentUrl(item);
           const busy = busyId === item.id;
           return (
@@ -123,7 +226,6 @@ export function DraftMediaList({
               </CardHeader>
               <CardContent className="space-y-3">
                 {item.kind === "image" ? (
-                  // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={url}
                     alt="draft"
@@ -150,12 +252,18 @@ export function DraftMediaList({
                   variant="secondary"
                   disabled={busy}
                   onClick={async () => {
+                    const wasHidden = Boolean(hiddenIds[item.id]);
+                    setHiddenIds((prev) => applyOptimisticDraftHide(prev, item.id));
                     setBusyId(item.id);
                     try {
                       await deleteDraftMedia(threadId, item.id);
-                      setHiddenIds((prev) => ({ ...prev, [item.id]: true }));
                       toast.success("已丢弃草稿");
                     } catch (error) {
+                      if (!wasHidden) {
+                        setHiddenIds((prev) =>
+                          rollbackOptimisticDraftHide(prev, item.id)
+                        );
+                      }
                       toast.error(
                         error instanceof Error
                           ? error.message
@@ -263,6 +371,11 @@ export function DraftMediaList({
                   return;
                 }
 
+                const optimisticItemId = pendingItem.id;
+                const wasHidden = Boolean(hiddenIds[optimisticItemId]);
+                setHiddenIds((prev) =>
+                  applyOptimisticDraftHide(prev, optimisticItemId)
+                );
                 setBusyId(pendingItem.id);
                 try {
                   const resp = await attachDraftMedia(
@@ -273,6 +386,11 @@ export function DraftMediaList({
                   );
                   if (resp.target_updated === false) {
                     const detail = resp.target_update_error?.trim();
+                    if (!wasHidden) {
+                      setHiddenIds((prev) =>
+                        rollbackOptimisticDraftHide(prev, optimisticItemId)
+                      );
+                    }
                     toast.warning(
                       detail
                         ? `已生成挂载结果，但目标未更新：${detail}`
@@ -281,10 +399,14 @@ export function DraftMediaList({
                     return;
                   }
 
-                  setHiddenIds((prev) => ({ ...prev, [pendingItem.id]: true }));
                   setDialogOpen(false);
                   toast.success("已挂载");
                 } catch (error) {
+                  if (!wasHidden) {
+                    setHiddenIds((prev) =>
+                      rollbackOptimisticDraftHide(prev, optimisticItemId)
+                    );
+                  }
                   toast.error(
                     error instanceof Error ? error.message : "挂载失败",
                   );
@@ -299,6 +421,7 @@ export function DraftMediaList({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

@@ -6,12 +6,21 @@ vi.mock('@/core/config', () => ({
 
 import { novelApiService } from '@/core/novel/novel-api';
 
-function mockResponse(payload: unknown, status = 200): Response {
+function mockJsonResponse(payload: unknown, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
     status,
     text: vi.fn().mockResolvedValue(JSON.stringify(payload)),
     json: vi.fn().mockResolvedValue(payload),
+  } as unknown as Response;
+}
+
+function mockTextResponse(text: string, status = 500): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: vi.fn().mockResolvedValue(text),
+    json: vi.fn().mockRejectedValue(new Error('json() should not be used')),
   } as unknown as Response;
 }
 
@@ -27,7 +36,7 @@ describe('NovelApiService book import contract', () => {
 
   it('maps legacy extract_mode values to backend contract', async () => {
     const fetchMock = vi.mocked(fetch);
-    fetchMock.mockResolvedValueOnce(mockResponse({ task_id: 'task-1' }));
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ task_id: 'task-1' }));
 
     const file = new File(['dummy'], 'book.txt', { type: 'text/plain' });
     const result = await novelApiService.createBookImportTask(file, {
@@ -47,8 +56,8 @@ describe('NovelApiService book import contract', () => {
   it('uses /book-import prefix for task status and preview APIs', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock
-      .mockResolvedValueOnce(mockResponse({ task_id: 'tid', status: 'running', progress: 30, message: 'ok' }))
-      .mockResolvedValueOnce(mockResponse({
+      .mockResolvedValueOnce(mockJsonResponse({ task_id: 'tid', status: 'running', progress: 30, message: 'ok' }))
+      .mockResolvedValueOnce(mockJsonResponse({
         task_id: 'tid',
         project_suggestion: {
           title: '项目A',
@@ -93,5 +102,46 @@ describe('NovelApiService book import contract', () => {
     expect(url).toBe('http://backend.test/book-import/tasks/tid/retry-stream');
     expect(options?.method).toBe('POST');
     expect(options?.body).toBe(JSON.stringify({ steps: ['world_building', 'career_system'] }));
+  });
+
+  it('raises ApiError for non-JSON book import error bodies', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce(mockTextResponse('Internal Server Error', 500));
+
+    const statusPromise = novelApiService.getBookImportTaskStatus('tid');
+
+    await expect(statusPromise).rejects.not.toBeInstanceOf(SyntaxError);
+    await expect(statusPromise).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 500,
+      message: expect.stringContaining('500'),
+      details: 'Internal Server Error',
+    });
+  });
+
+  it('rejects applyBookImportStream with status and parsed details on non-2xx', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ error: 'stream failed' }, 503));
+
+    await expect(
+      novelApiService.applyBookImportStream('tid', { mode: 'tail' }),
+    ).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 503,
+      details: { error: 'stream failed' },
+    });
+  });
+
+  it('rejects retryBookImportStepsStream with status and parsed details on non-2xx', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ error: 'retry failed' }, 502));
+
+    await expect(
+      novelApiService.retryBookImportStepsStream('tid', ['outline', 'chapter']),
+    ).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 502,
+      details: { error: 'retry failed' },
+    });
   });
 });

@@ -222,7 +222,7 @@ export function useSpringEntrance(selector: string, options?: {
   return ref;
 }
 
-export function useMagneticHover(selector: string, strength: number = 0.3) {
+export function useMagneticHover(selector: string, strength = 0.3) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -332,7 +332,7 @@ export function useTextReveal(selector: string, options?: {
   return ref;
 }
 
-export function useParallaxScroll(selector: string, speed: number = 0.1) {
+export function useParallaxScroll(selector: string, speed = 0.1) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

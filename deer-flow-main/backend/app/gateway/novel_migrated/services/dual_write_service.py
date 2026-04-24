@@ -5,7 +5,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from app.gateway.novel_migrated.core.database import async_session_factory
 from app.gateway.novel_migrated.models.dual_write_log import DualWriteLog
@@ -48,7 +48,7 @@ async def retry_pending_dual_writes() -> int:
     """
     import httpx
 
-    from deerflow.tools.builtins.novel_tool_helpers import get_base_url, get_timeout_seconds, build_headers
+    from deerflow.tools.builtins.novel_tool_helpers import build_headers, get_base_url, get_timeout_seconds
 
     now = datetime.now(tz=UTC)
     success_count = 0
@@ -76,7 +76,6 @@ async def retry_pending_dual_writes() -> int:
                     response.raise_for_status()
 
                 entry.status = "success"
-                entry.retry_count += 1
                 success_count += 1
                 logger.info("Dual-write retry success: id=%s project=%s", entry.id, entry.modern_project_id)
             except Exception as exc:

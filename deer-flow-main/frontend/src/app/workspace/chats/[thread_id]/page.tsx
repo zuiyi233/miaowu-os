@@ -50,7 +50,11 @@ export default function ChatPage() {
 
   const [thread, sendMessage, isUploading] = useThreadStream({
     threadId: isNewThread ? undefined : threadId,
-    context: settings.context,
+    context: {
+      ...settings.context,
+      moduleId: "chat-main",
+      module_id: "chat-main",
+    },
     isMock,
     onStart: (createdThreadId) => {
       setThreadId(createdThreadId);
@@ -91,7 +95,10 @@ export default function ChatPage() {
 
   const handleSubmit = useCallback(
     (message: PromptInputMessage) => {
-      void sendMessage(threadId, message);
+      void sendMessage(threadId, message, {
+        moduleId: "chat-main",
+        module_id: "chat-main",
+      });
     },
     [sendMessage, threadId],
   );

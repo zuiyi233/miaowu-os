@@ -12,6 +12,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import Link from "next/link";
+
 import {
   useAnimeEntrance,
   useSpringEntrance,
@@ -46,7 +47,7 @@ function ViewCard({ view }: { view: (typeof workspaceViews)[0] }) {
           duration: 400,
           ease: "spring(1, 0.5, 10, 0)",
         });
-        const iconWrap = el.querySelector(".view-icon") as HTMLElement;
+        const iconWrap = el.querySelector(".view-icon")!;
         if (iconWrap) {
           animate(iconWrap, {
             scale: [1, 1.2],
@@ -64,7 +65,7 @@ function ViewCard({ view }: { view: (typeof workspaceViews)[0] }) {
           duration: 500,
           ease: "spring(1, 0.4, 12, 0)",
         });
-        const iconWrap = el.querySelector(".view-icon") as HTMLElement;
+        const iconWrap = el.querySelector(".view-icon")!;
         if (iconWrap) {
           animate(iconWrap, {
             scale: [1.2, 1],

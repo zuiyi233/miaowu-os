@@ -6,6 +6,7 @@ import {
   ConversationContent,
 } from "@/components/ai-elements/conversation";
 import { useI18n } from "@/core/i18n/hooks";
+import { normalizeDraftMediaMap } from "@/core/media/drafts";
 import {
   extractContentFromMessage,
   extractPresentFilesFromMessage,
@@ -17,7 +18,6 @@ import {
   hasToolCalls,
 } from "@/core/messages/utils";
 import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
-import { normalizeDraftMediaMap } from "@/core/media/drafts";
 import type { Subtask } from "@/core/tasks";
 import { useUpdateSubtask } from "@/core/tasks/context";
 import type { AgentThreadState } from "@/core/threads";

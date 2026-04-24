@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from langchain.tools import tool
@@ -8,6 +9,69 @@ from langchain.tools import tool
 from deerflow.tools.builtins.novel_tool_helpers import _fail, _ok, get_base_url, get_json, post_json
 
 logger = logging.getLogger(__name__)
+
+_CN_DIGITS = {
+    "零": 0,
+    "〇": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+_CN_UNITS = {"十": 10, "百": 100, "千": 1000, "万": 10000}
+_FULLWIDTH_DIGITS_TRANS = str.maketrans("０１２３４５６７８９", "0123456789")
+
+
+def _parse_chinese_number(token: str) -> int:
+    if not token:
+        return 0
+    total = 0
+    section = 0
+    number = 0
+
+    for char in token:
+        if char in _CN_DIGITS:
+            number = _CN_DIGITS[char]
+            continue
+        if char in _CN_UNITS:
+            unit = _CN_UNITS[char]
+            if unit == 10000:
+                section = (section + number) * unit
+                total += section
+                section = 0
+                number = 0
+            else:
+                if number == 0:
+                    number = 1
+                section += number * unit
+                number = 0
+    return total + section + number
+
+
+def _parse_chapter_number(raw: str) -> int:
+    text = (raw or "").strip().translate(_FULLWIDTH_DIGITS_TRANS)
+    if not text:
+        return 1
+
+    digit_match = re.search(r"\d+", text)
+    if digit_match:
+        try:
+            return max(1, int(digit_match.group(0)))
+        except ValueError:
+            pass
+
+    cn_match = re.search(r"[零〇一二两三四五六七八九十百千万]+", text)
+    if cn_match:
+        parsed = _parse_chinese_number(cn_match.group(0))
+        if parsed > 0:
+            return parsed
+    return 1
 
 
 @tool("analyze_chapter", parse_docstring=True)
@@ -84,7 +148,7 @@ async def manage_foreshadow(
     if action == "context":
         if not project_id:
             return _fail("project_id required for context action")
-        chapter_number = int(content) if content.isdigit() else 1
+        chapter_number = _parse_chapter_number(content)
         try:
             data = await get_json(f"{base_url}/api/foreshadows/projects/{project_id}/context/{chapter_number}")
             return _ok(data, source="novel_migrated.foreshadow_context")

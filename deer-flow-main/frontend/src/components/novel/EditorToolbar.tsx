@@ -24,7 +24,7 @@ import { useState, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { toast } from 'sonner';
 
 import { useAiPanelStore, useNovelStore } from '@/core/novel';
-import { novelAiService } from '@/core/novel/ai-service';
+import { NOVEL_AI_MODULE_IDS, novelAiService } from '@/core/novel/ai-service';
 import { useNovelQuery } from '@/core/novel/queries';
 import { cn } from '@/lib/utils';
 
@@ -113,6 +113,11 @@ export function EditorToolbar({ editor, novelId, className }: EditorToolbarProps
               content: `请继续以下章节的内容：\n${prompt}`,
             },
           ],
+          moduleId: NOVEL_AI_MODULE_IDS.chapterAiEdit,
+          context: {
+            moduleId: NOVEL_AI_MODULE_IDS.chapterAiEdit,
+            module_id: NOVEL_AI_MODULE_IDS.chapterAiEdit,
+          },
           novelId,
           stream: true,
         },
@@ -194,6 +199,11 @@ export function EditorToolbar({ editor, novelId, className }: EditorToolbarProps
                 content: getUserContent(action, selectedText),
               },
             ],
+            moduleId: NOVEL_AI_MODULE_IDS.chapterAiEdit,
+            context: {
+              moduleId: NOVEL_AI_MODULE_IDS.chapterAiEdit,
+              module_id: NOVEL_AI_MODULE_IDS.chapterAiEdit,
+            },
             novelId,
             stream: true,
           },

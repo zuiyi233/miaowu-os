@@ -16,32 +16,42 @@
 """
 from __future__ import annotations
 
+import importlib
 import logging
 import uuid
 from datetime import datetime
+from functools import lru_cache
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
 
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.user_context import get_request_user_id, resolve_user_id
 from app.gateway.novel_migrated.models.prompt_workshop import (
-    PromptWorkshopItem,
     PromptSubmission,
+    PromptWorkshopItem,
     PromptWorkshopLike,
 )
 from app.gateway.novel_migrated.models.writing_style import WritingStyle
 from app.gateway.novel_migrated.services.workshop_client import (
-    workshop_client,
     WorkshopClientError,
+    workshop_client,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/prompt-workshop", tags=["prompt-workshop"])
+
+
+@lru_cache(maxsize=1)
+def _get_runtime_config_module():
+    try:
+        return importlib.import_module("app.gateway.novel_migrated.core.config")
+    except ImportError:
+        return None
 
 
 def _is_workshop_server() -> bool:
@@ -53,13 +63,10 @@ def _is_workshop_server() -> bool:
     - 如果配置了 WORKSHOP_MODE="server"，则返回 True
     - 适用于 deer-flow 单机部署或私有化部署场景
     """
-    try:
-        import importlib
-
-        config_module = importlib.import_module("app.gateway.novel_migrated.core.config")
-        return getattr(config_module, "WORKSHOP_MODE", "client") == "server"
-    except ImportError:
+    config_module = _get_runtime_config_module()
+    if config_module is None:
         return False
+    return getattr(config_module, "WORKSHOP_MODE", "client") == "server"
 
 
 # ==================== 请求/响应模型 ====================
@@ -129,14 +136,9 @@ def _get_user_identifier(user_id: str) -> str:
     
     格式：instance_id:user_id
     """
-    try:
-        import importlib
-
-        config_module = importlib.import_module("app.gateway.novel_migrated.core.config")
-        instance_id = getattr(config_module, "INSTANCE_ID", "local")
-        return f"{instance_id}:{user_id}"
-    except ImportError:
-        return f"local:{user_id}"
+    config_module = _get_runtime_config_module()
+    instance_id = getattr(config_module, "INSTANCE_ID", "local") if config_module is not None else "local"
+    return f"{instance_id}:{user_id}"
 
 
 def _get_optional_user_identifier(request: Request) -> Optional[str]:

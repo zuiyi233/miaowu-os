@@ -2,8 +2,8 @@
 
 import { BarChart3 } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect } from 'react';
 import { useParams } from 'next/navigation';
+import { useEffect } from 'react';
 
 import { NovelEditor } from '@/components/novel/Editor';
 import { Button } from '@/components/ui/button';

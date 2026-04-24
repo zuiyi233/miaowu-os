@@ -15,15 +15,15 @@ import time
 import uuid
 from datetime import datetime
 from email.mime.text import MIMEText
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id
-from app.gateway.novel_migrated.core.crypto import safe_decrypt, encrypt_secret, is_encryption_enabled
+from app.gateway.novel_migrated.core.crypto import encrypt_secret, is_encryption_enabled, safe_decrypt
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.models.settings import Settings
 from app.gateway.novel_migrated.services.ai_service import AIService, create_user_ai_service
@@ -41,14 +41,14 @@ class ModelConfig(BaseModel):
     """模型配置"""
     name: str = Field(..., description="模型名称")
     provider: str = Field(..., description="API 提供商")
-    api_base_url: Optional[str] = Field(None, description="API 基础 URL")
+    api_base_url: str | None = Field(None, description="API 基础 URL")
 
 
 class TestRequest(BaseModel):
     """测试请求"""
     prompt: str = Field("你好，请回复'测试成功'", description="测试提示词")
-    model_name: Optional[str] = Field(None, description="模型名称（为空则使用当前配置）")
-    max_tokens: Optional[int] = Field(50, description="最大 token 数")
+    model_name: str | None = Field(None, description="模型名称（为空则使用当前配置）")
+    max_tokens: int | None = Field(50, description="最大 token 数")
 
 
 class FunctionCallingTestRequest(BaseModel):
@@ -78,39 +78,39 @@ class FunctionCallingTestRequest(BaseModel):
 class PresetCreate(BaseModel):
     """创建预设请求"""
     name: str = Field(..., min_length=1, max_length=100, description="预设名称")
-    description: Optional[str] = Field(None, max_length=500, description="预设描述")
+    description: str | None = Field(None, max_length=500, description="预设描述")
     config: dict = Field(..., description="预设配置（JSON）")
 
 
 class PresetUpdate(BaseModel):
     """更新预设请求"""
-    name: Optional[str] = Field(None, min_length=1, max_length=100)
-    description: Optional[str] = None
-    config: Optional[dict] = None
+    name: str | None = Field(None, min_length=1, max_length=100)
+    description: str | None = None
+    config: dict | None = None
 
 
 class PresetFromCurrentRequest(BaseModel):
     """从当前配置创建预设"""
     name: str = Field(..., min_length=1, max_length=100, description="预设名称")
-    description: Optional[str] = Field(None, max_length=500, description="预设描述")
+    description: str | None = Field(None, max_length=500, description="预设描述")
 
 
 class SettingsPayload(BaseModel):
     """设置保存/更新请求（对齐参考项目核心字段）"""
 
-    api_provider: Optional[str] = Field(default=None, description="API 提供商")
-    api_key: Optional[str] = Field(default=None, description="API 密钥")
-    api_base_url: Optional[str] = Field(default=None, description="API 基础 URL")
-    llm_model: Optional[str] = Field(default=None, description="模型名称")
-    temperature: Optional[float] = Field(default=None, description="温度参数")
-    max_tokens: Optional[int] = Field(default=None, description="最大 token 数")
-    system_prompt: Optional[str] = Field(default=None, description="系统提示词")
-    cover_api_provider: Optional[str] = Field(default=None, description="封面 API 提供商")
-    cover_api_key: Optional[str] = Field(default=None, description="封面 API 密钥")
-    cover_api_base_url: Optional[str] = Field(default=None, description="封面 API 基础 URL")
-    cover_image_model: Optional[str] = Field(default=None, description="封面模型")
-    cover_enabled: Optional[bool] = Field(default=None, description="是否启用封面")
-    preferences: Optional[str] = Field(default=None, description="扩展偏好(JSON 字符串)")
+    api_provider: str | None = Field(default=None, description="API 提供商")
+    api_key: str | None = Field(default=None, description="API 密钥")
+    api_base_url: str | None = Field(default=None, description="API 基础 URL")
+    llm_model: str | None = Field(default=None, description="模型名称")
+    temperature: float | None = Field(default=None, description="温度参数")
+    max_tokens: int | None = Field(default=None, description="最大 token 数")
+    system_prompt: str | None = Field(default=None, description="系统提示词")
+    cover_api_provider: str | None = Field(default=None, description="封面 API 提供商")
+    cover_api_key: str | None = Field(default=None, description="封面 API 密钥")
+    cover_api_base_url: str | None = Field(default=None, description="封面 API 基础 URL")
+    cover_image_model: str | None = Field(default=None, description="封面模型")
+    cover_enabled: bool | None = Field(default=None, description="是否启用封面")
+    preferences: str | None = Field(default=None, description="扩展偏好(JSON 字符串)")
 
 
 class CoverSettingsTestRequest(BaseModel):
@@ -118,19 +118,19 @@ class CoverSettingsTestRequest(BaseModel):
 
     cover_api_provider: str = Field(..., description="封面 API 提供商")
     cover_api_key: str = Field(..., description="封面 API 密钥")
-    cover_api_base_url: Optional[str] = Field(None, description="封面 API 基础 URL")
+    cover_api_base_url: str | None = Field(None, description="封面 API 基础 URL")
     cover_image_model: str = Field(..., description="封面模型名称")
 
 
 class SMTPConfigUpdate(BaseModel):
     """SMTP 配置更新"""
-    smtp_host: Optional[str] = Field(None, description="SMTP 服务器地址")
-    smtp_port: Optional[int] = Field(None, description="SMTP 端口")
-    smtp_user: Optional[str] = Field(None, description="SMTP 用户名")
-    smtp_password: Optional[str] = Field(None, description="SMTP 密码")
-    smtp_from_email: Optional[EmailStr] = Field(None, description="发件人邮箱")
-    use_tls: Optional[bool] = Field(True, description="是否使用 TLS")
-    smtp_enabled: Optional[bool] = Field(False, description="是否启用 SMTP")
+    smtp_host: str | None = Field(None, description="SMTP 服务器地址")
+    smtp_port: int | None = Field(None, description="SMTP 端口")
+    smtp_user: str | None = Field(None, description="SMTP 用户名")
+    smtp_password: str | None = Field(None, description="SMTP 密码")
+    smtp_from_email: EmailStr | None = Field(None, description="发件人邮箱")
+    use_tls: bool | None = Field(True, description="是否使用 TLS")
+    smtp_enabled: bool | None = Field(False, description="是否启用 SMTP")
 
 
 class SMTPTestRequest(BaseModel):
@@ -142,6 +142,15 @@ class SMTPTestRequest(BaseModel):
 # ==================== 辅助函数 ====================
 
 _SENSITIVE_FIELDS = {"api_key", "cover_api_key"}
+_AI_SYNC_FIELD_KEYS = {
+    "api_provider",
+    "api_key",
+    "api_base_url",
+    "llm_model",
+    "temperature",
+    "max_tokens",
+    "system_prompt",
+}
 
 
 def _encrypt_if_needed(field_name: str, value: Any) -> Any:
@@ -155,6 +164,17 @@ def _encrypt_if_needed(field_name: str, value: Any) -> Any:
     if not str_val:
         return value
     return encrypt_secret(str_val)
+
+
+def _apply_settings_payload(settings: Settings, payload: dict[str, Any]) -> None:
+    for key, value in payload.items():
+        setattr(settings, key, _encrypt_if_needed(key, value))
+
+
+def _sync_ai_bundle_if_needed(settings: Settings, payload: dict[str, Any]) -> None:
+    ai_payload = {key: value for key, value in payload.items() if key in _AI_SYNC_FIELD_KEYS}
+    if ai_payload:
+        get_ai_settings_service().sync_preferences_from_settings_payload(settings, ai_payload)
 
 async def get_user_ai_service(
     request: Request,
@@ -221,6 +241,68 @@ def _get_presets(preferences: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def _sanitize_preset_config_for_response(config: dict[str, Any]) -> dict[str, Any]:
+    """Return a response-safe preset config without leaking secrets."""
+    sanitized = dict(config)
+    has_api_key = bool(sanitized.get("api_key") or sanitized.get("api_key_encrypted"))
+    has_cover_api_key = bool(sanitized.get("cover_api_key") or sanitized.get("cover_api_key_encrypted"))
+
+    for key in ("api_key", "cover_api_key", "api_key_encrypted", "cover_api_key_encrypted"):
+        sanitized.pop(key, None)
+
+    sanitized["has_api_key"] = has_api_key
+    sanitized["has_cover_api_key"] = has_cover_api_key
+    return sanitized
+
+
+def _sanitize_preset_for_response(preset: dict[str, Any]) -> dict[str, Any]:
+    """Return a response-safe preset payload."""
+    sanitized = dict(preset)
+    config = sanitized.get("config")
+    if isinstance(config, dict):
+        sanitized["config"] = _sanitize_preset_config_for_response(config)
+    return sanitized
+
+
+def _resolve_secret_for_preset_activate(config: dict[str, Any], *, plain_field: str, encrypted_field: str) -> tuple[str | None, bool]:
+    """Resolve preset secret for activation.
+
+    Returns:
+        tuple[str | None, bool]:
+            - str | None: stored secret value to apply
+            - bool: whether the returned value is already encrypted
+    """
+    encrypted_value = config.get(encrypted_field)
+    if isinstance(encrypted_value, str):
+        trimmed_encrypted = encrypted_value.strip()
+        if trimmed_encrypted:
+            return trimmed_encrypted, True
+
+    plain_value = config.get(plain_field)
+    if isinstance(plain_value, str):
+        trimmed_plain = plain_value.strip()
+        if trimmed_plain:
+            decrypted = safe_decrypt(trimmed_plain)
+            if is_encryption_enabled() and decrypted is not None and decrypted != trimmed_plain:
+                return trimmed_plain, True
+            return trimmed_plain, False
+
+    return None, False
+
+
+def _resolve_secret_for_runtime(config: dict[str, Any], *, plain_field: str, encrypted_field: str) -> str | None:
+    """Resolve preset secret into plaintext for runtime calls."""
+    encrypted_value = config.get(encrypted_field)
+    if isinstance(encrypted_value, str) and encrypted_value.strip():
+        return safe_decrypt(encrypted_value.strip())
+
+    plain_value = config.get(plain_field)
+    if isinstance(plain_value, str) and plain_value.strip():
+        return safe_decrypt(plain_value.strip())
+
+    return None
+
+
 def _settings_to_response(settings: Settings) -> dict[str, Any]:
     """将 Settings ORM 对象转为兼容参考项目核心字段的响应结构。"""
     raw_api_key = safe_decrypt(settings.api_key)
@@ -270,28 +352,16 @@ async def save_settings(
     result = await db.execute(select(Settings).where(Settings.user_id == user_id))
     settings = result.scalar_one_or_none()
     payload = data.model_dump(exclude_unset=True)
-    ai_field_keys = {
-        "api_provider",
-        "api_key",
-        "api_base_url",
-        "llm_model",
-        "temperature",
-        "max_tokens",
-        "system_prompt",
-    }
 
     if settings:
-        for key, value in payload.items():
-            setattr(settings, key, _encrypt_if_needed(key, value))
+        _apply_settings_payload(settings, payload)
     else:
         encrypted_payload = {k: _encrypt_if_needed(k, v) for k, v in payload.items()}
         settings = Settings(user_id=user_id, **encrypted_payload)
         db.add(settings)
 
     # Keep canonical provider bundle in sync when legacy fields are written.
-    ai_payload = {k: payload[k] for k in payload.keys() if k in ai_field_keys}
-    if ai_payload:
-        get_ai_settings_service().sync_preferences_from_settings_payload(settings, ai_payload)
+    _sync_ai_bundle_if_needed(settings, payload)
 
     await db.commit()
     await db.refresh(settings)
@@ -313,22 +383,10 @@ async def update_settings(
         raise HTTPException(status_code=404, detail="设置不存在，请先创建设置")
 
     payload = data.model_dump(exclude_unset=True)
-    ai_field_keys = {
-        "api_provider",
-        "api_key",
-        "api_base_url",
-        "llm_model",
-        "temperature",
-        "max_tokens",
-        "system_prompt",
-    }
-    for key, value in payload.items():
-        setattr(settings, key, _encrypt_if_needed(key, value))
+    _apply_settings_payload(settings, payload)
 
     # Keep canonical provider bundle in sync when legacy fields are written.
-    ai_payload = {k: payload[k] for k in payload.keys() if k in ai_field_keys}
-    if ai_payload:
-        get_ai_settings_service().sync_preferences_from_settings_payload(settings, ai_payload)
+    _sync_ai_bundle_if_needed(settings, payload)
 
     await db.commit()
     await db.refresh(settings)
@@ -543,12 +601,13 @@ async def get_presets(
         presets_data = _json.loads(preferences) if isinstance(preferences, str) else preferences
 
         presets = presets_data.get("presets", [])
+        safe_presets = [_sanitize_preset_for_response(item) for item in presets if isinstance(item, dict)]
 
         return {
             "success": True,
             "data": {
-                "presets": presets,
-                "total": len(presets),
+                "presets": safe_presets,
+                "total": len(safe_presets),
             },
         }
     except Exception as e:
@@ -602,7 +661,7 @@ async def create_preset(
 
         return {
             "success": True,
-            "data": new_preset,
+            "data": _sanitize_preset_for_response(new_preset),
             "message": f"预设 '{data.name}' 创建成功",
         }
     except Exception as e:
@@ -739,8 +798,9 @@ async def activate_preset(
     if isinstance(preset_config, dict):
         if preset_config.get("api_provider") is not None:
             settings.api_provider = str(preset_config.get("api_provider") or settings.api_provider)
-        if preset_config.get("api_key") is not None:
-            settings.api_key = _encrypt_if_needed("api_key", str(preset_config.get("api_key") or ""))
+        preset_api_key, api_key_already_encrypted = _resolve_secret_for_preset_activate(preset_config, plain_field="api_key", encrypted_field="api_key_encrypted")
+        if preset_api_key is not None:
+            settings.api_key = preset_api_key if api_key_already_encrypted else _encrypt_if_needed("api_key", preset_api_key)
         if preset_config.get("api_base_url") is not None:
             settings.api_base_url = str(preset_config.get("api_base_url") or "")
         if preset_config.get("llm_model") is not None:
@@ -785,9 +845,10 @@ async def test_preset(
         raise HTTPException(status_code=404, detail=f"预设 {preset_id} 不存在")
 
     config = target_preset.get("config") if isinstance(target_preset.get("config"), dict) else {}
+    preset_runtime_api_key = _resolve_secret_for_runtime(config, plain_field="api_key", encrypted_field="api_key_encrypted")
     ai_service = create_user_ai_service(
         api_provider=str(config.get("api_provider") or settings.api_provider or "openai"),
-        api_key=safe_decrypt(str(config.get("api_key") or "")) or safe_decrypt(settings.api_key) or "",
+        api_key=preset_runtime_api_key or safe_decrypt(settings.api_key) or "",
         api_base_url=str(config.get("api_base_url") or settings.api_base_url or ""),
         model_name=str(config.get("llm_model") or settings.llm_model or "gpt-4"),
         temperature=float(config.get("temperature") if config.get("temperature") is not None else (settings.temperature or 0.7)),
@@ -856,14 +917,20 @@ async def create_preset_from_current(
         "created_at": datetime.utcnow().isoformat(),
         "config": {
             "api_provider": settings.api_provider,
-            "api_key": safe_decrypt(settings.api_key),
             "api_base_url": settings.api_base_url,
             "llm_model": settings.llm_model,
             "temperature": settings.temperature,
             "max_tokens": settings.max_tokens,
             "system_prompt": settings.system_prompt,
+            "has_api_key": bool(safe_decrypt(settings.api_key)),
+            "has_cover_api_key": bool(safe_decrypt(settings.cover_api_key)),
         },
     }
+    if is_encryption_enabled() and isinstance(settings.api_key, str) and settings.api_key.strip():
+        new_preset["config"]["api_key_encrypted"] = settings.api_key.strip()
+    if is_encryption_enabled() and isinstance(settings.cover_api_key, str) and settings.cover_api_key.strip():
+        new_preset["config"]["cover_api_key_encrypted"] = settings.cover_api_key.strip()
+
     presets.append(new_preset)
     preferences["presets"] = presets
     _save_preferences(settings, preferences)
@@ -873,7 +940,7 @@ async def create_preset_from_current(
     logger.info("用户 %s 从当前配置创建预设: %s", user_id, preset_name)
     return {
         "success": True,
-        "data": new_preset,
+        "data": _sanitize_preset_for_response(new_preset),
         "message": f"已从当前配置创建预设 '{preset_name}'",
     }
 

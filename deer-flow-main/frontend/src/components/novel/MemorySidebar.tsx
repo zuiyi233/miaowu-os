@@ -1,18 +1,19 @@
 'use client';
 
-import { useMemo, useEffect, useRef } from 'react';
-import { cn } from '@/lib/utils';
 import { Flame, Star, Zap, User } from 'lucide-react';
-import { Card } from '@/components/ui/card';
+import { useMemo, useEffect, useRef } from 'react';
+
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
+import { Card } from '@/components/ui/card';
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
 import type { MemoryAnnotation, MemoryAnnotationType } from '@/core/novel/schemas';
+import { cn } from '@/lib/utils';
 
 interface MemorySidebarProps {
   annotations: MemoryAnnotation[];

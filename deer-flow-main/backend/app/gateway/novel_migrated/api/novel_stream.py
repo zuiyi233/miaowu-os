@@ -757,6 +757,8 @@ async def _load_or_create_batch_task(
             )
             existing = existing_result.scalar_one_or_none()
             if existing:
+                if recovery_service.recover_batch_task(existing):
+                    await db.commit()
                 chapters_result = await db.execute(
                     select(Chapter)
                     .where(Chapter.project_id == project.id, Chapter.id.in_(existing.chapter_ids or []))
@@ -936,6 +938,7 @@ async def batch_generate_chapters_stream(
     async def event_generator() -> AsyncGenerator[str, None]:
         tracker = WizardProgressTracker("批量章节")
         yield await tracker.start()
+        task: BatchGenerationTask | None = None
         try:
             task, chapters, reused = await _load_or_create_batch_task(
                 db=db,
@@ -1135,9 +1138,26 @@ async def batch_generate_chapters_stream(
                 yield await tracker.complete("批量任务结束（含失败，可重放）")
             yield _complete_event()
         except HTTPException as exc:
+            # 确保任务不会卡在 running/processing
+            try:
+                if task is not None and task.status == "running":
+                    task.status = "failed"
+                    task.error_message = f"批量任务异常中断：{exc.detail}"[:500]
+                    task.completed_at = datetime.utcnow()
+                    await db.commit()
+            except Exception:  # pragma: no cover - best effort
+                await db.rollback()
             yield _error_event(str(exc.detail), exc.status_code)
         except Exception as exc:  # pragma: no cover
             await db.rollback()
+            try:
+                if task is not None and task.status == "running":
+                    task.status = "failed"
+                    task.error_message = f"批量任务异常中断：{exc}"[:500]
+                    task.completed_at = datetime.utcnow()
+                    await db.commit()
+            except Exception:  # pragma: no cover - best effort
+                await db.rollback()
             logger.error("batch generate stream failed: %s", exc, exc_info=True)
             yield _error_event(str(exc), 500)
 

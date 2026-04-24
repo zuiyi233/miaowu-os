@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 from types import ModuleType
 
 from fastapi import APIRouter
@@ -42,12 +43,24 @@ _OPTIONAL_ROUTER_MODULES = (
     "app.gateway.novel_migrated.api.novel_agent_configs",
 )
 
+_ADMIN_ROUTER_MODULE = "app.gateway.novel_migrated.api.admin"
+_ADMIN_ROUTE_SWITCH_ENV = "NOVEL_MIGRATED_ENABLE_ADMIN_ROUTES"
+
 
 def _import_router_module(module_path: str) -> ModuleType:
     return importlib.import_module(module_path)
 
 
+def _is_admin_router_enabled() -> bool:
+    raw = os.getenv(_ADMIN_ROUTE_SWITCH_ENV, "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _include_optional_router(module_path: str) -> bool:
+    if module_path == _ADMIN_ROUTER_MODULE and not _is_admin_router_enabled():
+        logger.info("Skip optional router %s: disabled by %s", module_path, _ADMIN_ROUTE_SWITCH_ENV)
+        return False
+
     try:
         module = _import_router_module(module_path)
     except ModuleNotFoundError as exc:

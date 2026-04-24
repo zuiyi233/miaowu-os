@@ -132,4 +132,33 @@ describe("phase2 status mapping", () => {
     expect(snapshot.errors).toHaveLength(0);
     expect(snapshot.warnings).toHaveLength(0);
   });
+
+  it("drops meaningless placeholder message in thread snapshot", () => {
+    const snapshot = buildPhase2SnapshotFromThread({
+      novel_pipeline: {
+        status: "running",
+        progress: 15,
+        message: "N/A",
+      },
+    });
+
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.status).toBe("running");
+    expect(snapshot?.progress).toBe(15);
+    expect(snapshot?.message).toBeUndefined();
+  });
+
+  it("falls back to synthesized summary when report message is placeholder", () => {
+    const snapshot = buildPhase2SnapshotFromQualityReport(
+      {
+        status: "success",
+        summary: "null",
+        issues: [],
+      },
+      "novel-empty-message",
+    );
+
+    expect(snapshot.status).toBe("success");
+    expect(snapshot.message).toBe("一致性检查通过");
+  });
 });

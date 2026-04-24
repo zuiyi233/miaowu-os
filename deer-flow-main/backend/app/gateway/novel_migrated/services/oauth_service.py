@@ -13,10 +13,11 @@ OAuth2 服务（最小兼容实现）
 """
 from __future__ import annotations
 
-import httpx
 import logging
 import secrets
-from typing import Optional, Dict, Any
+from typing import Any
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ class BaseOAuthService:
         query_string = "&".join([f"{k}={v}" for k, v in params.items()])
         return f"{self.AUTHORIZE_URL}?{query_string}"
 
-    async def get_access_token(self, code: str) -> Optional[Dict[str, Any]]:
+    async def get_access_token(self, code: str) -> dict[str, Any] | None:
         """
         使用授权码获取访问令牌
         
@@ -104,7 +105,7 @@ class BaseOAuthService:
             logger.error(f"获取访问令牌异常: {e}")
             return None
 
-    async def get_user_info(self, access_token: str) -> Optional[Dict[str, Any]]:
+    async def get_user_info(self, access_token: str) -> dict[str, Any] | None:
         """
         使用访问令牌获取用户信息
         
@@ -163,7 +164,7 @@ class LinuxDOOAuthService(BaseOAuthService):
 
 
 # 全局 OAuth 服务实例（延迟初始化）
-_oauth_service: Optional[BaseOAuthService] = None
+_oauth_service: BaseOAuthService | None = None
 
 
 def get_oauth_service() -> BaseOAuthService:
@@ -181,5 +182,15 @@ def get_oauth_service() -> BaseOAuthService:
     return _oauth_service
 
 
-# 兼容性别名
-oauth_service = get_oauth_service()
+class _LazyOAuthServiceProxy:
+    """Compatibility proxy that delays real service construction until first use."""
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(get_oauth_service(), item)
+
+    def __repr__(self) -> str:  # pragma: no cover - debug helper
+        return "<LazyOAuthServiceProxy(target=LinuxDOOAuthService)>"
+
+
+# 兼容性别名（保持导出名称，但不在模块加载时创建真实实例）
+oauth_service: BaseOAuthService | _LazyOAuthServiceProxy = _LazyOAuthServiceProxy()

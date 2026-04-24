@@ -1,8 +1,10 @@
 """章节管理API - CRUD、单章/批量生成、重写、局部重写"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import AliasChoices, BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,12 +18,25 @@ from app.gateway.novel_migrated.models.regeneration_task import RegenerationTask
 from app.gateway.novel_migrated.services.ai_service import AIService
 from app.gateway.novel_migrated.services.optimistic_lock import optimistic_update
 from app.gateway.novel_migrated.services.recovery_service import recovery_service
+from app.gateway.observability.context import update_trace_context
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/chapters", tags=["chapters"])
 
 
-class ChapterCreateRequest(BaseModel):
+_IDEMPOTENCY_BODY_KEYS = ("idempotencyKey", "idempotency_key")
+_IDEMPOTENCY_HEADER_KEYS = ("x-idempotency-key", "idempotency-key")
+
+
+class _WriteRequestBase(BaseModel):
+    idempotency_key: str | None = Field(
+        default=None,
+        exclude=True,
+        validation_alias=AliasChoices("idempotency_key", "idempotencyKey"),
+    )
+
+
+class ChapterCreateRequest(_WriteRequestBase):
     title: str = ""
     summary: str = ""
     content: str = ""
@@ -31,14 +46,14 @@ class ChapterCreateRequest(BaseModel):
     expansion_plan: str | None = None
 
 
-class ChapterUpdateRequest(BaseModel):
+class ChapterUpdateRequest(_WriteRequestBase):
     title: str | None = None
     summary: str | None = None
     content: str | None = None
     expansion_plan: str | None = None
 
 
-class BatchGenerateRequest(BaseModel):
+class BatchGenerateRequest(_WriteRequestBase):
     project_id: str
     start_chapter_number: int
     chapter_count: int = 1
@@ -47,7 +62,7 @@ class BatchGenerateRequest(BaseModel):
     enable_analysis: bool = False
 
 
-class RegenerateRequest(BaseModel):
+class RegenerateRequest(_WriteRequestBase):
     project_id: str
     chapter_id: str
     modification_instructions: str = ""
@@ -57,7 +72,7 @@ class RegenerateRequest(BaseModel):
     preserve_elements: dict | None = None
 
 
-class PartialRegenerateRequest(BaseModel):
+class PartialRegenerateRequest(_WriteRequestBase):
     project_id: str
     chapter_id: str
     selected_text: str
@@ -65,6 +80,56 @@ class PartialRegenerateRequest(BaseModel):
     context_after: str = ""
     user_instructions: str = ""
     style_id: int | None = None
+
+
+def _normalize_idempotency_key(value: Any) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+def _extract_idempotency_key(request: Request, payload: dict[str, Any] | None = None) -> str | None:
+    for key in _IDEMPOTENCY_HEADER_KEYS:
+        normalized = _normalize_idempotency_key(request.headers.get(key))
+        if normalized:
+            return normalized
+
+    if payload:
+        for key in _IDEMPOTENCY_BODY_KEYS:
+            normalized = _normalize_idempotency_key(payload.get(key))
+            if normalized:
+                return normalized
+
+    for key in _IDEMPOTENCY_BODY_KEYS:
+        normalized = _normalize_idempotency_key(request.query_params.get(key))
+        if normalized:
+            return normalized
+
+    return None
+
+
+def _strip_idempotency_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in payload.items()
+        if key not in _IDEMPOTENCY_BODY_KEYS
+    }
+
+
+def _request_payload_for_idempotency(request_model: _WriteRequestBase | None) -> dict[str, Any]:
+    if request_model is None:
+        return {}
+    payload: dict[str, Any] = {}
+    if request_model.idempotency_key is not None:
+        payload["idempotency_key"] = request_model.idempotency_key
+    return payload
+
+
+def _bind_idempotency_context(request: Request, request_model: _WriteRequestBase | None = None) -> str | None:
+    payload = _request_payload_for_idempotency(request_model)
+    idempotency_key = _extract_idempotency_key(request, payload)
+    if idempotency_key:
+        update_trace_context(idempotency_key=idempotency_key)
+    return idempotency_key
 
 
 @router.get("/project/{project_id}")
@@ -118,9 +183,11 @@ async def get_chapter(
 async def create_chapter(
     project_id: str,
     req: ChapterCreateRequest,
+    request: Request,
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
+    _bind_idempotency_context(request, req)
     await verify_project_access(project_id, user_id, db)
 
     max_result = await db.execute(
@@ -149,9 +216,11 @@ async def create_chapter(
 async def update_chapter(
     chapter_id: str,
     req: ChapterUpdateRequest,
+    request: Request,
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
+    _bind_idempotency_context(request, req)
     result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
     chapter = result.scalar_one_or_none()
     if not chapter:
@@ -173,8 +242,10 @@ async def update_chapter(
 
     if updates:
         try:
-            await optimistic_update(Chapter, chapter_id, updates)
+            await optimistic_update(Chapter, chapter_id, updates, db=db)
+            await db.commit()
         except ValueError as exc:
+            await db.rollback()
             raise HTTPException(status_code=409, detail=str(exc))
 
     result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
@@ -185,9 +256,11 @@ async def update_chapter(
 @router.delete("/{chapter_id}")
 async def delete_chapter(
     chapter_id: str,
+    request: Request,
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
+    _bind_idempotency_context(request)
     result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
     chapter = result.scalar_one_or_none()
     if not chapter:
@@ -201,10 +274,12 @@ async def delete_chapter(
 @router.post("/batch-generate")
 async def batch_generate_chapters(
     req: BatchGenerateRequest,
+    request: Request,
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
     ai_service: AIService = Depends(get_user_ai_service),
 ):
+    _bind_idempotency_context(request, req)
     await verify_project_access(req.project_id, user_id, db)
 
     chapter_ids = []
@@ -329,9 +404,11 @@ async def get_active_batch_task(
 @router.post("/regenerate")
 async def regenerate_chapter(
     req: RegenerateRequest,
+    request: Request,
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
+    _bind_idempotency_context(request, req)
     await verify_project_access(req.project_id, user_id, db)
 
     result = await db.execute(select(Chapter).where(Chapter.id == req.chapter_id))
@@ -390,10 +467,12 @@ async def get_regen_task_status(
 @router.post("/partial-regenerate")
 async def partial_regenerate(
     req: PartialRegenerateRequest,
+    request: Request,
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
     ai_service: AIService = Depends(get_user_ai_service),
 ):
+    _bind_idempotency_context(request, req)
     await verify_project_access(req.project_id, user_id, db)
 
     result = await db.execute(select(Chapter).where(Chapter.id == req.chapter_id))
@@ -425,10 +504,12 @@ async def partial_regenerate(
 @router.put("/{chapter_id}/status")
 async def update_chapter_status(
     chapter_id: str,
+    request: Request,
     status: str = Query(..., description="New status"),
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
+    _bind_idempotency_context(request)
     result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
     chapter = result.scalar_one_or_none()
     if not chapter:
@@ -439,28 +520,38 @@ async def update_chapter_status(
     if status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
 
-    chapter.status = status
-    await db.commit()
+    try:
+        await optimistic_update(Chapter, chapter_id, {"status": status}, db=db)
+        await db.commit()
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    await db.refresh(chapter)
     return _serialize_chapter(chapter)
 
 
 @router.put("/reorder")
 async def reorder_chapters(
+    request: Request,
     project_id: str = Query(...),
     chapter_orders: list = [],
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
+    _bind_idempotency_context(request)
     await verify_project_access(project_id, user_id, db)
 
     for item in chapter_orders:
         ch_id = item.get("id")
         new_num = item.get("chapter_number")
         if ch_id and new_num:
-            result = await db.execute(select(Chapter).where(Chapter.id == ch_id))
-            ch = result.scalar_one_or_none()
-            if ch and ch.project_id == project_id:
-                ch.chapter_number = new_num
+            try:
+                await optimistic_update(
+                    Chapter, ch_id, {"chapter_number": new_num}, db=db
+                )
+            except ValueError:
+                logger.warning("Reorder conflict on chapter %s, skipping", ch_id)
 
     await db.commit()
     return {"message": "Chapters reordered"}

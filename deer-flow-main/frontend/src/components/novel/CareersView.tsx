@@ -1,17 +1,13 @@
 'use client';
 
+import { Trophy, Plus, Pencil, Trash2, Zap, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { useState, useCallback } from 'react';
 import { toast } from 'sonner';
-import { Trophy, Plus, Pencil, Trash2, Zap, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
-import { cn } from '@/lib/utils';
 
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -20,6 +16,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
   SelectContent,
@@ -27,14 +27,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Progress } from '@/components/ui/progress';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-
-import { useCareersQuery, useCreateCareerMutation, useUpdateCareerMutation, useDeleteCareerMutation } from '@/core/novel/queries';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
 import { novelApiService } from '@/core/novel/novel-api';
+import { useCareersQuery, useCreateCareerMutation, useUpdateCareerMutation, useDeleteCareerMutation } from '@/core/novel/queries';
 import type { Career, CareerStage } from '@/core/novel/schemas';
+import { cn } from '@/lib/utils';
 
 interface CareersViewProps {
   novelId: string;
@@ -108,7 +107,7 @@ export function CareersView({ novelId }: CareersViewProps) {
       .split('\n')
       .filter((line) => line.trim())
       .map((line, index) => {
-        const match = line.match(/^(\d+)\.\s*([^-]+)(?:\s*-\s*(.*))?$/);
+        const match = /^(\d+)\.\s*([^-]+)(?:\s*-\s*(.*))?$/.exec(line);
         if (match) {
           return { level: parseInt(match[1]!), name: (match[2] ?? '').trim(), description: (match[3] ?? '').trim() };
         }

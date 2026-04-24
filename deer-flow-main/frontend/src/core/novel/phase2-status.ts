@@ -1,4 +1,13 @@
 type StatusSeverity = "error" | "warning" | "info";
+const EMPTY_MESSAGE_SENTINELS = new Set([
+  "null",
+  "undefined",
+  "none",
+  "n/a",
+  "na",
+  "无",
+  "暂无",
+]);
 
 export type Phase2TaskStatus =
   | "idle"
@@ -45,6 +54,28 @@ function asString(value: unknown): string | undefined {
     return String(value);
   }
   return undefined;
+}
+
+function normalizeMessage(value: unknown): string | undefined {
+  const text = asString(value);
+  if (!text) {
+    return undefined;
+  }
+
+  const normalized = text.replace(/\u00a0/g, " ").trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (EMPTY_MESSAGE_SENTINELS.has(normalized.toLowerCase())) {
+    return undefined;
+  }
+
+  if (/^[\s\-–—_.,:;|/\\]+$/.test(normalized)) {
+    return undefined;
+  }
+
+  return normalized;
 }
 
 function asNumber(value: unknown): number | undefined {
@@ -161,7 +192,7 @@ function normalizeIssue(
   fallbackSource?: string,
 ): Phase2StatusIssue | null {
   if (typeof raw === "string") {
-    const message = asString(raw);
+    const message = normalizeMessage(raw);
     if (!message) {
       return null;
     }
@@ -177,7 +208,7 @@ function normalizeIssue(
     return null;
   }
 
-  const message = asString(
+  const message = normalizeMessage(
     firstDefined(record, [
       "message",
       "detail",
@@ -363,7 +394,7 @@ function buildSnapshotFromCandidate(
   const progress = asNumber(
     firstDefined(candidate, ["progress", "percent", "percentage", "progress_percent"]),
   );
-  const message = asString(
+  const message = normalizeMessage(
     firstDefined(candidate, ["message", "summary", "detail", "description"]),
   );
   const novelId = findNovelId(candidate);
@@ -552,7 +583,7 @@ export function buildPhase2SnapshotFromQualityReport(
   }
 
   const summary =
-    asString(firstDefined(report, ["summary", "message", "detail"])) ??
+    normalizeMessage(firstDefined(report, ["summary", "message", "detail"])) ??
     (reportBlockers.length > 0
       ? `存在 ${reportBlockers.length} 项定稿阻断`
       : reportWarnings.length > 0

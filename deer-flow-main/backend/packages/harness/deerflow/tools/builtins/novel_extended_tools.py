@@ -2,13 +2,25 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import quote
 
 from langchain.tools import tool
 
 from deerflow.tools.builtins.novel_idempotency import check_idempotency
-from deerflow.tools.builtins.novel_tool_helpers import _fail, _ok, get_base_url, get_json, post_json, put_json
+from deerflow.tools.builtins.novel_tool_helpers import _fail, _ok, get_base_url, get_json, post_json
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_required_id(value: str, field_name: str) -> tuple[str | None, dict[str, Any] | None]:
+    normalized = (value or "").strip()
+    if not normalized:
+        return None, _fail(f"{field_name} required")
+    return normalized, None
+
+
+def _safe_path_segment(value: str) -> str:
+    return quote(value, safe="")
 
 
 @tool("regenerate_chapter", parse_docstring=True)
@@ -43,10 +55,16 @@ async def regenerate_chapter(
     dup = check_idempotency("regenerate_chapter", idempotency_key)
     if dup["is_duplicate"]:
         return _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.regenerate")
+    normalized_project_id, validation_error = _normalize_required_id(project_id, "project_id")
+    if validation_error:
+        return validation_error
+    normalized_chapter_id, validation_error = _normalize_required_id(chapter_id, "chapter_id")
+    if validation_error:
+        return validation_error
     base_url = get_base_url()
     payload: dict[str, Any] = {
-        "project_id": project_id,
-        "chapter_id": chapter_id,
+        "project_id": normalized_project_id,
+        "chapter_id": normalized_chapter_id,
         "modification_instructions": modification_instructions,
         "custom_instructions": custom_instructions,
         "target_word_count": target_word_count,
@@ -93,10 +111,16 @@ async def partial_regenerate(
     dup = check_idempotency("partial_regenerate", idempotency_key)
     if dup["is_duplicate"]:
         return _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.partial_regenerate")
+    normalized_project_id, validation_error = _normalize_required_id(project_id, "project_id")
+    if validation_error:
+        return validation_error
+    normalized_chapter_id, validation_error = _normalize_required_id(chapter_id, "chapter_id")
+    if validation_error:
+        return validation_error
     base_url = get_base_url()
     payload: dict[str, Any] = {
-        "project_id": project_id,
-        "chapter_id": chapter_id,
+        "project_id": normalized_project_id,
+        "chapter_id": normalized_chapter_id,
         "selected_text": selected_text,
         "context_before": context_before,
         "context_after": context_after,
@@ -130,15 +154,19 @@ async def finalize_project(
     dup = check_idempotency("finalize_project", idempotency_key)
     if dup["is_duplicate"]:
         return _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.finalize")
+    normalized_project_id, validation_error = _normalize_required_id(project_id, "project_id")
+    if validation_error:
+        return validation_error
+    project_path_id = _safe_path_segment(normalized_project_id)
     base_url = get_base_url()
     try:
-        gate_data = await get_json(f"{base_url}/polish/projects/{project_id}/consistency-report")
+        gate_data = await get_json(f"{base_url}/polish/projects/{project_path_id}/consistency-report")
         if gate_data.get("success") is False:
             return _ok(gate_data, source="novel_migrated.finalize_gate")
     except Exception as exc:
         logger.warning("finalize_project gate check failed (proceeding anyway): %s", exc)
     try:
-        data = await post_json(f"{base_url}/polish/projects/{project_id}/finalize", {})
+        data = await post_json(f"{base_url}/polish/projects/{project_path_id}/finalize", {})
         return _ok(data, source="novel_migrated.finalize")
     except Exception as exc:
         logger.error("finalize_project failed: %s", exc)
@@ -202,13 +230,19 @@ async def update_character_states(
     dup = check_idempotency("update_character_states", idempotency_key)
     if dup["is_duplicate"]:
         return _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.character_states")
+    normalized_chapter_id, validation_error = _normalize_required_id(chapter_id, "chapter_id")
+    if validation_error:
+        return validation_error
+    normalized_project_id, validation_error = _normalize_required_id(project_id, "project_id")
+    if validation_error:
+        return validation_error
     base_url = get_base_url()
-    payload: dict[str, Any] = {"chapter_id": chapter_id}
-    if project_id:
-        payload["project_id"] = project_id
+    payload: dict[str, Any] = {"chapter_id": normalized_chapter_id, "project_id": normalized_project_id}
+    project_path_id = _safe_path_segment(normalized_project_id)
+    chapter_path_id = _safe_path_segment(normalized_chapter_id)
     try:
         data = await post_json(
-            f"{base_url}/api/memories/projects/{project_id}/analyze-chapter/{chapter_id}",
+            f"{base_url}/api/memories/projects/{project_path_id}/analyze-chapter/{chapter_path_id}",
             payload,
         )
         return _ok(data, source="novel_migrated.character_states")

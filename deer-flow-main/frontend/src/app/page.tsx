@@ -2,11 +2,11 @@ import { Footer } from "@/components/landing/footer";
 import { Header } from "@/components/landing/header";
 import { Hero } from "@/components/landing/hero";
 import { CoreFeaturesSection } from "@/components/landing/sections/core-features-section";
+import { GlobeSection } from "@/components/landing/sections/globe-section";
 import { NovelShowcaseSection } from "@/components/landing/sections/novel-showcase-section";
 import { TechStackSection } from "@/components/landing/sections/tech-stack-section";
-import { GlobeSection } from "@/components/landing/sections/globe-section";
-import ParticleOcean from "@/components/ui/particle-ocean";
 import { OceanFlow } from "@/components/ui/ocean-flow";
+import ParticleOcean from "@/components/ui/particle-ocean";
 
 export default function LandingPage() {
   return (

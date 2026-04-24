@@ -19,6 +19,21 @@ from enum import Enum
 from typing import Any
 
 
+def _coerce_non_empty_str(value: Any, *, default: str = "") -> str:
+    if isinstance(value, str):
+        return value.strip() or default
+    if value is None:
+        return default
+    as_str = str(value).strip()
+    return as_str or default
+
+
+def _coerce_mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
 class SessionMode(str, Enum):
     NORMAL = "normal"
     CREATE = "create"
@@ -100,10 +115,12 @@ class DomainToolCall:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DomainToolCall:
+        normalized_name = _coerce_non_empty_str(data.get("name"))
+        normalized_id = _coerce_non_empty_str(data.get("id"), default=f"call_{uuid.uuid4().hex[:12]}")
         return cls(
-            name=data.get("name", ""),
-            args=data.get("args", {}),
-            id=data.get("id", f"call_{uuid.uuid4().hex[:12]}"),
+            name=normalized_name,
+            args=_coerce_mapping(data.get("args")),
+            id=normalized_id,
         )
 
 

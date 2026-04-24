@@ -1,34 +1,39 @@
 """章节重新生成服务"""
-from typing import Dict, Any, AsyncGenerator, Optional
-from sqlalchemy.ext.asyncio import AsyncSession
 import difflib
+import hashlib
+from collections import OrderedDict
+from collections.abc import AsyncGenerator
+from typing import Any
 
-from app.gateway.novel_migrated.services.ai_service import AIService
-from app.gateway.novel_migrated.services.prompt_service import PromptService
+from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.chapter import Chapter
 from app.gateway.novel_migrated.models.memory import PlotAnalysis
-from app.gateway.novel_migrated.core.logger import get_logger
+from app.gateway.novel_migrated.services.ai_service import AIService
+from app.gateway.novel_migrated.services.prompt_service import PromptService
 
 logger = get_logger(__name__)
 
 
 class ChapterRegenerator:
+    _SEGMENT_SIZE = 1500
+    _MAX_SEGMENT_CACHE_ENTRIES = 16
 
     def __init__(self, ai_service: AIService):
         self.ai_service = ai_service
+        self._segmented_content_cache: OrderedDict[str, tuple[str, ...]] = OrderedDict()
 
     async def regenerate_with_feedback(
         self,
         chapter: Chapter,
-        analysis: Optional[PlotAnalysis],
+        analysis: PlotAnalysis | None,
         modification_instructions: str,
-        project_context: Dict[str, Any],
+        project_context: dict[str, Any],
         style_content: str = "",
         target_word_count: int = 3000,
         custom_instructions: str = "",
         focus_areas: list = None,
         preserve_elements: dict = None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+    ) -> AsyncGenerator[dict[str, Any], None]:
         try:
             logger.info(f"Regenerating chapter {chapter.chapter_number}")
             yield {'type': 'progress', 'progress': 5, 'message': 'Building modification instructions...'}
@@ -73,7 +78,7 @@ class ChapterRegenerator:
 
     def _build_modification_instructions(
         self,
-        analysis: Optional[PlotAnalysis] = None,
+        analysis: PlotAnalysis | None = None,
         modification_instructions: str = "",
         custom_instructions: str = "",
         focus_areas: list = None,
@@ -120,12 +125,12 @@ class ChapterRegenerator:
         self,
         chapter: Chapter,
         modification_instructions: str,
-        project_context: Dict[str, Any],
+        project_context: dict[str, Any],
         style_content: str = "",
         target_word_count: int = 3000,
     ) -> str:
         template = PromptService.CHAPTER_REGENERATION_SYSTEM
-        original_content = chapter.content or ""
+        original_content = self._get_segmented_content(chapter.content or "")
 
         prompt = f"""{template}
 
@@ -147,7 +152,43 @@ class ChapterRegenerator:
 
         return prompt
 
-    def calculate_content_diff(self, original_content: str, new_content: str) -> Dict[str, Any]:
+    def _get_segmented_content(self, content: str) -> str:
+        """
+        分段缓存长文本，避免重复切片导致内存峰值持续抬升。
+
+        保持输出契约不变：返回内容与原始 content 完全一致。
+        """
+        if not content:
+            return ""
+
+        if len(content) <= self._SEGMENT_SIZE:
+            return content
+
+        cache_key = self._build_content_cache_key(content)
+        cached_segments = self._segmented_content_cache.get(cache_key)
+        if cached_segments is None:
+            cached_segments = tuple(
+                content[idx : idx + self._SEGMENT_SIZE]
+                for idx in range(0, len(content), self._SEGMENT_SIZE)
+            )
+            self._segmented_content_cache[cache_key] = cached_segments
+            self._segmented_content_cache.move_to_end(cache_key)
+            self._evict_segment_cache_if_needed()
+        else:
+            self._segmented_content_cache.move_to_end(cache_key)
+
+        return "".join(cached_segments)
+
+    @staticmethod
+    def _build_content_cache_key(content: str) -> str:
+        digest = hashlib.sha1(content.encode("utf-8")).hexdigest()
+        return f"{len(content)}:{digest}"
+
+    def _evict_segment_cache_if_needed(self) -> None:
+        while len(self._segmented_content_cache) > self._MAX_SEGMENT_CACHE_ENTRIES:
+            self._segmented_content_cache.popitem(last=False)
+
+    def calculate_content_diff(self, original_content: str, new_content: str) -> dict[str, Any]:
         diff_stats = {
             'original_length': len(original_content),
             'new_length': len(new_content),

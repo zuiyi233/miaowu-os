@@ -10,6 +10,7 @@ import {
   BookOpen,
   Code2,
 } from "lucide-react";
+
 import {
   useAnimeEntrance,
   useSpringEntrance,
@@ -44,7 +45,7 @@ function TechCard({ tech }: { tech: (typeof techItems)[0] }) {
           duration: 400,
           ease: "spring(1, 0.5, 10, 0)",
         });
-        const icon = el.querySelector(".tech-icon") as HTMLElement;
+        const icon = el.querySelector(".tech-icon")!;
         if (icon) {
           animate(icon, {
             scale: [1, 1.2],
@@ -63,7 +64,7 @@ function TechCard({ tech }: { tech: (typeof techItems)[0] }) {
           duration: 500,
           ease: "spring(1, 0.4, 12, 0)",
         });
-        const icon = el.querySelector(".tech-icon") as HTMLElement;
+        const icon = el.querySelector(".tech-icon")!;
         if (icon) {
           animate(icon, {
             scale: [1.2, 1],

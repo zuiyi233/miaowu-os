@@ -117,6 +117,32 @@ def test_sync_model_call_uses_retry_after_header(monkeypatch: pytest.MonkeyPatch
     assert waits == [2.0]
 
 
+@pytest.mark.anyio
+async def test_sync_model_call_skips_blocking_sleep_when_running_in_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    middleware = _build_middleware(retry_max_attempts=2, retry_base_delay_ms=20, retry_cap_delay_ms=20)
+    waits: list[float] = []
+    attempts = 0
+
+    def fake_sleep(delay: float) -> None:
+        waits.append(delay)
+
+    def handler(_request) -> AIMessage:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise FakeError("server busy", status_code=503)
+        return AIMessage(content="ok")
+
+    monkeypatch.setattr("time.sleep", fake_sleep)
+
+    result = middleware.wrap_model_call(SimpleNamespace(), handler)
+
+    assert isinstance(result, AIMessage)
+    assert result.content == "ok"
+    assert attempts == 2
+    assert waits == []
+
+
 def test_sync_model_call_propagates_graph_bubble_up() -> None:
     middleware = _build_middleware()
 
@@ -437,15 +463,15 @@ async def test_async_circuit_breaker_trips_and_recovers(monkeypatch: pytest.Monk
     assert middleware._check_circuit() is False
 
 
-# ---------- 403 Transient Auth Retry Tests ----------
+# ---------- 403 Auth / Forbidden Tests ----------
 
 
-def test_classify_error_403_transient_is_retriable() -> None:
+def test_classify_error_403_is_auth_not_retriable() -> None:
     middleware = _build_middleware()
     exc = FakeError("Authorization failed", status_code=403)
     retriable, reason = middleware._classify_error(exc)
-    assert retriable is True
-    assert reason == "transient"
+    assert retriable is False
+    assert reason == "auth"
 
 
 def test_classify_error_403_hard_auth_is_not_retriable() -> None:
@@ -472,7 +498,7 @@ def test_classify_error_401_is_not_retriable() -> None:
     assert reason == "auth"
 
 
-def test_sync_403_transient_triggers_retry_and_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sync_403_does_not_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     middleware = _build_middleware(retry_max_attempts=3, retry_base_delay_ms=10, retry_cap_delay_ms=10)
     attempts = 0
     waits: list[float] = []
@@ -488,13 +514,13 @@ def test_sync_403_transient_triggers_retry_and_succeeds(monkeypatch: pytest.Monk
     result = middleware.wrap_model_call(SimpleNamespace(), handler)
 
     assert isinstance(result, AIMessage)
-    assert result.content == "ok"
-    assert attempts == 3
-    assert len(waits) == 2
+    assert "authentication or access is invalid" in result.content
+    assert attempts == 1
+    assert len(waits) == 0
 
 
 @pytest.mark.anyio
-async def test_async_403_transient_triggers_retry_and_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_async_403_does_not_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     middleware = _build_middleware(retry_max_attempts=3, retry_base_delay_ms=10, retry_cap_delay_ms=10)
     attempts = 0
     waits: list[float] = []
@@ -514,9 +540,9 @@ async def test_async_403_transient_triggers_retry_and_succeeds(monkeypatch: pyte
     result = await middleware.awrap_model_call(SimpleNamespace(), handler)
 
     assert isinstance(result, AIMessage)
-    assert result.content == "ok"
-    assert attempts == 3
-    assert len(waits) == 2
+    assert "authentication or access is invalid" in result.content
+    assert attempts == 1
+    assert len(waits) == 0
 
 
 def test_sync_403_hard_auth_does_not_retry(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -542,16 +568,16 @@ def test_classify_error_402_transient_is_retriable() -> None:
     middleware = _build_middleware()
     exc = FakeError("Payment required", status_code=402)
     retriable, reason = middleware._classify_error(exc)
-    assert retriable is True
-    assert reason == "transient"
+    assert retriable is False
+    assert reason == "quota"
 
 
 def test_classify_error_402_quota_is_not_retriable() -> None:
     middleware = _build_middleware()
     exc = FakeError("insufficient_quota: billing unavailable", status_code=402)
     retriable, reason = middleware._classify_error(exc)
-    assert retriable is True
-    assert reason == "transient"
+    assert retriable is False
+    assert reason == "quota"
 
 
 def test_classify_error_429_quota_is_not_retriable() -> None:
@@ -566,19 +592,19 @@ def test_classify_error_404_is_retriable() -> None:
     middleware = _build_middleware()
     exc = FakeError("Not found", status_code=404)
     retriable, reason = middleware._classify_error(exc)
-    assert retriable is True
-    assert reason == "transient"
+    assert retriable is False
+    assert reason == "generic"
 
 
 def test_classify_error_419_is_retriable() -> None:
     middleware = _build_middleware()
     exc = FakeError("Authentication timeout", status_code=419)
     retriable, reason = middleware._classify_error(exc)
-    assert retriable is True
-    assert reason == "transient"
+    assert retriable is False
+    assert reason == "generic"
 
 
-def test_sync_404_triggers_retry_and_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sync_404_does_not_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     middleware = _build_middleware(retry_max_attempts=3, retry_base_delay_ms=10, retry_cap_delay_ms=10)
     attempts = 0
     waits: list[float] = []
@@ -594,12 +620,12 @@ def test_sync_404_triggers_retry_and_succeeds(monkeypatch: pytest.MonkeyPatch) -
     result = middleware.wrap_model_call(SimpleNamespace(), handler)
 
     assert isinstance(result, AIMessage)
-    assert result.content == "ok"
-    assert attempts == 2
-    assert len(waits) == 1
+    assert "LLM request failed" in result.content
+    assert attempts == 1
+    assert len(waits) == 0
 
 
-def test_sync_419_triggers_retry_and_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sync_419_does_not_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     middleware = _build_middleware(retry_max_attempts=3, retry_base_delay_ms=10, retry_cap_delay_ms=10)
     attempts = 0
     waits: list[float] = []
@@ -615,6 +641,6 @@ def test_sync_419_triggers_retry_and_succeeds(monkeypatch: pytest.MonkeyPatch) -
     result = middleware.wrap_model_call(SimpleNamespace(), handler)
 
     assert isinstance(result, AIMessage)
-    assert result.content == "ok"
-    assert attempts == 2
-    assert len(waits) == 1
+    assert "LLM request failed" in result.content
+    assert attempts == 1
+    assert len(waits) == 0

@@ -1,17 +1,16 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
-import { toast } from 'sonner';
 import { CheckCircle, Loader2, AlertCircle, X } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { useState, useEffect, useCallback } from 'react';
+import { toast } from 'sonner';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
-
 import { getBackendBaseURL } from '@/core/config';
+import { cn } from '@/lib/utils';
 
 export interface GenerationConfig {
   title: string;
@@ -164,7 +163,7 @@ export function AIProjectGenerator({
         handleAutoGenerate(config);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [config, resumeProjectId]);
 
   const handleResumeGenerate = async (data: GenerationConfig, pidParam: string) => {
@@ -263,7 +262,10 @@ export function AIProjectGenerator({
     await streamPost('/api/wizard-stream/career-system', { project_id: pid }, {
       onProgress: (msg, prog) => { setProgress(prog); setProgressMessage(msg); },
       onResult: (result) => {
-        console.log(`成功生成职业体系：主职业${(result as Record<string, unknown>).main_careers_count}个，副职业${(result as Record<string, unknown>).sub_careers_count}个`);
+        const careerResult = result as Record<string, unknown>;
+        const mainCareersCount = Number(careerResult.main_careers_count ?? 0);
+        const subCareersCount = Number(careerResult.sub_careers_count ?? 0);
+        console.log(`成功生成职业体系：主职业${mainCareersCount}个，副职业${subCareersCount}个`);
         setGenerationSteps(prev => ({ ...prev, careers: 'completed' }));
       },
       onError: (error) => {
@@ -297,7 +299,9 @@ export function AIProjectGenerator({
     }, {
       onProgress: (msg, prog) => { setProgress(prog); setProgressMessage(msg); },
       onResult: (result) => {
-        console.log(`成功生成${((result as Record<string, unknown>).characters as unknown[])?.length || 0}个角色`);
+        const characters = (result as Record<string, unknown>).characters;
+        const characterCount = Array.isArray(characters) ? characters.length : 0;
+        console.log(`成功生成${characterCount}个角色`);
         setGenerationSteps(prev => ({ ...prev, characters: 'completed' }));
       },
       onError: (error) => {
@@ -398,7 +402,10 @@ export function AIProjectGenerator({
       await streamPost('/api/wizard-stream/career-system', { project_id: createdProjectId }, {
         onProgress: (msg, prog) => { setProgress(prog); setProgressMessage(msg); },
         onResult: (result) => {
-          console.log(`成功生成职业体系：主职业${(result as Record<string, unknown>).main_careers_count}个，副职业${(result as Record<string, unknown>).sub_careers_count}个`);
+          const careerResult = result as Record<string, unknown>;
+          const mainCareersCount = Number(careerResult.main_careers_count ?? 0);
+          const subCareersCount = Number(careerResult.sub_careers_count ?? 0);
+          console.log(`成功生成职业体系：主职业${mainCareersCount}个，副职业${subCareersCount}个`);
           setGenerationSteps(prev => ({ ...prev, careers: 'completed' }));
         },
         onError: (error) => {

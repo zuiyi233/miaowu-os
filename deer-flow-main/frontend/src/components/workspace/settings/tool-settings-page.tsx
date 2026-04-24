@@ -26,8 +26,7 @@ export function ToolSettingsPage() {
     error: featureError,
   } = useFeatureFlags();
   const resolvedFeatureFlags =
-    featureConfig &&
-    featureConfig.features &&
+    featureConfig?.features &&
     typeof featureConfig.features === "object"
       ? featureConfig.features
       : null;

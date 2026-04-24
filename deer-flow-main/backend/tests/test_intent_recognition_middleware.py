@@ -44,6 +44,18 @@ def test_detect_intent_ignores_how_to_question():
     assert intent is None
 
 
+def test_detect_management_intent_supports_english_action_entity():
+    middleware = IntentRecognitionMiddleware()
+    hit = middleware._detect_novel_management_intent("Please delete chapter 3 in this project")
+    assert hit is True
+
+
+def test_detect_management_intent_avoids_projector_false_positive():
+    middleware = IntentRecognitionMiddleware()
+    hit = middleware._detect_novel_management_intent("please update the projector brightness")
+    assert hit is False
+
+
 def test_process_request_returns_not_handled_for_normal_chat():
     middleware = IntentRecognitionMiddleware()
     request = _request_with_message("你好，今天天气怎么样")
@@ -276,12 +288,8 @@ def test_has_active_creation_session_is_scoped_by_user_and_session():
         context={"thread_id": thread_id},
     )
 
-    same_user_hit = asyncio.run(
-        middleware.has_active_creation_session(user_id=user_id, session_key=session_key)
-    )
-    other_user_hit = asyncio.run(
-        middleware.has_active_creation_session(user_id="gate-user-b", session_key=session_key)
-    )
+    same_user_hit = asyncio.run(middleware.has_active_creation_session(user_id=user_id, session_key=session_key))
+    other_user_hit = asyncio.run(middleware.has_active_creation_session(user_id="gate-user-b", session_key=session_key))
     other_session_hit = asyncio.run(
         middleware.has_active_creation_session(
             user_id=user_id,
@@ -333,9 +341,7 @@ def test_has_active_creation_session_hits_database_backend(monkeypatch):
     monkeypatch.setattr(middleware, "_db_prune_expired_sessions", _fake_db_prune_expired_sessions)
     middleware._storage_backend = "database"
 
-    hit = asyncio.run(
-        middleware.has_active_creation_session(user_id=user_id, session_key=session_key)
-    )
+    hit = asyncio.run(middleware.has_active_creation_session(user_id=user_id, session_key=session_key))
 
     assert hit is True
     assert called["count"] >= 1
@@ -512,3 +518,61 @@ def test_execute_pending_action_returns_execute_result_in_protocol(monkeypatch):
     assert protocol["action_type"] == "update_chapter"
     assert protocol["execute_result"]["status"] == "success"
     assert protocol["execute_result"]["target_id"] == "chapter-3"
+
+
+class _RollbackTrackingSession:
+    def __init__(self, *, in_transaction: bool = True) -> None:
+        self._in_transaction = in_transaction
+        self.rollback_calls = 0
+
+    def in_transaction(self) -> bool:
+        return self._in_transaction
+
+    async def rollback(self) -> None:
+        self.rollback_calls += 1
+
+
+def test_execute_pending_action_rolls_back_session_on_dispatch_error(monkeypatch):
+    middleware = IntentRecognitionMiddleware()
+    action = _PendingAction(
+        action="update_chapter",
+        entity="chapter",
+        operation="update",
+        project_id="proj-rollback",
+        target_id="chapter-rollback",
+        payload={"content": "boom"},
+    )
+    session = _NovelCreationSession(
+        session_key="manage-rollback",
+        user_id="user-rollback",
+        mode="manage",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        fields=middleware._initialize_fields({}),
+        awaiting_confirm=True,
+        active_project_id="proj-rollback",
+        active_project_title="回滚测试项目",
+        pending_action=action,
+        idempotency_key="idem-manage-rollback",
+    )
+
+    async def _consume_once(*args, **kwargs):
+        return True
+
+    async def _failing_dispatch(*args, **kwargs):
+        raise RuntimeError("db write failed")
+
+    db_session = _RollbackTrackingSession(in_transaction=True)
+    monkeypatch.setattr(middleware, "_consume_idempotency_key", _consume_once)
+    monkeypatch.setattr(middleware, "_dispatch_manage_action", _failing_dispatch)
+
+    result = asyncio.run(
+        middleware._execute_pending_action(
+            session=session,
+            db_session=db_session,
+        )
+    )
+
+    assert result.handled is True
+    assert "执行失败" in result.content
+    assert db_session.rollback_calls == 1

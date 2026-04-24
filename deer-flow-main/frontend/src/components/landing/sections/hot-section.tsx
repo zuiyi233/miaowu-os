@@ -3,9 +3,10 @@
 import { Flame, Eye, Star, BookOpen } from "lucide-react";
 import Link from "next/link";
 
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+
 import { Section } from "../section";
 
 const hotNovels = [

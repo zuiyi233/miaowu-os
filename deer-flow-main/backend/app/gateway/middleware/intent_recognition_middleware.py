@@ -23,6 +23,12 @@ from pathlib import Path
 from typing import Any
 
 from app.gateway.middleware.domain_protocol import ExecuteResult, build_action_protocol
+from app.gateway.middleware.intent_components import (
+    IntentDetector,
+    ManageActionRouter,
+    SessionManager,
+    SessionPersistence,
+)
 from app.gateway.novel_migrated.services.skill_governance_service import (
     DegradedFallbackMode,
     resolve_skill_governance,
@@ -119,6 +125,20 @@ _MANAGE_ENTITY_KEYWORDS = (
     "物品",
     "道具",
     "伏笔",
+    "project",
+    "chapter",
+    "chapters",
+    "outline",
+    "outlines",
+    "character",
+    "characters",
+    "relationship",
+    "relationships",
+    "organization",
+    "organizations",
+    "item",
+    "items",
+    "foreshadow",
 )
 
 _MANAGE_ACTION_KEYWORDS = (
@@ -138,11 +158,30 @@ _MANAGE_ACTION_KEYWORDS = (
     "调整",
     "完善",
     "改",
+    "manage",
+    "update",
+    "edit",
+    "modify",
+    "delete",
+    "remove",
+    "import",
+    "export",
+    "generate",
+    "add",
+    "create",
+    "new",
+    "switch",
+    "view",
+    "list",
+    "show",
+    "adjust",
+    "refine",
 )
 
 _MANAGE_INTENT_PATTERNS = (
     re.compile(r"(管理|修改|更新|删除|新增|新建|切换|查看|列出|导入|导出|生成).{0,24}(项目|章节|大纲|角色|关系|组织|物品|伏笔)"),
-    re.compile(r"(chapter|outline|character|relationship|project).{0,24}(update|delete|create|list|manage)", re.IGNORECASE),
+    re.compile(r"\b(chapter|outline|character|relationship|project|organization|item|foreshadow)s?\b.{0,24}\b(update|delete|create|list|manage|edit|modify|remove|switch|view|show)\b", re.IGNORECASE),
+    re.compile(r"\b(update|delete|create|list|manage|edit|modify|remove|switch|view|show)\b.{0,24}\b(chapter|outline|character|relationship|project|organization|item|foreshadow)s?\b", re.IGNORECASE),
 )
 
 _PROJECT_LIST_KEYWORDS = (
@@ -150,6 +189,9 @@ _PROJECT_LIST_KEYWORDS = (
     "列出项目",
     "有哪些项目",
     "查看项目",
+    "list projects",
+    "show projects",
+    "project list",
 )
 
 _PROJECT_SWITCH_KEYWORDS = (
@@ -157,6 +199,10 @@ _PROJECT_SWITCH_KEYWORDS = (
     "选择项目",
     "进入项目",
     "使用项目",
+    "switch project",
+    "select project",
+    "use project",
+    "open project",
 )
 
 _QUESTION_PREFIXES = ("怎么", "如何", "怎样", "可以", "能否", "是否", "what", "how")
@@ -301,6 +347,36 @@ class IntentRecognitionMiddleware:
         self._used_idempotency_keys: dict[str, datetime] = {}
         self._storage_backend = self._resolve_storage_backend()
         self._session_store_path = self._resolve_session_store_path()
+        self._intent_detector = IntentDetector(
+            question_prefixes=_QUESTION_PREFIXES,
+            creation_keywords=_INTENT_KEYWORDS,
+            creation_patterns=_INTENT_PATTERNS,
+            management_keywords=_MANAGE_ENTITY_KEYWORDS,
+            management_action_keywords=_MANAGE_ACTION_KEYWORDS,
+            management_patterns=_MANAGE_INTENT_PATTERNS,
+            extract_title=lambda text: self._extract_title(text),
+            extract_genre=lambda text: self._extract_genre(text),
+            extract_theme=lambda text: self._extract_theme(text),
+            extract_audience=lambda text: self._extract_audience(text),
+            extract_target_words=lambda text: self._extract_target_words(text),
+            intent_factory=lambda raw_message, prefill: _NovelCreateIntent(
+                raw_message=raw_message,
+                prefill=prefill,
+            ),
+        )
+        self._session_persistence = SessionPersistence(
+            get_session=lambda session_key: self._get_session(session_key),
+            save_session=lambda session: self._save_session(session),
+            remove_session=lambda session_key: self._remove_session(session_key),
+            prune_expired_sessions=lambda: self._prune_expired_sessions(),
+            consume_idempotency_key=lambda key, **kwargs: self._consume_idempotency_key(key, **kwargs),
+            prune_expired_idempotency_keys=lambda: self._prune_expired_idempotency_keys(),
+        )
+        self._session_manager = SessionManager(self._session_persistence)
+        self._manage_action_router = ManageActionRouter(
+            owner=self,
+            pending_action_factory=_PendingAction,
+        )
         if self._storage_backend == "file":
             self._load_state_from_disk()
 
@@ -316,19 +392,18 @@ class IntentRecognitionMiddleware:
             return IntentRecognitionResult(handled=False)
 
         messages = list(getattr(request, "messages", []) or [])
-        user_message = self._extract_latest_user_message(messages)
+        user_message = self._intent_detector.extract_latest_user_message(messages)
         if not user_message:
             return IntentRecognitionResult(handled=False)
 
-        await self._prune_expired_sessions()
-        await self._prune_expired_idempotency_keys()
+        await self._session_manager.prune()
         session_key = self._resolve_session_key(request, user_id)
         update_trace_context(
             **extract_trace_fields_from_context(getattr(request, "context", None)),
             session_key=session_key,
         )
 
-        session = await self._get_session(session_key)
+        session = await self._session_manager.get(session_key)
         if session is not None:
             if session.mode == "normal":
                 pass
@@ -352,7 +427,7 @@ class IntentRecognitionMiddleware:
                 result.is_novel_intent = True
                 return result
 
-        intent = self._detect_novel_creation_intent(user_message)
+        intent = self._intent_detector.detect_creation_intent(user_message)
         if intent is not None:
             idem_key = self._generate_idempotency_key(user_id, "create_novel")
             session = _NovelCreationSession(
@@ -373,7 +448,7 @@ class IntentRecognitionMiddleware:
             result.is_novel_intent = True
             return result
 
-        if self._detect_novel_management_intent(user_message):
+        if self._intent_detector.detect_management_intent(user_message):
             idem_key = self._generate_idempotency_key(user_id, "manage_novel")
             session = _NovelCreationSession(
                 session_key=session_key,
@@ -412,8 +487,8 @@ class IntentRecognitionMiddleware:
         if not normalized_user_id or not normalized_session_key:
             return False
 
-        await self._prune_expired_sessions()
-        session = await self._get_session(normalized_session_key)
+        await self._session_persistence.prune_expired_sessions()
+        session = await self._session_manager.get(normalized_session_key)
         if session is None:
             return False
         return session.mode == "create" and session.user_id == normalized_user_id
@@ -495,12 +570,7 @@ class IntentRecognitionMiddleware:
             await self._save_session(session)
             return IntentRecognitionResult(
                 handled=True,
-                content=(
-                    "好的，已取消本次提交。"
-                    "请直接告诉我你要修改的字段，例如：\n"
-                    "- 书名改成《星海回声》\n"
-                    "- 类型改成悬疑"
-                ),
+                content=("好的，已取消本次提交。请直接告诉我你要修改的字段，例如：\n- 书名改成《星海回声》\n- 类型改成悬疑"),
                 session=self._session_brief(session),
             )
 
@@ -662,11 +732,7 @@ class IntentRecognitionMiddleware:
                 },
             )
 
-        content = (
-            f"已按确认信息创建小说《{payload.get('title', session.fields.get('title', ''))}》"
-            f"（类型：{payload.get('genre', session.fields.get('genre', _DEFAULT_GENRE))}），"
-            f"ID：{payload.get('id', 'unknown')}。"
-        )
+        content = f"已按确认信息创建小说《{payload.get('title', session.fields.get('title', ''))}》（类型：{payload.get('genre', session.fields.get('genre', _DEFAULT_GENRE))}），ID：{payload.get('id', 'unknown')}。"
         tool_call = self._build_wire_tool_call(
             name="create_novel",
             args={
@@ -761,7 +827,7 @@ class IntentRecognitionMiddleware:
             )
 
         if session.pending_action is not None:
-            await self._merge_pending_action_from_message(
+            await self._manage_action_router.merge(
                 action=session.pending_action,
                 user_message=normalized,
                 session=session,
@@ -796,7 +862,7 @@ class IntentRecognitionMiddleware:
             if context_result is not None:
                 return context_result
 
-        action = await self._build_pending_action_from_message(
+        action = await self._manage_action_router.build(
             session=session,
             user_message=normalized,
             db_session=db_session,
@@ -861,7 +927,7 @@ class IntentRecognitionMiddleware:
         if lowered in _CONFIRM_KEYWORDS or user_message in _CONFIRM_KEYWORDS:
             return await self._execute_pending_action(session=session, db_session=db_session)
 
-        await self._merge_pending_action_from_message(
+        await self._manage_action_router.merge(
             action=action,
             user_message=user_message,
             session=session,
@@ -875,10 +941,7 @@ class IntentRecognitionMiddleware:
         if action.missing_fields:
             return IntentRecognitionResult(
                 handled=True,
-                content=(
-                    "已取消确认，继续补全信息。\n"
-                    f"{self._build_manage_missing_question(action)}"
-                ),
+                content=(f"已取消确认，继续补全信息。\n{self._build_manage_missing_question(action)}"),
                 session=self._session_brief(session),
             )
 
@@ -968,10 +1031,7 @@ class IntentRecognitionMiddleware:
 
         lines = [
             "可用项目：",
-            *[
-                f"- {item['title']}（ID: {item['id']}，类型: {item.get('genre') or '未设置'}）"
-                for item in projects
-            ],
+            *[f"- {item['title']}（ID: {item['id']}，类型: {item.get('genre') or '未设置'}）" for item in projects],
             "请说“切换项目《项目名》”或“切换项目ID: xxx”。",
         ]
         return IntentRecognitionResult(
@@ -1038,10 +1098,7 @@ class IntentRecognitionMiddleware:
 
         return IntentRecognitionResult(
             handled=True,
-            content=(
-                f"已切换到项目《{session.active_project_title}》。\n"
-                "你可以继续说“修改第3章内容为... / 新建大纲... / 修改角色...”。"
-            ),
+            content=(f"已切换到项目《{session.active_project_title}》。\n你可以继续说“修改第3章内容为... / 新建大纲... / 修改角色...”。"),
             session=self._session_brief(session),
         )
 
@@ -1149,10 +1206,7 @@ class IntentRecognitionMiddleware:
             if not relationships:
                 content = "当前项目还没有角色关系。"
             else:
-                lines = [
-                    f"- {r.get('character_from_id')} -> {r.get('character_to_id')}：{r.get('relationship_name') or '未命名关系'}"
-                    for r in relationships[:20]
-                ]
+                lines = [f"- {r.get('character_from_id')} -> {r.get('character_to_id')}：{r.get('relationship_name') or '未命名关系'}" for r in relationships[:20]]
                 content = "关系列表：\n" + "\n".join(lines)
             return IntentRecognitionResult(handled=True, content=content, session=self._session_brief(session))
 
@@ -1186,337 +1240,11 @@ class IntentRecognitionMiddleware:
         user_message: str,
         db_session: Any,
     ) -> _PendingAction | None:
-        lowered = user_message.lower()
-        project_id = session.active_project_id
-
-        if not project_id:
-            return None
-
-        if self._is_project_export_request(lowered):
-            return _PendingAction(
-                action="export_project_archive",
-                entity="project",
-                operation="export",
-                project_id=project_id,
-                target_id=project_id,
-                target_label=session.active_project_title or project_id,
-                payload={},
-            )
-
-        if self._is_outline_generate_request(lowered):
-            payload = self._extract_outline_generate_payload(user_message)
-            return _PendingAction(
-                action="generate_outline",
-                entity="outline",
-                operation="generate",
-                project_id=project_id,
-                target_id=project_id,
-                target_label="完整大纲",
-                payload=payload,
-            )
-
-        if self._is_character_generate_request(lowered):
-            payload = self._extract_character_generate_payload(user_message)
-            return _PendingAction(
-                action="generate_characters",
-                entity="character",
-                operation="generate",
-                project_id=project_id,
-                target_id=project_id,
-                target_label="角色与组织",
-                payload=payload,
-            )
-
-        if self._is_chapter_create_request(lowered):
-            payload = self._extract_chapter_create_payload(user_message)
-            return _PendingAction(
-                action="create_chapter",
-                entity="chapter",
-                operation="create",
-                project_id=project_id,
-                target_label="新章节",
-                payload=payload,
-            )
-
-        if self._is_chapter_delete_request(lowered):
-            chapter = await self._resolve_chapter_from_text(
-                project_id=project_id,
-                user_id=session.user_id,
-                user_message=user_message,
-                db_session=db_session,
-            )
-            return _PendingAction(
-                action="delete_chapter",
-                entity="chapter",
-                operation="delete",
-                project_id=project_id,
-                target_id=chapter.get("id") if chapter else None,
-                target_label=self._chapter_label(chapter) if chapter else "",
-                payload={},
-            )
-
-        if self._is_chapter_update_request(lowered):
-            chapter = await self._resolve_chapter_from_text(
-                project_id=project_id,
-                user_id=session.user_id,
-                user_message=user_message,
-                db_session=db_session,
-            )
-            payload = self._extract_chapter_update_payload(user_message)
-            return _PendingAction(
-                action="update_chapter",
-                entity="chapter",
-                operation="update",
-                project_id=project_id,
-                target_id=chapter.get("id") if chapter else None,
-                target_label=self._chapter_label(chapter) if chapter else "",
-                payload=payload,
-            )
-
-        if self._is_outline_create_request(lowered):
-            payload = self._extract_outline_create_payload(user_message)
-            return _PendingAction(
-                action="create_outline",
-                entity="outline",
-                operation="create",
-                project_id=project_id,
-                target_label="新大纲",
-                payload=payload,
-            )
-
-        if self._is_outline_delete_request(lowered):
-            outline = await self._resolve_outline_from_text(
-                project_id=project_id,
-                user_id=session.user_id,
-                user_message=user_message,
-                db_session=db_session,
-            )
-            return _PendingAction(
-                action="delete_outline",
-                entity="outline",
-                operation="delete",
-                project_id=project_id,
-                target_id=outline.get("id") if outline else None,
-                target_label=self._outline_label(outline) if outline else "",
-                payload={},
-            )
-
-        if self._is_outline_update_request(lowered):
-            outline = await self._resolve_outline_from_text(
-                project_id=project_id,
-                user_id=session.user_id,
-                user_message=user_message,
-                db_session=db_session,
-            )
-            payload = self._extract_outline_update_payload(user_message)
-            return _PendingAction(
-                action="update_outline",
-                entity="outline",
-                operation="update",
-                project_id=project_id,
-                target_id=outline.get("id") if outline else None,
-                target_label=self._outline_label(outline) if outline else "",
-                payload=payload,
-            )
-
-        if self._is_character_create_request(lowered):
-            payload = self._extract_character_create_payload(user_message)
-            return _PendingAction(
-                action="create_character",
-                entity="character",
-                operation="create",
-                project_id=project_id,
-                target_label=payload.get("name") or "新角色",
-                payload=payload,
-            )
-
-        if self._is_character_delete_request(lowered):
-            character = await self._resolve_character_from_text(
-                project_id=project_id,
-                user_id=session.user_id,
-                user_message=user_message,
-                db_session=db_session,
-                allow_organization=True,
-            )
-            return _PendingAction(
-                action="delete_character",
-                entity="character",
-                operation="delete",
-                project_id=project_id,
-                target_id=character.get("id") if character else None,
-                target_label=self._character_label(character) if character else "",
-                payload={},
-            )
-
-        if self._is_character_update_request(lowered):
-            character = await self._resolve_character_from_text(
-                project_id=project_id,
-                user_id=session.user_id,
-                user_message=user_message,
-                db_session=db_session,
-                allow_organization=True,
-            )
-            payload = self._extract_character_update_payload(user_message)
-            return _PendingAction(
-                action="update_character",
-                entity="character",
-                operation="update",
-                project_id=project_id,
-                target_id=character.get("id") if character else None,
-                target_label=self._character_label(character) if character else "",
-                payload=payload,
-            )
-
-        if self._is_relationship_create_request(lowered):
-            payload = self._extract_relationship_payload(user_message)
-            return _PendingAction(
-                action="create_relationship",
-                entity="relationship",
-                operation="create",
-                project_id=project_id,
-                target_label="角色关系",
-                payload=payload,
-            )
-
-        if self._is_relationship_update_request(lowered):
-            payload = self._extract_relationship_payload(user_message)
-            return _PendingAction(
-                action="update_relationship",
-                entity="relationship",
-                operation="update",
-                project_id=project_id,
-                target_label="角色关系",
-                payload=payload,
-            )
-
-        if self._is_relationship_delete_request(lowered):
-            payload = self._extract_relationship_payload(user_message)
-            return _PendingAction(
-                action="delete_relationship",
-                entity="relationship",
-                operation="delete",
-                project_id=project_id,
-                target_label="角色关系",
-                payload=payload,
-            )
-
-        if self._is_organization_create_request(lowered):
-            payload = self._extract_organization_create_payload(user_message)
-            return _PendingAction(
-                action="create_organization",
-                entity="organization",
-                operation="create",
-                project_id=project_id,
-                target_label=payload.get("name") or "新组织",
-                payload=payload,
-            )
-
-        if self._is_organization_member_request(lowered):
-            payload = self._extract_organization_member_payload(user_message)
-            return _PendingAction(
-                action="add_organization_member",
-                entity="organization",
-                operation="member_add",
-                project_id=project_id,
-                target_label=payload.get("organization_name") or "组织成员",
-                payload=payload,
-            )
-
-        if self._is_organization_update_request(lowered):
-            org = await self._resolve_organization_from_text(
-                project_id=project_id,
-                user_id=session.user_id,
-                user_message=user_message,
-                db_session=db_session,
-            )
-            payload = self._extract_organization_update_payload(user_message)
-            return _PendingAction(
-                action="update_organization",
-                entity="organization",
-                operation="update",
-                project_id=project_id,
-                target_id=org.get("id") if org else None,
-                target_label=self._organization_label(org) if org else "",
-                payload=payload,
-            )
-
-        if self._is_organization_delete_request(lowered):
-            org = await self._resolve_organization_from_text(
-                project_id=project_id,
-                user_id=session.user_id,
-                user_message=user_message,
-                db_session=db_session,
-            )
-            return _PendingAction(
-                action="delete_organization",
-                entity="organization",
-                operation="delete",
-                project_id=project_id,
-                target_id=org.get("id") if org else None,
-                target_label=self._organization_label(org) if org else "",
-                payload={},
-            )
-
-        if self._is_item_create_request(lowered):
-            payload = self._extract_item_create_payload(user_message)
-            return _PendingAction(
-                action="create_item",
-                entity="item",
-                operation="create",
-                project_id=project_id,
-                target_label=payload.get("title") or "新物品",
-                payload=payload,
-            )
-
-        if self._is_item_delete_request(lowered):
-            item = await self._resolve_item_from_text(project_id=project_id, user_message=user_message, db_session=db_session)
-            return _PendingAction(
-                action="delete_item",
-                entity="item",
-                operation="delete",
-                project_id=project_id,
-                target_id=item.get("id") if item else None,
-                target_label=item.get("title") if item else "",
-                payload={},
-            )
-
-        if self._is_item_update_request(lowered):
-            item = await self._resolve_item_from_text(project_id=project_id, user_message=user_message, db_session=db_session)
-            payload = self._extract_item_update_payload(user_message)
-            return _PendingAction(
-                action="update_item",
-                entity="item",
-                operation="update",
-                project_id=project_id,
-                target_id=item.get("id") if item else None,
-                target_label=item.get("title") if item else "",
-                payload=payload,
-            )
-
-        if self._is_project_update_request(lowered):
-            payload = self._extract_project_update_payload(user_message)
-            return _PendingAction(
-                action="update_project",
-                entity="project",
-                operation="update",
-                project_id=project_id,
-                target_id=project_id,
-                target_label=session.active_project_title or project_id,
-                payload=payload,
-            )
-
-        if self._is_project_delete_request(lowered):
-            return _PendingAction(
-                action="delete_project",
-                entity="project",
-                operation="delete",
-                project_id=project_id,
-                target_id=project_id,
-                target_label=session.active_project_title or project_id,
-                payload={},
-            )
-
-        return None
+        return await self._manage_action_router.build_pending_action(
+            session=session,
+            user_message=user_message,
+            db_session=db_session,
+        )
 
     async def _merge_pending_action_from_message(
         self,
@@ -1526,268 +1254,15 @@ class IntentRecognitionMiddleware:
         session: _NovelCreationSession,
         db_session: Any,
     ) -> None:
-        project_id = action.project_id or session.active_project_id
-        if not project_id:
-            return
-
-        if action.action == "update_project":
-            action.payload.update(self._extract_project_update_payload(user_message))
-            return
-
-        if action.action == "generate_outline":
-            action.payload.update(self._extract_outline_generate_payload(user_message))
-            return
-
-        if action.action == "generate_characters":
-            action.payload.update(self._extract_character_generate_payload(user_message))
-            return
-
-        if action.action == "create_chapter":
-            action.payload.update(self._extract_chapter_create_payload(user_message))
-            return
-
-        if action.action in {"update_chapter", "delete_chapter"}:
-            if not action.target_id:
-                chapter = await self._resolve_chapter_from_text(
-                    project_id=project_id,
-                    user_id=session.user_id,
-                    user_message=user_message,
-                    db_session=db_session,
-                )
-                if chapter:
-                    action.target_id = chapter.get("id")
-                    action.target_label = self._chapter_label(chapter)
-            if action.action == "update_chapter":
-                action.payload.update(self._extract_chapter_update_payload(user_message))
-            return
-
-        if action.action == "create_outline":
-            action.payload.update(self._extract_outline_create_payload(user_message))
-            return
-
-        if action.action in {"update_outline", "delete_outline"}:
-            if not action.target_id:
-                outline = await self._resolve_outline_from_text(
-                    project_id=project_id,
-                    user_id=session.user_id,
-                    user_message=user_message,
-                    db_session=db_session,
-                )
-                if outline:
-                    action.target_id = outline.get("id")
-                    action.target_label = self._outline_label(outline)
-            if action.action == "update_outline":
-                action.payload.update(self._extract_outline_update_payload(user_message))
-            return
-
-        if action.action == "create_character":
-            action.payload.update(self._extract_character_create_payload(user_message))
-            return
-
-        if action.action in {"update_character", "delete_character"}:
-            if not action.target_id:
-                character = await self._resolve_character_from_text(
-                    project_id=project_id,
-                    user_id=session.user_id,
-                    user_message=user_message,
-                    db_session=db_session,
-                    allow_organization=True,
-                )
-                if character:
-                    action.target_id = character.get("id")
-                    action.target_label = self._character_label(character)
-            if action.action == "update_character":
-                action.payload.update(self._extract_character_update_payload(user_message))
-            return
-
-        if action.action in {"create_relationship", "update_relationship", "delete_relationship"}:
-            action.payload.update(self._extract_relationship_payload(user_message))
-            return
-
-        if action.action == "create_organization":
-            action.payload.update(self._extract_organization_create_payload(user_message))
-            if action.payload.get("name"):
-                action.target_label = str(action.payload.get("name") or "")
-            return
-
-        if action.action == "update_organization":
-            if not action.target_id:
-                org = await self._resolve_organization_from_text(
-                    project_id=project_id,
-                    user_id=session.user_id,
-                    user_message=user_message,
-                    db_session=db_session,
-                )
-                if org:
-                    action.target_id = org.get("id")
-                    action.target_label = self._organization_label(org)
-            action.payload.update(self._extract_organization_update_payload(user_message))
-            return
-
-        if action.action == "delete_organization":
-            if not action.target_id:
-                org = await self._resolve_organization_from_text(
-                    project_id=project_id,
-                    user_id=session.user_id,
-                    user_message=user_message,
-                    db_session=db_session,
-                )
-                if org:
-                    action.target_id = org.get("id")
-                    action.target_label = self._organization_label(org)
-            return
-
-        if action.action == "add_organization_member":
-            action.payload.update(self._extract_organization_member_payload(user_message))
-            return
-
-        if action.action == "create_item":
-            action.payload.update(self._extract_item_create_payload(user_message))
-            return
-
-        if action.action in {"update_item", "delete_item"}:
-            if not action.target_id:
-                item = await self._resolve_item_from_text(project_id=project_id, user_message=user_message, db_session=db_session)
-                if item:
-                    action.target_id = item.get("id")
-                    action.target_label = str(item.get("title") or "")
-            if action.action == "update_item":
-                action.payload.update(self._extract_item_update_payload(user_message))
+        await self._manage_action_router.merge_pending_action(
+            action=action,
+            user_message=user_message,
+            session=session,
+            db_session=db_session,
+        )
 
     def _compute_missing_fields(self, action: _PendingAction) -> list[str]:
-        missing: list[str] = []
-
-        if not action.project_id:
-            missing.append("project_selector")
-            return missing
-
-        if action.action == "update_project":
-            if not action.payload:
-                missing.append("project_updates")
-            return missing
-
-        if action.action == "delete_project":
-            return missing
-
-        if action.action == "export_project_archive":
-            return missing
-
-        if action.action == "generate_outline":
-            return missing
-
-        if action.action == "generate_characters":
-            return missing
-
-        if action.action == "create_chapter":
-            if not any(action.payload.get(key) for key in ("title", "summary", "content")):
-                missing.append("chapter_create_payload")
-            return missing
-
-        if action.action == "update_chapter":
-            if not action.target_id:
-                missing.append("chapter_selector")
-            if not action.payload:
-                missing.append("chapter_updates")
-            return missing
-
-        if action.action == "delete_chapter":
-            if not action.target_id:
-                missing.append("chapter_selector")
-            return missing
-
-        if action.action == "create_outline":
-            if not action.payload.get("title") or not action.payload.get("content"):
-                missing.append("outline_create_payload")
-            return missing
-
-        if action.action == "update_outline":
-            if not action.target_id:
-                missing.append("outline_selector")
-            if not action.payload:
-                missing.append("outline_updates")
-            return missing
-
-        if action.action == "delete_outline":
-            if not action.target_id:
-                missing.append("outline_selector")
-            return missing
-
-        if action.action == "create_character":
-            if not action.payload.get("name"):
-                missing.append("character_create_payload")
-            return missing
-
-        if action.action == "update_character":
-            if not action.target_id:
-                missing.append("character_selector")
-            if not action.payload:
-                missing.append("character_updates")
-            return missing
-
-        if action.action == "delete_character":
-            if not action.target_id:
-                missing.append("character_selector")
-            return missing
-
-        if action.action == "create_relationship":
-            if not action.payload.get("character_from_name") or not action.payload.get("character_to_name"):
-                missing.append("relationship_pair")
-            if not action.payload.get("relationship_name"):
-                missing.append("relationship_name")
-            return missing
-
-        if action.action == "update_relationship":
-            if not action.payload.get("character_from_name") or not action.payload.get("character_to_name"):
-                missing.append("relationship_pair")
-            if not any(key in action.payload for key in ("relationship_name", "intimacy_level", "description", "status")):
-                missing.append("relationship_updates")
-            return missing
-
-        if action.action == "delete_relationship":
-            if not action.payload.get("character_from_name") or not action.payload.get("character_to_name"):
-                missing.append("relationship_pair")
-            return missing
-
-        if action.action == "create_organization":
-            if not action.payload.get("name"):
-                missing.append("organization_create_payload")
-            return missing
-
-        if action.action == "update_organization":
-            if not action.target_id:
-                missing.append("organization_selector")
-            if not action.payload:
-                missing.append("organization_updates")
-            return missing
-
-        if action.action == "delete_organization":
-            if not action.target_id:
-                missing.append("organization_selector")
-            return missing
-
-        if action.action == "add_organization_member":
-            if not action.payload.get("organization_name") or not action.payload.get("member_name"):
-                missing.append("organization_member_payload")
-            return missing
-
-        if action.action == "create_item":
-            if not action.payload.get("title") or not action.payload.get("content"):
-                missing.append("item_create_payload")
-            return missing
-
-        if action.action == "update_item":
-            if not action.target_id:
-                missing.append("item_selector")
-            if not action.payload:
-                missing.append("item_updates")
-            return missing
-
-        if action.action == "delete_item":
-            if not action.target_id:
-                missing.append("item_selector")
-            return missing
-
-        return missing
+        return self._manage_action_router.compute_missing_fields(action)
 
     def _build_manage_missing_question(self, action: _PendingAction) -> str:
         if not action.missing_fields:
@@ -1804,13 +1279,7 @@ class IntentRecognitionMiddleware:
         payload_text = self._format_payload_for_summary(action.payload)
         project_name = session.active_project_title or action.project_id or "未指定项目"
         target_text = f"，目标：{action.target_label}" if action.target_label else ""
-        return (
-            "请确认执行以下操作：\n"
-            f"- 项目：{project_name}\n"
-            f"- 动作：{action.action}{target_text}\n"
-            f"- 参数：{payload_text}\n\n"
-            "回复“确认执行”后我才会真正落库；回复“取消”可放弃本次操作。"
-        )
+        return f"请确认执行以下操作：\n- 项目：{project_name}\n- 动作：{action.action}{target_text}\n- 参数：{payload_text}\n\n回复“确认执行”后我才会真正落库；回复“取消”可放弃本次操作。"
 
     @staticmethod
     def _format_payload_for_summary(payload: dict[str, Any]) -> str:
@@ -1883,7 +1352,7 @@ class IntentRecognitionMiddleware:
             )
 
         try:
-            result_payload = await self._dispatch_manage_action(action=action, session=session, db_session=db_session)
+            result_payload = await self._manage_action_router.dispatch(action=action, session=session, db_session=db_session)
         except Exception as exc:
             message = getattr(exc, "detail", None) or str(exc)
             logger.warning("manage action %s failed: %s", action.action, message, exc_info=True)
@@ -1965,437 +1434,24 @@ class IntentRecognitionMiddleware:
                 execute_result=ExecuteResult(
                     status="success",
                     message=content,
-                    target_id=str(
-                        action.target_id
-                        or (
-                            result_payload.get("id")
-                            if isinstance(result_payload, dict)
-                            else ""
-                        )
-                        or ""
-                    ),
+                    target_id=str(action.target_id or (result_payload.get("id") if isinstance(result_payload, dict) else "") or ""),
                     summary={"action": action.action},
                 ),
             ),
         )
 
     async def _dispatch_manage_action(self, *, action: _PendingAction, session: _NovelCreationSession, db_session: Any) -> dict[str, Any]:
-        action_name = action.action
-
-        if action_name == "update_project":
-            from app.gateway.novel_migrated.api.projects import ProjectUpdateRequest, update_project
-
-            req = ProjectUpdateRequest(**action.payload)
-            return await update_project(project_id=action.project_id or "", req=req, user_id=session.user_id, db=db_session)
-
-        if action_name == "delete_project":
-            from app.gateway.novel_migrated.api.projects import delete_project
-
-            payload = await delete_project(project_id=action.target_id or action.project_id or "", user_id=session.user_id, db=db_session)
-            if isinstance(payload, dict):
-                return payload
-            return {"message": "Project deleted"}
-
-        if action_name == "export_project_archive":
-            from app.gateway.novel_migrated.api.import_export import build_export_download_path
-            from app.gateway.novel_migrated.services.import_export_service import get_import_export_service
-
-            project = await self._get_project_model(
-                project_id=action.project_id or "",
-                user_id=session.user_id,
-                db_session=db_session,
-            )
-            if project is None:
-                raise ValueError("项目不存在或无权限")
-
-            service = get_import_export_service()
-            export_bytes = await service.export_project(project_id=project.id, db=db_session)
-            export_dir = Path(__file__).resolve().parents[1] / "data" / "exports"
-            export_dir.mkdir(parents=True, exist_ok=True)
-            file_name = f"project-{project.id}-{datetime.now().strftime('%Y%m%d%H%M%S')}.zip"
-            file_path = export_dir / file_name
-            file_path.write_bytes(export_bytes)
-            return {
-                "project_id": project.id,
-                "file_name": file_name,
-                "file_path": str(file_path),
-                "download_path": build_export_download_path(project.id),
-                "size_bytes": len(export_bytes),
-                "source": "import_export_service",
-            }
-
-        if action_name == "generate_outline":
-            from app.gateway.novel_migrated.services.book_import_service import book_import_service
-
-            project = await self._get_project_model(
-                project_id=action.project_id or "",
-                user_id=session.user_id,
-                db_session=db_session,
-            )
-            if project is None:
-                raise ValueError("项目不存在或无权限")
-
-            chapter_count = max(5, min(int(action.payload.get("chapter_count") or project.chapter_count or 30), 300))
-            narrative_perspective = str(
-                action.payload.get("narrative_perspective")
-                or project.narrative_perspective
-                or "第三人称"
-            )
-            target_words = max(1000, min(int(action.payload.get("target_words") or project.target_words or 100000), 3_000_000))
-
-            outlines_count = await book_import_service._generate_outline_from_project(  # noqa: SLF001
-                db=db_session,
-                user_id=session.user_id,
-                project=project,
-                chapter_count=chapter_count,
-                narrative_perspective=narrative_perspective,
-                target_words=target_words,
-            )
-            project.wizard_step = 4
-            project.wizard_status = "completed"
-            project.status = "writing"
-            await db_session.commit()
-            return {
-                "project_id": project.id,
-                "outlines_count": outlines_count,
-                "chapter_count": chapter_count,
-                "target_words": target_words,
-                "narrative_perspective": narrative_perspective,
-                "source": "book_import_service.generate_outline",
-            }
-
-        if action_name == "generate_characters":
-            from app.gateway.novel_migrated.services.book_import_service import book_import_service
-
-            project = await self._get_project_model(
-                project_id=action.project_id or "",
-                user_id=session.user_id,
-                db_session=db_session,
-            )
-            if project is None:
-                raise ValueError("项目不存在或无权限")
-
-            count = max(5, min(int(action.payload.get("count") or project.character_count or 8), 20))
-            if action.payload.get("theme"):
-                project.theme = str(action.payload.get("theme"))
-            if action.payload.get("genre"):
-                project.genre = str(action.payload.get("genre"))[:50]
-            project.character_count = count
-
-            generated_count = await book_import_service._generate_characters_and_organizations_from_project(  # noqa: SLF001
-                db=db_session,
-                user_id=session.user_id,
-                project=project,
-                count=count,
-            )
-            project.wizard_step = max(int(project.wizard_step or 0), 3)
-            project.wizard_status = "incomplete"
-            await db_session.commit()
-            return {
-                "project_id": project.id,
-                "count": count,
-                "generated_count": generated_count,
-                "source": "book_import_service.generate_characters",
-            }
-
-        if action_name == "create_chapter":
-            from app.gateway.novel_migrated.api.chapters import ChapterCreateRequest, create_chapter
-
-            req = ChapterCreateRequest(**action.payload)
-            return await create_chapter(project_id=action.project_id or "", req=req, user_id=session.user_id, db=db_session)
-
-        if action_name == "update_chapter":
-            from app.gateway.novel_migrated.api.chapters import ChapterUpdateRequest, update_chapter
-
-            req = ChapterUpdateRequest(**action.payload)
-            return await update_chapter(chapter_id=action.target_id or "", req=req, user_id=session.user_id, db=db_session)
-
-        if action_name == "delete_chapter":
-            from app.gateway.novel_migrated.api.chapters import delete_chapter
-
-            payload = await delete_chapter(chapter_id=action.target_id or "", user_id=session.user_id, db=db_session)
-            if isinstance(payload, dict):
-                return payload
-            return {"message": "Chapter deleted"}
-
-        if action_name == "create_outline":
-            from app.gateway.novel_migrated.api.outlines import OutlineCreateRequest, create_outline
-
-            req = OutlineCreateRequest(**action.payload)
-            return await create_outline(project_id=action.project_id or "", req=req, user_id=session.user_id, db=db_session)
-
-        if action_name == "update_outline":
-            from app.gateway.novel_migrated.api.outlines import OutlineUpdateRequest, update_outline
-
-            req = OutlineUpdateRequest(**action.payload)
-            return await update_outline(outline_id=action.target_id or "", req=req, user_id=session.user_id, db=db_session)
-
-        if action_name == "delete_outline":
-            from app.gateway.novel_migrated.api.outlines import delete_outline
-
-            payload = await delete_outline(outline_id=action.target_id or "", user_id=session.user_id, db=db_session)
-            if isinstance(payload, dict):
-                return payload
-            return {"message": "Outline deleted"}
-
-        if action_name == "create_character":
-            from app.gateway.novel_migrated.api.characters import CharacterCreateRequest, create_character
-
-            req = CharacterCreateRequest(**action.payload)
-            return await create_character(project_id=action.project_id or "", req=req, user_id=session.user_id, db=db_session)
-
-        if action_name == "update_character":
-            from app.gateway.novel_migrated.api.characters import CharacterUpdateRequest, update_character
-
-            req = CharacterUpdateRequest(**action.payload)
-            return await update_character(character_id=action.target_id or "", req=req, user_id=session.user_id, db=db_session)
-
-        if action_name == "delete_character":
-            from app.gateway.novel_migrated.api.characters import delete_character
-
-            payload = await delete_character(character_id=action.target_id or "", user_id=session.user_id, db=db_session)
-            if isinstance(payload, dict):
-                return payload
-            return {"message": "Character deleted"}
-
-        if action_name == "create_relationship":
-            from app.gateway.novel_migrated.api.relationships import RelationshipCreateRequest, create_relationship
-
-            from_char = await self._resolve_character_by_name(
-                project_id=action.project_id or "",
-                name=str(action.payload.get("character_from_name") or ""),
-                user_id=session.user_id,
-                db_session=db_session,
-            )
-            to_char = await self._resolve_character_by_name(
-                project_id=action.project_id or "",
-                name=str(action.payload.get("character_to_name") or ""),
-                user_id=session.user_id,
-                db_session=db_session,
-            )
-            req = RelationshipCreateRequest(
-                project_id=action.project_id or "",
-                character_from_id=str(from_char.get("id") or ""),
-                character_to_id=str(to_char.get("id") or ""),
-                relationship_name=str(action.payload.get("relationship_name") or "相关"),
-                intimacy_level=int(action.payload.get("intimacy_level") or 50),
-                description=str(action.payload.get("description") or ""),
-                status=str(action.payload.get("status") or "active"),
-            )
-            return await create_relationship(req=req, user_id=session.user_id, db=db_session)
-
-        if action_name == "update_relationship":
-            from app.gateway.novel_migrated.api.relationships import RelationshipUpdateRequest, list_relationships, update_relationship
-
-            from_char = await self._resolve_character_by_name(
-                project_id=action.project_id or "",
-                name=str(action.payload.get("character_from_name") or ""),
-                user_id=session.user_id,
-                db_session=db_session,
-            )
-            to_char = await self._resolve_character_by_name(
-                project_id=action.project_id or "",
-                name=str(action.payload.get("character_to_name") or ""),
-                user_id=session.user_id,
-                db_session=db_session,
-            )
-            rel_data = await list_relationships(project_id=action.project_id or "", user_id=session.user_id, db=db_session, character_id=None)
-            relationships = rel_data.get("relationships", [])
-            rel = self._match_relationship(relationships, str(from_char.get("id") or ""), str(to_char.get("id") or ""))
-            if rel is None:
-                raise ValueError("未找到对应关系，请先创建关系")
-
-            req = RelationshipUpdateRequest(
-                relationship_name=action.payload.get("relationship_name"),
-                intimacy_level=action.payload.get("intimacy_level"),
-                description=action.payload.get("description"),
-                status=action.payload.get("status"),
-            )
-            return await update_relationship(relationship_id=str(rel.get("id") or ""), req=req, user_id=session.user_id, db=db_session)
-
-        if action_name == "delete_relationship":
-            from app.gateway.novel_migrated.api.relationships import delete_relationship, list_relationships
-
-            from_char = await self._resolve_character_by_name(
-                project_id=action.project_id or "",
-                name=str(action.payload.get("character_from_name") or ""),
-                user_id=session.user_id,
-                db_session=db_session,
-            )
-            to_char = await self._resolve_character_by_name(
-                project_id=action.project_id or "",
-                name=str(action.payload.get("character_to_name") or ""),
-                user_id=session.user_id,
-                db_session=db_session,
-            )
-            rel_data = await list_relationships(project_id=action.project_id or "", user_id=session.user_id, db=db_session, character_id=None)
-            relationships = rel_data.get("relationships", [])
-            rel = self._match_relationship(relationships, str(from_char.get("id") or ""), str(to_char.get("id") or ""))
-            if rel is None:
-                raise ValueError("未找到对应关系")
-
-            payload = await delete_relationship(relationship_id=str(rel.get("id") or ""), user_id=session.user_id, db=db_session)
-            if isinstance(payload, dict):
-                return payload
-            return {"message": "Relationship deleted"}
-
-        if action_name == "create_organization":
-            from app.gateway.novel_migrated.api.characters import CharacterCreateRequest, create_character
-            from app.gateway.novel_migrated.api.organizations import OrganizationUpdateRequest, update_organization
-
-            org_name = str(action.payload.get("name") or "").strip()
-            if not org_name:
-                raise ValueError("缺少组织名称")
-
-            created = await create_character(
-                project_id=action.project_id or "",
-                req=CharacterCreateRequest(
-                    name=org_name,
-                    is_organization=True,
-                    role_type="supporting",
-                    organization_type=action.payload.get("organization_type"),
-                    organization_purpose=action.payload.get("purpose"),
-                ),
-                user_id=session.user_id,
-                db=db_session,
-            )
-
-            org_updates = {
-                key: value
-                for key, value in action.payload.items()
-                if key in {"organization_type", "purpose", "hierarchy", "power_level", "location"}
-            }
-            if org_updates:
-                await update_organization(
-                    organization_id=str(created.get("id") or ""),
-                    req=OrganizationUpdateRequest(**org_updates),
-                    user_id=session.user_id,
-                    db=db_session,
-                )
-            return created
-
-        if action_name == "update_organization":
-            from app.gateway.novel_migrated.api.characters import CharacterUpdateRequest, update_character
-            from app.gateway.novel_migrated.api.organizations import OrganizationUpdateRequest, update_organization
-
-            org_updates = {
-                key: value
-                for key, value in action.payload.items()
-                if key in {"organization_type", "purpose", "hierarchy", "power_level", "location"}
-            }
-            char_updates = {}
-            if "organization_type" in org_updates:
-                char_updates["organization_type"] = org_updates["organization_type"]
-            if "purpose" in org_updates:
-                char_updates["organization_purpose"] = org_updates["purpose"]
-
-            latest: dict[str, Any] = {"id": action.target_id}
-            if char_updates:
-                latest = await update_character(
-                    character_id=action.target_id or "",
-                    req=CharacterUpdateRequest(**char_updates),
-                    user_id=session.user_id,
-                    db=db_session,
-                )
-
-            if org_updates:
-                org_result = await update_organization(
-                    organization_id=action.target_id or "",
-                    req=OrganizationUpdateRequest(**org_updates),
-                    user_id=session.user_id,
-                    db=db_session,
-                )
-                if isinstance(org_result, dict):
-                    latest.update(org_result)
-
-            return latest
-
-        if action_name == "delete_organization":
-            from app.gateway.novel_migrated.api.characters import delete_character
-
-            payload = await delete_character(character_id=action.target_id or "", user_id=session.user_id, db=db_session)
-            if isinstance(payload, dict):
-                return payload
-            return {"message": "Organization deleted"}
-
-        if action_name == "add_organization_member":
-            from app.gateway.novel_migrated.api.organizations import (
-                MemberAddRequest,
-                OrganizationUpdateRequest,
-                add_member,
-                update_organization,
-            )
-
-            org = await self._resolve_organization_by_name(
-                project_id=action.project_id or "",
-                name=str(action.payload.get("organization_name") or ""),
-                user_id=session.user_id,
-                db_session=db_session,
-            )
-            member = await self._resolve_character_by_name(
-                project_id=action.project_id or "",
-                name=str(action.payload.get("member_name") or ""),
-                user_id=session.user_id,
-                db_session=db_session,
-            )
-
-            # Ensure organization detail exists before adding member.
-            await update_organization(
-                organization_id=str(org.get("id") or ""),
-                req=OrganizationUpdateRequest(),
-                user_id=session.user_id,
-                db=db_session,
-            )
-
-            req = MemberAddRequest(
-                character_id=str(member.get("id") or ""),
-                position=str(action.payload.get("position") or ""),
-                rank=int(action.payload.get("rank") or 5),
-                loyalty=int(action.payload.get("loyalty") or 50),
-                status=str(action.payload.get("status") or "active"),
-            )
-            return await add_member(organization_id=str(org.get("id") or ""), req=req, user_id=session.user_id, db=db_session)
-
-        if action_name in {"create_item", "update_item", "delete_item"}:
-            return await self._dispatch_item_action(action=action, db_session=db_session)
-
-        raise ValueError(f"unsupported action: {action_name}")
+        return await self._manage_action_router.dispatch_manage_action(
+            action=action,
+            session=session,
+            db_session=db_session,
+        )
 
     async def _dispatch_item_action(self, *, action: _PendingAction, db_session: Any) -> dict[str, Any]:
-        from app.gateway.novel_migrated.schemas.foreshadow import ForeshadowCreate, ForeshadowUpdate
-        from app.gateway.novel_migrated.services.foreshadow_service import foreshadow_service
-
-        if action.action == "create_item":
-            req = ForeshadowCreate(
-                project_id=action.project_id or "",
-                title=str(action.payload.get("title") or ""),
-                content=str(action.payload.get("content") or ""),
-                category="item",
-                tags=action.payload.get("tags") or [],
-                notes=action.payload.get("notes") or None,
-            )
-            created = await foreshadow_service.create_foreshadow(db=db_session, data=req)
-            return created.to_dict()
-
-        if action.action == "update_item":
-            req = ForeshadowUpdate(
-                title=action.payload.get("title"),
-                content=action.payload.get("content"),
-                tags=action.payload.get("tags"),
-                notes=action.payload.get("notes"),
-            )
-            updated = await foreshadow_service.update_foreshadow(db=db_session, foreshadow_id=action.target_id or "", data=req)
-            if updated is None:
-                raise ValueError("物品不存在")
-            return updated.to_dict()
-
-        if action.action == "delete_item":
-            deleted = await foreshadow_service.delete_foreshadow(db=db_session, foreshadow_id=action.target_id or "")
-            if not deleted:
-                raise ValueError("物品不存在")
-            return {"message": "Item deleted", "id": action.target_id}
-
-        raise ValueError(f"unsupported item action: {action.action}")
+        return await self._manage_action_router.dispatch_item_action(
+            action=action,
+            db_session=db_session,
+        )
 
     async def _resolve_project_from_text(self, *, user_message: str, user_id: str, db_session: Any) -> dict[str, Any] | None:
         project_id_match = _PROJECT_ID_PATTERN.search(user_message)
@@ -2803,7 +1859,7 @@ class IntentRecognitionMiddleware:
     @staticmethod
     def _extract_name_after_keyword(text: str, *, keywords: tuple[str, ...], max_len: int) -> str | None:
         for keyword in keywords:
-            pattern = re.compile(rf"{re.escape(keyword)}\s*[：:]?\s*([\u4e00-\u9fa5A-Za-z0-9_\-]{1,{max_len}})")
+            pattern = re.compile(rf"{re.escape(keyword)}\s*[：:]?\s*([\u4e00-\u9fa5A-Za-z0-9_\-]{1, {max_len}})")
             match = pattern.search(text)
             if match:
                 return match.group(1).strip()
@@ -3277,29 +2333,17 @@ class IntentRecognitionMiddleware:
         skills: list[dict[str, str]],
     ) -> str:
         try:
-            skill_text = "\n\n".join(
-                f"[技能]{entry['name']}\n描述: {entry['description']}\n要点摘录:\n{entry['snippet']}"
-                for entry in skills[:4]
-            )
+            skill_text = "\n\n".join(f"[技能]{entry['name']}\n描述: {entry['description']}\n要点摘录:\n{entry['snippet']}" for entry in skills[:4])
             fields_json = json.dumps(fields, ensure_ascii=False)
 
             messages = [
                 {
                     "role": "system",
-                    "content": (
-                        "你是小说创建向导。"
-                        "你必须优先参考给定的主项目技能内容，"
-                        "为当前字段提供最多3条简短建议，每条一行。"
-                        "不要输出JSON。"
-                    ),
+                    "content": ("你是小说创建向导。你必须优先参考给定的主项目技能内容，为当前字段提供最多3条简短建议，每条一行。不要输出JSON。"),
                 },
                 {
                     "role": "user",
-                    "content": (
-                        f"当前字段: {_FIELD_LABELS.get(field_name, field_name)}\n"
-                        f"已收集信息: {fields_json}\n"
-                        f"可参考技能:\n{skill_text}"
-                    ),
+                    "content": (f"当前字段: {_FIELD_LABELS.get(field_name, field_name)}\n已收集信息: {fields_json}\n可参考技能:\n{skill_text}"),
                 },
             ]
 
@@ -3326,15 +2370,7 @@ class IntentRecognitionMiddleware:
     ) -> list[dict[str, str]]:
         now = datetime.now()
         config_mtime = self._get_extensions_config_mtime()
-        can_reuse_cache = (
-            session is None
-            and not user_id
-            and
-            not force_refresh
-            and self._skills_cache_at is not None
-            and now - self._skills_cache_at < _SKILL_CACHE_TTL
-            and self._skills_cache_config_mtime == config_mtime
-        )
+        can_reuse_cache = session is None and not user_id and not force_refresh and self._skills_cache_at is not None and now - self._skills_cache_at < _SKILL_CACHE_TTL and self._skills_cache_config_mtime == config_mtime
         if can_reuse_cache:
             return self._skills_cache
 
@@ -3351,16 +2387,8 @@ class IntentRecognitionMiddleware:
                     user_id=user_id,
                     extensions_config=extensions_config,
                 )
-                workspace_states = {
-                    skill.name.strip(): extensions_config.is_skill_enabled(skill.name, skill.category)
-                    for skill in skills
-                    if skill.name and skill.name.strip()
-                }
-                enabled_skills = [
-                    skill
-                    for skill in skills
-                    if extensions_config.is_skill_enabled(skill.name, skill.category)
-                ]
+                workspace_states = {skill.name.strip(): extensions_config.is_skill_enabled(skill.name, skill.category) for skill in skills if skill.name and skill.name.strip()}
+                enabled_skills = [skill for skill in skills if extensions_config.is_skill_enabled(skill.name, skill.category)]
             except Exception as config_exc:
                 logger.warning("failed to load extensions config for skill toggles: %s", config_exc)
                 # Follow deerflow fail-open behavior: keep skills available when config is unreadable.
@@ -3524,11 +2552,7 @@ class IntentRecognitionMiddleware:
 
         candidates: list[str] = []
         for entry in all_entries:
-            haystack = (
-                f"{entry.get('name', '')}\n"
-                f"{entry.get('description', '')}\n"
-                f"{entry.get('snippet', '')}"
-            ).lower()
+            haystack = (f"{entry.get('name', '')}\n{entry.get('description', '')}\n{entry.get('snippet', '')}").lower()
             if any(token in haystack for token in tokens):
                 candidates.append(str(entry.get("name", "")).strip())
         return [name for name in candidates if name]
@@ -3547,21 +2571,7 @@ class IntentRecognitionMiddleware:
         normalized = (user_message or "").strip()
         if not normalized:
             return None
-
-        lowered = normalized.lower()
-        compact = re.sub(r"\s+", "", lowered)
-        hit_keyword = any(keyword in lowered or keyword in compact for keyword in _INTENT_KEYWORDS)
-        if not hit_keyword:
-            hit_keyword = any(pattern.search(normalized) for pattern in _INTENT_PATTERNS)
-        if not hit_keyword:
-            return None
-
-        question_like = any(lowered.startswith(prefix) for prefix in _QUESTION_PREFIXES)
-        if question_like and "帮我" not in normalized and "please" not in lowered:
-            return None
-
-        prefill = self._extract_fields_from_message(normalized)
-        return _NovelCreateIntent(raw_message=normalized, prefill=prefill)
+        return self._intent_detector.detect_creation_intent(normalized)
 
     def _detect_novel_management_intent(self, user_message: str) -> bool:
         normalized = (user_message or "").strip()
@@ -3572,38 +2582,10 @@ class IntentRecognitionMiddleware:
             return True
         if any(keyword in normalized for keyword in _PROJECT_SWITCH_KEYWORDS):
             return True
-
-        has_entity = any(keyword in normalized for keyword in _MANAGE_ENTITY_KEYWORDS)
-        has_action = any(keyword in normalized for keyword in _MANAGE_ACTION_KEYWORDS)
-        if has_entity and has_action:
-            return True
-
-        return any(pattern.search(normalized) for pattern in _MANAGE_INTENT_PATTERNS)
+        return self._intent_detector.detect_management_intent(normalized)
 
     def _extract_fields_from_message(self, text: str) -> dict[str, Any]:
-        fields: dict[str, Any] = {}
-
-        title = self._extract_title(text)
-        if title:
-            fields["title"] = title
-
-        genre = self._extract_genre(text)
-        if genre:
-            fields["genre"] = genre
-
-        theme = self._extract_theme(text)
-        if theme:
-            fields["theme"] = theme
-
-        audience = self._extract_audience(text)
-        if audience:
-            fields["audience"] = audience
-
-        target_words = self._extract_target_words(text)
-        if target_words is not None:
-            fields["target_words"] = target_words
-
-        return fields
+        return self._intent_detector.extract_fields(text)
 
     @staticmethod
     def _extract_title(user_message: str) -> str | None:
@@ -3749,9 +2731,7 @@ class IntentRecognitionMiddleware:
                     return f"{user_id}:{key}:{value.strip()}"
             if context:
                 # Fallback: unknown context shape still gets a stable per-context key.
-                digest = hashlib.sha1(
-                    json.dumps(context, sort_keys=True, ensure_ascii=False).encode("utf-8")
-                ).hexdigest()[:16]
+                digest = hashlib.sha1(json.dumps(context, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
                 return f"{user_id}:ctx:{digest}"
         return f"{user_id}:default"
 
@@ -3856,32 +2836,16 @@ class IntentRecognitionMiddleware:
         action_snapshot: _PendingAction | None = None,
     ) -> dict[str, Any]:
         action = action_snapshot if action_snapshot is not None else session.pending_action
-        action_type = action_override or (
-            "create_novel"
-            if session.mode == "create"
-            else (action.action if action is not None else "manage_session")
-        )
+        action_type = action_override or ("create_novel" if session.mode == "create" else (action.action if action is not None else "manage_session"))
 
         if session.mode == "create":
             slot_schema = self._build_create_slot_schema(session)
-            missing_slots = (
-                list(missing_slots_override)
-                if missing_slots_override is not None
-                else [field_name for field_name in _FIELD_ORDER if not self._has_slot_value(session.fields.get(field_name))]
-            )
+            missing_slots = list(missing_slots_override) if missing_slots_override is not None else [field_name for field_name in _FIELD_ORDER if not self._has_slot_value(session.fields.get(field_name))]
         else:
             slot_schema = self._build_manage_slot_schema(session=session, action=action)
-            missing_slots = (
-                list(missing_slots_override)
-                if missing_slots_override is not None
-                else list(action.missing_fields) if action is not None else []
-            )
+            missing_slots = list(missing_slots_override) if missing_slots_override is not None else list(action.missing_fields) if action is not None else []
 
-        requires_confirmation = (
-            bool(confirmation_required)
-            if confirmation_required is not None
-            else bool(session.awaiting_confirm or (not missing_slots and session.mode in {"create", "manage"}))
-        )
+        requires_confirmation = bool(confirmation_required) if confirmation_required is not None else bool(session.awaiting_confirm or (not missing_slots and session.mode in {"create", "manage"}))
 
         try:
             return build_action_protocol(
@@ -3898,11 +2862,7 @@ class IntentRecognitionMiddleware:
                 "slot_schema": slot_schema,
                 "missing_slots": missing_slots,
                 "confirmation_required": requires_confirmation,
-                "execute_result": (
-                    execute_result.to_dict()
-                    if isinstance(execute_result, ExecuteResult)
-                    else execute_result
-                ),
+                "execute_result": (execute_result.to_dict() if isinstance(execute_result, ExecuteResult) else execute_result),
             }
 
     def _session_brief(
@@ -4063,11 +3023,7 @@ class IntentRecognitionMiddleware:
             fields=fields if isinstance(fields, dict) else self._initialize_fields({}),
             awaiting_confirm=bool(raw.get("awaiting_confirm", False)),
             last_prompted_field=str(raw.get("last_prompted_field") or "") or None,
-            skill_suggestions=(
-                {str(k): str(v) for k, v in skill_suggestions.items()}
-                if isinstance(skill_suggestions, dict)
-                else {}
-            ),
+            skill_suggestions=({str(k): str(v) for k, v in skill_suggestions.items()} if isinstance(skill_suggestions, dict) else {}),
             active_project_id=str(raw.get("active_project_id") or "") or None,
             active_project_title=str(raw.get("active_project_title") or "") or None,
             pending_action=pending_action,
@@ -4133,9 +3089,7 @@ class IntentRecognitionMiddleware:
 
         await init_db_schema()
         async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(IntentSessionState).where(IntentSessionState.session_key == session_key)
-            )
+            result = await db.execute(select(IntentSessionState).where(IntentSessionState.session_key == session_key))
             row = result.scalar_one_or_none()
             if row is None:
                 return None
@@ -4168,21 +3122,21 @@ class IntentRecognitionMiddleware:
         payload_json = json.dumps(self._serialize_session(session), ensure_ascii=False)
 
         async with AsyncSessionLocal() as db:
-            existing = await db.get(IntentSessionState, session.session_key)
-            if existing is None:
-                db.add(
-                    IntentSessionState(
-                        session_key=session.session_key,
-                        user_id=session.user_id,
-                        payload_json=payload_json,
-                        updated_at=session.updated_at,
+            async with db.begin():
+                existing = await db.get(IntentSessionState, session.session_key)
+                if existing is None:
+                    db.add(
+                        IntentSessionState(
+                            session_key=session.session_key,
+                            user_id=session.user_id,
+                            payload_json=payload_json,
+                            updated_at=session.updated_at,
+                        )
                     )
-                )
-            else:
-                existing.user_id = session.user_id
-                existing.payload_json = payload_json
-                existing.updated_at = session.updated_at
-            await db.commit()
+                else:
+                    existing.user_id = session.user_id
+                    existing.payload_json = payload_json
+                    existing.updated_at = session.updated_at
 
     async def _db_delete_session(self, session_key: str) -> None:
         from sqlalchemy import delete
@@ -4192,10 +3146,8 @@ class IntentRecognitionMiddleware:
 
         await init_db_schema()
         async with AsyncSessionLocal() as db:
-            await db.execute(
-                delete(IntentSessionState).where(IntentSessionState.session_key == session_key)
-            )
-            await db.commit()
+            async with db.begin():
+                await db.execute(delete(IntentSessionState).where(IntentSessionState.session_key == session_key))
 
     async def _db_prune_expired_sessions(self) -> None:
         from sqlalchemy import delete
@@ -4206,10 +3158,8 @@ class IntentRecognitionMiddleware:
         await init_db_schema()
         cutoff = datetime.now() - _SESSION_TTL
         async with AsyncSessionLocal() as db:
-            await db.execute(
-                delete(IntentSessionState).where(IntentSessionState.updated_at < cutoff)
-            )
-            await db.commit()
+            async with db.begin():
+                await db.execute(delete(IntentSessionState).where(IntentSessionState.updated_at < cutoff))
 
     async def _db_consume_idempotency_key(
         self,
@@ -4225,12 +3175,11 @@ class IntentRecognitionMiddleware:
 
         await init_db_schema()
         async with AsyncSessionLocal() as db:
-            db.add(IntentIdempotencyKey(key=key, user_id=user_id, action=action))
             try:
-                await db.commit()
+                async with db.begin():
+                    db.add(IntentIdempotencyKey(key=key, user_id=user_id, action=action))
                 return True
             except IntegrityError:
-                await db.rollback()
                 return False
 
     async def _db_prune_expired_idempotency_keys(self) -> None:
@@ -4242,9 +3191,7 @@ class IntentRecognitionMiddleware:
         await init_db_schema()
         cutoff = datetime.now() - _SESSION_TTL
         async with AsyncSessionLocal() as db:
-            await db.execute(
-                delete(IntentIdempotencyKey).where(IntentIdempotencyKey.created_at < cutoff)
-            )
+            await db.execute(delete(IntentIdempotencyKey).where(IntentIdempotencyKey.created_at < cutoff))
             await db.commit()
 
     async def _get_session(self, session_key: str) -> _NovelCreationSession | None:
@@ -4287,11 +3234,7 @@ class IntentRecognitionMiddleware:
                     return
                 except Exception:
                     logger.exception("failed to prune expired intent sessions in database, fallback to memory cache")
-            expired = [
-                key
-                for key, session in self._sessions.items()
-                if now - session.updated_at > _SESSION_TTL
-            ]
+            expired = [key for key, session in self._sessions.items() if now - session.updated_at > _SESSION_TTL]
             for key in expired:
                 self._sessions.pop(key, None)
             if expired:
@@ -4300,6 +3243,7 @@ class IntentRecognitionMiddleware:
     def _is_feature_enabled(self, *, user_id: str | None = None) -> bool:
         try:
             from deerflow.config.extensions_config import get_extensions_config
+
             cfg = get_extensions_config()
             if hasattr(cfg, "is_feature_enabled_for_user"):
                 return cfg.is_feature_enabled_for_user(
@@ -4316,6 +3260,29 @@ class IntentRecognitionMiddleware:
         raw = f"{user_id}:{action}:{datetime.now().isoformat()}"
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
+    @staticmethod
+    def _build_idempotency_store_key(*, key: str, action: str | None) -> str:
+        """Build a storage key for idempotency checks.
+
+        The original client key may be re-used across different actions. To
+        avoid false-positive duplicates (H-06), we scope the storage key by
+        action when provided.
+
+        NOTE: `IntentIdempotencyKey.key` is `String(64)`, so we must keep the
+        stored key within 64 chars.
+        """
+        normalized_key = str(key or "").strip()
+        if not normalized_key:
+            return ""
+        normalized_action = str(action or "").strip()
+        if not normalized_action:
+            return normalized_key[:64]
+
+        composite = f"{normalized_action}:{normalized_key}"
+        if len(composite) <= 64:
+            return composite
+        return hashlib.sha256(composite.encode()).hexdigest()
+
     async def _consume_idempotency_key(
         self,
         key: str,
@@ -4323,19 +3290,23 @@ class IntentRecognitionMiddleware:
         user_id: str | None = None,
         action: str | None = None,
     ) -> bool:
+        store_key = self._build_idempotency_store_key(key=key, action=action)
+        if not store_key:
+            return True
+
         async with self._lock:
             if self._storage_backend == "database":
                 try:
                     return await self._db_consume_idempotency_key(
-                        key,
+                        store_key,
                         user_id=user_id,
                         action=action,
                     )
                 except Exception:
                     logger.exception("failed to consume idempotency key in database, fallback to memory cache")
-            if key in self._used_idempotency_keys:
+            if store_key in self._used_idempotency_keys:
                 return False
-            self._used_idempotency_keys[key] = datetime.now()
+            self._used_idempotency_keys[store_key] = datetime.now()
             self._persist_state_best_effort_locked()
             return True
 
@@ -4348,10 +3319,7 @@ class IntentRecognitionMiddleware:
                     return
                 except Exception:
                     logger.exception("failed to prune idempotency keys in database, fallback to memory cache")
-            expired = [
-                key for key, ts in self._used_idempotency_keys.items()
-                if now - ts > _SESSION_TTL
-            ]
+            expired = [key for key, ts in self._used_idempotency_keys.items() if now - ts > _SESSION_TTL]
             for key in expired:
                 self._used_idempotency_keys.pop(key, None)
             if expired:

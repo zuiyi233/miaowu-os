@@ -11,14 +11,47 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.gateway.config import get_gateway_config
 from app.gateway.middleware.request_trace import RequestTraceMiddleware
+from app.gateway.novel_migrated.core.logger import setup_logging
 from app.gateway.observability.context import install_trace_log_filter
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+_FILE_LOG_ENABLED_VALUES = {"1", "true", "yes", "on"}
+
+
+def _is_truthy_env(name: str) -> bool:
+    value = (os.getenv(name) or "").strip().lower()
+    return value in _FILE_LOG_ENABLED_VALUES
+
+
+def _configure_gateway_logging() -> None:
+    """Configure gateway logging with optional file rotation support.
+
+    Defaults remain console-only to preserve current runtime behavior.
+    """
+    level = (os.getenv("DEERFLOW_GATEWAY_LOG_LEVEL") or "INFO").strip().upper()
+    log_to_file = _is_truthy_env("DEERFLOW_GATEWAY_LOG_TO_FILE")
+    log_file_path = (os.getenv("DEERFLOW_GATEWAY_LOG_FILE_PATH") or "").strip() or None
+
+    raw_max_bytes = (os.getenv("DEERFLOW_GATEWAY_LOG_MAX_BYTES") or "").strip()
+    raw_backup_count = (os.getenv("DEERFLOW_GATEWAY_LOG_BACKUP_COUNT") or "").strip()
+    try:
+        max_bytes = int(raw_max_bytes) if raw_max_bytes else 10 * 1024 * 1024
+    except ValueError:
+        max_bytes = 10 * 1024 * 1024
+    try:
+        backup_count = int(raw_backup_count) if raw_backup_count else 30
+    except ValueError:
+        backup_count = 30
+
+    setup_logging(
+        level=level,
+        log_to_file=log_to_file,
+        log_file_path=log_file_path,
+        max_bytes=max(1024 * 1024, max_bytes),
+        backup_count=max(1, backup_count),
+    )
+
+
+_configure_gateway_logging()
 
 logger = logging.getLogger(__name__)
 install_trace_log_filter()

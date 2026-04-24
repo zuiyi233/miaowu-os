@@ -1,6 +1,5 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -10,12 +9,13 @@ import {
   X,
   AlignVerticalSpaceAround,
 } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
-import { cn } from '@/lib/utils';
+import { Slider } from '@/components/ui/slider';
 import { getBackendBaseURL } from '@/core/config';
+import { cn } from '@/lib/utils';
 
 interface ReaderSettings {
   fontSize: number;
@@ -85,7 +85,7 @@ export function ChapterReader({ open, onOpenChange, chapter, onChapterChange }: 
 
   useEffect(() => {
     if (chapter?.id) setLoading(false);
-    const el = document.querySelector('.reader-scroll-container') as HTMLElement;
+    const el = document.querySelector('.reader-scroll-container')!;
     if (el) el.scrollTop = 0;
   }, [chapter?.id]);
 

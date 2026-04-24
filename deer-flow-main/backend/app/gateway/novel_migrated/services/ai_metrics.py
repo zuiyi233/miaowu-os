@@ -1,37 +1,86 @@
 """AI使用统计服务 - 支持内存缓存 + 数据库持久化"""
+
 from __future__ import annotations
 
 import asyncio
 import threading
-from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
+from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, delete
+from sqlalchemy import and_, delete, select
 
-from app.gateway.novel_migrated.models.ai_metric import AIMetric
-from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.core.database import AsyncSessionLocal
+from app.gateway.novel_migrated.core.logger import get_logger
+from app.gateway.novel_migrated.models.ai_metric import AIMetric
 
 logger = get_logger(__name__)
 
-_in_memory_stats: Dict[str, List[Dict[str, Any]]] = {}
-_pending_writes: List[Dict[str, Any]] = []
+_in_memory_stats: dict[str, list[dict[str, Any]]] = {}
+_pending_writes: list[dict[str, Any]] = []
 _write_lock = threading.Lock()
 _flush_interval = 300  # 5分钟自动刷新一次
 _max_pending_writes = 100  # 最大待写入条数
 _last_flush_time = 0.0
+_max_flush_retries = 3
+_flush_task: asyncio.Task[None] | None = None
+
+
+def _record_in_memory_and_queue(record: dict[str, Any], timestamp_seconds: float) -> bool:
+    """Thread-safe state update used by sync call paths."""
+    global _last_flush_time
+
+    user_id = str(record["user_id"])
+    with _write_lock:
+        if user_id not in _in_memory_stats:
+            _in_memory_stats[user_id] = []
+
+        _in_memory_stats[user_id].append(record)
+
+        # 内存限制：保留最近500条
+        if len(_in_memory_stats[user_id]) > 1000:
+            _in_memory_stats[user_id] = _in_memory_stats[user_id][-500:]
+
+        _pending_writes.append(record)
+        return len(_pending_writes) >= _max_pending_writes or (timestamp_seconds - _last_flush_time) > _flush_interval
+
+
+def _drain_pending_batch(flush_timestamp: float) -> list[dict[str, Any]]:
+    """Thread-safe pending queue drain for async flush."""
+    global _last_flush_time
+
+    with _write_lock:
+        if not _pending_writes:
+            return []
+        batch = _pending_writes.copy()
+        _pending_writes.clear()
+        _last_flush_time = flush_timestamp
+        return batch
+
+
+def _requeue_failed_batch(batch: list[dict[str, Any]]) -> tuple[int, int]:
+    """Thread-safe bounded retry requeue."""
+    with _write_lock:
+        retryable: list[dict[str, Any]] = []
+        dropped = 0
+        for record in batch:
+            retry_count = int(record.get("_flush_retry_count", 0)) + 1
+            if retry_count > _max_flush_retries:
+                dropped += 1
+                continue
+            record["_flush_retry_count"] = retry_count
+            retryable.append(record)
+        if retryable:
+            _pending_writes.extend(retryable)
+        return len(retryable), dropped
 
 
 class AIMetricsService:
     """AI使用统计服务 - 双层存储（内存 + 数据库）"""
 
-    def record_usage(self, user_id: str, provider: str, model: str,
-                     prompt_tokens: int = 0, completion_tokens: int = 0,
-                     operation_type: str = "generation", success: bool = True):
+    def record_usage(self, user_id: str, provider: str, model: str, prompt_tokens: int = 0, completion_tokens: int = 0, operation_type: str = "generation", success: bool = True):
         """
         记录AI使用统计
-        
+
         策略：
         1. 立即写入内存缓存（保证快速响应）
         2. 加入待写入队列（异步批量写入数据库）
@@ -47,41 +96,34 @@ class AIMetricsService:
             "operation_type": operation_type,
             "success": success,
             "user_id": user_id,
+            "_flush_retry_count": 0,
         }
 
-        # 写入内存缓存
-        with _write_lock:
-            if user_id not in _in_memory_stats:
-                _in_memory_stats[user_id] = []
-
-            _in_memory_stats[user_id].append(record)
-
-            # 内存限制：保留最近500条
-            if len(_in_memory_stats[user_id]) > 1000:
-                _in_memory_stats[user_id] = _in_memory_stats[user_id][-500:]
-
-            # 加入待写入队列
-            _pending_writes.append(record)
-
-            # 检查是否需要触发批量写入
-            should_flush = (
-                len(_pending_writes) >= _max_pending_writes or
-                (timestamp.timestamp() - _last_flush_time) > _flush_interval
-            )
+        should_flush = _record_in_memory_and_queue(record, timestamp.timestamp())
 
         if should_flush:
-            asyncio.create_task(self._flush_to_db_async())
+            self._schedule_flush()
+
+    def _schedule_flush(self) -> None:
+        """Schedule one in-flight async flush task at most."""
+        global _flush_task
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Best effort: caller may be in sync context without running loop.
+            return
+
+        if _flush_task is not None and not _flush_task.done():
+            return
+        _flush_task = loop.create_task(self._flush_to_db_async())
 
     async def _flush_to_db_async(self):
         """异步批量写入数据库"""
-        global _last_flush_time
+        global _flush_task
 
-        with _write_lock:
-            if not _pending_writes:
-                return
-            batch = _pending_writes.copy()
-            _pending_writes.clear()
-            _last_flush_time = datetime.now().timestamp()
+        batch = await asyncio.to_thread(_drain_pending_batch, datetime.now().timestamp())
+        if not batch:
+            return
 
         try:
             async with AsyncSessionLocal() as session:
@@ -103,56 +145,47 @@ class AIMetricsService:
 
         except Exception as e:
             logger.error("❌ AI统计数据持久化失败: %s", e, exc_info=True)
-            with _write_lock:
-                _pending_writes.extend(batch)  # 失败时放回队列
+            retry_count, dropped = await asyncio.to_thread(_requeue_failed_batch, batch)
+            if retry_count:
+                logger.warning("⚠️ 回收 %s 条AI统计记录等待重试", retry_count)
+            if dropped:
+                logger.error("❌ 丢弃 %s 条AI统计写入记录（超过最大重试 %s 次）", dropped, _max_flush_retries)
+        finally:
+            _flush_task = None
 
-    def get_user_stats(self, user_id: str, days: int = 30) -> Dict[str, Any]:
+    async def get_user_stats(self, user_id: str, days: int = 30) -> dict[str, Any]:
         """
         获取用户AI使用统计
-        
+
         策略：
         1. 优先从内存读取（快速响应）
         2. 如果内存数据不足，从数据库加载历史数据
         """
         records = _in_memory_stats.get(user_id, [])
         cutoff = datetime.now() - timedelta(days=days)
-        
-        # 从内存中筛选近期记录
-        recent_from_memory = [
-            r for r in records 
-            if datetime.fromisoformat(r["timestamp"]) >= cutoff
-        ]
 
-        # 如果内存数据不足，标记需要从数据库加载
+        recent_from_memory = [r for r in records if datetime.fromisoformat(r["timestamp"]) >= cutoff]
+
         need_db_fallback = len(recent_from_memory) < 10 and days > 7
 
         all_records = recent_from_memory
 
         if need_db_fallback or not all_records:
-            db_records = asyncio.get_event_loop().run_until_complete(
-                self._load_from_db(user_id, days)
-            )
-            # 合并去重（以内存数据为准）
-            db_timestamps = {r["timestamp"] for r in db_records}
-            merged = [r for r in db_records if r["timestamp"] not in db_timestamps]
-            all_records = merged + all_records
+            db_records = await self._load_from_db(user_id, days)
+            # 合并去重（以内存数据为准，避免同一timestamp的重复记录）
+            memory_timestamps = {r["timestamp"] for r in recent_from_memory}
+            merged = [r for r in db_records if r.get("timestamp") not in memory_timestamps]
+            all_records = merged + recent_from_memory
 
         return self._calculate_stats(all_records, days)
 
-    async def _load_from_db(self, user_id: str, days: int) -> List[Dict[str, Any]]:
+    async def _load_from_db(self, user_id: str, days: int) -> list[dict[str, Any]]:
         """从数据库加载历史统计"""
         try:
             cutoff = datetime.now() - timedelta(days=days)
-            
+
             async with AsyncSessionLocal() as session:
-                result = await session.execute(
-                    select(AIMetric).where(
-                        and_(
-                            AIMetric.user_id == user_id,
-                            AIMetric.created_at >= cutoff
-                        )
-                    ).order_by(AIMetric.created_at.desc())
-                )
+                result = await session.execute(select(AIMetric).where(and_(AIMetric.user_id == user_id, AIMetric.created_at >= cutoff)).order_by(AIMetric.created_at.desc()))
                 metrics = result.scalars().all()
 
                 records = [
@@ -169,15 +202,14 @@ class AIMetricsService:
                     for m in metrics
                 ]
 
-                logger.info("📊 从数据库加载 %s 条历史记录 (user=%s, days=%s)", 
-                           len(records), user_id, days)
+                logger.info("📊 从数据库加载 %s 条历史记录 (user=%s, days=%s)", len(records), user_id, days)
                 return records
 
         except Exception as e:
             logger.error("❌ 从数据库加载AI统计失败: %s", e, exc_info=True)
             return []
 
-    def _calculate_stats(self, records: List[Dict], days: int) -> Dict[str, Any]:
+    def _calculate_stats(self, records: list[dict], days: int) -> dict[str, Any]:
         """计算统计数据"""
         if not records:
             return {"total_calls": 0, "total_tokens": 0, "period_days": days}
@@ -224,17 +256,15 @@ class AIMetricsService:
         """清理超过指定天数的历史记录"""
         try:
             cutoff = datetime.now() - timedelta(days=days)
-            
+
             async with AsyncSessionLocal() as session:
-                result = await session.execute(
-                    delete(AIMetric).where(AIMetric.created_at < cutoff)
-                )
+                result = await session.execute(delete(AIMetric).where(AIMetric.created_at < cutoff))
                 await session.commit()
-                
+
                 deleted_count = result.rowcount
                 if deleted_count > 0:
                     logger.info("🗑️ 已清理 %s 条超过 %s 天的AI统计记录", deleted_count, days)
-                    
+
         except Exception as e:
             logger.error("❌ 清理历史AI统计失败: %s", e, exc_info=True)
 

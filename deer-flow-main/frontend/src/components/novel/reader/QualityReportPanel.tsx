@@ -210,6 +210,30 @@ function summarizeGateReport(report: FinalizeGateReport | null): string[] {
   ];
 }
 
+function normalizeFeedbackLine(line: string): string {
+  return line.trim().replace(/\s+/g, ' ');
+}
+
+export function buildFinalizeFeedbackLines(
+  gateMessage: string,
+  finalizeMessage: string,
+  gateReport: FinalizeGateReport | null,
+): string[] {
+  const seen = new Set<string>();
+  const ordered = [gateMessage, finalizeMessage, ...summarizeGateReport(gateReport)];
+  const lines: string[] = [];
+
+  for (const raw of ordered) {
+    const normalized = normalizeFeedbackLine(raw);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    lines.push(normalized);
+  }
+  return lines;
+}
+
 const severityIcons: Record<string, React.ReactNode> = {
   error: <AlertCircle className="h-4 w-4 text-red-500" />,
   warning: <AlertCircle className="h-4 w-4 text-yellow-500" />,
@@ -239,6 +263,10 @@ export function QualityReportPanel({ novelId, chapters, characters, timelineEven
     finalizeMessage: '',
   });
   const { gateReport, gateMessage, finalizeMessage } = feedbackState;
+  const feedbackLines = useMemo(
+    () => buildFinalizeFeedbackLines(gateMessage, finalizeMessage, gateReport),
+    [finalizeMessage, gateMessage, gateReport],
+  );
 
   const setFeedbackStateByEvent = (event: FinalizeGateFeedbackEvent) => {
     setFeedbackState((previous) => reduceFinalizeGateFeedbackState(previous, event));
@@ -396,14 +424,12 @@ export function QualityReportPanel({ novelId, chapters, characters, timelineEven
         <CardDescription>AI 自动检测内容质量和一致性问题</CardDescription>
       </CardHeader>
       <CardContent>
-        {(gateMessage || finalizeMessage || gateReport) && (
+        {feedbackLines.length > 0 && (
           <Alert className="mb-4" variant={gateReport?.result === 'block' ? 'destructive' : 'default'}>
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>{gateReport?.result === 'block' ? '门禁阻断' : '定稿门禁状态'}</AlertTitle>
             <AlertDescription className="space-y-1">
-              {gateMessage && <div>{gateMessage}</div>}
-              {finalizeMessage && <div>{finalizeMessage}</div>}
-              {summarizeGateReport(gateReport).map((line) => (
+              {feedbackLines.map((line) => (
                 <div key={line}>{line}</div>
               ))}
             </AlertDescription>

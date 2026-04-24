@@ -56,3 +56,39 @@ def test_ensure_ai_provider_settings_trims_and_filters_empty_models() -> None:
 
     normalized = _ensure_ai_provider_settings(prefs)
     assert normalized["providers"][0]["models"] == ["gpt-4o-mini"]
+
+
+def test_ensure_ai_provider_settings_accepts_feature_routing_settings_dict() -> None:
+    prefs = {
+        "ai_provider_settings": {
+            "version": 1,
+            "default_provider_id": None,
+            "client_settings": {"enable_stream_mode": True, "request_timeout": 660000, "max_retries": 2},
+            "feature_routing_settings": {
+                "create_novel": {"provider_id": "p1"},
+                "novel_tools": {"provider_id": "p2", "base_url": "http://127.0.0.1:8551"},
+            },
+            "providers": [],
+        }
+    }
+
+    normalized = _ensure_ai_provider_settings(prefs)
+    assert normalized["feature_routing_settings"] == {
+        "create_novel": {"provider_id": "p1"},
+        "novel_tools": {"provider_id": "p2", "base_url": "http://127.0.0.1:8551"},
+    }
+
+
+def test_ensure_ai_provider_settings_invalid_feature_routing_settings_becomes_none() -> None:
+    prefs = {
+        "ai_provider_settings": {
+            "version": 1,
+            "default_provider_id": None,
+            "client_settings": {"enable_stream_mode": True, "request_timeout": 660000, "max_retries": 2},
+            "feature_routing_settings": ["invalid"],
+            "providers": [],
+        }
+    }
+
+    normalized = _ensure_ai_provider_settings(prefs)
+    assert normalized["feature_routing_settings"] is None

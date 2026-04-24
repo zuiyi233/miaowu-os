@@ -13,6 +13,8 @@ DeerFlow is a LangGraph-based AI super agent system with a full-stack architectu
 - **Nginx** (port 2026): Unified reverse proxy entry point
 - **Provisioner** (port 8002, optional in Docker dev): Started only when sandbox is configured for provisioner/Kubernetes mode
 
+> Miaowu fork local-dev override: when working in `D:\miaowu-os\deer-flow-main`, gateway defaults/proxy fallbacks are pinned to `127.0.0.1:8551` (frontend `4560`) unless explicitly overridden by env vars.
+
 **Runtime Modes**:
 - **Standard mode** (`make dev`): LangGraph Server handles agent execution as a separate process. 4 processes total.
 - **Gateway mode** (`make dev-pro`, experimental): Agent runtime embedded in Gateway via `RunManager` + `run_agent()` + `StreamBridge` (`packages/harness/deerflow/runtime/`). Service manages its own concurrency via async tasks. 3 processes total, no LangGraph Server.
@@ -233,14 +235,28 @@ FastAPI application on port 8001 with health check at `GET /health`.
 - `POST /api/ai/chat` includes session-based intent middleware for novel workflows with two active tracks:
   - Novel creation session: guided field collection (title/genre/theme/audience/target_words), then persistence only after explicit confirmation.
   - Novel lifecycle management session: project/chapter/outline/character/relationship/organization/item mapping operations in a conversational session.
+- Intent middleware internals are split into explicit components in `app.gateway.middleware.intent_components`:
+  - `IntentDetector`
+  - `SessionPersistence`
+  - `SessionManager`
+  - `ManageActionRouter`
+  Compatibility wrappers are kept in `intent_recognition_middleware.py` so existing imports/tests remain stable.
+- `ManageActionRouter` is the primary home for manage-session action build/merge/dispatch and missing-slot computation to limit middleware God-class growth.
 - Intent session state and idempotency keys are persisted in shared `novel_migrated` database tables (`intent_session_states`, `intent_idempotency_keys`) by default.
 - Set `DEERFLOW_INTENT_SESSION_BACKEND=file` to force legacy JSON-file storage (`DEERFLOW_INTENT_SESSION_STORE_PATH`).
 - Side-effect actions (create/update/delete and other writes) require explicit confirmation before execution.
+- On manage-action dispatch failures, `ManageActionRouter` performs best-effort rollback when the request `db_session` still has an active transaction.
 - Intent-session skill loading follows enabled states in `extensions_config.json` (ranked by novel relevance), and `技能推荐` can force a refresh.
 - Intent skill loading can optionally run three-layer governance (`intent_skill_governance`): system defaults -> workspace enabled -> session candidates, with degraded fallback mode controlled by `DEERFLOW_INTENT_SKILL_GOVERNANCE_FALLBACK_MODE` (`workspace_only|system_only|intersection`).
 - Intent session payloads expose structured `action_protocol` contract (`action_type`, `slot_schema`, `missing_slots`, `confirmation_required`, `execute_result`) while preserving legacy aliases for compatibility.
 - Intent workflow responses include `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches these session replies.
 - Gateway request logs now carry unified trace fields via middleware/context filters: `request_id/thread_id/project_id/session_key/idempotency_key`.
+- Gateway app logging initializes through `app.gateway.novel_migrated.core.logger.setup_logging` and supports optional rotating-file output with:
+  - `DEERFLOW_GATEWAY_LOG_TO_FILE`
+  - `DEERFLOW_GATEWAY_LOG_FILE_PATH`
+  - `DEERFLOW_GATEWAY_LOG_MAX_BYTES`
+  - `DEERFLOW_GATEWAY_LOG_BACKUP_COUNT`
+  - `DEERFLOW_GATEWAY_LOG_LEVEL`
 - Lifecycle-related traces also include: `lifecycle_state`, `lifecycle_transition`, `lifecycle_mode`, `lifecycle_replay`, `lifecycle_token`.
 - In-process novel pipeline metrics are exposed by `/api/features/metrics/novel-pipeline`: success rate, failure rate, retry rate, P95 latency, duplicate-write interception rate.
 - Feature flags support user-scoped canary release through `FeatureFlagConfig(enabled, rollout_percentage, allow_users, deny_users)` and deterministic hash bucketing.

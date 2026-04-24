@@ -3,11 +3,11 @@
 提供 GitHub 提交历史的缓存和代理服务。
 适配 deer-flow 项目，使用可配置的仓库信息。
 """
+
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["更新日志"])
+router = APIRouter(prefix="/changelog", tags=["更新日志"])
 
 # GitHub API 配置（可通过环境变量或配置覆盖）
 GITHUB_API_BASE = "https://api.github.com"
@@ -33,7 +33,7 @@ _cache = {
 def _get_repo_config() -> tuple:
     """
     获取仓库配置
-    
+
     优先从配置模块读取，否则使用默认值
     """
     try:
@@ -50,8 +50,10 @@ def _get_repo_config() -> tuple:
 
 # ==================== 响应模型 ====================
 
+
 class GitHubAuthor(BaseModel):
     """GitHub 作者信息"""
+
     name: str
     email: str
     date: str
@@ -59,32 +61,37 @@ class GitHubAuthor(BaseModel):
 
 class GitHubCommitInfo(BaseModel):
     """GitHub 提交信息"""
+
     author: GitHubAuthor
     message: str
 
 
 class GitHubUser(BaseModel):
     """GitHub 用户信息"""
+
     login: str
     avatar_url: str
 
 
 class GitHubCommit(BaseModel):
     """GitHub 提交数据"""
+
     sha: str
     commit: GitHubCommitInfo
     html_url: str
-    author: Optional[GitHubUser] = None
+    author: GitHubUser | None = None
 
 
 class ChangelogResponse(BaseModel):
     """更新日志响应"""
-    commits: List[GitHubCommit]
+
+    commits: list[GitHubCommit]
     cached: bool
-    cache_time: Optional[str] = None
+    cache_time: str | None = None
 
 
 # ==================== 辅助函数 ====================
+
 
 def is_cache_valid() -> bool:
     """检查缓存是否有效"""
@@ -97,14 +104,14 @@ def is_cache_valid() -> bool:
     return cache_age < _cache["ttl"]
 
 
-async def fetch_github_commits(page: int = 1, per_page: int = 30) -> List[dict]:
+async def fetch_github_commits(page: int = 1, per_page: int = 30) -> list[dict]:
     """
     从 GitHub API 获取提交历史
-    
+
     Args:
         page: 页码
         per_page: 每页数量
-        
+
     Returns:
         提交数据列表
     """
@@ -132,6 +139,7 @@ async def fetch_github_commits(page: int = 1, per_page: int = 30) -> List[dict]:
 
 
 # ==================== API 端点 ====================
+
 
 @router.get("/changelog", response_model=ChangelogResponse)
 async def get_changelog(

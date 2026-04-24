@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getBackendBaseURL } from "@/core/config";
 
+import type { AiFeatureRoutingState } from "./feature-routing";
+
 const API_BASE = getBackendBaseURL();
 
 export interface UserAiClientSettings {
@@ -27,6 +29,7 @@ export interface UserAiSettings {
   providers: UserAiProviderRecord[];
   default_provider_id: string | null;
   client_settings: UserAiClientSettings;
+  feature_routing_settings?: AiFeatureRoutingState | null;
 
   // legacy-compatible fields (still returned for compatibility)
   api_provider: string;
@@ -56,6 +59,7 @@ export interface UserAiSettingsUpdate {
   providers?: UserAiProviderRecordUpdate[];
   default_provider_id?: string | null;
   client_settings?: Partial<UserAiClientSettings>;
+  feature_routing_settings?: AiFeatureRoutingState | null;
 
   // legacy fields
   api_provider?: string | null;

@@ -225,13 +225,7 @@ async def test_finalize_endpoint_allows_warn_result() -> None:
     await init_db_schema()
     user_id = f"gate-warn-user-{uuid.uuid4()}"
 
-    chapter_content = (
-        "夜色压城，江面风浪翻涌。"
-        "主角沿着旧码头缓慢前行，回想前夜与师父的争执。"
-        "他在仓库里找到遗失的线索，却仍无法确认幕后之人。"
-        "章节暂时收束在新的疑问上。"
-        "远处汽笛再度响起，他决定连夜追查旧案卷宗，给下一章留下明确行动目标。"
-    )
+    chapter_content = "夜色压城，江面风浪翻涌。主角沿着旧码头缓慢前行，回想前夜与师父的争执。他在仓库里找到遗失的线索，却仍无法确认幕后之人。章节暂时收束在新的疑问上。远处汽笛再度响起，他决定连夜追查旧案卷宗，给下一章留下明确行动目标。"
 
     async with AsyncSessionLocal() as session:
         project = Project(user_id=user_id, title="告警可放行测试")
@@ -281,12 +275,7 @@ async def test_finalize_endpoint_allows_warn_result() -> None:
 async def test_finalize_project_lifecycle_strategy_transitions_when_feature_enabled() -> None:
     await init_db_schema()
     user_id = f"gate-lifecycle-user-{uuid.uuid4()}"
-    chapter_content = (
-        "晨雾尚未散去，旧城墙上的风铃被北风吹得清响。"
-        "主角沿着石阶反复确认前夜留下的符号，逐步拼出敌方行军路线。"
-        "他在驿站与同伴会合后决定分头追踪，确保下一章能无缝推进主线。"
-        "这一章以新的调查目标收束，同时保留必要悬念。"
-    )
+    chapter_content = "晨雾尚未散去，旧城墙上的风铃被北风吹得清响。主角沿着石阶反复确认前夜留下的符号，逐步拼出敌方行军路线。他在驿站与同伴会合后决定分头追踪，确保下一章能无缝推进主线。这一章以新的调查目标收束，同时保留必要悬念。"
 
     async with AsyncSessionLocal() as session:
         project = Project(user_id=user_id, title="生命周期门禁测试")
@@ -312,9 +301,7 @@ async def test_finalize_project_lifecycle_strategy_transitions_when_feature_enab
         session.add(analysis)
         await session.commit()
 
-    lifecycle_cfg = ExtensionsConfig(
-        features={"novel_lifecycle_v2": FeatureFlagConfig(enabled=True, rollout_percentage=100)}
-    )
+    lifecycle_cfg = ExtensionsConfig(features={"novel_lifecycle_v2": FeatureFlagConfig(enabled=True, rollout_percentage=100)})
 
     async with AsyncSessionLocal() as session:
         with patch(
@@ -347,10 +334,7 @@ async def test_finalize_project_lifecycle_strategy_transitions_when_feature_enab
 async def test_finalize_gate_applies_rule_model_fusion_when_feature_enabled() -> None:
     await init_db_schema()
     user_id = f"gate-fusion-user-{uuid.uuid4()}"
-    chapter_content = (
-        "夜雾贴着河岸缓慢蔓延，主角在废弃码头找到残破航图。"
-        "他意识到线索并不完整，决定暂时按兵不动并回收更多证据。"
-    )
+    chapter_content = "夜雾贴着河岸缓慢蔓延，主角在废弃码头找到残破航图。他意识到线索并不完整，决定暂时按兵不动并回收更多证据。"
 
     async with AsyncSessionLocal() as session:
         project = Project(user_id=user_id, title="融合门禁测试")
@@ -376,13 +360,11 @@ async def test_finalize_gate_applies_rule_model_fusion_when_feature_enabled() ->
         )
         await session.commit()
 
-    fusion_cfg = ExtensionsConfig(
-        features={"novel_quality_gate_fusion": FeatureFlagConfig(enabled=True, rollout_percentage=100)}
-    )
+    fusion_cfg = ExtensionsConfig(features={"novel_quality_gate_fusion": FeatureFlagConfig(enabled=True, rollout_percentage=100)})
 
     async with AsyncSessionLocal() as session:
         with patch(
-            "app.gateway.novel_migrated.services.consistency_gate_service.get_extensions_config",
+            "app.gateway.novel_migrated.services.consistency_gate.reporter.get_extensions_config",
             return_value=fusion_cfg,
         ):
             report = await consistency_gate_service.build_finalize_gate_report(

@@ -5,8 +5,8 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { WordRotate } from "@/components/ui/word-rotate";
-import { cn } from "@/lib/utils";
 import { useHeroAnimation, useMagneticHover, useFloatAnimation } from "@/lib/anime";
+import { cn } from "@/lib/utils";
 import "@/components/ui/text-effects.css";
 
 function HeroDecorations() {

@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Optional, List, Union
+from typing import Any
 
 from app.gateway.novel_migrated.core.logger import get_logger
+from app.gateway.novel_migrated.services.ai_service import AIService
 
 logger = get_logger(__name__)
 
@@ -17,8 +18,7 @@ class JSONHelper:
         if not text or not text.strip():
             raise ValueError("Empty text provided")
 
-        cleaned = JSONHelper._strip_markdown(text)
-        cleaned = JSONHelper._strip_code_block(cleaned)
+        cleaned = AIService.clean_json_response(text)
         cleaned = JSONHelper._fix_common_issues(cleaned)
 
         try:
@@ -63,7 +63,7 @@ class JSONHelper:
         return text
 
     @staticmethod
-    def _extract_json_objects(text: str) -> List[dict]:
+    def _extract_json_objects(text: str) -> list[dict[str, Any]]:
         objects = []
         depth = 0
         start = -1
@@ -84,7 +84,7 @@ class JSONHelper:
         return objects
 
     @staticmethod
-    def _extract_json_arrays(text: str) -> List[list]:
+    def _extract_json_arrays(text: str) -> list[list[Any]]:
         arrays = []
         depth = 0
         start = -1

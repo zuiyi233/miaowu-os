@@ -945,3 +945,23 @@ nul
 
 # Standalone desktop shell repo
 tauri-app-template-main/
+
+# ==============================================================================
+# LOCAL REVIEW / TEST ARTIFACTS (L-19 / L-20 / L-21)
+# ==============================================================================
+# Keep local audit/test deliverables out of VCS by default.
+/test_ai_novel_connection.py
+/connection_test_report_*.txt
+/AI_Novel_Connection_Test_Report.md
+/CODE_REVIEW_REPORT.md
+/Novel_Agent_Settings_Implementation_Plan.md
+/Novel_Creation_Process_Assessment_Report.md
+/Novel_Discussion_Summary.md
+/novel-tool-gap-analysis.md
+/Miaowu_OS_Next_Phase_Strategy_Report_*.md
+/小说*报告*.md
+
+# Trellis planning/task journals are local working artifacts.
+deer-flow-main/.trellis/workspace/**/*.jsonl
+deer-flow-main/.trellis/workspace/**/task.json
+deer-flow-main/.trellis/workspace/**/prd.md

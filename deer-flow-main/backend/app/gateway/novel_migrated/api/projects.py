@@ -161,9 +161,11 @@ async def update_project(
 
     if updates:
         try:
-            lock_result = await optimistic_update(Project, project_id, updates)
+            lock_result = await optimistic_update(Project, project_id, updates, db=db)
+            await db.commit()
             logger.info("Project %s updated with optimistic lock (attempts=%d)", project_id, lock_result["attempts"])
         except ValueError as exc:
+            await db.rollback()
             raise HTTPException(status_code=409, detail=str(exc))
 
     result = await db.execute(select(Project).where(Project.id == project_id))
@@ -217,7 +219,7 @@ async def world_build(
         accumulated += chunk
 
     try:
-        cleaned = ai_service._clean_json_response(accumulated)
+        cleaned = ai_service.clean_json_response(accumulated)
         world_data = json.loads(cleaned)
 
         if isinstance(world_data, dict):
@@ -318,8 +320,10 @@ async def update_wizard_status(
 
     if updates:
         try:
-            await optimistic_update(Project, project_id, updates)
+            await optimistic_update(Project, project_id, updates, db=db)
+            await db.commit()
         except ValueError as exc:
+            await db.rollback()
             raise HTTPException(status_code=409, detail=str(exc))
 
     result = await db.execute(select(Project).where(Project.id == project_id))

@@ -73,6 +73,7 @@ class AIProviderSettings(TypedDict):
     default_provider_id: str | None
     providers: list[ProviderRecord]
     client_settings: ClientSettings
+    feature_routing_settings: dict[str, Any] | None
 
 
 def _map_model_use_to_provider_type(use: Any) -> str:
@@ -213,8 +214,16 @@ def _normalize_provider_record(raw: dict[str, Any], *, previous: ProviderRecord 
 
     name = (raw.get("name") or prev.get("name") or "Provider").strip()
     provider = (raw.get("provider") or prev.get("provider") or "openai").strip()
-    base_url = (raw.get("base_url") or prev.get("base_url") or "").strip()
-    models = _normalize_models(raw.get("models")) or prev.get("models") or []
+    if "base_url" in raw:
+        base_url = (raw.get("base_url") or "").strip()
+    else:
+        base_url = (prev.get("base_url") or "").strip()
+
+    if "models" in raw:
+        # Keep explicit empty list from request payloads; do not back-fill with previous.
+        models = _normalize_models(raw.get("models"))
+    else:
+        models = _normalize_models(prev.get("models"))
 
     temperature = raw.get("temperature") if raw.get("temperature") is not None else prev.get("temperature")
     max_tokens = raw.get("max_tokens") if raw.get("max_tokens") is not None else prev.get("max_tokens")
@@ -287,6 +296,14 @@ def _ensure_client_settings(value: Any) -> ClientSettings:
     return merged  # type: ignore[return-value]
 
 
+def _ensure_feature_routing_settings(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        return None
+    return dict(value)
+
+
 def _ensure_ai_provider_settings(preferences: dict[str, Any]) -> AIProviderSettings:
     raw = preferences.get(AI_PROVIDER_SETTINGS_PREF_KEY)
     if not isinstance(raw, dict):
@@ -295,6 +312,7 @@ def _ensure_ai_provider_settings(preferences: dict[str, Any]) -> AIProviderSetti
             default_provider_id=None,
             providers=[],
             client_settings=dict(DEFAULT_CLIENT_SETTINGS),
+            feature_routing_settings=None,
         )
 
     default_provider_id = raw.get("default_provider_id")
@@ -314,12 +332,14 @@ def _ensure_ai_provider_settings(preferences: dict[str, Any]) -> AIProviderSetti
             providers.append(_normalize_provider_record(item))
 
     client_settings = _ensure_client_settings(raw.get("client_settings"))
+    feature_routing_settings = _ensure_feature_routing_settings(raw.get("feature_routing_settings"))
 
     return AIProviderSettings(
         version=int(raw.get("version") or AI_PROVIDER_SETTINGS_VERSION),
         default_provider_id=default_provider_id,
         providers=providers,
         client_settings=client_settings,
+        feature_routing_settings=feature_routing_settings,
     )
 
 
@@ -385,6 +405,7 @@ class AISettingsService:
                 "default_provider_id": seed_bundle.get("default_provider_id"),
                 "providers": seed_bundle["providers"],
                 "client_settings": seed_bundle["client_settings"],
+                "feature_routing_settings": None,
             }
             _save_preferences(settings, preferences)
 
@@ -431,6 +452,7 @@ class AISettingsService:
                     "default_provider_id": seed_bundle.get("default_provider_id"),
                     "providers": seed_bundle["providers"],
                     "client_settings": seed_bundle["client_settings"],
+                    "feature_routing_settings": ai_provider_settings.get("feature_routing_settings"),
                 }
                 _save_preferences(settings, preferences)
                 await db.commit()
@@ -444,12 +466,13 @@ class AISettingsService:
             "providers": [_public_provider_record(p) for p in ai_provider_settings["providers"]],
             "default_provider_id": ai_provider_settings["default_provider_id"],
             "client_settings": ai_provider_settings["client_settings"],
+            "feature_routing_settings": ai_provider_settings.get("feature_routing_settings"),
             # legacy fields (mirror source-of-truth for runtime)
             "api_provider": settings.api_provider or "openai",
             "api_base_url": settings.api_base_url or "",
             "llm_model": settings.llm_model or "gpt-4o-mini",
-            "temperature": settings.temperature or 0.7,
-            "max_tokens": settings.max_tokens or 4096,
+            "temperature": settings.temperature if settings.temperature is not None else 0.7,
+            "max_tokens": settings.max_tokens if settings.max_tokens is not None else 4096,
             "system_prompt": settings.system_prompt,
         }
 
@@ -463,6 +486,9 @@ class AISettingsService:
         # ---- Update client_settings / default_provider_id (new contract) ----
         if isinstance(payload.get("client_settings"), dict):
             current["client_settings"] = _ensure_client_settings(payload["client_settings"])
+
+        if "feature_routing_settings" in payload:
+            current["feature_routing_settings"] = _ensure_feature_routing_settings(payload.get("feature_routing_settings"))
 
         if "default_provider_id" in payload:
             default_provider_id = payload.get("default_provider_id")
@@ -565,6 +591,7 @@ class AISettingsService:
             "default_provider_id": current["default_provider_id"],
             "providers": current["providers"],
             "client_settings": current["client_settings"],
+            "feature_routing_settings": current.get("feature_routing_settings"),
         }
         _save_preferences(settings, preferences)
 
@@ -597,6 +624,7 @@ class AISettingsService:
             "default_provider_id": current["default_provider_id"],
             "providers": current["providers"],
             "client_settings": current["client_settings"],
+            "feature_routing_settings": current.get("feature_routing_settings"),
         }
         _save_preferences(settings, preferences)
 

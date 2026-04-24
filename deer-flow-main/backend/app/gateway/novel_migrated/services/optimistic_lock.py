@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.core.database import async_session_factory
 
@@ -18,6 +19,7 @@ async def optimistic_update(
     updates: dict[str, Any],
     id_column: str = "id",
     retry_max: int = _OPTIMISTIC_RETRY_MAX,
+    db: AsyncSession | None = None,
 ) -> dict[str, Any]:
     """Perform an optimistic-lock update on a model instance.
 
@@ -31,6 +33,9 @@ async def optimistic_update(
         updates: Dict of column-name -> new-value to set.
         id_column: Name of the primary key column (default "id").
         retry_max: Maximum number of retry attempts on version conflict.
+        db: Optional existing AsyncSession. If provided, the update runs
+            within this session (caller manages commit). If None, a new
+            session is created and committed internally.
 
     Returns:
         Dict with "success", "attempts", and "final_version" keys.
@@ -43,7 +48,10 @@ async def optimistic_update(
     if id_col is None or version_col is None:
         raise ValueError(f"Model {model_class.__name__} missing id or version column")
 
-    async with async_session_factory() as session:
+    own_session = db is None
+    session = db or async_session_factory()
+
+    try:
         for attempt in range(1, retry_max + 1):
             stmt = select(model_class).where(id_col == entity_id)
             result = await session.execute(stmt)
@@ -53,15 +61,17 @@ async def optimistic_update(
                 raise ValueError(f"{model_class.__name__} with {id_column}={entity_id} not found")
 
             current_version = instance.version
-            update_stmt = (
-                update(model_class)
-                .where(id_col == entity_id, version_col == current_version)
-                .values(**updates, version=current_version + 1)
-            )
+            update_stmt = update(model_class).where(id_col == entity_id, version_col == current_version).values(**updates, version=current_version + 1)
             row_result = await session.execute(update_stmt)
-            await session.commit()
+
+            if own_session:
+                await session.commit()
+            else:
+                await session.flush()
 
             if row_result.rowcount > 0:
+                if not own_session:
+                    await session.refresh(instance)
                 return {
                     "success": True,
                     "attempts": attempt,
@@ -75,9 +85,10 @@ async def optimistic_update(
                 attempt,
                 retry_max,
             )
-            await session.rollback()
+            if own_session:
+                await session.rollback()
 
-        raise ValueError(
-            f"Optimistic lock conflict on {model_class.__name__} id={entity_id} "
-            f"after {retry_max} retries"
-        )
+        raise ValueError(f"Optimistic lock conflict on {model_class.__name__} id={entity_id} after {retry_max} retries")
+    finally:
+        if own_session and session is not None:
+            await session.close()

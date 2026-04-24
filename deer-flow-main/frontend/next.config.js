@@ -32,7 +32,7 @@ const config = {
     );
     const gatewayURL = getInternalServiceURL(
       "DEER_FLOW_INTERNAL_GATEWAY_BASE_URL",
-      "http://127.0.0.1:8001",
+      "http://127.0.0.1:8551",
     );
 
     if (forceDesktopProxy || !process.env.NEXT_PUBLIC_LANGGRAPH_BASE_URL) {

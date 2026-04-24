@@ -8,81 +8,15 @@ the tool defers to the session flow rather than bypassing the confirmation gate.
 from __future__ import annotations
 
 import logging
-import os
-from typing import Annotated
-from typing import Any
+from typing import Annotated, Any
 
-import httpx
 from langchain.tools import tool
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import InjectedToolArg
 
+from deerflow.tools.builtins.novel_tool_helpers import SESSION_CONTEXT_KEYS, USER_CONTEXT_KEYS, get_base_url, pick_non_empty_str, post_json
+
 logger = logging.getLogger(__name__)
-
-_NOVEL_TOOL_BASE_URL_ENV = "DEERFLOW_NOVEL_TOOL_BASE_URL"
-_DEFAULT_NOVEL_TOOL_BASE_URL = "http://127.0.0.1:8001"
-_NOVEL_TOOL_TIMEOUT_ENV = "DEERFLOW_NOVEL_TOOL_TIMEOUT_SECONDS"
-_ACCESS_TOKEN_ENV = "DEERFLOW_AI_PROVIDER_API_TOKEN"
-_SESSION_CONTEXT_KEYS: tuple[str, ...] = (
-    "thread_id",
-    "threadId",
-    "conversation_id",
-    "conversationId",
-    "chat_id",
-    "chatId",
-    "workspace_id",
-    "workspaceId",
-    "session_id",
-    "sessionId",
-    "novel_id",
-    "novelId",
-    "project_id",
-    "projectId",
-)
-_USER_CONTEXT_KEYS: tuple[str, ...] = ("user_id", "userId")
-
-
-def _get_base_url() -> str:
-    raw = (os.getenv(_NOVEL_TOOL_BASE_URL_ENV) or "").strip()
-    return raw.rstrip("/") or _DEFAULT_NOVEL_TOOL_BASE_URL
-
-
-def _get_timeout_seconds() -> float:
-    raw = (os.getenv(_NOVEL_TOOL_TIMEOUT_ENV) or "").strip()
-    if not raw:
-        return 10.0
-    try:
-        return max(1.0, float(raw))
-    except ValueError:
-        logger.warning("Invalid %s=%s, fallback to 10s", _NOVEL_TOOL_TIMEOUT_ENV, raw)
-        return 10.0
-
-
-def _build_headers() -> dict[str, str]:
-    headers = {"Content-Type": "application/json"}
-    token = (os.getenv(_ACCESS_TOKEN_ENV) or "").strip()
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    return headers
-
-
-async def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    timeout = httpx.Timeout(_get_timeout_seconds())
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(url, json=payload, headers=_build_headers())
-        response.raise_for_status()
-        data = response.json()
-        if isinstance(data, dict):
-            return data
-        return {"raw": data}
-
-
-def _pick_non_empty_str(source: dict[str, Any], *keys: str) -> str | None:
-    for key in keys:
-        value = source.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
 
 
 def _resolve_gate_scope(
@@ -94,15 +28,12 @@ def _resolve_gate_scope(
     context = raw_config.get("context")
     context_map = context if isinstance(context, dict) else {}
 
-    user_id = (
-        _pick_non_empty_str(context_map, *_USER_CONTEXT_KEYS)
-        or _pick_non_empty_str(configurable_map, *_USER_CONTEXT_KEYS)
-    )
+    user_id = pick_non_empty_str(context_map, *USER_CONTEXT_KEYS) or pick_non_empty_str(configurable_map, *USER_CONTEXT_KEYS)
     if not user_id:
         return None, None
 
     merged_context: dict[str, Any] = {}
-    for key in (*_SESSION_CONTEXT_KEYS, *_USER_CONTEXT_KEYS):
+    for key in (*SESSION_CONTEXT_KEYS, *USER_CONTEXT_KEYS):
         value = context_map.get(key)
         if isinstance(value, str) and value.strip():
             merged_context[key] = value.strip()
@@ -174,17 +105,10 @@ async def create_novel(
                 "success": False,
                 "source": "session_gate",
                 "error": "active_creation_session",
-                "message": (
-                    "当前有正在进行的小说创建会话，请勿重复调用 create_novel。"
-                    "请回到 /api/ai/chat 会话流程继续补充字段，"
-                    "或回复“确认”完成创建、回复“取消”放弃。"
-                    "仅在已取消当前会话且用户明确要求重新开始时，才应再次调用 create_novel。"
-                ),
+                "message": ("当前有正在进行的小说创建会话，请勿重复调用 create_novel。请回到 /api/ai/chat 会话流程继续补充字段，或回复“确认”完成创建、回复“取消”放弃。仅在已取消当前会话且用户明确要求重新开始时，才应再次调用 create_novel。"),
             }
     else:
-        logger.warning(
-            "create_novel session gate skipped: missing user/session context (fail-open)"
-        )
+        logger.warning("create_novel session gate skipped: missing user/session context (fail-open)")
 
     normalized_title = (title or "").strip()
     if not normalized_title:
@@ -196,7 +120,7 @@ async def create_novel(
 
     normalized_genre = (genre or "").strip() or "科幻"
     normalized_description = (description or "").strip()
-    base_url = _get_base_url()
+    base_url = get_base_url()
 
     modern_payload = {
         "title": normalized_title,
@@ -208,7 +132,7 @@ async def create_novel(
     modern_error = ""
 
     try:
-        project = await _post_json(modern_url, modern_payload)
+        project = await post_json(modern_url, modern_payload)
         legacy_payload = {
             "title": normalized_title,
             "metadata": {
@@ -221,11 +145,12 @@ async def create_novel(
         if project.get("id"):
             legacy_payload["id"] = project["id"]
         try:
-            await _post_json(f"{base_url}/api/novels", legacy_payload)
+            await post_json(f"{base_url}/api/novels", legacy_payload)
         except Exception as legacy_sync_exc:
             logger.warning("create_novel dual-write to legacy endpoint failed: %s", legacy_sync_exc)
             try:
                 from app.gateway.novel_migrated.services.dual_write_service import record_dual_write_failure
+
                 await record_dual_write_failure(
                     modern_project_id=project.get("id", ""),
                     legacy_payload=legacy_payload,
@@ -255,7 +180,7 @@ async def create_novel(
     }
     legacy_url = f"{base_url}/api/novels"
     try:
-        novel = await _post_json(legacy_url, legacy_payload)
+        novel = await post_json(legacy_url, legacy_payload)
         metadata = novel.get("metadata", {}) if isinstance(novel, dict) else {}
         genre_value = normalized_genre
         if isinstance(metadata, dict) and metadata.get("genre"):
@@ -273,8 +198,5 @@ async def create_novel(
         return {
             "success": False,
             "source": "network",
-            "error": (
-                "failed to create novel via both endpoints: "
-                f"modern={modern_error or 'unknown'}; legacy={legacy_exc}"
-            ),
+            "error": (f"failed to create novel via both endpoints: modern={modern_error or 'unknown'}; legacy={legacy_exc}"),
         }

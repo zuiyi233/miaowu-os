@@ -6,11 +6,11 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
+import type { AiStructuredResponse, SessionBrief } from '@/core/ai/global-ai-service';
 import { getBackendBaseURL } from '@/core/config';
 import { useI18n } from '@/core/i18n/hooks';
 import { useAiPanelStore } from '@/core/novel';
-import { novelAiService } from '@/core/novel/ai-service';
-import type { AiStructuredResponse, SessionBrief } from '@/core/ai/global-ai-service';
+import { NOVEL_AI_MODULE_IDS, novelAiService } from '@/core/novel/ai-service';
 
 interface Message {
   id: string;
@@ -105,6 +105,11 @@ export function AiChatView({ novelId }: { novelId: string }) {
                 : userInput,
             },
           ],
+          moduleId: NOVEL_AI_MODULE_IDS.chat,
+          context: {
+            moduleId: NOVEL_AI_MODULE_IDS.chat,
+            module_id: NOVEL_AI_MODULE_IDS.chat,
+          },
           novelId,
           stream: true,
         },

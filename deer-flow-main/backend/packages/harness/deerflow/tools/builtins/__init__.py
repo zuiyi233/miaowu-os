@@ -28,6 +28,33 @@ from .setup_agent_tool import setup_agent
 from .task_tool import task_tool
 from .view_image_tool import view_image_tool
 
+CORE_BUILTIN_TOOLS = (
+    present_file_tool,
+    ask_clarification_tool,
+    generate_image_draft,
+    generate_tts_draft,
+)
+
+NOVEL_BUILTIN_TOOLS = (
+    create_novel,
+    build_world,
+    generate_characters,
+    generate_outline,
+    expand_outline,
+    generate_chapter,
+    generate_career_system,
+    analyze_chapter,
+    manage_foreshadow,
+    search_memories,
+    check_consistency,
+    polish_text,
+    regenerate_chapter,
+    partial_regenerate,
+    finalize_project,
+    import_book,
+    update_character_states,
+)
+
 __all__ = [
     "setup_agent",
     "present_file_tool",
@@ -53,4 +80,6 @@ __all__ = [
     "finalize_project",
     "import_book",
     "update_character_states",
+    "CORE_BUILTIN_TOOLS",
+    "NOVEL_BUILTIN_TOOLS",
 ]

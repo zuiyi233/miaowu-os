@@ -1,32 +1,23 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { toast } from 'sonner';
 import {
   Upload, Play, RefreshCw, X, RotateCcw,
   AlertTriangle, Redo, Inbox, CheckCircle, FileText,
   Loader2, ChevronRight, BookOpen, Settings
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { useRouter } from 'next/navigation';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { toast } from 'sonner';
 
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Switch } from '@/components/ui/switch';
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import {
   Dialog,
   DialogContent,
@@ -35,16 +26,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
-
+import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
 import { novelApiService } from '@/core/novel/novel-api';
 import type { BookImportTask, BookImportPreview, BookImportChapter, BookImportWarning, BookImportStepFailure } from '@/core/novel/schemas';
+import { cn } from '@/lib/utils';
 
 type PageStep = 'upload' | 'parsing' | 'preview' | 'applying';
 
@@ -263,11 +262,14 @@ export function BookImportPage() {
             .filter((outline) => outline && typeof outline === 'object')
             .map((outline, index) => {
               const record = outline as Record<string, unknown>;
+              const title = typeof record.title === 'string' ? record.title : `第${index + 1}章`;
+              const content = typeof record.content === 'string' ? record.content : '';
+              const structure = record.structure ?? null;
               return {
-                title: String(record.title ?? `第${index + 1}章`),
-                content: String(record.content ?? ''),
+                title,
+                content,
                 order_index: Number(record.order_index ?? index + 1),
-                structure: record.structure ?? null,
+                structure,
               };
             })
           : [],
@@ -276,9 +278,10 @@ export function BookImportPage() {
       const response = await novelApiService.applyBookImportStream(taskId, payload);
       await readSSEStream(response, false);
     } catch (err: any) {
-      setApplyError(err.message || '导入失败');
+      const errorMessage = err instanceof Error ? err.message : '导入失败';
+      setApplyError(errorMessage);
       setApplyStatus('error');
-      updateCache({ applyError: err.message, applyStatus: 'error' });
+      updateCache({ applyError: errorMessage, applyStatus: 'error' });
     }
   };
 
@@ -289,81 +292,140 @@ export function BookImportPage() {
 
     const decoder = new TextDecoder();
     let buffer = '';
+    let shouldSyncRetryCache = true;
+    let reachedTerminalEvent = false;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    const handleSSELine = (line: string) => {
+      if (!line.startsWith('data:')) {
+        return;
+      }
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+      try {
+        const data = JSON.parse(line.slice(5).trim());
 
-      for (const line of lines) {
-        if (!line.startsWith('data:')) continue;
-        try {
-          const data = JSON.parse(line.slice(5).trim());
+        if (data.type === 'progress') {
+          setApplyProgress(data.progress ?? applyProgress);
+          setApplyStatus(data.status || 'processing');
+          updateCache({ applyProgress: data.progress ?? applyProgress, applyStatus: data.status || 'processing' });
+          return;
+        }
 
-          if (data.type === 'progress') {
-            setApplyProgress(data.progress ?? applyProgress);
-            setApplyStatus(data.status || 'processing');
-            updateCache({ applyProgress: data.progress ?? applyProgress, applyStatus: data.status || 'processing' });
-          } else if (data.type === 'result') {
-            setApplyProgress(100);
-            setApplyStatus('completed');
-            toast.success('🎉 拆书导入完成！');
-            clearCache();
-            setTimeout(() => router.push('/workspace/novel'), 1500);
-            return;
-          } else if (data.type === 'error') {
-            const errorMessage = data.message || data.error || '导入出错';
-            setApplyError(errorMessage);
-            setApplyStatus('error');
-            updateCache({ applyError: errorMessage, applyStatus: 'error' });
-            return;
-          } else if (data.type === 'done') {
-            setApplyProgress(100);
-            setApplyStatus('completed');
-            clearCache();
-            return;
-          } else if (data.type === 'step_failure' || data.status === 'step_failures') {
-            let failuresRaw: unknown[] = [];
-            if (Array.isArray(data.failed_steps)) {
-              failuresRaw = data.failed_steps;
-            } else if (typeof data.message === 'string') {
-              try {
-                const parsed = JSON.parse(data.message);
-                if (parsed && Array.isArray(parsed.failed_steps)) {
-                  failuresRaw = parsed.failed_steps;
-                }
-              } catch {
-                // ignore parse error
+        if (data.type === 'result') {
+          reachedTerminalEvent = true;
+          setApplyProgress(100);
+          setApplyStatus('completed');
+          toast.success('🎉 拆书导入完成！');
+          clearCache();
+          shouldSyncRetryCache = false;
+          setTimeout(() => router.push('/workspace/novel'), 1500);
+          return;
+        }
+
+        if (data.type === 'error') {
+          reachedTerminalEvent = true;
+          const errorMessage = data.message || data.error || '导入出错';
+          setApplyError(errorMessage);
+          setApplyStatus('error');
+          updateCache({ applyError: errorMessage, applyStatus: 'error' });
+          return;
+        }
+
+        if (data.type === 'done') {
+          reachedTerminalEvent = true;
+          setApplyProgress(100);
+          setApplyStatus('completed');
+          clearCache();
+          shouldSyncRetryCache = false;
+          return;
+        }
+
+        if (data.type === 'step_failure' || data.status === 'step_failures') {
+          let failuresRaw: unknown[] = [];
+          if (Array.isArray(data.failed_steps)) {
+            failuresRaw = data.failed_steps;
+          } else if (typeof data.message === 'string') {
+            try {
+              const parsed = JSON.parse(data.message);
+              if (parsed && Array.isArray(parsed.failed_steps)) {
+                failuresRaw = parsed.failed_steps;
               }
-            } else if (data.step_name || data.stepName) {
-              failuresRaw = [data];
+            } catch {
+              // ignore parse error
             }
-
-            const normalizedFailures = failuresRaw
-              .map((item) => {
-                const entry = (item ?? {}) as Record<string, unknown>;
-                return {
-                  stepName: String(entry.step_name ?? entry.stepName ?? ''),
-                  stepLabel: String(entry.step_label ?? entry.stepLabel ?? '未知步骤'),
-                  error: String(entry.error ?? entry.error_message ?? '未知错误'),
-                  retryCount: Number(entry.retry_count ?? entry.retryCount ?? 0),
-                };
-              })
-              .filter((item) => item.stepName);
-
-            if (normalizedFailures.length > 0) {
-              setFailedSteps((prev) => {
-                const next = [...prev, ...normalizedFailures];
-                updateCache({ failedSteps: next });
-                return next;
-              });
-            }
+          } else if (data.step_name || data.stepName) {
+            failuresRaw = [data];
           }
-        } catch {
-          // skip malformed JSON
+
+          const normalizedFailures = failuresRaw
+            .map((item) => {
+              const entry = (item ?? {}) as Record<string, unknown>;
+              const stepName = typeof entry.step_name === 'string'
+                ? entry.step_name
+                : typeof entry.stepName === 'string'
+                  ? entry.stepName
+                  : '';
+              const stepLabel = typeof entry.step_label === 'string'
+                ? entry.step_label
+                : typeof entry.stepLabel === 'string'
+                  ? entry.stepLabel
+                  : '未知步骤';
+              const error = typeof entry.error === 'string'
+                ? entry.error
+                : typeof entry.error_message === 'string'
+                  ? entry.error_message
+                  : '未知错误';
+              return {
+                stepName,
+                stepLabel,
+                error,
+                retryCount: Number(entry.retry_count ?? entry.retryCount ?? 0),
+              };
+            })
+            .filter((item) => item.stepName);
+
+          if (normalizedFailures.length > 0) {
+            setFailedSteps((prev) => {
+              const next = [...prev, ...normalizedFailures];
+              updateCache({ failedSteps: next });
+              return next;
+            });
+          }
+        }
+      } catch {
+        // skip malformed JSON
+      }
+    };
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          handleSSELine(line);
+          if (reachedTerminalEvent) {
+            return;
+          }
+        }
+      }
+
+      const tailLine = buffer.trim();
+      if (tailLine) {
+        handleSSELine(tailLine);
+      }
+
+      if (!reachedTerminalEvent) {
+        throw new Error('导入流提前结束，未收到完成事件');
+      }
+    } finally {
+      if (isRetry) {
+        setRetrying(false);
+        if (shouldSyncRetryCache) {
+          updateCache({ retrying: false });
         }
       }
     }
@@ -382,9 +444,11 @@ export function BookImportPage() {
       setApplyError(null);
       await readSSEStream(response, true);
     } catch (err: any) {
-      setApplyError(err.message || '重试失败');
+      const errorMessage = err instanceof Error ? err.message : '重试失败';
+      setApplyError(errorMessage);
+      setApplyStatus('error');
       setRetrying(false);
-      updateCache({ applyError: err.message, retrying: false });
+      updateCache({ applyError: errorMessage, applyStatus: 'error', retrying: false });
     }
   };
 

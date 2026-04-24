@@ -2,9 +2,9 @@
 
 import { Edit, Trash2, User, Building2, Download } from 'lucide-react';
 
-import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 
 interface CharacterCardProps {
