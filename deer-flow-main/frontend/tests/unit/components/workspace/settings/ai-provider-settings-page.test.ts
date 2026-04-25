@@ -45,6 +45,9 @@ function createProviderCardMarkup(
       onDelete: () => undefined,
       onSetActive: () => undefined,
       onFormChange: () => undefined,
+      fetchingModels: false,
+      fetchModelsError: null,
+      onFetchModels: () => undefined,
     })
   );
 }

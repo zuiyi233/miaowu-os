@@ -3,23 +3,34 @@
 import {
   AlertTriangle,
   Bot,
+  Check,
   CheckCircle2,
   ChevronDown,
   CircleHelp,
+  Clock,
+  Download,
   Globe,
   Plus,
   RefreshCw,
   Save,
+  Search,
   Settings2,
   Shield,
-  Sparkles,
   Trash2,
+  X,
 } from "lucide-react";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +41,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -61,6 +73,7 @@ import {
   type AiModelTarget,
   type AiParallelStrategy,
 } from "@/core/ai/feature-routing";
+import { getBackendBaseURL } from "@/core/config";
 import { cn } from "@/lib/utils";
 
 import { SettingsSection } from "./settings-section";
@@ -73,6 +86,65 @@ const CATEGORY_LABELS: Record<AiFeatureModuleRoute["category"], string> = {
   novel: "小说",
   custom: "自定义",
 };
+
+const MODEL_CAPABILITY_KEYWORDS: Record<string, string[]> = {
+  thinking: ["o1", "o3", "o4", "deepseek-r1", "deepseek-reasoner", "claude-3.5-sonnet", "claude-4", "gemini-2.5", "qwen3", "qwq"],
+  vision: ["vision", "gpt-4o", "gpt-4-turbo", "claude-3", "gemini", "qwen-vl", "glm-4v"],
+  long_context: ["128k", "200k", "1m", "2m", "long", "claude-3", "gemini-1.5", "gemini-2.0"],
+  fast: ["mini", "flash", "haiku", "turbo", "lite", "speed"],
+};
+
+const RECENT_MODELS_KEY = "miaowu_recent_models";
+const MAX_RECENT_MODELS = 8;
+
+function getModelCapabilities(modelName: string): string[] {
+  const lower = modelName.toLowerCase();
+  const caps: string[] = [];
+  for (const [cap, keywords] of Object.entries(MODEL_CAPABILITY_KEYWORDS)) {
+    if (keywords.some((kw) => lower.includes(kw))) {
+      caps.push(cap);
+    }
+  }
+  return caps;
+}
+
+function getCapabilityBadge(cap: string) {
+  switch (cap) {
+    case "thinking":
+      return { label: "推理", className: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300" };
+    case "vision":
+      return { label: "视觉", className: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" };
+    case "long_context":
+      return { label: "长文", className: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300" };
+    case "fast":
+      return { label: "快速", className: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300" };
+    default:
+      return { label: cap, className: "" };
+  }
+}
+
+function loadRecentModels(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(RECENT_MODELS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((m): m is string => typeof m === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentModel(modelName: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const recent = loadRecentModels().filter((m) => m !== modelName);
+    recent.unshift(modelName);
+    window.localStorage.setItem(RECENT_MODELS_KEY, JSON.stringify(recent.slice(0, MAX_RECENT_MODELS)));
+  } catch {
+    // ignore
+  }
+}
 
 function HelpTip({ text }: { text: string }) {
   return (
@@ -91,7 +163,7 @@ function HelpTip({ text }: { text: string }) {
   );
 }
 
-function ModelSelector({
+function SearchableModelSelector({
   label,
   help,
   target,
@@ -106,12 +178,89 @@ function ModelSelector({
   allowEmpty?: boolean;
   onChange: (next: AiModelTarget | null) => void;
 }) {
+  const [providerOpen, setProviderOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
+  const [providerSearch, setProviderSearch] = useState("");
+  const [modelSearch, setModelSearch] = useState("");
+
   const selectedProviderId = target?.providerId ?? NONE_VALUE;
   const selectedProvider = providers.find((p) => p.id === selectedProviderId);
   const selectedModel =
     selectedProvider && target?.model && selectedProvider.models.includes(target.model)
       ? target.model
       : NONE_VALUE;
+
+  const recentModels = useMemo(() => loadRecentModels(), []);
+
+  const filteredProviders = useMemo(() => {
+    if (!providerSearch.trim()) return providers;
+    const q = providerSearch.toLowerCase();
+    return providers.filter((p) => p.name.toLowerCase().includes(q) || p.provider.toLowerCase().includes(q));
+  }, [providers, providerSearch]);
+
+  const filteredModels = useMemo(() => {
+    const models = selectedProvider?.models ?? [];
+    if (!modelSearch.trim()) return models;
+    const q = modelSearch.toLowerCase();
+    return models.filter((m) => m.toLowerCase().includes(q));
+  }, [selectedProvider, modelSearch]);
+
+  const recentFilteredModels = useMemo(() => {
+    if (!selectedProvider || modelSearch.trim()) return [];
+    return recentModels.filter((m) => selectedProvider.models.includes(m));
+  }, [selectedProvider, recentModels, modelSearch]);
+
+  const groupedModels = useMemo(() => {
+    if (!selectedProvider) return {};
+    const groups: Record<string, string[]> = {};
+    for (const model of filteredModels) {
+      const caps = getModelCapabilities(model);
+      const groupKey = caps[0] ?? "other";
+      groups[groupKey] ??= [];
+      groups[groupKey].push(model);
+    }
+    return groups;
+  }, [filteredModels, selectedProvider]);
+
+  const GROUP_LABELS: Record<string, string> = {
+    thinking: "推理模型",
+    vision: "视觉模型",
+    long_context: "长上下文",
+    fast: "快速模型",
+    other: "其他模型",
+  };
+
+  const handleProviderSelect = useCallback(
+    (providerId: string) => {
+      setProviderOpen(false);
+      setProviderSearch("");
+      if (providerId === NONE_VALUE) {
+        if (allowEmpty) onChange(null);
+        return;
+      }
+      const provider = providers.find((p) => p.id === providerId);
+      if (!provider || provider.models.length === 0) {
+        onChange(null);
+        return;
+      }
+      onChange({ providerId: provider.id, model: provider.models[0]! });
+    },
+    [allowEmpty, onChange, providers],
+  );
+
+  const handleModelSelect = useCallback(
+    (modelName: string) => {
+      setModelOpen(false);
+      setModelSearch("");
+      if (modelName === NONE_VALUE || !selectedProvider) {
+        onChange(null);
+        return;
+      }
+      saveRecentModel(modelName);
+      onChange({ providerId: selectedProvider.id, model: modelName });
+    },
+    [onChange, selectedProvider],
+  );
 
   return (
     <div className="space-y-1.5">
@@ -122,57 +271,153 @@ function ModelSelector({
         </div>
       )}
       <div className="flex gap-2">
-        <Select
-          value={selectedProviderId}
-          onValueChange={(value) => {
-            if (value === NONE_VALUE) {
-              if (allowEmpty) onChange(null);
-              return;
-            }
-            const provider = providers.find((p) => p.id === value);
-            if (!provider || provider.models.length === 0) {
-              onChange(null);
-              return;
-            }
-            onChange({ providerId: provider.id, model: provider.models[0]! });
-          }}
-        >
-          <SelectTrigger className="h-9 flex-1 min-w-0">
-            <SelectValue placeholder="选择服务商" />
-          </SelectTrigger>
-          <SelectContent>
-            {allowEmpty && <SelectItem value={NONE_VALUE}>未设置</SelectItem>}
-            {providers.map((p) => (
-              <SelectItem key={p.id} value={p.id} disabled={p.models.length === 0}>
-                {p.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Popover open={providerOpen} onOpenChange={(v) => { setProviderOpen(v); if (!v) setProviderSearch(""); }}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                "h-9 flex-1 min-w-0 inline-flex items-center justify-between rounded-md border border-input bg-background px-3 text-sm shadow-xs",
+                "ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+                "hover:bg-accent hover:text-accent-foreground",
+                !selectedProvider && "text-muted-foreground",
+              )}
+            >
+              <span className="truncate">
+                {selectedProvider ? selectedProvider.name : "选择服务商"}
+              </span>
+              <ChevronDown className="ml-1 h-4 w-4 shrink-0 opacity-50" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="p-0 w-[280px]" align="start">
+            <Command shouldFilter={false}>
+              <div className="flex items-center border-b px-3">
+                <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
+                <input
+                  className="flex-1 h-9 bg-transparent py-1 text-sm outline-none placeholder:text-muted-foreground"
+                  placeholder="搜索服务商..."
+                  value={providerSearch}
+                  onChange={(e) => setProviderSearch(e.target.value)}
+                />
+              </div>
+              <CommandList className="max-h-[240px]">
+                <CommandEmpty>未找到匹配的服务商</CommandEmpty>
+                {allowEmpty && (
+                  <CommandItem value={NONE_VALUE} onSelect={() => handleProviderSelect(NONE_VALUE)} className="text-muted-foreground">
+                    未设置
+                  </CommandItem>
+                )}
+                {filteredProviders.map((p) => (
+                  <CommandItem
+                    key={p.id}
+                    value={p.id}
+                    onSelect={() => handleProviderSelect(p.id)}
+                    disabled={p.models.length === 0}
+                    className="flex items-center justify-between"
+                  >
+                    <span className="truncate">{p.name}</span>
+                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                      <Badge variant="outline" className="text-[9px] px-1 py-0">
+                        {p.provider}
+                      </Badge>
+                      <span className="text-[10px] text-muted-foreground">{p.models.length} 模型</span>
+                      {p.id === selectedProviderId && <Check className="h-3.5 w-3.5 text-primary" />}
+                    </div>
+                  </CommandItem>
+                ))}
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
 
-        <Select
-          value={selectedModel}
-          onValueChange={(value) => {
-            if (value === NONE_VALUE || !selectedProvider) {
-              onChange(null);
-              return;
-            }
-            onChange({ providerId: selectedProvider.id, model: value });
-          }}
-          disabled={!selectedProvider || selectedProvider.models.length === 0}
+        <Popover
+          open={modelOpen}
+          onOpenChange={(v) => { setModelOpen(v); if (!v) setModelSearch(""); }}
         >
-          <SelectTrigger className="h-9 flex-1 min-w-0">
-            <SelectValue placeholder="选择模型" />
-          </SelectTrigger>
-          <SelectContent>
-            {allowEmpty && <SelectItem value={NONE_VALUE}>未设置</SelectItem>}
-            {selectedProvider?.models.map((m) => (
-              <SelectItem key={m} value={m}>
-                {m}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              disabled={!selectedProvider || selectedProvider.models.length === 0}
+              className={cn(
+                "h-9 flex-1 min-w-0 inline-flex items-center justify-between rounded-md border border-input bg-background px-3 text-sm shadow-xs",
+                "ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+                "hover:bg-accent hover:text-accent-foreground",
+                "disabled:cursor-not-allowed disabled:opacity-50",
+                (!selectedProvider || selectedModel === NONE_VALUE) && "text-muted-foreground",
+              )}
+            >
+              <span className="truncate">
+                {selectedProvider && selectedModel !== NONE_VALUE ? selectedModel : "选择模型"}
+              </span>
+              <ChevronDown className="ml-1 h-4 w-4 shrink-0 opacity-50" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="p-0 w-[340px]" align="start">
+            <Command shouldFilter={false}>
+              <div className="flex items-center border-b px-3">
+                <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
+                <input
+                  className="flex-1 h-9 bg-transparent py-1 text-sm outline-none placeholder:text-muted-foreground"
+                  placeholder="搜索模型..."
+                  value={modelSearch}
+                  onChange={(e) => setModelSearch(e.target.value)}
+                />
+              </div>
+              <CommandList className="max-h-[320px]">
+                <CommandEmpty>未找到匹配的模型</CommandEmpty>
+                {allowEmpty && (
+                  <CommandItem value={NONE_VALUE} onSelect={() => handleModelSelect(NONE_VALUE)} className="text-muted-foreground">
+                    未设置
+                  </CommandItem>
+                )}
+                {recentFilteredModels.length > 0 && !modelSearch.trim() && (
+                  <CommandGroup heading={
+                    <div className="flex items-center gap-1 text-xs">
+                      <Clock className="h-3 w-3" />
+                      最近使用
+                    </div>
+                  }>
+                    {recentFilteredModels.map((m) => (
+                      <CommandItem key={`recent-${m}`} value={m} onSelect={() => handleModelSelect(m)} className="flex items-center justify-between">
+                        <span className="truncate text-xs">{m}</span>
+                        <div className="flex items-center gap-1 shrink-0 ml-1">
+                          {getModelCapabilities(m).map((cap) => {
+                            const badge = getCapabilityBadge(cap);
+                            return (
+                              <Badge key={cap} variant="outline" className={cn("text-[8px] px-1 py-0 border-0", badge.className)}>
+                                {badge.label}
+                              </Badge>
+                            );
+                          })}
+                          {m === selectedModel && <Check className="h-3.5 w-3.5 text-primary" />}
+                        </div>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                )}
+                {Object.entries(groupedModels).map(([group, models]) => (
+                  <CommandGroup key={group} heading={GROUP_LABELS[group] ?? group}>
+                    {models.map((m) => (
+                      <CommandItem key={m} value={m} onSelect={() => handleModelSelect(m)} className="flex items-center justify-between">
+                        <span className="truncate text-xs">{m}</span>
+                        <div className="flex items-center gap-1 shrink-0 ml-1">
+                          {getModelCapabilities(m).map((cap) => {
+                            const badge = getCapabilityBadge(cap);
+                            return (
+                              <Badge key={cap} variant="outline" className={cn("text-[8px] px-1 py-0 border-0", badge.className)}>
+                                {badge.label}
+                              </Badge>
+                            );
+                          })}
+                          {m === selectedModel && <Check className="h-3.5 w-3.5 text-primary" />}
+                        </div>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                ))}
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
       </div>
     </div>
   );
@@ -181,6 +426,26 @@ function ModelSelector({
 function formatModelDisplay(target: AiModelTarget | null, providers: AiProviderConfig[]) {
   if (!target) return "未设置";
   return `${getProviderDisplayName(providers, target.providerId)} / ${target.model}`;
+}
+
+async function fetchModelsFromProviderApi(
+  baseUrl: string,
+  apiKey: string,
+  providerType: string,
+): Promise<string[]> {
+  const endpoint = `${getBackendBaseURL()}/api/user/fetch-provider-models`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, provider_type: providerType }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail ?? `请求失败 (${response.status})`);
+  }
+  const data = (await response.json()) as { models: string[] };
+  return data.models ?? [];
 }
 
 export function AiProviderSettingsPage() {
@@ -220,6 +485,9 @@ export function AiProviderSettingsPage() {
   const [globalAutoFailover, setGlobalAutoFailover] = useState(true);
   const [globalParallelEnabled, setGlobalParallelEnabled] = useState(false);
   const [globalPending, setGlobalPending] = useState(false);
+
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [fetchModelsError, setFetchModelsError] = useState<string | null>(null);
 
   useEffect(() => {
     if (routingNotice) {
@@ -261,7 +529,7 @@ export function AiProviderSettingsPage() {
       setRoutingDirty(true);
       setRoutingNotice(null);
     },
-    [providers]
+    [providers],
   );
 
   const patchModule = useCallback(
@@ -271,7 +539,7 @@ export function AiProviderSettingsPage() {
         modules: state.modules.map((m) => (m.moduleId === moduleId ? { ...m, ...patch } : m)),
       }));
     },
-    [mutateRouting]
+    [mutateRouting],
   );
 
   const isModuleUsingGlobal = useCallback(
@@ -289,7 +557,7 @@ export function AiProviderSettingsPage() {
             module.backupTarget.model === globalBackup.model;
       return samePrimary && sameBackup && module.parallelEnabled === globalParallelEnabled;
     },
-    [defaultTarget, globalBackup, globalParallelEnabled]
+    [defaultTarget, globalBackup, globalParallelEnabled],
   );
 
   const handleApplyGlobal = useCallback(() => {
@@ -373,7 +641,7 @@ export function AiProviderSettingsPage() {
         setSaving(false);
       }
     },
-    [deleteProvider, editingId, saveDraftToServer]
+    [deleteProvider, editingId, saveDraftToServer],
   );
 
   const handleSetActive = useCallback(
@@ -389,7 +657,7 @@ export function AiProviderSettingsPage() {
         setSaving(false);
       }
     },
-    [saveDraftToServer, setActiveProvider]
+    [saveDraftToServer, setActiveProvider],
   );
 
   const handleSaveRouting = useCallback(async () => {
@@ -435,7 +703,7 @@ export function AiProviderSettingsPage() {
       });
       setDeleteModuleConfirmId(null);
     },
-    [mutateRouting]
+    [mutateRouting],
   );
 
   const toggleModuleExpand = useCallback((moduleId: string) => {
@@ -447,9 +715,36 @@ export function AiProviderSettingsPage() {
     });
   }, []);
 
+  const handleFetchModels = useCallback(async () => {
+    if (!formData.baseUrl && !formData.apiKey) {
+      setFetchModelsError("请先填写接口地址和 API Key");
+      return;
+    }
+    setFetchingModels(true);
+    setFetchModelsError(null);
+    try {
+      const models = await fetchModelsFromProviderApi(
+        formData.baseUrl ?? "",
+        formData.apiKey ?? "",
+        formData.provider ?? "openai",
+      );
+      if (models.length === 0) {
+        setFetchModelsError("未获取到任何模型，请检查接口地址和 API Key");
+        return;
+      }
+      const existingModels = formData.models ?? [];
+      const merged = Array.from(new Set([...existingModels, ...models])).sort();
+      setFormData((prev) => ({ ...prev, models: merged }));
+    } catch (err) {
+      setFetchModelsError(err instanceof Error ? err.message : "获取模型列表失败");
+    } finally {
+      setFetchingModels(false);
+    }
+  }, [formData]);
+
   const routingModules = routingDraft?.modules ?? [];
   const configurableRoutingModules = routingModules.filter((moduleRoute) =>
-    isFeatureModuleConfigurableInSettings(moduleRoute.moduleId)
+    isFeatureModuleConfigurableInSettings(moduleRoute.moduleId),
   );
 
   return (
@@ -516,18 +811,23 @@ export function AiProviderSettingsPage() {
                 provider={provider}
                 isEditing={editingId === provider.id}
                 formData={formData}
+                fetchingModels={fetchingModels}
+                fetchModelsError={fetchModelsError}
                 onEdit={() => {
                   setEditingId(provider.id);
                   setFormData({ ...provider, apiKey: "", clearApiKey: false });
+                  setFetchModelsError(null);
                 }}
                 onCancel={() => {
                   setEditingId(null);
                   setFormData({});
+                  setFetchModelsError(null);
                 }}
                 onSave={handleSaveProvider}
                 onDelete={() => setDeleteConfirmId(provider.id)}
                 onSetActive={() => void handleSetActive(provider.id)}
                 onFormChange={(data) => setFormData(data)}
+                onFetchModels={handleFetchModels}
               />
             ))}
           </div>
@@ -597,7 +897,7 @@ export function AiProviderSettingsPage() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <ModelSelector
+            <SearchableModelSelector
               label="主用模型"
               help="所有功能默认使用的 AI 模型"
               target={defaultTarget}
@@ -610,7 +910,7 @@ export function AiProviderSettingsPage() {
                 }));
               }}
             />
-            <ModelSelector
+            <SearchableModelSelector
               label="备用模型（可选）"
               help="主用模型不可用时自动切换至此模型"
               target={globalBackup}
@@ -739,7 +1039,7 @@ export function AiProviderSettingsPage() {
                     </div>
 
                     <div className="grid gap-4 md:grid-cols-2">
-                      <ModelSelector
+                      <SearchableModelSelector
                         label="主用模型"
                         help="优先使用的 AI 模型"
                         target={moduleRoute.primaryTarget}
@@ -757,7 +1057,7 @@ export function AiProviderSettingsPage() {
                           })
                         }
                       />
-                      <ModelSelector
+                      <SearchableModelSelector
                         label="备用模型"
                         help="主用模型不可用时自动切换至此模型"
                         target={moduleRoute.backupTarget}
@@ -904,22 +1204,28 @@ export function ProviderCard({
   provider,
   isEditing,
   formData,
+  fetchingModels,
+  fetchModelsError,
   onEdit,
   onCancel,
   onSave,
   onDelete,
   onSetActive,
   onFormChange,
+  onFetchModels,
 }: {
   provider: AiProviderConfig;
   isEditing: boolean;
   formData: Partial<AiProviderConfig>;
+  fetchingModels: boolean;
+  fetchModelsError: string | null;
   onEdit: () => void;
   onCancel: () => void;
   onSave: () => void;
   onDelete: () => void;
   onSetActive: () => void;
   onFormChange: (data: Partial<AiProviderConfig>) => void;
+  onFetchModels: () => void;
 }) {
   const providerTypeLabels: Record<AiProviderType, string> = {
     openai: "OpenAI",
@@ -927,6 +1233,40 @@ export function ProviderCard({
     google: "Google",
     custom: "自定义",
   };
+
+  const [modelInputMode, setModelInputMode] = useState<"tags" | "text">("tags");
+  const [tagInput, setTagInput] = useState("");
+
+  const models = useMemo(() => formData.models ?? [], [formData.models]);
+
+  const addModelTag = useCallback(
+    (value: string) => {
+      const trimmed = value.trim();
+      if (!trimmed || models.includes(trimmed)) return;
+      onFormChange({ ...formData, models: [...models, trimmed] });
+    },
+    [formData, models, onFormChange],
+  );
+
+  const removeModelTag = useCallback(
+    (model: string) => {
+      onFormChange({ ...formData, models: models.filter((m) => m !== model) });
+    },
+    [formData, models, onFormChange],
+  );
+
+  const handleTagKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter" || e.key === ",") {
+        e.preventDefault();
+        addModelTag(tagInput);
+        setTagInput("");
+      } else if (e.key === "Backspace" && !tagInput && models.length > 0) {
+        removeModelTag(models[models.length - 1]!);
+      }
+    },
+    [addModelTag, models, removeModelTag, tagInput],
+  );
 
   return (
     <div
@@ -1029,17 +1369,83 @@ export function ProviderCard({
               />
             </div>
             <div className="space-y-1.5 md:col-span-2">
-              <Label className="text-xs">模型列表（用逗号分隔）</Label>
-              <Input
-                value={formData.models?.join(", ") ?? ""}
-                onChange={(e) =>
-                  onFormChange({
-                    ...formData,
-                    models: e.target.value.split(",").map((m) => m.trim()).filter(Boolean),
-                  })
-                }
-                placeholder="gpt-4o, gpt-4o-mini, claude-3-opus"
-              />
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">模型列表</Label>
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-[11px] gap-1"
+                    onClick={onFetchModels}
+                    disabled={fetchingModels}
+                  >
+                    {fetchingModels ? (
+                      <RefreshCw className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Download className="h-3 w-3" />
+                    )}
+                    {fetchingModels ? "获取中..." : "从供应商获取"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-[11px]"
+                    onClick={() => setModelInputMode(modelInputMode === "tags" ? "text" : "tags")}
+                  >
+                    {modelInputMode === "tags" ? "文本模式" : "标签模式"}
+                  </Button>
+                </div>
+              </div>
+              {fetchModelsError && (
+                <p className="text-xs text-destructive">{fetchModelsError}</p>
+              )}
+              {modelInputMode === "tags" ? (
+                <div
+                  className={cn(
+                    "flex flex-wrap items-center gap-1 min-h-9 rounded-md border border-input bg-background px-3 py-2 text-sm",
+                    "ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2",
+                  )}
+                >
+                  {models.map((m) => (
+                    <span
+                      key={m}
+                      className="inline-flex items-center gap-0.5 rounded bg-secondary text-secondary-foreground px-1.5 py-0.5 text-[11px]"
+                    >
+                      {m}
+                      <button
+                        type="button"
+                        className="ml-0.5 hover:text-destructive"
+                        onClick={() => removeModelTag(m)}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    className="flex-1 min-w-[80px] bg-transparent outline-none placeholder:text-muted-foreground text-xs"
+                    placeholder={models.length === 0 ? "输入模型名称，回车添加..." : "继续添加..."}
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={handleTagKeyDown}
+                  />
+                </div>
+              ) : (
+                <Input
+                  value={models.join(", ")}
+                  onChange={(e) =>
+                    onFormChange({
+                      ...formData,
+                      models: e.target.value.split(",").map((m) => m.trim()).filter(Boolean),
+                    })
+                  }
+                  placeholder="gpt-4o, gpt-4o-mini, claude-3-opus"
+                />
+              )}
+              {models.length > 0 && (
+                <p className="text-[10px] text-muted-foreground">共 {models.length} 个模型</p>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2 pt-2">

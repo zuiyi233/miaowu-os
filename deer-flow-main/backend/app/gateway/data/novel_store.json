@@ -31,6 +31,22 @@
       "version": 1,
       "createdAt": "2026-04-25T10:59:22.424360+00:00",
       "updatedAt": "2026-04-25T10:59:22.424360+00:00"
+    },
+    "02a3f0c1-938c-4c73-87e5-2f59d91dab15": {
+      "id": "02a3f0c1-938c-4c73-87e5-2f59d91dab15",
+      "title": "九天神途",
+      "outline": "",
+      "coverImage": null,
+      "metadata": {
+        "genre": "玄幻修仙",
+        "description": "一个现代青年意外穿越到修仙世界，从凡人开始踏上逆天修行之路的故事",
+        "created_by": "deerflow_create_novel_tool_dual_write",
+        "modern_project_id": "02a3f0c1-938c-4c73-87e5-2f59d91dab15"
+      },
+      "syncStatus": "local",
+      "version": 1,
+      "createdAt": "2026-04-25T20:38:56.871071+00:00",
+      "updatedAt": "2026-04-25T20:38:56.871071+00:00"
     }
   },
   "chapters": {},
@@ -61,6 +77,27 @@
         }
       ],
       "generatedAt": "2026-04-25T10:48:10.745836+00:00"
+    },
+    "02a3f0c1-938c-4c73-87e5-2f59d91dab15": {
+      "novelId": "02a3f0c1-938c-4c73-87e5-2f59d91dab15",
+      "score": 60,
+      "metrics": {
+        "wordCount": 0,
+        "chapterCount": 0,
+        "characterCount": 0,
+        "timelineEventCount": 0
+      },
+      "issues": [
+        {
+          "type": "low_word_count",
+          "severity": "warning",
+          "message": "小说总字数较少，建议继续完善内容。",
+          "details": {
+            "wordCount": 0
+          }
+        }
+      ],
+      "generatedAt": "2026-04-25T20:53:15.231071+00:00"
     }
   },
   "audits": {
@@ -138,6 +175,21 @@
           "version": 1
         },
         "createdAt": "2026-04-25T10:59:22.424874+00:00"
+      }
+    ],
+    "02a3f0c1-938c-4c73-87e5-2f59d91dab15": [
+      {
+        "id": "audit-8ad32e2e3fe1",
+        "novelId": "02a3f0c1-938c-4c73-87e5-2f59d91dab15",
+        "action": "novel.create",
+        "entityType": "novel",
+        "entityId": "02a3f0c1-938c-4c73-87e5-2f59d91dab15",
+        "author": "system",
+        "details": {
+          "title": "九天神途",
+          "version": 1
+        },
+        "createdAt": "2026-04-25T20:38:56.871071+00:00"
       }
     ]
   }
