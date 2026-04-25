@@ -44,7 +44,7 @@ export interface AiGlobalSettings {
   featureRoutingSettings: AiFeatureRoutingState | null;
 }
 
-interface AiSettingsState {
+export interface AiSettingsState {
   hydrated: boolean;
   hydrating: boolean;
   hydrationError: string | null;

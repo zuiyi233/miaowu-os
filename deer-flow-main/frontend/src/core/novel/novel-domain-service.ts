@@ -43,12 +43,12 @@ export class NovelDomainService {
     );
   }
 
-  async deleteNovel(title: string): Promise<void> {
+  async deleteNovel(title: string): Promise<boolean> {
     return executeRemoteFirst(
       () => novelApiService.deleteNovel(title),
       () => databaseService.deleteNovel(title),
       'NovelDomainService.deleteNovel',
-      () => databaseService.deleteNovel(title),
+      async () => { await databaseService.deleteNovel(title); },
     );
   }
 

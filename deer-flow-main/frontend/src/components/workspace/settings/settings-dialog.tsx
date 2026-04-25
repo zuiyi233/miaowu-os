@@ -104,18 +104,18 @@ export function SettingsDialog(props: SettingsDialogProps) {
       onOpenChange={(open) => props.onOpenChange?.(open)}
     >
       <DialogContent
-        className="flex h-[75vh] max-h-[calc(100vh-2rem)] flex-col sm:max-w-5xl md:max-w-6xl"
+        className="flex h-[92vh] max-h-[calc(100vh-1rem)] w-[95vw] max-w-[1400px] flex-col gap-0 overflow-hidden p-0"
         aria-describedby={undefined}
       >
-        <DialogHeader className="gap-1">
+        <DialogHeader className="gap-1 shrink-0 px-6 pt-6 pb-4">
           <DialogTitle>{t.settings.title}</DialogTitle>
           <p className="text-muted-foreground text-sm">
             {t.settings.description}
           </p>
         </DialogHeader>
-        <div className="grid min-h-0 flex-1 gap-4 md:grid-cols-[220px_1fr]">
-          <nav className="bg-sidebar min-h-0 overflow-y-auto rounded-lg border p-2">
-            <ul className="space-y-1 pr-1">
+        <div className="grid min-h-0 flex-1 gap-0 md:grid-cols-[200px_1fr]">
+          <nav className="bg-sidebar min-h-0 overflow-y-auto border-r p-3">
+            <ul className="space-y-1">
               {sections.map(({ id, label, icon: Icon }) => {
                 const active = activeSection === id;
                 return (
@@ -138,8 +138,8 @@ export function SettingsDialog(props: SettingsDialogProps) {
               })}
             </ul>
           </nav>
-          <ScrollArea className="h-full min-h-0 rounded-lg border">
-            <div className="space-y-8 p-6">
+          <ScrollArea className="h-full min-h-0">
+            <div className="p-5">
               {activeSection === "appearance" && <AppearanceSettingsPage />}
               {activeSection === "ai-providers" && <AiProviderSettingsPage />}
               {activeSection === "drafts" && <DraftSettingsPage />}

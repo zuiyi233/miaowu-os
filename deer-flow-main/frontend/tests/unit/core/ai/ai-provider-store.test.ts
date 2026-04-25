@@ -27,7 +27,7 @@ test("buildMigrationPayloadFromLegacySource maps provider payload with explicit 
   expect(payload).not.toBeNull();
   expect(payload?.default_provider_id).toBe("provider-1");
   expect(payload?.providers).toHaveLength(1);
-  expect(payload?.providers[0]).toMatchObject({
+  expect(payload?.providers?.[0]).toMatchObject({
     id: "provider-1",
     name: "OpenAI",
     provider: "openai",
@@ -61,7 +61,7 @@ test("buildMigrationPayloadFromLegacySource supports legacy llmProviders and def
 
   expect(payload).not.toBeNull();
   expect(payload?.providers).toHaveLength(1);
-  expect(payload?.providers[0]).toMatchObject({
+  expect(payload?.providers?.[0]).toMatchObject({
     id: "legacy-1",
     name: "Legacy",
     provider: "custom",

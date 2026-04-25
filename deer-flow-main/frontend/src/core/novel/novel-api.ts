@@ -755,7 +755,11 @@ export async function executeRemoteFirst<T>(
   try {
     const value = await remote();
     if (onRemoteSuccess) {
-      await onRemoteSuccess(value);
+      try {
+        await onRemoteSuccess(value);
+      } catch (syncError) {
+        console.warn(`[novel] onRemoteSuccess failed in ${context}`, syncError);
+      }
     }
     return value;
   } catch (error) {
@@ -812,10 +816,11 @@ export class NovelApiService {
     return normalizeNovel(result);
   }
 
-  async deleteNovel(novelId: string | number): Promise<void> {
+  async deleteNovel(novelId: string | number): Promise<boolean> {
     await request(`/novels/${encodeURIComponent(String(novelId))}`, {
       method: 'DELETE',
     });
+    return true;
   }
 
   async createChapter(novelId: string, chapter: Chapter): Promise<Chapter> {

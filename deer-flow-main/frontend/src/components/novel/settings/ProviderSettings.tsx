@@ -19,6 +19,7 @@ import {
   useAiProviderStore,
   type AiProviderConfig,
   type AiProviderType,
+  type AiSettingsState,
 } from '@/core/ai/ai-provider-store';
 
 export const createDefaultProvider = (id: string): AiProviderConfig => ({
@@ -40,7 +41,7 @@ export const parseModelsInput = (value: string): string[] =>
     .filter(Boolean);
 
 type ProviderSettingsActions = Pick<
-  ReturnType<typeof useAiProviderStore>,
+  AiSettingsState,
   'addProvider' | 'updateProvider' | 'deleteProvider' | 'setActiveProvider' | 'saveDraftToServer'
 >;
 
@@ -178,9 +179,9 @@ export const ProviderSettings: React.FC = () => {
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle>LLM 提供商设置</CardTitle>
+            <CardTitle>AI 服务商</CardTitle>
             <CardDescription>
-              统一由后端 /api/user/ai-settings 作为单一真源（两处入口共享）
+              管理你的 AI 模型服务商（与主设置页共享同一份数据）
             </CardDescription>
           </div>
 

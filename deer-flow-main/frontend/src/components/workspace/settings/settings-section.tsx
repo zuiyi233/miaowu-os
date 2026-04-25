@@ -12,14 +12,14 @@ export function SettingsSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className={cn(className)}>
-      <header className="space-y-2">
-        <div className="text-lg font-semibold">{title}</div>
+    <section className={cn("space-y-4", className)}>
+      <header>
+        <div className="text-base font-semibold">{title}</div>
         {description && (
-          <div className="text-muted-foreground text-sm">{description}</div>
+          <div className="text-muted-foreground text-sm mt-1">{description}</div>
         )}
       </header>
-      <main className="mt-4">{children}</main>
+      <main>{children}</main>
     </section>
   );
 }

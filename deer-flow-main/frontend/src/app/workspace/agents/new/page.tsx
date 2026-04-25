@@ -106,6 +106,8 @@ export default function NewAgentPage() {
     context: {
       mode: "flash",
       is_bootstrap: true,
+      moduleId: "agent-bootstrap",
+      module_id: "agent-bootstrap",
     },
     onToolEnd({ name }) {
       if (name !== "setup_agent" || !agentName) return;

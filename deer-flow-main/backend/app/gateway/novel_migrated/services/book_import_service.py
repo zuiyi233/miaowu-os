@@ -1584,7 +1584,14 @@ class BookImportService:
     def _normalize_target_words(self, value: Any, fallback: int = 100000) -> int:
         return normalize_target_words(value, fallback)
 
-    async def _build_user_ai_service(self, *, db: AsyncSession, user_id: str) -> AIService:
+    async def _build_user_ai_service(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: str,
+        ai_provider_id: str | None = None,
+        ai_model: str | None = None,
+    ) -> AIService:
         """读取用户AI配置并创建支持MCP的AI服务实例。"""
         settings_result = await db.execute(select(Settings).where(Settings.user_id == user_id))
         user_settings = settings_result.scalar_one_or_none()
@@ -1600,13 +1607,77 @@ class BookImportService:
         mcp_plugins = mcp_result.scalars().all()
         enable_mcp = any(plugin.enabled for plugin in mcp_plugins) if mcp_plugins else False
 
+        resolved_provider = user_settings.api_provider or "openai"
+        resolved_api_key = safe_decrypt(user_settings.api_key) or ""
+        resolved_base_url = user_settings.api_base_url or ""
+        resolved_model = (str(ai_model).strip() if isinstance(ai_model, str) else "") or user_settings.llm_model or "gpt-4"
+        resolved_temperature = user_settings.temperature if user_settings.temperature is not None else 0.7
+        resolved_max_tokens = user_settings.max_tokens if user_settings.max_tokens is not None else 2000
+
+        provider_id = (ai_provider_id or "").strip()
+        if provider_id:
+            try:
+                raw_preferences = user_settings.preferences or "{}"
+                preferences = json.loads(raw_preferences) if isinstance(raw_preferences, str) else raw_preferences
+                if isinstance(preferences, dict):
+                    bundle = preferences.get("ai_provider_settings")
+                    providers = bundle.get("providers") if isinstance(bundle, dict) else None
+                    if isinstance(providers, list):
+                        for provider_record in providers:
+                            if not isinstance(provider_record, dict):
+                                continue
+                            record_id = str(provider_record.get("id") or "").strip()
+                            if record_id != provider_id:
+                                continue
+
+                            provider_name = str(provider_record.get("provider") or "").strip()
+                            if provider_name:
+                                resolved_provider = provider_name
+
+                            resolved_base_url = str(provider_record.get("base_url") or "").strip()
+
+                            encrypted_key = provider_record.get("api_key_encrypted")
+                            if isinstance(encrypted_key, str) and encrypted_key.strip():
+                                resolved_api_key = safe_decrypt(encrypted_key) or encrypted_key.strip()
+
+                            provider_temperature = provider_record.get("temperature")
+                            if provider_temperature is not None:
+                                try:
+                                    resolved_temperature = float(provider_temperature)
+                                except (TypeError, ValueError):
+                                    pass
+
+                            provider_max_tokens = provider_record.get("max_tokens")
+                            if provider_max_tokens is not None:
+                                try:
+                                    resolved_max_tokens = int(provider_max_tokens)
+                                except (TypeError, ValueError):
+                                    pass
+
+                            if not (isinstance(ai_model, str) and ai_model.strip()):
+                                provider_models = provider_record.get("models")
+                                if isinstance(provider_models, list):
+                                    first_model = next(
+                                        (
+                                            str(item).strip()
+                                            for item in provider_models
+                                            if isinstance(item, str) and item.strip()
+                                        ),
+                                        "",
+                                    )
+                                    if first_model:
+                                        resolved_model = first_model
+                            break
+            except Exception as exc:
+                logger.warning("解析 ai_provider_settings 失败，回退到默认用户设置: %s", exc)
+
         return create_user_ai_service_with_mcp(
-            api_provider=user_settings.api_provider or "openai",
-            api_key=safe_decrypt(user_settings.api_key) or "",
-            api_base_url=user_settings.api_base_url or "",
-            model_name=user_settings.llm_model or "gpt-4",
-            temperature=user_settings.temperature if user_settings.temperature is not None else 0.7,
-            max_tokens=user_settings.max_tokens if user_settings.max_tokens is not None else 2000,
+            api_provider=resolved_provider,
+            api_key=resolved_api_key,
+            api_base_url=resolved_base_url,
+            model_name=resolved_model,
+            temperature=resolved_temperature,
+            max_tokens=resolved_max_tokens,
             user_id=user_id,
             db_session=db,
             system_prompt=user_settings.system_prompt,
@@ -1663,6 +1734,8 @@ class BookImportService:
         progress_callback: Any = None,
         progress_range: tuple[int, int] = (0, 100),
         raise_on_error: bool = False,
+        ai_provider_id: str | None = None,
+        ai_model: str | None = None,
     ) -> int:
         """根据反向生成的项目基础信息，优先生成并写入世界观。"""
 
@@ -1673,7 +1746,12 @@ class BookImportService:
 
         try:
             await _notify("🌍 正在初始化AI服务...", 0.1)
-            ai_service = await self._build_user_ai_service(db=db, user_id=user_id)
+            ai_service = await self._build_user_ai_service(
+                db=db,
+                user_id=user_id,
+                ai_provider_id=ai_provider_id,
+                ai_model=ai_model,
+            )
 
             await _notify("🌍 正在准备世界观提示词...", 0.2)
             template = await PromptService.get_template("WORLD_BUILDING", user_id, db)
@@ -1730,6 +1808,8 @@ class BookImportService:
         project: Project,
         progress_callback: Any = None,
         progress_range: tuple[int, int] = (0, 100),
+        ai_provider_id: str | None = None,
+        ai_model: str | None = None,
     ) -> int:
         """根据项目世界观生成职业体系（3主2副）。"""
 
@@ -1739,7 +1819,12 @@ class BookImportService:
                 await progress_callback(msg, p)
 
         await _notify("💼 正在初始化AI服务...", 0.1)
-        ai_service = await self._build_user_ai_service(db=db, user_id=user_id)
+        ai_service = await self._build_user_ai_service(
+            db=db,
+            user_id=user_id,
+            ai_provider_id=ai_provider_id,
+            ai_model=ai_model,
+        )
 
         await _notify("💼 正在准备职业体系提示词...", 0.2)
         template = await PromptService.get_template("CAREER_SYSTEM_GENERATION", user_id, db)
@@ -1829,6 +1914,8 @@ class BookImportService:
         count: int,
         progress_callback: Any = None,
         progress_range: tuple[int, int] = (0, 100),
+        ai_provider_id: str | None = None,
+        ai_model: str | None = None,
     ) -> int:
         """根据世界观+职业体系生成角色/组织，并补全职业和组织成员关系。"""
 
@@ -1844,7 +1931,12 @@ class BookImportService:
                 return default
 
         await _notify("👥 正在初始化AI服务...", 0.05)
-        ai_service = await self._build_user_ai_service(db=db, user_id=user_id)
+        ai_service = await self._build_user_ai_service(
+            db=db,
+            user_id=user_id,
+            ai_provider_id=ai_provider_id,
+            ai_model=ai_model,
+        )
 
         # 控制数量区间，避免过多生成
         target_count = max(5, min(count, 20))
@@ -2220,6 +2312,8 @@ class BookImportService:
         target_words: int,
         progress_callback: Any = None,
         progress_range: tuple[int, int] = (0, 100),
+        ai_provider_id: str | None = None,
+        ai_model: str | None = None,
     ) -> int:
         """基于项目设定生成完整章节大纲。"""
 
@@ -2239,7 +2333,12 @@ class BookImportService:
         )
 
         await _notify("📚 正在初始化AI服务...", 0.1)
-        ai_service = await self._build_user_ai_service(db=db, user_id=user_id)
+        ai_service = await self._build_user_ai_service(
+            db=db,
+            user_id=user_id,
+            ai_provider_id=ai_provider_id,
+            ai_model=ai_model,
+        )
 
         await _notify("📚 正在准备大纲提示词...", 0.2)
         template = await PromptService.get_template("WIZARD_COMPLETE_OUTLINE_GENERATION", user_id, db)

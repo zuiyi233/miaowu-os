@@ -499,13 +499,16 @@ export class DatabaseService {
     };
   }
 
-  async deleteNovel(novelTitle: string): Promise<void> {
+  async deleteNovel(novelIdOrTitle: string): Promise<boolean> {
+    let deleted = false;
     await this.db.transaction(
       'rw',
       [this.db.novels, this.db.volumes, this.db.chapters, this.db.characters, this.db.settings, this.db.factions, this.db.items, this.db.relationships, this.db.timelineEvents, this.db.graphLayouts],
       async () => {
-        const novel = await this.db.novels.where('title').equals(novelTitle).first()
-          || await this.db.novels.where('id').equals(novelTitle).first();
+        let novel = await this.db.novels.where('id').equals(novelIdOrTitle).first();
+        if (!novel) {
+          novel = await this.db.novels.where('title').equals(novelIdOrTitle).first();
+        }
         if (!novel) return;
         const novelKey = (novel as any).id || novel.title;
         await this.db.volumes.where('novelId').equals(novelKey).delete();
@@ -517,9 +520,11 @@ export class DatabaseService {
         await this.db.relationships.where('novelId').equals(novelKey).delete();
         await this.db.timelineEvents.where('novelId').equals(novelKey).delete();
         await this.db.graphLayouts.where('novelId').equals(novelKey).delete();
-        await this.db.novels.where('title').equals(novel.title).delete();
-      }
+        await this.db.novels.where('id').equals(novelKey).delete();
+        deleted = true;
+      },
     );
+    return deleted;
   }
 
   async exportAllData(): Promise<{ version: number; novels: Novel[]; promptTemplates: PromptTemplate[]; timelineEvents: TimelineEvent[]; relationships: EntityRelationship[]; items: Item[]; graphLayouts: GraphLayout[] }> {

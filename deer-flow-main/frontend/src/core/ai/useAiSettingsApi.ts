@@ -4,7 +4,9 @@ import { getBackendBaseURL } from "@/core/config";
 
 import type { AiFeatureRoutingState } from "./feature-routing";
 
-const API_BASE = getBackendBaseURL();
+function getApiBase() {
+  return getBackendBaseURL();
+}
 
 export interface UserAiClientSettings {
   enable_stream_mode: boolean;
@@ -86,7 +88,7 @@ export class ApiHttpError extends Error {
 export async function fetchUserAiSettings(
   signal?: AbortSignal
 ): Promise<UserAiSettings> {
-  const response = await fetch(`${API_BASE}/api/user/ai-settings`, {
+  const response = await fetch(`${getApiBase()}/api/user/ai-settings`, {
     credentials: "include",
     signal,
   });
@@ -100,7 +102,7 @@ export async function putUserAiSettings(
   updates: UserAiSettingsUpdate,
   signal?: AbortSignal
 ): Promise<UserAiSettings> {
-  const response = await fetch(`${API_BASE}/api/user/ai-settings`, {
+  const response = await fetch(`${getApiBase()}/api/user/ai-settings`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",

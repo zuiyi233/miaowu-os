@@ -122,9 +122,9 @@ function FeatureCard({
         const el = e.currentTarget;
         el.style.borderColor = feature.glowColor.replace("0.15", "0.4");
         el.style.boxShadow = `0 0 30px ${feature.glowColor}, inset 0 0 30px ${feature.glowColor.replace("0.15", "0.05")}`;
-        const overlay = el.querySelector(".card-overlay")!;
+        const overlay = el.querySelector(".card-overlay") as HTMLElement | null;
         if (overlay) overlay.style.opacity = "1";
-        const icon = el.querySelector(".card-icon")!;
+        const icon = el.querySelector(".card-icon") as HTMLElement | null;
         if (icon) {
           animate(icon, {
             scale: [1, 1.15],
@@ -138,9 +138,9 @@ function FeatureCard({
         const el = e.currentTarget;
         el.style.borderColor = "rgba(255,255,255,0.06)";
         el.style.boxShadow = "none";
-        const overlay = el.querySelector(".card-overlay")!;
+        const overlay = el.querySelector(".card-overlay") as HTMLElement | null;
         if (overlay) overlay.style.opacity = "0";
-        const icon = el.querySelector(".card-icon")!;
+        const icon = el.querySelector(".card-icon") as HTMLElement | null;
         if (icon) {
           animate(icon, {
             scale: [1.15, 1],

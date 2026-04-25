@@ -42,7 +42,7 @@ export class RetryManager {
     return { success: false, error: lastError, attempts: opts.maxAttempts, duration: Date.now() - start };
   }
 
-  private defaultShouldRetry(error: StandardError, attempt: number): boolean {
+  public defaultShouldRetry(error: StandardError, attempt: number): boolean {
     const extError = error as ExtendedStandardError;
 
     if (extError.type === ErrorType.API_ERROR) {
@@ -72,7 +72,7 @@ export class RetryManager {
     return [ErrorType.NETWORK_ERROR, ErrorType.TIMEOUT_ERROR].includes(extError.type);
   }
 
-  private calculateDelay(attempt: number, opts: Required<RetryOptions>, error?: ExtendedStandardError): number {
+  public calculateDelay(attempt: number, opts: Required<RetryOptions>, error?: ExtendedStandardError): number {
     if (error?.retryAfterMs && error.retryAfterMs > 0) {
       return Math.min(error.retryAfterMs, opts.maxDelay);
     }

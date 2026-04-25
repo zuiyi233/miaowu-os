@@ -99,10 +99,18 @@ export const BUILTIN_FEATURE_MODULES: AiFeatureModuleDefinition[] = [
     runtimeReady: true,
   },
   {
+    id: "agent-bootstrap",
+    label: "智能体创建引导",
+    description: "创建新智能体时的 AI 引导对话",
+    category: "agent",
+    runtimeReady: true, // 有对应的后端 API 支持
+  },
+  {
     id: "novel-inspiration-wizard",
     label: "灵感模式 / AI 项目生成",
     description: "小说灵感模式与 AI 项目生成工作流",
     category: "novel",
+    runtimeReady: true, // 有对应的后端 API 支持
   },
   {
     id: "novel-book-import",
@@ -208,6 +216,20 @@ export const BUILTIN_FEATURE_MODULES: AiFeatureModuleDefinition[] = [
     description: "小说工作台 AI 聊天与问答",
     category: "novel",
     runtimeReady: true,
+  },
+  {
+    id: "novel-wizard",
+    label: "AI 项目生成向导",
+    description: "AI 项目一键生成（世界观/职业/角色/大纲）",
+    category: "novel",
+    runtimeReady: true, // 有对应的后端 API 支持
+  },
+  {
+    id: "memory-ai",
+    label: "记忆系统",
+    description: "记忆摘要生成与事实提取",
+    category: "workspace",
+    runtimeReady: true, // 有对应的后端 API 支持
   },
 ];
 
@@ -469,7 +491,7 @@ export function normalizeFeatureRoutingState(
     fallbackTarget
   );
 
-  const modules = [...normalizedModules.values()].map((moduleRoute) => {
+  const modules: AiFeatureModuleRoute[] = [...normalizedModules.values()].map((moduleRoute) => {
     if (moduleRoute.category === "custom") {
       return moduleRoute;
     }
@@ -478,7 +500,7 @@ export function normalizeFeatureRoutingState(
     if (!def) {
       return {
         ...moduleRoute,
-        category: "custom",
+        category: "custom" as AiFeatureCategory,
       };
     }
 

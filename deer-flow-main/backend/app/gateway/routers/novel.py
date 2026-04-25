@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -279,6 +280,7 @@ class NovelStore:
             self._recommendations.pop(novel_id, None)
             self._interactions.pop(novel_id, None)
             self._quality_reports.pop(novel_id, None)
+            self._audits.pop(novel_id, None)
             await self._persist_locked()
             return True
 
@@ -969,14 +971,50 @@ async def update_novel(novel_id: str, request: Request):
     return novel
 
 
+_NOVEL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+
+
 @router.delete("/novels/{novel_id}")
 @router.delete("/novel/novels/{novel_id}", deprecated=True)
 async def delete_novel(novel_id: str):
     """Delete a novel and all its associated data."""
+    if not _NOVEL_ID_PATTERN.match(novel_id):
+        raise HTTPException(status_code=400, detail="Invalid novel_id format")
+
     ok = await _novel_store.delete_novel(novel_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Novel not found")
-    return {"deleted": True}
+    if ok:
+        return {"deleted": True}
+
+    try:
+        from sqlalchemy import delete as sa_delete, select
+
+        from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+        from app.gateway.novel_migrated.models.project import Project
+
+        await init_db_schema()
+        async with AsyncSessionLocal() as modern_db:
+            result = await modern_db.execute(select(Project).where(Project.id == novel_id))
+            project = result.scalar_one_or_none()
+            if project:
+                try:
+                    from app.gateway.novel_migrated.models.analysis_task import AnalysisTask
+                    from app.gateway.novel_migrated.models.batch_generation_task import BatchGenerationTask
+                    from app.gateway.novel_migrated.models.regeneration_task import RegenerationTask
+
+                    await modern_db.execute(sa_delete(AnalysisTask).where(AnalysisTask.project_id == novel_id))
+                    await modern_db.execute(sa_delete(BatchGenerationTask).where(BatchGenerationTask.project_id == novel_id))
+                    await modern_db.execute(sa_delete(RegenerationTask).where(RegenerationTask.project_id == novel_id))
+                except ImportError:
+                    pass
+                await modern_db.delete(project)
+                await modern_db.commit()
+                return {"deleted": True}
+    except (ImportError, OSError) as exc:
+        logger.warning("delete_novel: modern store fallback unavailable (%s)", exc)
+    except Exception as exc:
+        logger.warning("delete_novel: modern store fallback query failed (%s)", exc)
+
+    raise HTTPException(status_code=404, detail="Novel not found")
 
 
 # ---------------------------------------------------------------------------

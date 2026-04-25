@@ -129,6 +129,21 @@ interface NovelTranslations {
   analysis: string;
   noEntities: (label: string) => string;
   deleteConfirm: (label: string) => string;
+  batchManage: string;
+  selectAll: string;
+  deselectAll: string;
+  deleteSelected: string;
+  exitManage: string;
+  confirmDeleteTitle: string;
+  confirmDeleteDescription: string;
+  batchDeleteTitle: string;
+  batchDeleteDescription: string;
+  deleted: string;
+  deleteFailed: string;
+  deleting: string;
+  confirmDelete: string;
+  batchDeleted: string;
+  batchDeleteResult: string;
 }
 
 export interface Translations {

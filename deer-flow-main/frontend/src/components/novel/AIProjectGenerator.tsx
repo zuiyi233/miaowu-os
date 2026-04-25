@@ -2,13 +2,15 @@
 
 import { CheckCircle, Loader2, AlertCircle, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { useAiProviderStore } from '@/core/ai/ai-provider-store';
+import { resolveModuleRoutingTarget, loadFeatureRoutingState, normalizeFeatureRoutingState } from '@/core/ai/feature-routing';
 import { getBackendBaseURL } from '@/core/config';
 import { cn } from '@/lib/utils';
 
@@ -57,12 +59,31 @@ interface StreamCallbacks {
   onComplete?: () => void;
 }
 
-async function streamPost(url: string, body: Record<string, unknown>, callbacks: StreamCallbacks): Promise<unknown> {
+const WIZARD_MODULE_ID = "novel-wizard";
+
+function getWizardModelConfig(): Record<string, unknown> {
+  const store = useAiProviderStore.getState();
+  const routingRaw = store.effective.featureRoutingSettings ?? loadFeatureRoutingState(store.effective.providers);
+  const routing = normalizeFeatureRoutingState(routingRaw, store.effective.providers);
+  const resolved = resolveModuleRoutingTarget(routing, WIZARD_MODULE_ID);
+  const target = resolved?.target ?? routing.defaultTarget;
+  if (!target) return { module_id: WIZARD_MODULE_ID };
+  const provider = store.effective.providers.find((p) => p.id === target.providerId);
+  return {
+    module_id: WIZARD_MODULE_ID,
+    ai_provider_id: target.providerId,
+    ai_model: target.model,
+    ai_provider_name: provider?.name ?? "",
+  };
+}
+
+async function streamPost(url: string, body: Record<string, unknown>, callbacks: StreamCallbacks, modelConfig?: Record<string, unknown>): Promise<unknown> {
   const backendBase = getBackendBaseURL();
+  const enrichedBody = { ...modelConfig, ...body };
   const response = await fetch(`${backendBase}${url}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(enrichedBody),
   });
 
   if (!response.ok) {
@@ -76,35 +97,86 @@ async function streamPost(url: string, body: Record<string, unknown>, callbacks:
   const decoder = new TextDecoder();
   let buffer = '';
   let result: unknown = null;
+  let reachedTerminalEvent = false;
+
+  const parseSseBlock = (rawBlock: string) => {
+    const dataLines = rawBlock
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trim());
+
+    if (dataLines.length === 0) {
+      return;
+    }
+
+    const payload = dataLines.join('\n');
+    if (!payload || payload === '[DONE]') {
+      return;
+    }
+
+    try {
+      const data = JSON.parse(payload) as Record<string, unknown>;
+      const eventTypeRaw = data.type;
+      const eventType = typeof eventTypeRaw === 'string' ? eventTypeRaw.trim() : '';
+
+      if (eventType === 'progress') {
+        const message = typeof data.message === 'string' ? data.message : '';
+        callbacks.onProgress(
+          message,
+          Math.min(100, Math.max(0, Number(data.progress) || 0)),
+        );
+        return;
+      }
+
+      if (eventType === 'result') {
+        result = data.data;
+        callbacks.onResult(result);
+        return;
+      }
+
+      if (eventType === 'error') {
+        reachedTerminalEvent = true;
+        const errorMessage =
+          (typeof data.message === 'string' && data.message.trim()) ||
+          (typeof data.error === 'string' && data.error.trim()) ||
+          'Unknown error';
+        callbacks.onError(errorMessage);
+        return;
+      }
+
+      if (eventType === 'complete' || eventType === 'done') {
+        reachedTerminalEvent = true;
+        callbacks.onComplete?.();
+      }
+    } catch {
+      // skip invalid JSON
+    }
+  };
 
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done) {
+      break;
+    }
 
     buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
+    const blocks = buffer.split('\n\n');
+    buffer = blocks.pop() || '';
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith('data:')) continue;
-
-      try {
-        const data = JSON.parse(trimmed.slice(5).trim());
-        if (data.type === 'progress') {
-          callbacks.onProgress(data.message || '', Math.min(100, Math.max(0, Number(data.progress) || 0)));
-        } else if (data.type === 'result') {
-          result = data.data;
-          callbacks.onResult(result);
-        } else if (data.type === 'error') {
-          callbacks.onError(data.message || data.error || 'Unknown error');
-        } else if (data.type === 'complete') {
-          callbacks.onComplete?.();
-        }
-      } catch {
-        // skip invalid JSON
-      }
+    for (const block of blocks) {
+      parseSseBlock(block);
     }
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    const tailBlocks = buffer.split('\n\n').filter(Boolean);
+    tailBlocks.forEach((block) => parseSseBlock(block));
+  }
+
+  if (!reachedTerminalEvent) {
+    throw new Error('SSE stream ended without terminal complete event');
   }
 
   return result;
@@ -118,6 +190,7 @@ export function AIProjectGenerator({
   resumeProjectId
 }: AIProjectGeneratorProps) {
   const router = useRouter();
+  const startedGenerationKeyRef = useRef<string | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [projectId, setProjectId] = useState<string>('');
@@ -139,6 +212,39 @@ export function AIProjectGenerator({
     currentStep: `${storagePrefix}_current_step`
   };
 
+  const streamPostWithConfig = useCallback(
+    (url: string, body: Record<string, unknown>, callbacks: StreamCallbacks) =>
+      streamPost(url, body, callbacks, getWizardModelConfig()),
+    []
+  );
+
+  const generationStartKey = useMemo(() => {
+    const genreKey = Array.isArray(config.genre) ? config.genre.join('|') : config.genre;
+    return [
+      resumeProjectId ?? '',
+      config.title,
+      config.description,
+      config.theme,
+      genreKey,
+      config.narrative_perspective,
+      config.target_words,
+      config.chapter_count,
+      config.character_count,
+      config.outline_mode ?? '',
+    ].join('::');
+  }, [
+    config.chapter_count,
+    config.character_count,
+    config.description,
+    config.genre,
+    config.narrative_perspective,
+    config.outline_mode,
+    config.target_words,
+    config.theme,
+    config.title,
+    resumeProjectId,
+  ]);
+
   const saveProgress = useCallback((pid: string, data: GenerationConfig, step: string) => {
     try {
       localStorage.setItem(storageKeys.projectId, pid);
@@ -157,14 +263,18 @@ export function AIProjectGenerator({
 
   useEffect(() => {
     if (config) {
+      if (startedGenerationKeyRef.current === generationStartKey) {
+        return;
+      }
+      startedGenerationKeyRef.current = generationStartKey;
+
       if (resumeProjectId) {
         handleResumeGenerate(config, resumeProjectId);
       } else {
         handleAutoGenerate(config);
       }
     }
-     
-  }, [config, resumeProjectId]);
+  }, [config, generationStartKey, resumeProjectId]);
 
   const handleResumeGenerate = async (data: GenerationConfig, pidParam: string) => {
     try {
@@ -227,7 +337,7 @@ export function AIProjectGenerator({
 
   const resumeFromWorldBuilding = async (data: GenerationConfig) => {
     const genreString = Array.isArray(data.genre) ? data.genre.join('、') : data.genre;
-    const worldResult = await streamPost('/api/wizard-stream/world-building', {
+    const worldResult = await streamPostWithConfig('/api/wizard-stream/world-building', {
       title: data.title,
       description: data.description,
       theme: data.theme,
@@ -259,7 +369,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, careers: 'processing' }));
     setProgressMessage('正在生成职业体系...');
 
-    await streamPost('/api/wizard-stream/career-system', { project_id: pid }, {
+    await streamPostWithConfig('/api/wizard-stream/career-system', { project_id: pid }, {
       onProgress: (msg, prog) => { setProgress(prog); setProgressMessage(msg); },
       onResult: (result) => {
         const careerResult = result as Record<string, unknown>;
@@ -285,7 +395,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, characters: 'processing' }));
     setProgressMessage('正在生成角色...');
 
-    await streamPost('/api/wizard-stream/characters', {
+    await streamPostWithConfig('/api/wizard-stream/characters', {
       project_id: pid,
       count: data.character_count,
       world_context: {
@@ -319,7 +429,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, outline: 'processing' }));
     setProgressMessage('正在生成大纲...');
 
-    await streamPost('/api/wizard-stream/outline', {
+    await streamPostWithConfig('/api/wizard-stream/outline', {
       project_id: pid,
       chapter_count: data.chapter_count,
       narrative_perspective: data.narrative_perspective,
@@ -362,7 +472,7 @@ export function AIProjectGenerator({
       setGenerationSteps(prev => ({ ...prev, worldBuilding: 'processing' }));
       setProgressMessage('正在生成世界观...');
 
-      const worldResult = await streamPost('/api/wizard-stream/world-building', {
+      const worldResult = await streamPostWithConfig('/api/wizard-stream/world-building', {
         title: data.title,
         description: data.description,
         theme: data.theme,
@@ -399,7 +509,7 @@ export function AIProjectGenerator({
       setGenerationSteps(prev => ({ ...prev, careers: 'processing' }));
       setProgressMessage('正在生成职业体系...');
 
-      await streamPost('/api/wizard-stream/career-system', { project_id: createdProjectId }, {
+      await streamPostWithConfig('/api/wizard-stream/career-system', { project_id: createdProjectId }, {
         onProgress: (msg, prog) => { setProgress(prog); setProgressMessage(msg); },
         onResult: (result) => {
           const careerResult = result as Record<string, unknown>;
@@ -420,7 +530,7 @@ export function AIProjectGenerator({
       setGenerationSteps(prev => ({ ...prev, characters: 'processing' }));
       setProgressMessage('正在生成角色...');
 
-      await streamPost('/api/wizard-stream/characters', {
+      await streamPostWithConfig('/api/wizard-stream/characters', {
         project_id: createdProjectId,
         count: data.character_count,
         world_context: {
@@ -449,7 +559,7 @@ export function AIProjectGenerator({
       setGenerationSteps(prev => ({ ...prev, outline: 'processing' }));
       setProgressMessage('正在生成大纲...');
 
-      await streamPost('/api/wizard-stream/outline', {
+      await streamPostWithConfig('/api/wizard-stream/outline', {
         project_id: createdProjectId,
         chapter_count: data.chapter_count,
         narrative_perspective: data.narrative_perspective,
@@ -518,7 +628,7 @@ export function AIProjectGenerator({
     setProgressMessage('重新生成世界观...');
     const genreString = Array.isArray(generationData.genre) ? generationData.genre.join('、') : generationData.genre;
 
-    const worldResult = await streamPost('/api/wizard-stream/world-building', {
+    const worldResult = await streamPostWithConfig('/api/wizard-stream/world-building', {
       title: generationData.title,
       description: generationData.description,
       theme: generationData.theme,
@@ -557,7 +667,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, careers: 'processing' }));
     setProgressMessage('重新生成职业体系...');
 
-    await streamPost('/api/wizard-stream/career-system', { project_id: pid }, {
+    await streamPostWithConfig('/api/wizard-stream/career-system', { project_id: pid }, {
       onProgress: (msg, prog) => { setProgress(prog); setProgressMessage(msg); },
       onResult: (result) => {
         console.log(`成功重新生成职业体系`);
@@ -583,7 +693,7 @@ export function AIProjectGenerator({
     setProgressMessage('重新生成角色...');
     const genreString = Array.isArray(generationData.genre) ? generationData.genre.join('、') : generationData.genre;
 
-    await streamPost('/api/wizard-stream/characters', {
+    await streamPostWithConfig('/api/wizard-stream/characters', {
       project_id: pid,
       count: generationData.character_count,
       world_context: {
@@ -619,7 +729,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, outline: 'processing' }));
     setProgressMessage('重新生成大纲...');
 
-    await streamPost('/api/wizard-stream/outline', {
+    await streamPostWithConfig('/api/wizard-stream/outline', {
       project_id: pid,
       chapter_count: generationData.chapter_count,
       narrative_perspective: generationData.narrative_perspective,
@@ -653,7 +763,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, careers: 'processing' }));
     setProgressMessage('正在生成职业体系...');
 
-    await streamPost('/api/wizard-stream/career-system', { project_id: pid }, {
+    await streamPostWithConfig('/api/wizard-stream/career-system', { project_id: pid }, {
       onProgress: (msg, prog) => { setProgress(prog); setProgressMessage(msg); },
       onResult: () => { setGenerationSteps(prev => ({ ...prev, careers: 'completed' })); },
       onError: (error) => {
@@ -673,7 +783,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, characters: 'processing' }));
     setProgressMessage('正在生成角色...');
 
-    await streamPost('/api/wizard-stream/characters', {
+    await streamPostWithConfig('/api/wizard-stream/characters', {
       project_id: pid,
       count: generationData.character_count,
       world_context: {
@@ -702,7 +812,7 @@ export function AIProjectGenerator({
     setGenerationSteps(prev => ({ ...prev, outline: 'processing' }));
     setProgressMessage('正在生成大纲...');
 
-    await streamPost('/api/wizard-stream/outline', {
+    await streamPostWithConfig('/api/wizard-stream/outline', {
       project_id: pid,
       chapter_count: generationData.chapter_count,
       narrative_perspective: generationData.narrative_perspective,

@@ -70,6 +70,26 @@ export function useUpdateNovelMutation() {
   });
 }
 
+export function useDeleteNovelMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (novelId: string | number) => {
+      const idStr = String(novelId);
+      return executeRemoteFirst(
+        () => novelApiService.deleteNovel(idStr),
+        () => databaseService.deleteNovel(idStr),
+        'useDeleteNovelMutation',
+        async () => { await databaseService.deleteNovel(idStr); },
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['novel'] });
+      queryClient.invalidateQueries({ queryKey: ['novels'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+    },
+  });
+}
+
 export function useUpdateChapterMutation() {
   const queryClient = useQueryClient();
   return useMutation({

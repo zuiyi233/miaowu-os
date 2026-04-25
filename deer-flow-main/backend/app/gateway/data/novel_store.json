@@ -1,62 +1,30 @@
 {
   "novels": {
-    "novel-1483b1229933": {
-      "id": "novel-1483b1229933",
-      "title": "Smoke Novel",
+    "bd504f64-7a2b-48cd-8cfc-e26b249eb8d6": {
+      "id": "bd504f64-7a2b-48cd-8cfc-e26b249eb8d6",
+      "title": "没钱修什么仙",
       "outline": "",
       "coverImage": null,
-      "metadata": {},
+      "metadata": {
+        "genre": "修仙",
+        "description": "",
+        "created_by": "deerflow_create_novel_tool_dual_write",
+        "modern_project_id": "bd504f64-7a2b-48cd-8cfc-e26b249eb8d6"
+      },
       "syncStatus": "local",
       "version": 1,
-      "createdAt": "2026-04-17T08:31:34.140105+00:00",
-      "updatedAt": "2026-04-17T08:31:34.140105+00:00"
+      "createdAt": "2026-04-25T07:38:07.869935+00:00",
+      "updatedAt": "2026-04-25T07:38:07.869935+00:00"
     }
   },
-  "chapters": {
-    "chapter-a85048372d22": {
-      "id": "chapter-a85048372d22",
-      "novelId": "novel-1483b1229933",
-      "title": "ch1",
-      "content": "",
-      "volumeId": null,
-      "order": 0,
-      "description": null,
-      "summary": null,
-      "syncStatus": "local",
-      "version": 1,
-      "createdAt": "2026-04-17T08:31:34.157444+00:00",
-      "updatedAt": "2026-04-17T08:31:34.157444+00:00"
-    }
-  },
+  "chapters": {},
   "characters": {},
   "entities": {},
   "timeline": {},
   "graphs": {},
   "recommendations": {},
   "interactions": {},
-  "quality_reports": {
-    "novel-1483b1229933": {
-      "novelId": "novel-1483b1229933",
-      "score": 65,
-      "metrics": {
-        "wordCount": 0,
-        "chapterCount": 1,
-        "characterCount": 0,
-        "timelineEventCount": 0
-      },
-      "issues": [
-        {
-          "type": "low_word_count",
-          "severity": "warning",
-          "message": "小说总字数较少，建议继续完善内容。",
-          "details": {
-            "wordCount": 0
-          }
-        }
-      ],
-      "generatedAt": "2026-04-23T19:49:15.459281+00:00"
-    }
-  },
+  "quality_reports": {},
   "audits": {
     "novel-1483b1229933": [
       {
@@ -84,6 +52,39 @@
           "order": 0
         },
         "createdAt": "2026-04-17T08:31:34.157475+00:00"
+      },
+      {
+        "id": "audit-c31e6d7e9b9e",
+        "novelId": "novel-1483b1229933",
+        "action": "novel.delete",
+        "entityType": "novel",
+        "entityId": "novel-1483b1229933",
+        "author": "system",
+        "details": {
+          "removed": {
+            "chapters": 1,
+            "entities": 0,
+            "timelineEvents": 0,
+            "recommendations": 0,
+            "interactions": 0
+          }
+        },
+        "createdAt": "2026-04-24T20:43:28.346504+00:00"
+      }
+    ],
+    "bd504f64-7a2b-48cd-8cfc-e26b249eb8d6": [
+      {
+        "id": "audit-c6c469c84250",
+        "novelId": "bd504f64-7a2b-48cd-8cfc-e26b249eb8d6",
+        "action": "novel.create",
+        "entityType": "novel",
+        "entityId": "bd504f64-7a2b-48cd-8cfc-e26b249eb8d6",
+        "author": "system",
+        "details": {
+          "title": "没钱修什么仙",
+          "version": 1
+        },
+        "createdAt": "2026-04-25T07:38:07.869935+00:00"
       }
     ]
   }

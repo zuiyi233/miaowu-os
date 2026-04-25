@@ -14,7 +14,7 @@ test("applyOptimisticDraftHide adds draft id once", () => {
 });
 
 test("rollbackOptimisticDraftHide removes draft id and preserves unrelated entries", () => {
-  const hidden = {
+  const hidden: Record<string, true> = {
     "draft-1": true,
     "draft-2": true,
   };

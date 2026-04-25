@@ -10,18 +10,28 @@ function getBaseOrigin() {
   return "http://localhost:2026";
 }
 
+let _cachedBackendBaseURL: string | undefined;
+
 export function getBackendBaseURL() {
-  if (isDesktopBuild) {
-    // Desktop managed mode always goes through local frontend origin + Next rewrites.
-    return "";
+  if (_cachedBackendBaseURL !== undefined) {
+    return _cachedBackendBaseURL;
   }
-  if (env.NEXT_PUBLIC_BACKEND_BASE_URL) {
-    return new URL(env.NEXT_PUBLIC_BACKEND_BASE_URL, getBaseOrigin())
+  let result: string;
+  if (isDesktopBuild) {
+    result = "";
+  } else if (env.NEXT_PUBLIC_BACKEND_BASE_URL) {
+    result = new URL(env.NEXT_PUBLIC_BACKEND_BASE_URL, getBaseOrigin())
       .toString()
       .replace(/\/+$/, "");
   } else {
-    return "";
+    result = "";
   }
+  _cachedBackendBaseURL = result;
+  return result;
+}
+
+export function resetBackendBaseURLCache() {
+  _cachedBackendBaseURL = undefined;
 }
 
 export function getLangGraphBaseURL(isMock?: boolean) {

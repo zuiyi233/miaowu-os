@@ -10,7 +10,9 @@ import {
 } from "./feature-routing";
 import { putUserAiSettings } from "./useAiSettingsApi";
 
-const API_BASE_URL = getBackendBaseURL();
+function getApiBaseUrl() {
+  return getBackendBaseURL();
+}
 
 export interface AiMessage {
   role: "user" | "assistant" | "system";
@@ -681,7 +683,7 @@ export class GlobalAiService {
       ]) ?? this.abortController.signal;
 
     try {
-      const endpoint = `${API_BASE_URL}/api/ai/chat`;
+      const endpoint = `${getApiBaseUrl()}/api/ai/chat`;
       const messages = mergeSystemPromptIntoMessages(
         [...options.messages],
         ctx.globalSystemPrompt
@@ -954,7 +956,7 @@ export class GlobalAiService {
 
     try {
       const response = await fetchWithTimeout(
-        `${API_BASE_URL}/api/ai/test-connection`,
+        `${getApiBaseUrl()}/api/ai/test-connection`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

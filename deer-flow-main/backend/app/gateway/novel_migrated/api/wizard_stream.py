@@ -38,10 +38,14 @@ class WorldBuildingStreamRequest(BaseModel):
     chapter_count: int = Field(default=30, ge=5, le=300)
     character_count: int = Field(default=8, ge=5, le=20)
     outline_mode: Literal["one-to-one", "one-to-many"] = Field(default="one-to-many")
+    ai_provider_id: str | None = Field(default=None, description="可选：指定本次向导使用的供应商 ID")
+    ai_model: str | None = Field(default=None, description="可选：指定本次向导使用的模型名称")
 
 
 class CareerSystemStreamRequest(BaseModel):
     project_id: str
+    ai_provider_id: str | None = Field(default=None, description="可选：指定本次向导使用的供应商 ID")
+    ai_model: str | None = Field(default=None, description="可选：指定本次向导使用的模型名称")
 
 
 class CharactersStreamRequest(BaseModel):
@@ -50,6 +54,8 @@ class CharactersStreamRequest(BaseModel):
     world_context: dict[str, str] | None = None
     theme: str | None = None
     genre: str | None = None
+    ai_provider_id: str | None = Field(default=None, description="可选：指定本次向导使用的供应商 ID")
+    ai_model: str | None = Field(default=None, description="可选：指定本次向导使用的模型名称")
 
 
 class OutlineStreamRequest(BaseModel):
@@ -57,6 +63,8 @@ class OutlineStreamRequest(BaseModel):
     chapter_count: int = Field(default=30, ge=5, le=300)
     narrative_perspective: str = Field(default="第三人称")
     target_words: int = Field(default=100000, ge=1000, le=3_000_000)
+    ai_provider_id: str | None = Field(default=None, description="可选：指定本次向导使用的供应商 ID")
+    ai_model: str | None = Field(default=None, description="可选：指定本次向导使用的模型名称")
 
 
 def _normalize_genre(genre: str | list[str]) -> str:
@@ -196,6 +204,8 @@ async def generate_world_building_stream(
             progress_callback=progress_callback,
             progress_range=(10, 88),
             raise_on_error=True,
+            ai_provider_id=payload.ai_provider_id,
+            ai_model=payload.ai_model,
         )
 
         project.wizard_step = 1
@@ -283,6 +293,8 @@ async def generate_career_system_stream(
             project=project,
             progress_callback=progress_callback,
             progress_range=(12, 88),
+            ai_provider_id=payload.ai_provider_id,
+            ai_model=payload.ai_model,
         )
 
         project.wizard_step = max(int(project.wizard_step or 0), 2)
@@ -328,6 +340,8 @@ async def generate_characters_stream(
             count=project.character_count,
             progress_callback=progress_callback,
             progress_range=(12, 88),
+            ai_provider_id=payload.ai_provider_id,
+            ai_model=payload.ai_model,
         )
 
         project.wizard_step = max(int(project.wizard_step or 0), 3)
@@ -371,6 +385,8 @@ async def generate_outline_stream(
             target_words=payload.target_words,
             progress_callback=progress_callback,
             progress_range=(12, 92),
+            ai_provider_id=payload.ai_provider_id,
+            ai_model=payload.ai_model,
         )
 
         project.wizard_step = 4
