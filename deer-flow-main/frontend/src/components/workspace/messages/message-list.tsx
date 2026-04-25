@@ -11,6 +11,7 @@ import {
   extractContentFromMessage,
   extractPresentFilesFromMessage,
   extractTextFromMessage,
+  getToolCalls,
   groupMessages,
   hasContent,
   hasPresentFiles,
@@ -149,15 +150,20 @@ export function MessageList({
             );
           } else if (group.type === "assistant:subagent") {
             const tasks = new Set<Subtask>();
+            const asString = (value: unknown): string =>
+              typeof value === "string" ? value : "";
             for (const message of group.messages) {
               if (message.type === "ai") {
-                for (const toolCall of message.tool_calls ?? []) {
-                  if (toolCall.name === "task") {
+                for (const toolCall of getToolCalls(message)) {
+                  if (
+                    toolCall.name === "task" &&
+                    typeof toolCall.id === "string"
+                  ) {
                     const task: Subtask = {
-                      id: toolCall.id!,
-                      subagent_type: toolCall.args.subagent_type,
-                      description: toolCall.args.description,
-                      prompt: toolCall.args.prompt,
+                      id: toolCall.id,
+                      subagent_type: asString(toolCall.args.subagent_type),
+                      description: asString(toolCall.args.description),
+                      prompt: asString(toolCall.args.prompt),
                       status: "in_progress",
                     };
                     updateSubtask(task);
@@ -218,7 +224,7 @@ export function MessageList({
                   {t.subtasks.executing(tasks.size)}
                 </div>,
               );
-              const taskIds = message.tool_calls
+              const taskIds = getToolCalls(message)
                 ?.filter((toolCall) => toolCall.name === "task")
                 .map((toolCall) => toolCall.id);
               for (const taskId of taskIds ?? []) {

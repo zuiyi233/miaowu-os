@@ -331,7 +331,7 @@ Proxied through nginx: `/api/langgraph/*` → LangGraph, all other `/api/*` → 
 3. **Built-in tools**:
    - `present_files` - Make output files visible to user (only `/mnt/user-data/outputs`)
    - `ask_clarification` - Request clarification (intercepted by ClarificationMiddleware → interrupts)
-   - `create_novel` - Create a novel via gateway endpoints (`/projects` with `/api/novels` fallback)
+   - `create_novel` - Optimized novel creation path: internal `novel_migrated` direct call first, HTTP fallback with retry/backoff, optional async legacy dual-write (disabled by default), and custom progress events (`create_novel_progress`)
    - `view_image` - Read image as base64 (added only if model supports vision)
 4. **Subagent tool** (if enabled):
    - `task` - Delegate to subagent (description, prompt, subagent_type, max_turns)

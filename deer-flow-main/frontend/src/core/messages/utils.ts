@@ -26,6 +26,162 @@ type MessageGroup =
   | AssistantClarificationGroup
   | AssistantSubagentGroup;
 
+export interface NormalizedToolCall {
+  id?: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+function parseToolCallCollection(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) {
+    return raw;
+  }
+
+  if (raw && typeof raw === "object") {
+    return [raw];
+  }
+
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      return parseToolCallCollection(parsed);
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+}
+
+function parseToolCallArgs(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return {};
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return { raw: trimmed };
+    }
+  }
+
+  return {};
+}
+
+function normalizeToolCall(raw: unknown): NormalizedToolCall | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+
+  const record = raw as Record<string, unknown>;
+  const id = typeof record.id === "string" ? record.id : undefined;
+
+  let name = "";
+  let argsSource: unknown = record.args;
+
+  if (typeof record.name === "string" && record.name.trim()) {
+    name = record.name.trim();
+  }
+
+  if (!name) {
+    const functionCall = record.function;
+    if (
+      functionCall &&
+      typeof functionCall === "object" &&
+      !Array.isArray(functionCall)
+    ) {
+      const fn = functionCall as Record<string, unknown>;
+      if (typeof fn.name === "string" && fn.name.trim()) {
+        name = fn.name.trim();
+        argsSource = fn.arguments;
+      }
+    }
+  }
+
+  if (!name) {
+    const fallbackName = record.tool_name;
+    if (typeof fallbackName === "string" && fallbackName.trim()) {
+      name = fallbackName.trim();
+    }
+  }
+
+  if (argsSource === undefined && "arguments" in record) {
+    argsSource = record.arguments;
+  }
+  if (argsSource === undefined && "input" in record) {
+    argsSource = record.input;
+  }
+
+  if (!name) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    args: parseToolCallArgs(argsSource),
+  };
+}
+
+function extractAdditionalKwargsToolCalls(message: Message): NormalizedToolCall[] {
+  if (message.type !== "ai") {
+    return [];
+  }
+
+  const additionalKwargs =
+    message.additional_kwargs &&
+    typeof message.additional_kwargs === "object" &&
+    !Array.isArray(message.additional_kwargs)
+      ? (message.additional_kwargs as Record<string, unknown>)
+      : null;
+
+  if (!additionalKwargs) {
+    return [];
+  }
+
+  const rawToolCalls = [
+    additionalKwargs.tool_calls,
+    additionalKwargs.raw_tool_calls,
+    additionalKwargs.openai_tool_calls,
+    additionalKwargs.function_calls,
+  ];
+
+  const normalized = rawToolCalls
+    .flatMap((candidate) => parseToolCallCollection(candidate))
+    .map((item) => normalizeToolCall(item))
+    .filter((item): item is NormalizedToolCall => item !== null);
+
+  return normalized;
+}
+
+export function getToolCalls(message: Message): NormalizedToolCall[] {
+  if (message.type !== "ai") {
+    return [];
+  }
+
+  const direct = parseToolCallCollection(message.tool_calls)
+    .map((item) => normalizeToolCall(item))
+    .filter((item): item is NormalizedToolCall => item !== null);
+
+  if (direct.length > 0) {
+    return direct;
+  }
+
+  return extractAdditionalKwargsToolCalls(message);
+}
+
 export function groupMessages<T>(
   messages: Message[],
   mapper: (group: MessageGroup) => T,
@@ -274,15 +430,13 @@ export function hasReasoning(message: Message) {
 }
 
 export function hasToolCalls(message: Message) {
-  return (
-    message.type === "ai" && message.tool_calls && message.tool_calls.length > 0
-  );
+  return message.type === "ai" && getToolCalls(message).length > 0;
 }
 
 export function hasPresentFiles(message: Message) {
   return (
     message.type === "ai" &&
-    message.tool_calls?.some((toolCall) => toolCall.name === "present_files")
+    getToolCalls(message).some((toolCall) => toolCall.name === "present_files")
   );
 }
 
@@ -295,7 +449,7 @@ export function extractPresentFilesFromMessage(message: Message) {
     return [];
   }
   const files: string[] = [];
-  for (const toolCall of message.tool_calls ?? []) {
+  for (const toolCall of getToolCalls(message)) {
     if (
       toolCall.name === "present_files" &&
       Array.isArray(toolCall.args.filepaths)
@@ -307,7 +461,7 @@ export function extractPresentFilesFromMessage(message: Message) {
 }
 
 export function hasSubagent(message: AIMessage) {
-  for (const toolCall of message.tool_calls ?? []) {
+  for (const toolCall of getToolCalls(message)) {
     if (toolCall.name === "task") {
       return true;
     }

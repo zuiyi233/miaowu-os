@@ -226,7 +226,7 @@ def test_context_merges_into_configurable():
     configurable = config.setdefault("configurable", {})
     for key in _CONTEXT_CONFIGURABLE_KEYS:
         if key in context:
-            configurable.setdefault(key, context[key])
+            configurable[key] = context[key]
 
     assert config["configurable"]["model_name"] == "deepseek-v3"
     assert config["configurable"]["thinking_enabled"] is True
@@ -241,8 +241,8 @@ def test_context_merges_into_configurable():
     assert "thread_id" not in {k for k in context if k in _CONTEXT_CONFIGURABLE_KEYS}
 
 
-def test_context_does_not_override_existing_configurable():
-    """Values already in config.configurable must NOT be overridden by context."""
+def test_context_overrides_existing_configurable():
+    """Allowlisted context values should override config.configurable values."""
     from app.gateway.services import build_run_config
 
     config = build_run_config(
@@ -269,11 +269,11 @@ def test_context_does_not_override_existing_configurable():
     configurable = config.setdefault("configurable", {})
     for key in _CONTEXT_CONFIGURABLE_KEYS:
         if key in context:
-            configurable.setdefault(key, context[key])
+            configurable[key] = context[key]
 
-    # Existing values must NOT be overridden
-    assert config["configurable"]["model_name"] == "gpt-4"
-    assert config["configurable"]["is_plan_mode"] is False
+    # Existing allowlisted values should be overridden by latest context
+    assert config["configurable"]["model_name"] == "deepseek-v3"
+    assert config["configurable"]["is_plan_mode"] is True
     # New values should be added
     assert config["configurable"]["subagent_enabled"] is True
 
@@ -338,5 +338,6 @@ def test_build_run_config_no_request_config():
     from app.gateway.services import build_run_config
 
     config = build_run_config("thread-abc", None, None)
-    assert config["configurable"] == {"thread_id": "thread-abc"}
+    assert config["configurable"]["thread_id"] == "thread-abc"
+    assert config["configurable"]["include_novel"] is True
     assert "context" not in config

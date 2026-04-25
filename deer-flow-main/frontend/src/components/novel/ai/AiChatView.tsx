@@ -1,12 +1,16 @@
 'use client';
 
-import { Download, Send } from 'lucide-react';
+import { Download, Send, Wrench } from 'lucide-react';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
-import type { AiStructuredResponse, SessionBrief } from '@/core/ai/global-ai-service';
+import type {
+  AiStructuredResponse,
+  DomainToolCall,
+  SessionBrief,
+} from '@/core/ai/global-ai-service';
 import { getBackendBaseURL } from '@/core/config';
 import { useI18n } from '@/core/i18n/hooks';
 import { useAiPanelStore } from '@/core/novel';
@@ -53,6 +57,104 @@ function resolveDownloadUrl(path: string): string {
   }
   const normalized = path.startsWith('/') ? path : `/${path}`;
   return `${getBackendBaseURL()}${normalized}`;
+}
+
+function resolveStructuredToolCalls(
+  structured?: AiStructuredResponse,
+): DomainToolCall[] {
+  if (!structured || !Array.isArray(structured.tool_calls)) {
+    return [];
+  }
+  return structured.tool_calls.filter(
+    (toolCall): toolCall is DomainToolCall =>
+      typeof toolCall?.name === 'string' && toolCall.name.trim().length > 0,
+  );
+}
+
+function formatToolCallArgsPreview(args: Record<string, unknown>): string {
+  const preferredKeys = ['title', 'novel_id', 'project_id', 'step', 'genre'];
+  for (const key of preferredKeys) {
+    const value = args[key];
+    if (typeof value === 'string' && value.trim()) {
+      return `${key}=${value.trim().slice(0, 40)}`;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return `${key}=${String(value)}`;
+    }
+  }
+
+  const entries = Object.entries(args).filter(([, value]) => {
+    return (
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean'
+    );
+  });
+  if (entries.length === 0) {
+    return '';
+  }
+  return entries
+    .slice(0, 2)
+    .map(([key, value]) => `${key}=${String(value).slice(0, 30)}`)
+    .join(', ');
+}
+
+function mergeStructuredResponse(
+  previous: AiStructuredResponse | undefined,
+  next: AiStructuredResponse,
+): AiStructuredResponse {
+  if (!previous) {
+    return next;
+  }
+
+  const mergedToolCalls: DomainToolCall[] = [];
+  const dedupeSet = new Set<string>();
+  const appendToolCalls = (calls: DomainToolCall[] | undefined) => {
+    if (!Array.isArray(calls)) {
+      return;
+    }
+    for (const call of calls) {
+      const argsKey = (() => {
+        try {
+          return JSON.stringify(call.args ?? {});
+        } catch {
+          return '[unserializable_args]';
+        }
+      })();
+      const dedupeKey = `${call.id || ''}|${call.name}|${argsKey}`;
+      if (dedupeSet.has(dedupeKey)) {
+        continue;
+      }
+      dedupeSet.add(dedupeKey);
+      mergedToolCalls.push(call);
+    }
+  };
+
+  appendToolCalls(previous.tool_calls);
+  appendToolCalls(next.tool_calls);
+
+  const merged: AiStructuredResponse = {
+    ...previous,
+    ...next,
+    content: next.content || previous.content,
+    session: next.session ?? previous.session,
+    context: {
+      ...(previous.context ?? {}),
+      ...(next.context ?? {}),
+    },
+    novel: {
+      ...(previous.novel ?? {}),
+      ...(next.novel ?? {}),
+    },
+  };
+
+  if (mergedToolCalls.length > 0) {
+    merged.tool_calls = mergedToolCalls;
+  } else {
+    delete merged.tool_calls;
+  }
+
+  return merged;
 }
 
 export function AiChatView({ novelId }: { novelId: string }) {
@@ -130,7 +232,10 @@ export function AiChatView({ novelId }: { novelId: string }) {
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === assistantMessageId
-                  ? { ...msg, structured: data }
+                  ? {
+                      ...msg,
+                      structured: mergeStructuredResponse(msg.structured, data),
+                    }
                   : msg
               )
             );
@@ -196,6 +301,12 @@ export function AiChatView({ novelId }: { novelId: string }) {
                 {(() => {
                   const downloadPath = extractDownloadPath(msg.structured);
                   const downloadUrl = downloadPath ? resolveDownloadUrl(downloadPath) : null;
+                  const toolCalls = resolveStructuredToolCalls(msg.structured);
+                  const displayContent =
+                    msg.content.trim() ||
+                    (msg.role === 'assistant' && toolCalls.length > 0
+                      ? '已触发工具调用，正在处理中…'
+                      : '');
                   return (
                     <div>
                       <div
@@ -205,8 +316,27 @@ export function AiChatView({ novelId }: { novelId: string }) {
                             : 'bg-muted'
                         }`}
                       >
-                        {msg.content}
+                        {displayContent}
                       </div>
+                      {msg.role === 'assistant' && toolCalls.length > 0 ? (
+                        <div className="mt-2 space-y-1 rounded-md border border-border/60 bg-background/60 p-2 text-xs text-muted-foreground">
+                          {toolCalls.map((toolCall, index) => {
+                            const preview = formatToolCallArgsPreview(toolCall.args);
+                            return (
+                              <div
+                                key={`${msg.id}-${toolCall.id || toolCall.name}-${index}`}
+                                className="flex items-center gap-1"
+                              >
+                                <Wrench className="h-3 w-3 shrink-0" />
+                                <span className="font-medium text-foreground/90">
+                                  {toolCall.name}
+                                </span>
+                                {preview ? <span className="truncate">· {preview}</span> : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                       {msg.role === 'assistant' && downloadUrl ? (
                         <div className="mt-2">
                           <Button asChild size="sm" variant="outline">

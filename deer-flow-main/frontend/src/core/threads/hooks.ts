@@ -136,6 +136,169 @@ function getStreamErrorMessage(error: unknown): string {
   return "Request failed.";
 }
 
+const STREAM_SUBMIT_MAX_ATTEMPTS = 10;
+const STREAM_SUBMIT_RETRY_BASE_DELAY_MS = 3000;
+
+function parseErrorStatusCode(error: unknown): number | null {
+  const parseStatus = (value: unknown): number | null => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string") {
+      const parsed = Number.parseInt(value.trim(), 10);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+    return null;
+  };
+
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const statusCandidates = [
+    Reflect.get(error, "status"),
+    Reflect.get(error, "statusCode"),
+    Reflect.get(Reflect.get(error, "response"), "status"),
+    Reflect.get(Reflect.get(error, "cause"), "status"),
+  ];
+  for (const candidate of statusCandidates) {
+    const parsed = parseStatus(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  const nested = Reflect.get(error, "error");
+  if (nested && typeof nested === "object") {
+    const nestedCandidates = [
+      Reflect.get(nested, "status"),
+      Reflect.get(nested, "statusCode"),
+      Reflect.get(Reflect.get(nested, "response"), "status"),
+      Reflect.get(Reflect.get(nested, "cause"), "status"),
+    ];
+    for (const candidate of nestedCandidates) {
+      const parsed = parseStatus(candidate);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+  }
+
+  return null;
+}
+
+function isRetryableSubmitError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return false;
+  }
+  if (error instanceof Error && error.name === "AbortError") {
+    return false;
+  }
+
+  const statusCode = parseErrorStatusCode(error);
+  if (statusCode !== null) {
+    if (statusCode === 408 || statusCode === 409 || statusCode === 425) {
+      return true;
+    }
+    if (statusCode === 429) {
+      return true;
+    }
+    if (statusCode >= 500) {
+      return true;
+    }
+    return false;
+  }
+
+  const errorObject = error && typeof error === "object" ? error : null;
+  const nestedErrorObject =
+    errorObject && typeof Reflect.get(errorObject, "error") === "object"
+      ? (Reflect.get(errorObject, "error") as object)
+      : null;
+  const causeErrorObject =
+    errorObject && typeof Reflect.get(errorObject, "cause") === "object"
+      ? (Reflect.get(errorObject, "cause") as object)
+      : null;
+  const codeCandidates = [
+    errorObject ? Reflect.get(errorObject, "code") : undefined,
+    nestedErrorObject ? Reflect.get(nestedErrorObject, "code") : undefined,
+    causeErrorObject ? Reflect.get(causeErrorObject, "code") : undefined,
+  ];
+  const retryableCodes = new Set([
+    "ECONNRESET",
+    "ECONNABORTED",
+    "ETIMEDOUT",
+    "EAI_AGAIN",
+    "ENETUNREACH",
+    "ERR_NETWORK",
+    "ERR_CONNECTION_RESET",
+    "ERR_CONNECTION_ABORTED",
+    "ERR_CONNECTION_CLOSED",
+    "ERR_INTERNET_DISCONNECTED",
+  ]);
+  for (const candidate of codeCandidates) {
+    if (typeof candidate === "string" && retryableCodes.has(candidate)) {
+      return true;
+    }
+  }
+
+  const message = getStreamErrorMessage(error).toLowerCase();
+  const retryablePatterns = [
+    "network",
+    "network error",
+    "disconnected",
+    "disconnect",
+    "failed to fetch",
+    "fetch failed",
+    "timeout",
+    "timed out",
+    "temporarily unavailable",
+    "connection reset",
+    "connection closed",
+    "connection aborted",
+    "gateway timeout",
+    "stream timed out",
+    "socket closed",
+    "econnreset",
+    "econnaborted",
+    "etimedout",
+    "socket hang up",
+    "断联",
+    "断开",
+    "网络波动",
+    "连接中断",
+    "连接超时",
+  ];
+  return retryablePatterns.some((pattern) => message.includes(pattern));
+}
+
+function waitMs(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function normalizeAgentThreadState(
+  values: Partial<AgentThreadState> | null | undefined,
+): AgentThreadState {
+  const valuesCandidate = values ?? {};
+  return {
+    ...(valuesCandidate as AgentThreadState),
+    title:
+      typeof valuesCandidate.title === "string" ? valuesCandidate.title : "",
+    messages: Array.isArray(valuesCandidate.messages)
+      ? valuesCandidate.messages
+      : [],
+    artifacts: Array.isArray(valuesCandidate.artifacts)
+      ? valuesCandidate.artifacts
+      : [],
+  };
+}
+
 export function useThreadStream({
   threadId,
   context,
@@ -151,6 +314,7 @@ export function useThreadStream({
   // and to allow access to the current thread id in onUpdateEvent
   const threadIdRef = useRef<string | null>(threadId ?? null);
   const startedRef = useRef(false);
+  const createNovelProgressRef = useRef<Map<string, string>>(new Map());
 
   const listeners = useRef({
     onStart,
@@ -173,6 +337,7 @@ export function useThreadStream({
       setOnStreamThreadId(normalizedThreadId);
     }
     threadIdRef.current = normalizedThreadId;
+    createNovelProgressRef.current.clear();
   }, [threadId]);
 
   const _handleOnStart = useCallback((id: string) => {
@@ -213,8 +378,9 @@ export function useThreadStream({
     reconnectOnMount: runMetadataStorageRef.current
       ? () => runMetadataStorageRef.current!
       : false,
-    // Keep history enabled (same as upstream deer-flow-main) so any consumer
-    // touching `thread.history` won't crash with runtime getter errors.
+    // Keep history enabled because the stream object exposes `history` getter;
+    // LangGraph SDK throws when that getter is touched while disabled.
+    // Restrict to a small page to reduce overhead.
     fetchStateHistory: { limit: 1 },
     onCreated(meta) {
       handleStreamStart(meta.thread_id);
@@ -298,6 +464,57 @@ export function useThreadStream({
         typeof event === "object" &&
         event !== null &&
         "type" in event &&
+        event.type === "create_novel_progress"
+      ) {
+        const e = event as {
+          type: "create_novel_progress";
+          tool_call_id?: string;
+          stage?: string;
+          status?: string;
+          message?: string;
+        };
+        const stage =
+          typeof e.stage === "string" && e.stage.trim()
+            ? e.stage.trim()
+            : "unknown_stage";
+        const status =
+          typeof e.status === "string" && e.status.trim()
+            ? e.status.trim()
+            : "running";
+        const message =
+          typeof e.message === "string" && e.message.trim()
+            ? e.message.trim()
+            : `create_novel ${stage} (${status})`;
+        const fallbackThreadScope =
+          typeof threadIdRef.current === "string" && threadIdRef.current.trim()
+            ? threadIdRef.current.trim()
+            : "default-thread";
+        const fallbackToolId = `${fallbackThreadScope}:${stage}`;
+        const normalizedToolCallId =
+          typeof e.tool_call_id === "string" && e.tool_call_id.trim()
+            ? e.tool_call_id.trim()
+            : fallbackToolId;
+        const toastId = `create-novel-progress:${normalizedToolCallId}`;
+        const dedupeKey = `${stage}:${status}:${message}`;
+        if (createNovelProgressRef.current.get(toastId) === dedupeKey) {
+          return;
+        }
+        createNovelProgressRef.current.set(toastId, dedupeKey);
+
+        if (status === "failed") {
+          toast.error(message, { id: toastId });
+        } else if (status === "completed" && stage === "completed") {
+          toast.success(message, { id: toastId });
+        } else {
+          toast(message, { id: toastId });
+        }
+        return;
+      }
+
+      if (
+        typeof event === "object" &&
+        event !== null &&
+        "type" in event &&
         event.type === "llm_retry" &&
         "message" in event &&
         typeof event.message === "string" &&
@@ -309,34 +526,8 @@ export function useThreadStream({
     },
     onError(error) {
       setOptimisticMessages([]);
+      createNovelProgressRef.current.clear();
       toast.error(getStreamErrorMessage(error));
-    },
-    onFinish(state) {
-      const valuesCandidate =
-        typeof state === "object" &&
-        state !== null &&
-        "values" in state &&
-        typeof state.values === "object" &&
-        state.values !== null
-          ? (state.values as Partial<AgentThreadState>)
-          : {};
-
-      const normalizedState: AgentThreadState = {
-        ...(valuesCandidate as AgentThreadState),
-        title:
-          typeof valuesCandidate.title === "string"
-            ? valuesCandidate.title
-            : "",
-        messages: Array.isArray(valuesCandidate.messages)
-          ? valuesCandidate.messages
-          : [],
-        artifacts: Array.isArray(valuesCandidate.artifacts)
-          ? valuesCandidate.artifacts
-          : [],
-      };
-
-      listeners.current.onFinish?.(normalizedState);
-      void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
     },
   });
 
@@ -346,6 +537,7 @@ export function useThreadStream({
   const sendInFlightRef = useRef(false);
   // Track message count before sending so we know when server has responded
   const prevMsgCountRef = useRef(thread.messages.length);
+  const wasLoadingRef = useRef(false);
 
   // Reset thread-local pending UI state when switching between threads so
   // optimistic messages and in-flight guards do not leak across chat views.
@@ -353,9 +545,29 @@ export function useThreadStream({
     startedRef.current = false;
     sendInFlightRef.current = false;
     prevMsgCountRef.current = 0;
+    wasLoadingRef.current = false;
+    createNovelProgressRef.current.clear();
     setOptimisticMessages([]);
     setIsUploading(false);
   }, [threadId]);
+
+  useEffect(() => {
+    if (thread.isLoading) {
+      wasLoadingRef.current = true;
+      return;
+    }
+
+    if (!wasLoadingRef.current) {
+      return;
+    }
+
+    wasLoadingRef.current = false;
+    listeners.current.onFinish?.(
+      normalizeAgentThreadState(thread.values as Partial<AgentThreadState>),
+    );
+    createNovelProgressRef.current.clear();
+    void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
+  }, [queryClient, thread.isLoading, thread.values]);
 
   // Clear optimistic when server messages arrive (count increases)
   useEffect(() => {
@@ -504,52 +716,76 @@ export function useThreadStream({
           }),
         );
 
-        await thread.submit(
-          {
-            messages: [
-              {
-                type: "human",
-                content: [
-                  {
-                    type: "text",
-                    text,
-                  },
-                ],
-                additional_kwargs: {
-                  ...options?.additionalKwargs,
-                  ...(filesForSubmit.length > 0
-                    ? { files: filesForSubmit }
-                    : {}),
+        const submitPayload: Parameters<typeof thread.submit>[0] = {
+          messages: [
+            {
+              type: "human",
+              content: [
+                {
+                  type: "text" as const,
+                  text,
                 },
+              ],
+              additional_kwargs: {
+                ...options?.additionalKwargs,
+                ...(filesForSubmit.length > 0
+                  ? { files: filesForSubmit }
+                  : {}),
               },
-            ],
-          },
-          {
-            threadId: threadId,
-            streamSubgraphs: true,
-            streamResumable: true,
-            config: {
-              recursion_limit: 1000,
             },
-            context: {
-              ...extraContext,
-              ...context,
-              thinking_enabled: context.mode !== "flash",
-              is_plan_mode: context.mode === "pro" || context.mode === "ultra",
-              subagent_enabled: context.mode === "ultra",
-              reasoning_effort:
-                context.reasoning_effort ??
-                (context.mode === "ultra"
-                  ? "high"
-                  : context.mode === "pro"
-                    ? "medium"
-                    : context.mode === "thinking"
-                      ? "low"
-                      : undefined),
-              thread_id: threadId,
-            },
+          ],
+        };
+
+        const submitOptions: Parameters<typeof thread.submit>[1] = {
+          threadId: threadId,
+          streamSubgraphs: true,
+          streamResumable: true,
+          config: {
+            recursion_limit: 1000,
           },
-        );
+          context: {
+            ...extraContext,
+            ...context,
+            thinking_enabled: context.mode !== "flash",
+            is_plan_mode: context.mode === "pro" || context.mode === "ultra",
+            subagent_enabled: context.mode === "ultra",
+            reasoning_effort:
+              context.reasoning_effort ??
+              (context.mode === "ultra"
+                ? "high"
+                : context.mode === "pro"
+                  ? "medium"
+                  : context.mode === "thinking"
+                    ? "low"
+                    : undefined),
+            thread_id: threadId,
+          },
+        };
+
+        for (
+          let attempt = 1;
+          attempt <= STREAM_SUBMIT_MAX_ATTEMPTS;
+          attempt += 1
+        ) {
+          try {
+            await thread.submit(submitPayload, submitOptions);
+            break;
+          } catch (error) {
+            const canRetry =
+              isRetryableSubmitError(error) &&
+              attempt < STREAM_SUBMIT_MAX_ATTEMPTS;
+            if (!canRetry) {
+              throw error;
+            }
+
+            const delayMs = STREAM_SUBMIT_RETRY_BASE_DELAY_MS * attempt;
+            toast(
+              `网络波动，${Math.round(delayMs / 1000)} 秒后自动重试（第 ${attempt + 1}/${STREAM_SUBMIT_MAX_ATTEMPTS} 次）`,
+            );
+            await waitMs(delayMs);
+          }
+        }
+
         void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
       } catch (error) {
         setOptimisticMessages([]);

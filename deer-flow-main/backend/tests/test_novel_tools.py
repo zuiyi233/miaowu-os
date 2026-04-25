@@ -63,9 +63,25 @@ def test_create_novel_not_blocked_for_different_user(monkeypatch):
     fake_middleware = _FakeIntentMiddleware(active_pairs={("user-1", "user-1:thread_id:thread-1")})
     _install_fake_ai_provider(monkeypatch, fake_middleware)
 
-    async def _fake_post_json(url: str, payload: dict):
-        assert url.endswith("/projects")
-        return {"id": "proj-1", "title": payload["title"], "genre": payload["genre"]}
+    async def _disable_internal_project(*args, **kwargs):
+        raise RuntimeError("force http fallback in test")
+
+    async def _disable_internal_legacy(*args, **kwargs):
+        raise RuntimeError("force http fallback in test")
+
+    monkeypatch.setattr(novel_tools, "_create_project_via_internal", _disable_internal_project)
+    monkeypatch.setattr(novel_tools, "_create_legacy_via_internal", _disable_internal_legacy)
+
+    async def _fake_post_json(url: str, payload: dict, **kwargs):
+        if url.endswith("/projects"):
+            return {"id": "proj-1", "title": payload["title"], "genre": payload["genre"]}
+        if url.endswith("/api/novels"):
+            return {
+                "id": payload.get("id") or "proj-1",
+                "title": payload["title"],
+                "metadata": payload.get("metadata", {}),
+            }
+        raise AssertionError(f"unexpected url: {url}")
 
     monkeypatch.setattr(novel_tools, "post_json", _fake_post_json)
 
@@ -81,6 +97,9 @@ def test_create_novel_not_blocked_for_different_user(monkeypatch):
     assert result["success"] is True
     assert result["source"] == "novel_migrated.projects"
     assert result["id"] == "proj-1"
+    assert result.get("legacy_sync", {}).get("status") in {"completed", "queued"}
+    assert "progress" in result
+    assert "stages" in result["progress"]
     assert fake_middleware.check_calls == [("user-2", "user-2:thread_id:thread-1")]
 
 
@@ -88,7 +107,22 @@ def test_create_novel_fail_open_when_missing_user_context(monkeypatch, caplog):
     fake_middleware = _FakeIntentMiddleware(active_pairs={("user-1", "user-1:thread_id:thread-1")})
     _install_fake_ai_provider(monkeypatch, fake_middleware)
 
-    async def _fake_post_json(url: str, payload: dict):
+    async def _disable_internal_project(*args, **kwargs):
+        raise RuntimeError("force http fallback in test")
+
+    async def _disable_internal_legacy(*args, **kwargs):
+        raise RuntimeError("force http fallback in test")
+
+    monkeypatch.setattr(novel_tools, "_create_project_via_internal", _disable_internal_project)
+    monkeypatch.setattr(novel_tools, "_create_legacy_via_internal", _disable_internal_legacy)
+
+    async def _fake_post_json(url: str, payload: dict, **kwargs):
+        if url.endswith("/api/novels"):
+            return {
+                "id": payload.get("id") or "proj-2",
+                "title": payload["title"],
+                "metadata": payload.get("metadata", {}),
+            }
         return {"id": "proj-2", "title": payload["title"], "genre": payload["genre"]}
 
     monkeypatch.setattr(novel_tools, "post_json", _fake_post_json)
@@ -106,6 +140,7 @@ def test_create_novel_fail_open_when_missing_user_context(monkeypatch, caplog):
     assert result["success"] is True
     assert result["source"] == "novel_migrated.projects"
     assert fake_middleware.check_calls == []
+    assert "progress" in result
     assert any("missing user/session context" in record.getMessage() for record in caplog.records)
 
 
@@ -113,7 +148,16 @@ def test_create_novel_resolves_context_from_helper_key_set(monkeypatch):
     fake_middleware = _FakeIntentMiddleware(active_pairs=set())
     _install_fake_ai_provider(monkeypatch, fake_middleware)
 
-    async def _fake_post_json(url: str, payload: dict):
+    async def _disable_internal_project(*args, **kwargs):
+        raise RuntimeError("force http fallback in test")
+
+    async def _disable_internal_legacy(*args, **kwargs):
+        raise RuntimeError("force http fallback in test")
+
+    monkeypatch.setattr(novel_tools, "_create_project_via_internal", _disable_internal_project)
+    monkeypatch.setattr(novel_tools, "_create_legacy_via_internal", _disable_internal_legacy)
+
+    async def _fake_post_json(url: str, payload: dict, **kwargs):
         if url.endswith("/projects"):
             return {"id": "proj-3", "title": payload["title"], "genre": payload["genre"]}
         if url.endswith("/api/novels"):
@@ -132,4 +176,103 @@ def test_create_novel_resolves_context_from_helper_key_set(monkeypatch):
     )
 
     assert result["success"] is True
+    assert "progress" in result
     assert fake_middleware.check_calls == [("user-3", "user-3:thread_id:thread-9")]
+
+
+def test_create_novel_prefers_internal_direct_path(monkeypatch):
+    fake_middleware = _FakeIntentMiddleware(active_pairs=set())
+    _install_fake_ai_provider(monkeypatch, fake_middleware)
+
+    async def _fake_internal_project(*args, **kwargs):
+        return {"id": "proj-internal-1", "title": "内部直连", "genre": "科幻"}
+
+    async def _fake_internal_legacy(payload: dict):
+        return {
+            "id": payload.get("id") or "proj-internal-1",
+            "title": payload.get("title", ""),
+            "metadata": payload.get("metadata", {}),
+        }
+
+    async def _should_not_call_post_json(*args, **kwargs):
+        raise AssertionError("post_json should not be called when internal path is available")
+
+    monkeypatch.setattr(novel_tools, "_create_project_via_internal", _fake_internal_project)
+    monkeypatch.setattr(novel_tools, "_create_legacy_via_internal", _fake_internal_legacy)
+    monkeypatch.setattr(novel_tools, "post_json", _should_not_call_post_json)
+
+    result = asyncio.run(
+        novel_tools.create_novel.coroutine(
+            title="内部直连优先",
+            genre="科幻",
+            description="",
+            config={"configurable": {"user_id": "user-9", "thread_id": "thread-9"}},
+        )
+    )
+
+    assert result["success"] is True
+    assert result["source"] == "novel_migrated.projects"
+    assert result.get("source_detail") == "internal"
+    assert result["id"] == "proj-internal-1"
+    assert result.get("legacy_sync", {}).get("status") == "completed"
+
+
+def test_create_novel_retries_modern_http_path(monkeypatch):
+    fake_middleware = _FakeIntentMiddleware(active_pairs=set())
+    _install_fake_ai_provider(monkeypatch, fake_middleware)
+
+    async def _disable_internal_project(*args, **kwargs):
+        raise RuntimeError("force modern internal failure")
+
+    async def _fake_internal_legacy(payload: dict):
+        return {
+            "id": payload.get("id") or "proj-retry-1",
+            "title": payload.get("title", ""),
+            "metadata": payload.get("metadata", {}),
+        }
+
+    modern_http_attempts = 0
+    allow_route_fallback_flags: list[bool] = []
+
+    async def _flaky_post_json(url: str, payload: dict, **kwargs):
+        nonlocal modern_http_attempts
+        allow_route_fallback_flags.append(bool(kwargs.get("allow_route_fallback")))
+
+        if url.endswith("/projects"):
+            modern_http_attempts += 1
+            if modern_http_attempts == 1:
+                raise RuntimeError("temporary modern http failure")
+            return {
+                "id": "proj-retry-1",
+                "title": payload["title"],
+                "genre": payload["genre"],
+            }
+
+        if url.endswith("/api/novels"):
+            return {
+                "id": payload.get("id") or "proj-retry-1",
+                "title": payload["title"],
+                "metadata": payload.get("metadata", {}),
+            }
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(novel_tools, "_create_project_via_internal", _disable_internal_project)
+    monkeypatch.setattr(novel_tools, "_create_legacy_via_internal", _fake_internal_legacy)
+    monkeypatch.setattr(novel_tools, "post_json", _flaky_post_json)
+    monkeypatch.setenv("DEERFLOW_CREATE_NOVEL_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("DEERFLOW_CREATE_NOVEL_RETRY_BACKOFF_MS", "0")
+
+    result = asyncio.run(
+        novel_tools.create_novel.coroutine(
+            title="重试项目",
+            genre="科幻",
+            description="",
+            config={"configurable": {"user_id": "user-10", "thread_id": "thread-10"}},
+        )
+    )
+
+    assert result["success"] is True
+    assert result["source"] == "novel_migrated.projects"
+    assert result["id"] == "proj-retry-1"
+    assert modern_http_attempts == 2
+    assert all(allow_route_fallback_flags)

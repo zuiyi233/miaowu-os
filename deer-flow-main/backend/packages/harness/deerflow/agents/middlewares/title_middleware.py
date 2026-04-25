@@ -1,5 +1,6 @@
 """Middleware for automatic thread title generation."""
 
+import asyncio
 import logging
 import re
 from typing import NotRequired, override
@@ -24,6 +25,8 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
     """Automatically generate a title for the thread after the first user message."""
 
     state_schema = TitleMiddlewareState
+    # Title generation is best-effort only; never block the whole run for too long.
+    title_generation_timeout_sec: float = 8.0
 
     def _normalize_content(self, content: object) -> str:
         if isinstance(content, str):
@@ -127,10 +130,19 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
                 model = create_chat_model(name=config.model_name, thinking_enabled=False)
             else:
                 model = create_chat_model(thinking_enabled=False)
-            response = await model.ainvoke(prompt)
+            timeout = self.title_generation_timeout_sec
+            if timeout > 0:
+                response = await asyncio.wait_for(model.ainvoke(prompt), timeout=timeout)
+            else:
+                response = await model.ainvoke(prompt)
             title = self._parse_title(response.content)
             if title:
                 return {"title": title}
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Title generation timed out after %.1fs; falling back to local title.",
+                self.title_generation_timeout_sec,
+            )
         except Exception:
             logger.debug("Failed to generate async title; falling back to local title", exc_info=True)
         return {"title": self._fallback_title(user_msg)}

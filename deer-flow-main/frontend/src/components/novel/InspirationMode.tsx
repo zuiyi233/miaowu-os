@@ -1,14 +1,12 @@
 'use client';
 
-import { Send, ArrowLeft, RefreshCcw, Sparkles, Loader2, RotateCcw, MessageSquare } from 'lucide-react';
+import { Send, ArrowLeft, RefreshCcw, Sparkles, Loader2, RotateCcw } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { toast } from 'sonner';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { useAiProviderStore } from '@/core/ai/ai-provider-store';
@@ -37,6 +35,10 @@ const BACKEND_GENERATION_STEPS: BackendGenerationStep[] = ['title', 'description
 const PERSPECTIVE_OPTIONS = ['第一人称', '第三人称', '全知视角'];
 const OUTLINE_MODE_OPTIONS = ['一对一', '一对多'];
 const INSPIRATION_MODULE_ID = 'novel-inspiration-wizard';
+const INSPIRATION_CACHE_KEY = 'inspiration_conversation_cache';
+const INSPIRATION_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const INSPIRATION_MAX_RETRY_ATTEMPTS = 10;
+const INSPIRATION_RETRY_BASE_DELAY_MS = 3000;
 
 function getInspirationModelConfig(): AiModelRoutingPayload {
   const store = useAiProviderStore.getState();
@@ -83,23 +85,62 @@ export function InspirationMode() {
 
   useEffect(() => {
     try {
-      const cached = localStorage.getItem('inspiration_conversation_cache');
+      const cached = localStorage.getItem(INSPIRATION_CACHE_KEY);
       if (cached) {
-        const data = JSON.parse(cached);
-        if (Date.now() - data.timestamp < 24 * 60 * 60 * 1000) {
+        const data = JSON.parse(cached) as {
+          messages?: Message[];
+          currentStep?: Step;
+          wizardData?: InspirationWizardData;
+          selectedOptions?: string[];
+          timestamp?: number;
+        };
+        const cacheTimestamp =
+          typeof data.timestamp === 'number' ? data.timestamp : 0;
+        if (Date.now() - cacheTimestamp < INSPIRATION_CACHE_TTL_MS) {
           setMessages(data.messages || []);
           setCurrentStep(data.currentStep || 'idea');
-          setWizardData(data.wizardData || wizardData);
+          setWizardData(
+            data.wizardData || {
+              title: '',
+              description: '',
+              theme: '',
+              genre: [],
+              narrativePerspective: '',
+              outlineMode: 'one-to-one',
+            },
+          );
+          if (Array.isArray(data.selectedOptions) && data.selectedOptions.length) {
+            setSelectedOptions(new Set(data.selectedOptions));
+          }
         }
       }
     } catch {}
   }, []);
 
-  const saveCache = useCallback((msgs: Message[], step: Step, data: InspirationWizardData) => {
-    localStorage.setItem('inspiration_conversation_cache', JSON.stringify({
-      messages: msgs, currentStep: step, wizardData: data, timestamp: Date.now(),
-    }));
-  }, []);
+  useEffect(() => {
+    if (isGenerating) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      try {
+        localStorage.setItem(
+          INSPIRATION_CACHE_KEY,
+          JSON.stringify({
+            messages,
+            currentStep,
+            wizardData,
+            selectedOptions: Array.from(selectedOptions),
+            timestamp: Date.now(),
+          }),
+        );
+      } catch {
+        // ignore cache persistence failures
+      }
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [messages, currentStep, wizardData, selectedOptions, isGenerating]);
 
   const getInitialIdea = useCallback(() => {
     const firstUserMessage = messages.find((message) => message.type === 'user');
@@ -118,29 +159,61 @@ export function InspirationMode() {
     };
   }, [getInitialIdea, wizardData.description, wizardData.theme, wizardData.title]);
 
+  const runInspirationRequestWithRetry = useCallback(async (
+    requestFn: () => Promise<InspirationOption>,
+    label: string,
+  ): Promise<InspirationOption> => {
+    let lastError = '';
+    for (
+      let attempt = 1;
+      attempt <= INSPIRATION_MAX_RETRY_ATTEMPTS;
+      attempt += 1
+    ) {
+      try {
+        const response = await requestFn();
+        if (!response.error) {
+          return response;
+        }
+        lastError = response.error;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+
+      if (attempt < INSPIRATION_MAX_RETRY_ATTEMPTS) {
+        const delayMs = INSPIRATION_RETRY_BASE_DELAY_MS * attempt;
+        toast(
+          `${label}失败，${Math.round(delayMs / 1000)} 秒后自动重试（第 ${attempt + 1}/${INSPIRATION_MAX_RETRY_ATTEMPTS} 次）`,
+        );
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, delayMs);
+        });
+      }
+    }
+
+    return {
+      prompt: '',
+      options: [],
+      error: lastError || `${label}失败`,
+    };
+  }, []);
+
   const generateOptions = useCallback(async (
     step: BackendGenerationStep,
     contextOverrides: Partial<{ initial_idea: string; title: string; description: string; theme: string }> = {},
   ): Promise<string[]> => {
-    const res = await novelApiService.generateInspirationOptions(
-      step,
-      buildInspirationContext(contextOverrides),
-      getInspirationModelConfig(),
+    const res = await runInspirationRequestWithRetry(
+      () => novelApiService.generateInspirationOptions(
+        step,
+        buildInspirationContext(contextOverrides),
+        getInspirationModelConfig(),
+      ),
+      `生成${step}候选`,
     );
     if (res.error) {
       toast.error(`AI生成失败: ${res.error}`);
     }
     return res.options;
-  }, [buildInspirationContext]);
-
-  const addAIMessage = useCallback((content: string, step?: Step, options?: string[], isMultiSelect?: boolean, canRefine?: boolean) => {
-    const msg: Message = { type: 'ai' as const, content, options, isMultiSelect, canRefine, step };
-    setMessages((prev) => {
-      const newMsgs = [...prev, msg];
-      saveCache(newMsgs, currentStep, wizardData);
-      return newMsgs;
-    });
-  }, [currentStep, wizardData, saveCache]);
+  }, [buildInspirationContext, runInspirationRequestWithRetry]);
 
   const addUserMessage = useCallback((content: string) => {
     setMessages((prev) => [...prev, { type: 'user', content }]);
@@ -299,7 +372,7 @@ export function InspirationMode() {
   const handleConfirmCreate = () => {
     setIsGenerating(true);
     setMessages((prev) => [...prev, { type: 'ai', content: `✅ 配置已确认！正在启动AI项目生成流程...\n\n《${wizardData.title}》即将诞生，请稍候。` }]);
-    localStorage.removeItem('inspiration_conversation_cache');
+    localStorage.removeItem(INSPIRATION_CACHE_KEY);
   };
 
   const buildGenerationConfig = (): GenerationConfig | null => {
@@ -326,7 +399,7 @@ export function InspirationMode() {
     setShowRefine(false);
     setRefineText('');
     setIsGenerating(false);
-    localStorage.removeItem('inspiration_conversation_cache');
+    localStorage.removeItem(INSPIRATION_CACHE_KEY);
   };
 
   const handleRefine = async () => {
@@ -341,12 +414,15 @@ export function InspirationMode() {
     setShowRefine(false);
     try {
       const prevOptions = messages.slice(-4).flatMap(m => m.options ?? []);
-      const res = await novelApiService.refineInspirationOptions(
-        refineStep,
-        buildInspirationContext(),
-        refineText,
-        prevOptions,
-        getInspirationModelConfig(),
+      const res = await runInspirationRequestWithRetry(
+        () => novelApiService.refineInspirationOptions(
+          refineStep,
+          buildInspirationContext(),
+          refineText,
+          prevOptions,
+          getInspirationModelConfig(),
+        ),
+        `优化${refineStep}候选`,
       );
       if (res.error) {
         toast.error(`AI优化失败: ${res.error}`);
@@ -371,7 +447,7 @@ export function InspirationMode() {
         <AIProjectGenerator
           config={generationConfig}
           storagePrefix="inspiration"
-          onComplete={(projectId) => {
+          onComplete={(_projectId) => {
             toast.success(`🎉 项目《${wizardData.title}》生成完成！`);
           }}
           onBack={() => setIsGenerating(false)}

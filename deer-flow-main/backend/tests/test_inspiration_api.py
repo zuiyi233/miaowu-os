@@ -20,12 +20,16 @@ async def test_generate_options_uses_inspiration_service(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(inspiration_api, "_build_inspiration_service", lambda **_: fake_service)
     monkeypatch.setattr(inspiration_api, "get_user_id", lambda request: "u-1")
+    monkeypatch.setattr(
+        inspiration_api,
+        "get_user_ai_service_with_overrides",
+        AsyncMock(return_value=object()),
+    )
 
     result = await inspiration_api.generate_options(
         {"step": "theme", "context": {"title": "猫咪冒险"}},
         http_request=_fake_request(),
         db=object(),
-        ai_service=object(),
     )
 
     assert result["options"] == ["A", "B", "C"]
@@ -43,6 +47,11 @@ async def test_refine_options_normalizes_payload_before_service(monkeypatch: pyt
 
     monkeypatch.setattr(inspiration_api, "_build_inspiration_service", lambda **_: fake_service)
     monkeypatch.setattr(inspiration_api, "get_user_id", lambda request: "u-1")
+    monkeypatch.setattr(
+        inspiration_api,
+        "get_user_ai_service_with_overrides",
+        AsyncMock(return_value=object()),
+    )
 
     result = await inspiration_api.refine_options(
         {
@@ -53,7 +62,6 @@ async def test_refine_options_normalizes_payload_before_service(monkeypatch: pyt
         },
         http_request=_fake_request(),
         db=object(),
-        ai_service=object(),
     )
 
     assert result["options"] == ["A", "B", "C"]
@@ -88,6 +96,11 @@ async def test_quick_generate_uses_public_clean_json_wrapper(monkeypatch: pytest
         "get_template",
         AsyncMock(return_value="请结合已有信息：{existing}"),
     )
+    monkeypatch.setattr(
+        inspiration_api,
+        "get_user_ai_service_with_overrides",
+        AsyncMock(return_value=fake_ai),
+    )
 
     result = await inspiration_api.quick_generate(
         {
@@ -98,7 +111,6 @@ async def test_quick_generate_uses_public_clean_json_wrapper(monkeypatch: pytest
         },
         http_request=_fake_request(),
         db=object(),
-        ai_service=fake_ai,
     )
 
     assert result["title"] == "猫城日志"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+import pytest
 
 from deerflow.tools.builtins import novel_tool_helpers
 
@@ -59,6 +60,24 @@ def test_post_json_route_prefix_fallback_on_404(monkeypatch):
     assert [url for _, url in _FakeAsyncClient.calls] == [
         "http://127.0.0.1:8551/projects/world-build",
         "http://127.0.0.1:8551/api/projects/world-build",
+    ]
+
+
+def test_post_json_can_disable_route_prefix_fallback(monkeypatch):
+    _FakeAsyncClient.calls = []
+    monkeypatch.setattr(novel_tool_helpers.httpx, "AsyncClient", _FakeAsyncClient)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(
+            novel_tool_helpers.post_json(
+                "http://127.0.0.1:8551/projects/world-build",
+                {"project_id": "p-1"},
+                allow_route_fallback=False,
+            )
+        )
+
+    assert [url for _, url in _FakeAsyncClient.calls] == [
+        "http://127.0.0.1:8551/projects/world-build",
     ]
 
 

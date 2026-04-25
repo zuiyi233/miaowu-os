@@ -114,9 +114,12 @@ async def _request_json(
     *,
     payload: dict[str, Any] | None = None,
     params: dict[str, Any] | None = None,
+    timeout_seconds: float | None = None,
+    allow_route_fallback: bool = True,
 ) -> dict[str, Any]:
-    timeout = httpx.Timeout(get_timeout_seconds())
-    fallback_url = _build_route_fallback_url(url)
+    effective_timeout = get_timeout_seconds() if timeout_seconds is None else max(1.0, float(timeout_seconds))
+    timeout = httpx.Timeout(effective_timeout)
+    fallback_url = _build_route_fallback_url(url) if allow_route_fallback else None
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.request(
@@ -142,16 +145,52 @@ async def _request_json(
         return {"raw": data}
 
 
-async def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    return await _request_json("POST", url, payload=payload)
+async def post_json(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    timeout_seconds: float | None = None,
+    allow_route_fallback: bool = True,
+) -> dict[str, Any]:
+    return await _request_json(
+        "POST",
+        url,
+        payload=payload,
+        timeout_seconds=timeout_seconds,
+        allow_route_fallback=allow_route_fallback,
+    )
 
 
-async def get_json(url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    return await _request_json("GET", url, params=params)
+async def get_json(
+    url: str,
+    params: dict[str, Any] | None = None,
+    *,
+    timeout_seconds: float | None = None,
+    allow_route_fallback: bool = True,
+) -> dict[str, Any]:
+    return await _request_json(
+        "GET",
+        url,
+        params=params,
+        timeout_seconds=timeout_seconds,
+        allow_route_fallback=allow_route_fallback,
+    )
 
 
-async def put_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    return await _request_json("PUT", url, payload=payload)
+async def put_json(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    timeout_seconds: float | None = None,
+    allow_route_fallback: bool = True,
+) -> dict[str, Any]:
+    return await _request_json(
+        "PUT",
+        url,
+        payload=payload,
+        timeout_seconds=timeout_seconds,
+        allow_route_fallback=allow_route_fallback,
+    )
 
 
 def _ok(data: dict[str, Any], **extra: Any) -> dict[str, Any]:

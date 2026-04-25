@@ -228,3 +228,26 @@ class TestTitleMiddlewareCoreLogic:
         assert result is not None
         assert "<think>" not in result["title"]
         assert result["title"] == "贵阳发展研究"
+
+    def test_generate_title_timeout_falls_back_to_local_title(self, monkeypatch):
+        """Timeouts in async title generation should not keep the whole run loading."""
+        _set_test_title_config(max_chars=20)
+        middleware = TitleMiddleware()
+        middleware.title_generation_timeout_sec = 0.01
+        model = MagicMock()
+
+        async def _slow_title(_prompt):
+            await asyncio.sleep(0.2)
+            return AIMessage(content="不会被使用")
+
+        model.ainvoke = AsyncMock(side_effect=_slow_title)
+        monkeypatch.setattr(title_middleware_module, "create_chat_model", MagicMock(return_value=model))
+
+        state = {
+            "messages": [
+                HumanMessage(content="请帮我写测试"),
+                AIMessage(content="好的"),
+            ]
+        }
+        result = asyncio.run(middleware._agenerate_title_result(state))
+        assert result == {"title": "请帮我写测试"}

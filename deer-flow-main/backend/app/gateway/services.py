@@ -309,7 +309,7 @@ async def start_run(
         configurable = config.setdefault("configurable", {})
         for key in _CONTEXT_CONFIGURABLE_KEYS:
             if key in context:
-                configurable.setdefault(key, context[key])
+                configurable[key] = context[key]
 
     stream_modes = normalize_stream_modes(body.stream_mode)
 

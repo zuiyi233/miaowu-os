@@ -42,7 +42,7 @@ def _build_inspiration_service(*, ai_service: AIService, user_id: str, db: Async
         ai_service=ai_service,
         user_id=user_id,
         db_session=db,
-        max_retries=3,
+        max_retries=10,
     )
 
 

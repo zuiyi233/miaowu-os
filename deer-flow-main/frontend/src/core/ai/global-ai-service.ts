@@ -169,6 +169,10 @@ const ERROR_CATALOG: Record<ErrorCode, AiErrorInfo> = {
   },
 };
 
+const MIN_TOTAL_CHAT_ATTEMPTS = 10;
+const CHAT_RETRY_BASE_DELAY_MS = 3000;
+const STREAM_CHUNK_TIMEOUT_CEILING_MS = 90_000;
+
 function mergeAbortSignals(
   signals: ReadonlyArray<AbortSignal | null | undefined>
 ): AbortSignal | undefined {
@@ -272,8 +276,11 @@ async function fetchWithRetry(
   retryDelayMs: number
 ): Promise<Response> {
   let lastError: Error | null = null;
+  // 产品约束：网络波动场景统一执行“最多10次尝试（首3秒线性递增）”。
+  // 这里固定重试预算，避免被历史配置(max_retries=2)覆盖成3次快速重试。
+  const effectiveRetries = MIN_TOTAL_CHAT_ATTEMPTS - 1;
 
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  for (let attempt = 0; attempt <= effectiveRetries; attempt++) {
     try {
       const response = await fetchWithTimeout(url, options, timeoutMs);
       if (response.ok) return response;
@@ -295,10 +302,11 @@ async function fetchWithRetry(
         throw error;
       }
 
-      if (attempt < retries) {
-        const backoffDelay = retryDelayMs * Math.pow(2, attempt);
+      if (attempt < effectiveRetries) {
+        const retryIndex = attempt + 1;
+        const backoffDelay = retryDelayMs * retryIndex;
         console.warn(
-          `AI请求失败 (尝试 ${attempt + 1}/${retries + 1}): ${lastError.message}. ${backoffDelay}ms后重试...`
+          `AI请求失败 (尝试 ${attempt + 1}/${effectiveRetries + 1}): ${lastError.message}. ${backoffDelay}ms后重试...`
         );
         await new Promise((resolve) =>
           setTimeout(resolve, backoffDelay)
@@ -521,32 +529,230 @@ export function resolveNonStreamContent(data: Record<string, unknown>): string {
   return directContent ?? messageContent ?? "";
 }
 
-function _extractStructuredResponse(data: Record<string, unknown>): AiStructuredResponse {
-  const contentValue = data.content;
-  const result: AiStructuredResponse = {
-    content: typeof contentValue === "string" ? contentValue : "",
+function parseDomainToolArgs(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return {};
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return { raw: trimmed };
+    }
+  }
+
+  return {};
+}
+
+function parseToolCallCollection(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) {
+    return raw;
+  }
+
+  if (raw && typeof raw === "object") {
+    return [raw];
+  }
+
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      return parseToolCallCollection(parsed);
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+}
+
+function pushToolCallsFromAdditionalKwargs(
+  owner: Record<string, unknown> | null | undefined,
+  pushToolCalls: (candidate: unknown) => void
+): void {
+  if (!owner) {
+    return;
+  }
+  const additionalKwargs =
+    owner.additional_kwargs &&
+    typeof owner.additional_kwargs === "object" &&
+    !Array.isArray(owner.additional_kwargs)
+      ? (owner.additional_kwargs as Record<string, unknown>)
+      : null;
+  if (!additionalKwargs) {
+    return;
+  }
+
+  pushToolCalls(additionalKwargs.tool_calls);
+  pushToolCalls(additionalKwargs.raw_tool_calls);
+  pushToolCalls(additionalKwargs.openai_tool_calls);
+  pushToolCalls(additionalKwargs.function_calls);
+}
+
+function normalizeDomainToolCall(value: unknown): DomainToolCall | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const id = typeof record.id === "string" ? record.id : "";
+  let name = "";
+  let argsSource: unknown = record.args;
+
+  if (typeof record.name === "string" && record.name.trim()) {
+    name = record.name.trim();
+  }
+
+  if (!name) {
+    const fn = record.function;
+    if (fn && typeof fn === "object" && !Array.isArray(fn)) {
+      const fnRecord = fn as Record<string, unknown>;
+      if (typeof fnRecord.name === "string" && fnRecord.name.trim()) {
+        name = fnRecord.name.trim();
+        argsSource = fnRecord.arguments;
+      }
+    }
+  }
+
+  if (!name && typeof record.tool_name === "string" && record.tool_name.trim()) {
+    name = record.tool_name.trim();
+  }
+
+  if (argsSource === undefined && "arguments" in record) {
+    argsSource = record.arguments;
+  }
+  if (argsSource === undefined && "input" in record) {
+    argsSource = record.input;
+  }
+
+  if (!name) {
+    return null;
+  }
+
+  return {
+    name,
+    args: parseDomainToolArgs(argsSource),
+    id,
+  };
+}
+
+function extractStructuredToolCalls(data: Record<string, unknown>): DomainToolCall[] {
+  const candidates: unknown[] = [];
+  const pushToolCalls = (candidate: unknown) => {
+    candidates.push(...parseToolCallCollection(candidate));
   };
 
-  if (Array.isArray(data.tool_calls) && data.tool_calls.length > 0) {
-    result.tool_calls = data.tool_calls
-      .filter(
-        (tc): tc is Record<string, unknown> =>
-          typeof tc === "object" && tc !== null
-      )
-      .map((tc) => {
-        const toolName = tc.name;
-        const toolId = tc.id;
-        const toolArgs = tc.args;
+  pushToolCalls(data.tool_calls);
+  pushToolCalls(data.raw_tool_calls);
+  pushToolCalls(data.function_calls);
+  pushToolCallsFromAdditionalKwargs(data, pushToolCalls);
 
-        return {
-          name: typeof toolName === "string" ? toolName : "",
-          args:
-            toolArgs && typeof toolArgs === "object" && !Array.isArray(toolArgs)
-              ? (toolArgs as Record<string, unknown>)
-              : {},
-          id: typeof toolId === "string" ? toolId : "",
-        };
-      });
+  const messageRecord =
+    data.message && typeof data.message === "object"
+      ? (data.message as Record<string, unknown>)
+      : null;
+  if (messageRecord) {
+    pushToolCalls(messageRecord.tool_calls);
+    pushToolCalls(messageRecord.raw_tool_calls);
+    pushToolCalls(messageRecord.function_calls);
+    pushToolCallsFromAdditionalKwargs(messageRecord, pushToolCalls);
+  }
+
+  const deltaRecord =
+    data.delta && typeof data.delta === "object"
+      ? (data.delta as Record<string, unknown>)
+      : null;
+  if (deltaRecord) {
+    pushToolCalls(deltaRecord.tool_calls);
+    pushToolCalls(deltaRecord.raw_tool_calls);
+    pushToolCalls(deltaRecord.function_calls);
+    pushToolCallsFromAdditionalKwargs(deltaRecord, pushToolCalls);
+  }
+
+  const firstChoice = Array.isArray(data.choices) ? data.choices[0] : null;
+  if (firstChoice && typeof firstChoice === "object") {
+    const firstChoiceRecord = firstChoice as Record<string, unknown>;
+    pushToolCalls(firstChoiceRecord.tool_calls);
+    pushToolCalls(firstChoiceRecord.raw_tool_calls);
+    pushToolCalls(firstChoiceRecord.function_calls);
+    pushToolCallsFromAdditionalKwargs(firstChoiceRecord, pushToolCalls);
+
+    const choiceMessage =
+      firstChoiceRecord.message && typeof firstChoiceRecord.message === "object"
+        ? (firstChoiceRecord.message as Record<string, unknown>)
+        : null;
+    if (choiceMessage) {
+      pushToolCalls(choiceMessage.tool_calls);
+      pushToolCalls(choiceMessage.raw_tool_calls);
+      pushToolCalls(choiceMessage.function_calls);
+      pushToolCallsFromAdditionalKwargs(choiceMessage, pushToolCalls);
+    }
+
+    const choiceDelta =
+      firstChoiceRecord.delta && typeof firstChoiceRecord.delta === "object"
+        ? (firstChoiceRecord.delta as Record<string, unknown>)
+        : null;
+    if (choiceDelta) {
+      pushToolCalls(choiceDelta.tool_calls);
+      pushToolCalls(choiceDelta.raw_tool_calls);
+      pushToolCalls(choiceDelta.function_calls);
+      pushToolCallsFromAdditionalKwargs(choiceDelta, pushToolCalls);
+    }
+  }
+
+  const normalized = candidates
+    .map((candidate) => normalizeDomainToolCall(candidate))
+    .filter((candidate): candidate is DomainToolCall => candidate !== null);
+  const deduped: DomainToolCall[] = [];
+  const dedupeSet = new Set<string>();
+  for (const call of normalized) {
+    const argsKey = (() => {
+      try {
+        return JSON.stringify(call.args);
+      } catch {
+        return "[unserializable_args]";
+      }
+    })();
+    const dedupeKey = `${call.id}|${call.name}|${argsKey}`;
+    if (dedupeSet.has(dedupeKey)) {
+      continue;
+    }
+    dedupeSet.add(dedupeKey);
+    deduped.push(call);
+  }
+
+  return deduped;
+}
+
+function _extractStructuredResponse(data: Record<string, unknown>): AiStructuredResponse {
+  const messageObj =
+    data.message && typeof data.message === "object"
+      ? (data.message as Record<string, unknown>)
+      : undefined;
+  const contentValue =
+    typeof data.content === "string"
+      ? data.content
+      : typeof messageObj?.content === "string"
+      ? messageObj.content
+      : "";
+  const result: AiStructuredResponse = {
+    content: contentValue,
+  };
+
+  const toolCalls = extractStructuredToolCalls(data);
+  if (toolCalls.length > 0) {
+    result.tool_calls = toolCalls;
   }
 
   if (data.novel && typeof data.novel === "object") {
@@ -721,7 +927,7 @@ export class GlobalAiService {
           },
           ctx.maxRetries,
           ctx.requestTimeout,
-          1000
+          CHAT_RETRY_BASE_DELAY_MS
         );
       };
 
@@ -786,10 +992,14 @@ export class GlobalAiService {
         return content;
       }
 
+      const streamChunkTimeoutMs = Math.max(
+        15_000,
+        Math.min(ctx.requestTimeout, STREAM_CHUNK_TIMEOUT_CEILING_MS)
+      );
       return await this.processStreamResponse(
         response,
         callbacks,
-        ctx.requestTimeout
+        streamChunkTimeoutMs
       );
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
@@ -857,9 +1067,16 @@ export class GlobalAiService {
           throw buildSseError(parsed);
         }
 
-        if (parsed.tool_calls || parsed.session || parsed.novel || parsed.context) {
-          lastStructured = _extractStructuredResponse(parsed);
-          callbacks?.onStructured?.(lastStructured);
+        const structuredCandidate = _extractStructuredResponse(parsed);
+        if (
+          (structuredCandidate.tool_calls &&
+            structuredCandidate.tool_calls.length > 0) ||
+          structuredCandidate.session ||
+          structuredCandidate.novel ||
+          structuredCandidate.context
+        ) {
+          lastStructured = structuredCandidate;
+          callbacks?.onStructured?.(structuredCandidate);
         }
 
         const deltaRecord =

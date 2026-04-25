@@ -27,6 +27,7 @@ import { useI18n } from "@/core/i18n/hooks";
 import {
   extractReasoningContentFromMessage,
   findToolCallResult,
+  getToolCalls,
 } from "@/core/messages/utils";
 import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
 import { extractTitleFromMarkdown } from "@/core/utils/markdown";
@@ -410,6 +411,107 @@ function ToolCall({
         icon={ListTodoIcon}
       ></ChainOfThoughtStep>
     );
+  } else if (name === "create_novel") {
+    const resultObject: Record<string, unknown> | null =
+      result && typeof result === "object" && !Array.isArray(result)
+        ? result
+        : null;
+    const progress: Record<string, unknown> | null =
+      resultObject &&
+      typeof resultObject.progress === "object" &&
+      resultObject.progress !== null &&
+      !Array.isArray(resultObject.progress)
+        ? (resultObject.progress as Record<string, unknown>)
+        : null;
+    const rawStageItems = Array.isArray(progress?.stages) ? progress.stages : [];
+    const stageItems = rawStageItems.filter(
+      (item): item is Record<string, unknown> =>
+        typeof item === "object" && item !== null && !Array.isArray(item),
+    );
+    const novelTitle =
+      typeof args.title === "string" && args.title.trim() ? args.title.trim() : "";
+    const success = resultObject?.success === true;
+    const hasFailure = resultObject?.success === false;
+    const stringResult = typeof result === "string" ? result.trim() : "";
+    const errorMessage =
+      typeof resultObject?.error === "string"
+        ? resultObject.error
+        : hasFailure && stringResult
+          ? stringResult
+          : "";
+
+    const stepStatus =
+      isLoading && isLast
+        ? "active"
+        : hasFailure
+          ? "active"
+          : "complete";
+
+    const description = isLoading && isLast
+      ? "进度：会话检查 → 创建项目 → 索引同步"
+      : success
+        ? "小说创建已完成"
+        : hasFailure
+          ? "小说创建失败"
+          : undefined;
+
+    const label = novelTitle
+      ? `创建小说：${novelTitle}`
+      : t.toolCalls.useTool(name);
+
+    return (
+      <ChainOfThoughtStep
+        key={id}
+        label={label}
+        icon={WrenchIcon}
+        status={stepStatus}
+        description={description}
+      >
+        {stageItems.length > 0 && (
+          <ChainOfThoughtSearchResults>
+            {stageItems.map((item, index) => {
+              const stage =
+                typeof item.stage === "string" && item.stage.trim()
+                  ? item.stage.trim()
+                  : "unknown";
+              const status =
+                typeof item.status === "string" && item.status.trim()
+                  ? item.status.trim()
+                  : "unknown";
+              const message =
+                typeof item.message === "string" && item.message.trim()
+                  ? item.message.trim()
+                  : `${stage} (${status})`;
+              const elapsedMs =
+                typeof item.elapsed_ms === "number"
+                  ? Math.round(item.elapsed_ms)
+                  : null;
+              return (
+                <ChainOfThoughtSearchResult
+                  key={`${stage}-${status}-${index}`}
+                  className={cn(
+                    status === "failed"
+                      ? "border-destructive/30 text-destructive"
+                      : status === "queued"
+                        ? "border-primary/30 text-primary"
+                        : undefined,
+                  )}
+                >
+                  {elapsedMs !== null ? `${message} · ${elapsedMs}ms` : message}
+                </ChainOfThoughtSearchResult>
+              );
+            })}
+          </ChainOfThoughtSearchResults>
+        )}
+        {errorMessage && (
+          <ChainOfThoughtSearchResults>
+            <ChainOfThoughtSearchResult className="border-destructive/30 text-destructive">
+              {errorMessage}
+            </ChainOfThoughtSearchResult>
+          </ChainOfThoughtSearchResults>
+        )}
+      </ChainOfThoughtStep>
+    );
   } else {
     const description: string | undefined = (args as { description: string })
       ?.description;
@@ -436,7 +538,7 @@ interface CoTReasoningStep extends GenericCoTStep<"reasoning"> {
 interface CoTToolCallStep extends GenericCoTStep<"toolCall"> {
   name: string;
   args: Record<string, unknown>;
-  result?: string;
+  result?: string | Record<string, unknown>;
 }
 
 type CoTStep = CoTReasoningStep | CoTToolCallStep;
@@ -455,7 +557,7 @@ function convertToSteps(messages: Message[]): CoTStep[] {
         };
         steps.push(step);
       }
-      for (const tool_call of message.tool_calls ?? []) {
+      for (const tool_call of getToolCalls(message)) {
         if (tool_call.name === "task") {
           continue;
         }

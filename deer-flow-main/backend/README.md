@@ -112,6 +112,24 @@ LLM-powered persistent context retention across conversations:
 | **MCP** | Any Model Context Protocol server (stdio, SSE, HTTP transports) |
 | **Skills** | Domain-specific workflows injected via system prompt |
 
+#### `create_novel` performance path (Miaowu fork)
+
+`create_novel` is optimized for lower latency and clearer runtime progress in streaming chats:
+
+- **P2 direct path first**: tries internal `novel_migrated` service calls before any HTTP loopback.
+- **P1 fast return + async dual-write**: when modern project creation succeeds, legacy sync can run in background (stream mode) to avoid blocking user-visible completion.
+- **P0 stage observability**: emits `custom` stream events (`type=create_novel_progress`) for key phases (session gate, validation, modern create, legacy sync, fallback).
+- **HTTP remains as fallback**: used only when internal modules are unavailable or raise runtime errors.
+
+Optional tuning env vars:
+
+- `DEERFLOW_CREATE_NOVEL_PRIMARY_TIMEOUT_SECONDS` (default `12`)
+- `DEERFLOW_CREATE_NOVEL_LEGACY_TIMEOUT_SECONDS` (default `4`)
+- `DEERFLOW_CREATE_NOVEL_ENABLE_ROUTE_FALLBACK` (default `true`)
+- `DEERFLOW_CREATE_NOVEL_DUAL_WRITE_ASYNC` (default `false`)
+- `DEERFLOW_CREATE_NOVEL_MAX_ATTEMPTS` (default `2`)
+- `DEERFLOW_CREATE_NOVEL_RETRY_BACKOFF_MS` (default `600`)
+
 ### Gateway API
 
 FastAPI application providing REST endpoints for frontend integration:

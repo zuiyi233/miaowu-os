@@ -6,6 +6,7 @@ response contracts compatible with existing inspiration endpoints.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -30,6 +31,25 @@ _TEMPERATURE_SETTINGS: dict[str, float] = {
     "theme": 0.55,
     "genre": 0.45,
 }
+
+_RETRY_BASE_DELAY_SECONDS = 3.0
+
+
+async def _sleep_before_retry(*, attempt: int, max_retries: int) -> None:
+    """Linear backoff for inspiration retries.
+
+    attempt is 0-based; first retry waits 3 seconds, second waits 6 seconds...
+    """
+    if attempt >= max_retries - 1:
+        return
+    delay_seconds = _RETRY_BASE_DELAY_SECONDS * float(attempt + 1)
+    logger.warning(
+        "灵感模式重试等待：第%s/%s次失败，%.1f秒后重试",
+        attempt + 1,
+        max_retries,
+        delay_seconds,
+    )
+    await asyncio.sleep(delay_seconds)
 
 
 def _handle_empty_content(content: str, attempt: int, max_retries: int, step: str) -> dict[str, Any] | None:
@@ -137,6 +157,10 @@ class InspirationService:
                 empty_result = _handle_empty_content(content, attempt, self.max_retries, step)
                 if empty_result is not None:
                     if empty_result.get("_retry"):
+                        await _sleep_before_retry(
+                            attempt=attempt,
+                            max_retries=self.max_retries,
+                        )
                         continue
                     return empty_result
 
@@ -145,6 +169,10 @@ class InspirationService:
                     logger.warning("第%s次生成格式校验失败: %s", attempt + 1, parsed_or_error["_validation_error"])
                     if attempt < self.max_retries - 1:
                         logger.info("准备重试...")
+                        await _sleep_before_retry(
+                            attempt=attempt,
+                            max_retries=self.max_retries,
+                        )
                         continue
                     return self._build_validation_fallback(step=step, message=str(parsed_or_error["_validation_error"]), max_retries=self.max_retries)
 
@@ -153,12 +181,20 @@ class InspirationService:
                 logger.error("第%s次JSON解析失败: %s", attempt + 1, exc)
                 if attempt < self.max_retries - 1:
                     logger.info("JSON解析失败，准备重试...")
+                    await _sleep_before_retry(
+                        attempt=attempt,
+                        max_retries=self.max_retries,
+                    )
                     continue
                 return self._build_json_fallback(step=step, max_retries=self.max_retries)
             except Exception as exc:  # noqa: BLE001
                 logger.error("第%s次生成失败: %s", attempt + 1, exc, exc_info=True)
                 if attempt < self.max_retries - 1:
                     logger.info("发生异常，准备重试...")
+                    await _sleep_before_retry(
+                        attempt=attempt,
+                        max_retries=self.max_retries,
+                    )
                     continue
                 return {"error": str(exc), "prompt": "生成失败，请重试", "options": ["重新生成", "我自己输入"]}
 
