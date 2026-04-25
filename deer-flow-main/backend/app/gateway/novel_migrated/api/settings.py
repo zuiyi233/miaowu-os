@@ -176,11 +176,202 @@ def _sync_ai_bundle_if_needed(settings: Settings, payload: dict[str, Any]) -> No
     if ai_payload:
         get_ai_settings_service().sync_preferences_from_settings_payload(settings, ai_payload)
 
-async def get_user_ai_service(
+
+def _as_non_empty_str(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def _extract_ai_provider_bundle(settings: Settings) -> dict[str, Any]:
+    preferences = _load_preferences(settings)
+    bundle = preferences.get("ai_provider_settings")
+    return bundle if isinstance(bundle, dict) else {}
+
+
+def _extract_target_from_routing_node(node: Any) -> tuple[str | None, str | None]:
+    if not isinstance(node, dict):
+        return None, None
+
+    provider_id = _as_non_empty_str(node.get("providerId") or node.get("provider_id"))
+    model_name = _as_non_empty_str(node.get("model") or node.get("model_name"))
+    return provider_id, model_name
+
+
+def _resolve_feature_routing_target(
+    bundle: dict[str, Any],
+    module_id: str | None,
+) -> tuple[str | None, str | None]:
+    feature_settings = bundle.get("feature_routing_settings")
+    if not isinstance(feature_settings, dict):
+        return None, None
+
+    target_provider_id: str | None = None
+    target_model: str | None = None
+
+    if module_id:
+        modules = feature_settings.get("modules")
+        if isinstance(modules, list):
+            matched_module = next(
+                (
+                    item
+                    for item in modules
+                    if isinstance(item, dict) and _as_non_empty_str(item.get("moduleId")) == module_id
+                ),
+                None,
+            )
+            if isinstance(matched_module, dict):
+                current_mode = _as_non_empty_str(matched_module.get("currentMode")) or "primary"
+                backup_provider_id, backup_model = _extract_target_from_routing_node(
+                    matched_module.get("backupTarget")
+                )
+                primary_provider_id, primary_model = _extract_target_from_routing_node(
+                    matched_module.get("primaryTarget")
+                )
+                default_provider_id, default_model = _extract_target_from_routing_node(
+                    matched_module.get("defaultTarget")
+                )
+
+                if current_mode == "backup" and backup_provider_id and backup_model:
+                    target_provider_id, target_model = backup_provider_id, backup_model
+                elif primary_provider_id and primary_model:
+                    target_provider_id, target_model = primary_provider_id, primary_model
+                elif default_provider_id and default_model:
+                    target_provider_id, target_model = default_provider_id, default_model
+
+    if target_provider_id and target_model:
+        return target_provider_id, target_model
+
+    return _extract_target_from_routing_node(feature_settings.get("defaultTarget"))
+
+
+def _find_provider_record(bundle: dict[str, Any], provider_id: str | None) -> dict[str, Any] | None:
+    if not provider_id:
+        return None
+
+    providers = bundle.get("providers")
+    if not isinstance(providers, list):
+        return None
+
+    for provider in providers:
+        if not isinstance(provider, dict):
+            continue
+        if _as_non_empty_str(provider.get("id")) == provider_id:
+            return provider
+
+    return None
+
+
+def _provider_models(provider_record: dict[str, Any]) -> list[str]:
+    models = provider_record.get("models")
+    if not isinstance(models, list):
+        return []
+
+    parsed: list[str] = []
+    for model_name in models:
+        if not isinstance(model_name, str):
+            continue
+        trimmed = model_name.strip()
+        if trimmed:
+            parsed.append(trimmed)
+    return parsed
+
+
+def _resolve_user_ai_runtime_config(
+    settings: Settings,
+    *,
+    ai_provider_id: str | None = None,
+    ai_model: str | None = None,
+    module_id: str | None = None,
+) -> tuple[dict[str, Any], str]:
+    runtime = {
+        "api_provider": _as_non_empty_str(settings.api_provider) or "openai",
+        "api_key": safe_decrypt(settings.api_key) or "",
+        "api_base_url": settings.api_base_url or "",
+        "model_name": _as_non_empty_str(settings.llm_model) or "gpt-4",
+        "temperature": float(settings.temperature) if settings.temperature is not None else 0.7,
+        "max_tokens": int(settings.max_tokens) if settings.max_tokens is not None else 2000,
+    }
+    source = "settings-default"
+
+    bundle = _extract_ai_provider_bundle(settings)
+
+    explicit_provider_id = _as_non_empty_str(ai_provider_id)
+    explicit_model_name = _as_non_empty_str(ai_model)
+    normalized_module_id = _as_non_empty_str(module_id)
+
+    routed_provider_id, routed_model = _resolve_feature_routing_target(bundle, normalized_module_id)
+
+    target_provider_id = explicit_provider_id or routed_provider_id
+    provider_record = _find_provider_record(bundle, target_provider_id)
+
+    if provider_record is None and target_provider_id:
+        logger.warning(
+            "未找到 provider_id=%s（module=%s），回退 Settings 顶层配置",
+            target_provider_id,
+            normalized_module_id,
+        )
+
+    if provider_record is not None:
+        runtime["api_provider"] = _as_non_empty_str(provider_record.get("provider")) or runtime["api_provider"]
+        runtime["api_base_url"] = _as_non_empty_str(provider_record.get("base_url")) or ""
+
+        encrypted_key = _as_non_empty_str(provider_record.get("api_key_encrypted"))
+        if encrypted_key is not None:
+            runtime["api_key"] = safe_decrypt(encrypted_key) or ""
+
+        provider_temperature = provider_record.get("temperature")
+        if provider_temperature is not None:
+            try:
+                runtime["temperature"] = float(provider_temperature)
+            except Exception:
+                pass
+
+        provider_max_tokens = provider_record.get("max_tokens")
+        if provider_max_tokens is not None:
+            try:
+                runtime["max_tokens"] = int(provider_max_tokens)
+            except Exception:
+                pass
+
+        provider_models = _provider_models(provider_record)
+
+        if explicit_model_name:
+            runtime["model_name"] = explicit_model_name
+            source = "explicit-provider+explicit-model"
+        elif routed_model:
+            if not provider_models or routed_model in provider_models:
+                runtime["model_name"] = routed_model
+                source = f"feature-routing:{normalized_module_id or 'default'}"
+            elif provider_models:
+                runtime["model_name"] = provider_models[0]
+                source = f"feature-routing-fallback:{normalized_module_id or 'default'}"
+        elif provider_models:
+            runtime["model_name"] = provider_models[0]
+            source = "provider-default-model"
+
+        if explicit_provider_id and not explicit_model_name:
+            source = "explicit-provider"
+    else:
+        if explicit_model_name:
+            runtime["model_name"] = explicit_model_name
+            source = "explicit-model"
+        elif routed_model:
+            runtime["model_name"] = routed_model
+            source = f"feature-routing-model-only:{normalized_module_id or 'default'}"
+
+    return runtime, source
+
+
+async def get_user_ai_service_with_overrides(
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession,
+    *,
+    ai_provider_id: str | None = None,
+    ai_model: str | None = None,
+    module_id: str | None = None,
 ) -> AIService:
-    """Create user AI service from persisted settings."""
     user_id = get_user_id(request)
 
     result = await db.execute(select(Settings).where(Settings.user_id == user_id))
@@ -192,17 +383,44 @@ async def get_user_ai_service(
         await db.commit()
         await db.refresh(settings)
 
+    runtime, source = _resolve_user_ai_runtime_config(
+        settings,
+        ai_provider_id=ai_provider_id,
+        ai_model=ai_model,
+        module_id=module_id,
+    )
+
+    logger.info(
+        "Resolved AI runtime: user=%s module=%s source=%s provider=%s model=%s",
+        user_id,
+        module_id,
+        source,
+        runtime["api_provider"],
+        runtime["model_name"],
+    )
+
     return create_user_ai_service(
-        api_provider=settings.api_provider,
-        api_key=safe_decrypt(settings.api_key) or "",
-        api_base_url=settings.api_base_url or "",
-        model_name=settings.llm_model,
-        temperature=settings.temperature,
-        max_tokens=settings.max_tokens,
+        api_provider=runtime["api_provider"],
+        api_key=runtime["api_key"],
+        api_base_url=runtime["api_base_url"],
+        model_name=runtime["model_name"],
+        temperature=runtime["temperature"],
+        max_tokens=runtime["max_tokens"],
         system_prompt=settings.system_prompt,
         user_id=user_id,
         db_session=db,
         enable_mcp=True,
+    )
+
+
+async def get_user_ai_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> AIService:
+    """Create user AI service from persisted settings (without explicit overrides)."""
+    return await get_user_ai_service_with_overrides(
+        request,
+        db,
     )
 
 

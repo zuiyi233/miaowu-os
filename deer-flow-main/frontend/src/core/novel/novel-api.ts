@@ -23,6 +23,12 @@ type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 export type QueryValue = string | number | boolean | null | undefined;
 
+export interface AiModelRoutingPayload {
+  module_id?: string;
+  ai_provider_id?: string;
+  ai_model?: string;
+}
+
 interface RequestOptions {
   method?: HttpMethod;
   body?: unknown;
@@ -1432,10 +1438,14 @@ export class NovelApiService {
     });
   }
 
-  async generateInspirationOptions(step: string, context: Record<string, unknown>): Promise<InspirationOption> {
+  async generateInspirationOptions(
+    step: string,
+    context: Record<string, unknown>,
+    modelRouting?: AiModelRoutingPayload,
+  ): Promise<InspirationOption> {
     const raw = await request<unknown>('/inspiration/generate-options', {
       method: 'POST',
-      body: { step, context },
+      body: { step, context, ...(modelRouting ?? {}) },
     });
     if (!isRecord(raw)) return { prompt: '', options: [] };
     return {
@@ -1445,10 +1455,16 @@ export class NovelApiService {
     };
   }
 
-  async refineInspirationOptions(step: string, context: Record<string, unknown>, feedback: string, previousOptions: string[]): Promise<InspirationOption> {
+  async refineInspirationOptions(
+    step: string,
+    context: Record<string, unknown>,
+    feedback: string,
+    previousOptions: string[],
+    modelRouting?: AiModelRoutingPayload,
+  ): Promise<InspirationOption> {
     const raw = await request<unknown>('/inspiration/refine-options', {
       method: 'POST',
-      body: { step, context, feedback, previous_options: previousOptions },
+      body: { step, context, feedback, previous_options: previousOptions, ...(modelRouting ?? {}) },
     });
     if (!isRecord(raw)) return { prompt: '', options: [] };
     return {
@@ -1458,10 +1474,13 @@ export class NovelApiService {
     };
   }
 
-  async quickGenerateInspiration(params: Record<string, unknown>): Promise<InspirationOption> {
+  async quickGenerateInspiration(
+    params: Record<string, unknown>,
+    modelRouting?: AiModelRoutingPayload,
+  ): Promise<InspirationOption> {
     const raw = await request<unknown>('/inspiration/quick-generate', {
       method: 'POST',
-      body: params,
+      body: { ...params, ...(modelRouting ?? {}) },
     });
     if (!isRecord(raw)) return { prompt: '', options: [] };
     return {

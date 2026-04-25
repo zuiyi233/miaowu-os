@@ -233,6 +233,20 @@ export const BUILTIN_FEATURE_MODULES: AiFeatureModuleDefinition[] = [
   },
 ];
 
+/**
+ * 主项目对话模型在对话框内独立选择，不在全局设置页重复暴露。
+ * 这些模块仍可存在于持久化路由结构中（兼容历史数据），
+ * 但应在设置页中视为“不可配置”。
+ */
+export const SETTINGS_LOCKED_MODULE_IDS = new Set<string>([
+  "chat-main",
+  "agent-chat",
+]);
+
+export function isFeatureModuleConfigurableInSettings(moduleId: string): boolean {
+  return !SETTINGS_LOCKED_MODULE_IDS.has(moduleId);
+}
+
 function getFirstAvailableTarget(providers: AiProviderConfig[]): AiModelTarget | null {
   const provider = providers.find((item) => item.models.length > 0);
   if (!provider) {

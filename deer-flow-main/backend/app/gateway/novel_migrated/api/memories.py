@@ -6,19 +6,18 @@ from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
-from app.gateway.novel_migrated.core.crypto import safe_decrypt
+from app.gateway.novel_migrated.api.settings import get_user_ai_service_with_overrides
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.chapter import Chapter
 from app.gateway.novel_migrated.models.memory import PlotAnalysis, StoryMemory
-from app.gateway.novel_migrated.models.settings import Settings
-from app.gateway.novel_migrated.services.ai_service import create_user_ai_service
 from app.gateway.novel_migrated.services.foreshadow_service import foreshadow_service
 from app.gateway.novel_migrated.services.memory_service import memory_service
 from app.gateway.novel_migrated.services.plot_analyzer import get_plot_analyzer
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/memories", tags=["memories"])
+MEMORY_MODULE_ID = "memory-ai"
 
 
 @router.post("/projects/{project_id}/analyze-chapter/{chapter_id}")
@@ -56,24 +55,11 @@ async def analyze_chapter(
         if not chapter.content:
             raise HTTPException(status_code=400, detail="章节内容为空,无法分析")
         
-        # 获取用户AI设置
-        settings_result = await db.execute(select(Settings))
-        settings = settings_result.scalar_one_or_none()
-        
-        if not settings:
-            raise HTTPException(status_code=400, detail="请先配置AI设置")
-        
-        # 创建AI服务
-        ai_service = create_user_ai_service(
-            api_provider=settings.api_provider,
-            api_key=safe_decrypt(settings.api_key) or "",
-            api_base_url=settings.api_base_url,
-            model_name=settings.llm_model,
-            temperature=settings.temperature,
-            max_tokens=settings.max_tokens,
-            user_id=user_id,
-            db_session=db,
-            enable_mcp=True,
+        # 记忆分析统一走全局能力路由（memory-ai），避免受主项目会话模型影响。
+        ai_service = await get_user_ai_service_with_overrides(
+            request,
+            db,
+            module_id=MEMORY_MODULE_ID,
         )
         
         # 获取已埋入的伏笔列表（用于回收匹配）

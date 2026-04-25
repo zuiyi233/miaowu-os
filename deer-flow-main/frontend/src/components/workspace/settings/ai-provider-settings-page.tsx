@@ -52,6 +52,7 @@ import {
 import {
   createCustomModuleRoute,
   getProviderDisplayName,
+  isFeatureModuleConfigurableInSettings,
   loadFeatureRoutingState,
   normalizeFeatureRoutingState,
   saveFeatureRoutingState,
@@ -302,17 +303,21 @@ export function AiProviderSettingsPage() {
     mutateRouting((state) => ({
       ...state,
       modules: state.modules.map((m) => ({
-        ...m,
-        primaryTarget: defaultTarget,
-        backupTarget: globalBackup,
-        autoFailover: globalAutoFailover,
-        parallelEnabled: globalParallelEnabled,
-        parallelStrategy: "compare" as AiParallelStrategy,
-        parallelTargets,
+        ...(isFeatureModuleConfigurableInSettings(m.moduleId)
+          ? {
+              ...m,
+              primaryTarget: defaultTarget,
+              backupTarget: globalBackup,
+              autoFailover: globalAutoFailover,
+              parallelEnabled: globalParallelEnabled,
+              parallelStrategy: "compare" as AiParallelStrategy,
+              parallelTargets,
+            }
+          : m),
       })),
     }));
     setGlobalPending(false);
-    setRoutingNotice({ type: "success", message: "已应用到所有功能模块" });
+    setRoutingNotice({ type: "success", message: "已应用到可配置功能模块" });
   }, [defaultTarget, globalBackup, globalAutoFailover, globalParallelEnabled, mutateRouting, routingDraft]);
 
   const handleSaveProvider = useCallback(async () => {
@@ -443,6 +448,9 @@ export function AiProviderSettingsPage() {
   }, []);
 
   const routingModules = routingDraft?.modules ?? [];
+  const configurableRoutingModules = routingModules.filter((moduleRoute) =>
+    isFeatureModuleConfigurableInSettings(moduleRoute.moduleId)
+  );
 
   return (
     <div className="space-y-8">
@@ -532,6 +540,14 @@ export function AiProviderSettingsPage() {
         title="模型配置"
         description="只需配置一次，即可应用到所有功能。如需单独调整，可展开对应功能进行修改"
       >
+        <Alert className="mb-4 border-primary/30 bg-primary/5">
+          <Shield className="h-4 w-4 text-primary" />
+          <AlertTitle>对话模型由对话框独立管理</AlertTitle>
+          <AlertDescription>
+            主项目对话（含智能体对话）请在聊天输入框顶部模型选择器中调整；本页仅配置记忆、灵感、小说工作流等系统能力模型。
+          </AlertDescription>
+        </Alert>
+
         {routingNotice && (
           <Alert variant={routingNotice.type === "error" ? "destructive" : "default"} className="mb-4">
             {routingNotice.type === "error" ? (
@@ -661,7 +677,7 @@ export function AiProviderSettingsPage() {
             <span className="text-xs">（点击展开可单独调整）</span>
           </h3>
 
-          {routingModules.map((moduleRoute) => {
+          {configurableRoutingModules.map((moduleRoute) => {
             const isExpanded = expandedModules.has(moduleRoute.moduleId);
             const isCustom = moduleRoute.category === "custom";
             const usingGlobal = isModuleUsingGlobal(moduleRoute);

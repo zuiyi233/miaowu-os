@@ -11,7 +11,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
-import { novelApiService } from '@/core/novel/novel-api';
+import { useAiProviderStore } from '@/core/ai/ai-provider-store';
+import { loadFeatureRoutingState, normalizeFeatureRoutingState, resolveModuleRoutingTarget } from '@/core/ai/feature-routing';
+import { novelApiService, type AiModelRoutingPayload } from '@/core/novel/novel-api';
 import type { InspirationOption, InspirationWizardData } from '@/core/novel/schemas';
 import { cn } from '@/lib/utils';
 
@@ -34,6 +36,23 @@ const STEP_ORDER: Step[] = ['idea', 'title', 'description', 'theme', 'genre', 'p
 const BACKEND_GENERATION_STEPS: BackendGenerationStep[] = ['title', 'description', 'theme', 'genre'];
 const PERSPECTIVE_OPTIONS = ['第一人称', '第三人称', '全知视角'];
 const OUTLINE_MODE_OPTIONS = ['一对一', '一对多'];
+const INSPIRATION_MODULE_ID = 'novel-inspiration-wizard';
+
+function getInspirationModelConfig(): AiModelRoutingPayload {
+  const store = useAiProviderStore.getState();
+  const routingRaw = store.effective.featureRoutingSettings ?? loadFeatureRoutingState(store.effective.providers);
+  const routing = normalizeFeatureRoutingState(routingRaw, store.effective.providers);
+  const resolved = resolveModuleRoutingTarget(routing, INSPIRATION_MODULE_ID);
+  const target = resolved?.target ?? routing.defaultTarget;
+  if (!target) {
+    return { module_id: INSPIRATION_MODULE_ID };
+  }
+  return {
+    module_id: INSPIRATION_MODULE_ID,
+    ai_provider_id: target.providerId,
+    ai_model: target.model,
+  };
+}
 
 export function InspirationMode() {
   const router = useRouter();
@@ -103,7 +122,11 @@ export function InspirationMode() {
     step: BackendGenerationStep,
     contextOverrides: Partial<{ initial_idea: string; title: string; description: string; theme: string }> = {},
   ): Promise<string[]> => {
-    const res = await novelApiService.generateInspirationOptions(step, buildInspirationContext(contextOverrides));
+    const res = await novelApiService.generateInspirationOptions(
+      step,
+      buildInspirationContext(contextOverrides),
+      getInspirationModelConfig(),
+    );
     if (res.error) {
       toast.error(`AI生成失败: ${res.error}`);
     }
@@ -323,6 +346,7 @@ export function InspirationMode() {
         buildInspirationContext(),
         refineText,
         prevOptions,
+        getInspirationModelConfig(),
       );
       if (res.error) {
         toast.error(`AI优化失败: ${res.error}`);
