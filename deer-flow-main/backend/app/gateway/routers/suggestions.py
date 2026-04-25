@@ -1,12 +1,13 @@
 import json
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.novel_migrated.api.settings import get_user_ai_service
+from app.gateway.novel_migrated.api.settings import get_user_ai_service_with_overrides
+from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.schemas.ai_message import AiMessage
-from app.gateway.novel_migrated.services.ai_service import AIService
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ class SuggestionsRequest(BaseModel):
     messages: list[SuggestionMessage] = Field(..., description="Recent conversation messages")
     n: int = Field(default=3, ge=1, le=5, description="Number of suggestions to generate")
     model_name: str | None = Field(default=None, description="Optional model override")
+    module_id: str | None = Field(default=None, description="Feature module ID for routing (e.g. 'chat-suggestions')")
 
 
 class SuggestionsResponse(BaseModel):
@@ -102,7 +104,8 @@ def _format_conversation(messages: list[SuggestionMessage]) -> str:
 async def generate_suggestions(
     thread_id: str,
     body: SuggestionsRequest,
-    ai_service: AIService = Depends(get_user_ai_service),
+    request: Request,
+    db: AsyncSession = Depends(get_db),
 ) -> SuggestionsResponse:
     if not body.messages:
         return SuggestionsResponse(suggestions=[])
@@ -125,14 +128,19 @@ async def generate_suggestions(
     user_content = f"Conversation Context:\n{conversation}\n\nGenerate {n} follow-up questions"
 
     try:
-        # IMPORTANT: Always use the same user AI settings (Settings DB) as the main chat flow.
-        # This prevents drift where suggestions use config.yaml/env keys while chat uses /api/user/ai-settings.
-        result = await ai_service.generate_text_with_messages(
+        effective_ai_service = await get_user_ai_service_with_overrides(
+            request=request,
+            db=db,
+            module_id=body.module_id,
+            ai_model=body.model_name if not body.module_id else None,
+        )
+
+        result = await effective_ai_service.generate_text_with_messages(
             messages=[
                 AiMessage(role="system", content=system_instruction),
                 AiMessage(role="user", content=user_content),
             ],
-            model=body.model_name,
+            model=None if body.module_id else body.model_name,
             temperature=0.2,
             max_tokens=256,
             auto_mcp=False,

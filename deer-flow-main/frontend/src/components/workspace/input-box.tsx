@@ -402,6 +402,7 @@ export function InputBox({
         messages: recent,
         n: 3,
         model_name: context.model_name ?? undefined,
+        module_id: "chat-suggestions",
       }),
       signal: controller.signal,
     })

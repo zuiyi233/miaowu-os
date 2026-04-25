@@ -222,14 +222,21 @@ export const BUILTIN_FEATURE_MODULES: AiFeatureModuleDefinition[] = [
     label: "AI 项目生成向导",
     description: "AI 项目一键生成（世界观/职业/角色/大纲）",
     category: "novel",
-    runtimeReady: true, // 有对应的后端 API 支持
+    runtimeReady: true,
   },
   {
     id: "memory-ai",
     label: "记忆系统",
     description: "记忆摘要生成与事实提取",
     category: "workspace",
-    runtimeReady: true, // 有对应的后端 API 支持
+    runtimeReady: true,
+  },
+  {
+    id: "chat-suggestions",
+    label: "智能推荐 / 后续问题",
+    description: "对话结束后自动生成的后续问题建议（Follow-up Suggestions）",
+    category: "workspace",
+    runtimeReady: true,
   },
 ];
 
