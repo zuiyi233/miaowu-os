@@ -36,7 +36,7 @@ class CharacterCreateRequest(BaseModel):
     organization_type: Optional[str] = None
     organization_purpose: Optional[str] = None
     traits: Optional[list] = None
-    relationships_text: Optional[str] = None
+    relationships: Optional[str] = None
 
 
 class CharacterUpdateRequest(BaseModel):
@@ -51,7 +51,7 @@ class CharacterUpdateRequest(BaseModel):
     organization_purpose: Optional[str] = None
     current_state: Optional[str] = None
     traits: Optional[list] = None
-    relationships_text: Optional[str] = None
+    relationships: Optional[str] = None
 
 
 class SingleGenerateRequest(BaseModel):
@@ -116,7 +116,7 @@ async def create_character(
         organization_type=req.organization_type,
         organization_purpose=req.organization_purpose,
         traits=json.dumps(req.traits, ensure_ascii=False) if req.traits else None,
-        relationships_text=req.relationships_text,
+        relationships=req.relationships,
     )
     db.add(character)
     await db.commit()
@@ -139,7 +139,7 @@ async def update_character(
 
     update_fields = ['name', 'role_type', 'personality', 'background', 'appearance',
                       'age', 'gender', 'organization_type', 'organization_purpose',
-                      'current_state', 'relationships_text']
+                      'current_state', 'relationships']
     for field_name in update_fields:
         value = getattr(req, field_name, None)
         if value is not None:
@@ -235,7 +235,7 @@ async def generate_single_character(
             organization_type=char_data.get("organization_type"),
             organization_purpose=char_data.get("organization_purpose"),
             traits=json.dumps(char_data.get("traits", []), ensure_ascii=False),
-            relationships_text=char_data.get("relationships_text"),
+            relationships=char_data.get("relationships_text") or char_data.get("relationships"),
         )
         db.add(character)
         await db.flush()
@@ -336,7 +336,7 @@ def _serialize_character(c: Character) -> dict:
         "organization_purpose": c.organization_purpose,
         "current_state": c.current_state,
         "traits": traits,
-        "relationships_text": c.relationships_text,
+        "relationships": c.relationships,
         "main_career_id": c.main_career_id,
         "main_career_stage": c.main_career_stage,
         "avatar_url": c.avatar_url,
