@@ -366,12 +366,14 @@ export function InputBox({
     }
 
     if (disabled || isMock) {
+      console.debug("[followup] skipped: disabled=%s isMock=%s", disabled, isMock);
       return;
     }
 
     const lastAi = [...thread.messages].reverse().find((m) => m.type === "ai");
     const lastAiId = lastAi?.id ?? null;
     if (!lastAiId || lastAiId === lastGeneratedForAiIdRef.current) {
+      console.debug("[followup] skipped: lastAiId=%s alreadyGenerated=%s", lastAiId, lastGeneratedForAiIdRef.current);
       return;
     }
     lastGeneratedForAiIdRef.current = lastAiId;
@@ -387,6 +389,7 @@ export function InputBox({
       .slice(-6);
 
     if (recent.length === 0) {
+      console.debug("[followup] skipped: no recent messages with content (total messages=%d)", thread.messages.length);
       return;
     }
 
@@ -395,19 +398,24 @@ export function InputBox({
     setFollowupsLoading(true);
     setFollowups([]);
 
+    const requestPayload = {
+      messages: recent,
+      n: 3,
+      model_name: context.model_name ?? undefined,
+      module_id: "chat-suggestions",
+    };
+    console.debug("[followup] requesting suggestions: threadId=%s model=%s messages=%d", threadId, context.model_name, recent.length);
+
     fetch(`${getBackendBaseURL()}/api/threads/${threadId}/suggestions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: recent,
-        n: 3,
-        model_name: context.model_name ?? undefined,
-        module_id: "chat-suggestions",
-      }),
+      body: JSON.stringify(requestPayload),
       signal: controller.signal,
     })
       .then(async (res) => {
         if (!res.ok) {
+          const errorText = await res.text().catch(() => "");
+          console.warn("[followup] API returned non-OK: status=%d body=%s", res.status, errorText.slice(0, 200));
           return { suggestions: [] as string[] };
         }
         return (await res.json()) as { suggestions?: string[] };
@@ -417,9 +425,19 @@ export function InputBox({
           .map((s) => (typeof s === "string" ? s.trim() : ""))
           .filter((s) => s.length > 0)
           .slice(0, 5);
+        if (suggestions.length === 0) {
+          console.debug("[followup] API returned empty suggestions (raw count=%d)", (data.suggestions ?? []).length);
+        } else {
+          console.debug("[followup] received %d suggestions: %o", suggestions.length, suggestions);
+        }
         setFollowups(suggestions);
       })
-      .catch(() => {
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          console.debug("[followup] request aborted (thread switch or re-render)");
+        } else {
+          console.warn("[followup] fetch failed:", error);
+        }
         setFollowups([]);
       })
       .finally(() => {

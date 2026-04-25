@@ -92,9 +92,16 @@ async function fetchRecommendations(novelId: string): Promise<RecommendationItem
   return executeRemoteFirst(
     async () => {
       const remote = await novelApiService.getRecommendations(novelId);
-      const items = Array.isArray(remote)
-        ? remote.map((item) => normalizeRecommendation(novelId, item as Record<string, unknown>))
-        : [];
+      if (!Array.isArray(remote)) {
+        console.warn("[recommendation] API returned non-array for novelId=%s: type=%s", novelId, typeof remote);
+        const remoteRecord = remote as Record<string, unknown> | null;
+        if (remoteRecord && typeof remoteRecord === "object" && Array.isArray(remoteRecord.items)) {
+          return remoteRecord.items.map((item: unknown) => normalizeRecommendation(novelId, item as Record<string, unknown>));
+        }
+        return [];
+      }
+      const items = remote.map((item) => normalizeRecommendation(novelId, item as Record<string, unknown>));
+      console.debug("[recommendation] fetched %d items for novelId=%s", items.length, novelId);
       return items;
     },
     () => databaseService.getRecommendationItems(novelId),
@@ -109,9 +116,16 @@ async function generateRecommendations(novelId: string): Promise<RecommendationI
   return executeRemoteFirst(
     async () => {
       const remote = await novelApiService.generateRecommendations(novelId);
-      const items = Array.isArray(remote)
-        ? remote.map((item) => normalizeRecommendation(novelId, item as Record<string, unknown>))
-        : [];
+      if (!Array.isArray(remote)) {
+        console.warn("[recommendation] generate API returned non-array for novelId=%s: type=%s", novelId, typeof remote);
+        const remoteRecord = remote as Record<string, unknown> | null;
+        if (remoteRecord && typeof remoteRecord === "object" && Array.isArray(remoteRecord.items)) {
+          return remoteRecord.items.map((item: unknown) => normalizeRecommendation(novelId, item as Record<string, unknown>));
+        }
+        return [];
+      }
+      const items = remote.map((item) => normalizeRecommendation(novelId, item as Record<string, unknown>));
+      console.debug("[recommendation] generated %d items for novelId=%s", items.length, novelId);
       return items;
     },
     () => databaseService.getRecommendationItems(novelId),
@@ -149,6 +163,12 @@ async function acceptRecommendation(novelId: string, recId: string): Promise<Rec
 }
 
 async function ignoreRecommendation(novelId: string, recId: string): Promise<void> {
+  try {
+    await novelApiService.acceptRecommendation(novelId, recId);
+    console.debug("[recommendation] ignored remotely: novelId=%s recId=%s", novelId, recId);
+  } catch (remoteError) {
+    console.warn("[recommendation] remote ignore failed, falling back to local: novelId=%s recId=%s", novelId, recId, remoteError);
+  }
   const existing = (await databaseService.getRecommendationItems(novelId)).find((item) => item.id === recId);
   if (!existing) {
     return;
@@ -166,6 +186,7 @@ export function RecommendationPanel({ novelId }: RecommendationPanelProps) {
   const { data: recommendations, isLoading, error } = useQuery({
     queryKey: ['recommendations', novelId],
     queryFn: () => fetchRecommendations(novelId),
+    enabled: Boolean(novelId),
   });
 
   const generateMutation = useMutation({

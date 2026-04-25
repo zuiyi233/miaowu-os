@@ -171,7 +171,7 @@ def _get_cached_model(model_name: str, base_url: str | None = None, api_key: str
             overrides["base_url"] = base_url.strip()
         if api_key and api_key.strip():
             overrides["api_key"] = api_key.strip()
-        model = create_chat_model(name=model_name, **overrides)
+        model = create_chat_model(name=model_name, thinking_enabled=False, **overrides)
         _model_cache[cache_key] = model
         logger.info("📦 模型缓存未命中，创建新实例: %s (overrides=%s)", model_name, list(overrides.keys()) if overrides else "none")
         return model

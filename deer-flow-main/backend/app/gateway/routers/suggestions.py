@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
@@ -40,8 +41,19 @@ def _strip_markdown_code_fence(text: str) -> str:
     return stripped
 
 
+def _remove_thinking_tags(text: str) -> str:
+    text = re.sub(r"<think>[^<]*</think>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<thinking>[^<]*</thinking>", "", text, flags=re.DOTALL)
+    return text.strip()
+
+
 def _parse_json_string_list(text: str) -> list[str] | None:
-    candidate = _strip_markdown_code_fence(text)
+    if not text or not text.strip():
+        return None
+
+    cleaned = _remove_thinking_tags(text)
+    candidate = _strip_markdown_code_fence(cleaned)
+
     start = candidate.find("[")
     end = candidate.rfind("]")
     if start == -1 or end == -1 or end <= start:
@@ -122,8 +134,11 @@ async def generate_suggestions(
         "- Questions must be relevant to the preceding conversation.\n"
         "- Questions must be written in the same language as the user.\n"
         "- Keep each question concise (ideally <= 20 words / <= 40 Chinese characters).\n"
-        "- Do NOT include numbering, markdown, or any extra text.\n"
-        "- Output MUST be a JSON array of strings only.\n"
+        "- Do NOT include any explanation, reasoning, or extra text.\n"
+        "- Output MUST be a JSON array of strings only, with no other text.\n"
+        "Example output:\n"
+        '["你能详细解释一下吗？", "这个功能怎么使用？", "有什么类似的例子？"]\n'
+        "Do NOT include markdown code fences, numbered lists, or any other formatting."
     )
     user_content = f"Conversation Context:\n{conversation}\n\nGenerate {n} follow-up questions"
 
@@ -149,7 +164,43 @@ async def generate_suggestions(
         suggestions = _parse_json_string_list(raw) or []
         cleaned = [s.replace("\n", " ").strip() for s in suggestions if s.strip()]
         cleaned = cleaned[:n]
+        logger.debug(
+            "Suggestions generated: thread_id=%s module_id=%s count=%d raw_length=%d raw_preview=%s cleaned=%s",
+            thread_id,
+            body.module_id,
+            len(cleaned),
+            len(raw),
+            repr(raw[:500]),
+            cleaned,
+        )
         return SuggestionsResponse(suggestions=cleaned)
     except Exception as exc:
-        logger.exception("Failed to generate suggestions: thread_id=%s err=%s", thread_id, exc)
+        logger.exception("Failed to generate suggestions: thread_id=%s module_id=%s model_name=%s err=%s", thread_id, body.module_id, body.model_name, exc)
+        if body.module_id and body.model_name:
+            logger.info("Retrying suggestions without module_id: thread_id=%s model_name=%s", thread_id, body.model_name)
+            try:
+                fallback_service = await get_user_ai_service_with_overrides(
+                    request=request,
+                    db=db,
+                    module_id=None,
+                    ai_model=body.model_name,
+                )
+                result = await fallback_service.generate_text_with_messages(
+                    messages=[
+                        AiMessage(role="system", content=system_instruction),
+                        AiMessage(role="user", content=user_content),
+                    ],
+                    model=body.model_name,
+                    temperature=0.2,
+                    max_tokens=256,
+                    auto_mcp=False,
+                )
+                raw = _extract_response_text(result.get("content"))
+                suggestions = _parse_json_string_list(raw) or []
+                cleaned = [s.replace("\n", " ").strip() for s in suggestions if s.strip()]
+                cleaned = cleaned[:n]
+                logger.debug("Fallback suggestions generated: thread_id=%s count=%d raw_length=%d", thread_id, len(cleaned), len(raw))
+                return SuggestionsResponse(suggestions=cleaned)
+            except Exception as fallback_exc:
+                logger.exception("Fallback suggestions also failed: thread_id=%s err=%s", thread_id, fallback_exc)
         return SuggestionsResponse(suggestions=[])

@@ -438,12 +438,14 @@ function ToolCall({
         ? resultObject.error
         : hasFailure && stringResult
           ? stringResult
-          : "";
+          : !resultObject && stringResult
+            ? stringResult
+            : "";
 
     const stepStatus =
       isLoading && isLast
         ? "active"
-        : hasFailure
+        : hasFailure || (!resultObject && stringResult)
           ? "active"
           : "complete";
 
@@ -453,7 +455,9 @@ function ToolCall({
         ? "小说创建已完成"
         : hasFailure
           ? "小说创建失败"
-          : undefined;
+          : !resultObject && stringResult
+            ? "处理结果异常"
+            : undefined;
 
     const label = novelTitle
       ? `创建小说：${novelTitle}`
