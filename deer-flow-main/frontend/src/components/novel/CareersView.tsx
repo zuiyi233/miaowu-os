@@ -1,13 +1,12 @@
 'use client';
 
-import { Trophy, Plus, Pencil, Trash2, Zap, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
-import { useState, useCallback } from 'react';
+import { Trophy, Plus, Pencil, Trash2, Zap, Loader2 } from 'lucide-react';
+import { useState, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -30,16 +29,37 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { useAiProviderStore } from '@/core/ai/ai-provider-store';
+import {
+  loadFeatureRoutingState,
+  normalizeFeatureRoutingState,
+  resolveModuleRoutingTarget,
+} from '@/core/ai/feature-routing';
 import { novelApiService } from '@/core/novel/novel-api';
 import { useCareersQuery, useCreateCareerMutation, useUpdateCareerMutation, useDeleteCareerMutation } from '@/core/novel/queries';
 import type { Career, CareerStage } from '@/core/novel/schemas';
-import { cn } from '@/lib/utils';
 
 interface CareersViewProps {
   novelId: string;
 }
 
+const CAREERS_MODULE_ID = 'novel-careers';
+
 export function CareersView({ novelId }: CareersViewProps) {
+  const providers = useAiProviderStore((state) => state.effective.providers);
+  const featureRoutingSettings = useAiProviderStore((state) => state.effective.featureRoutingSettings);
+  const modelRoutingPayload = useMemo(() => {
+    const routingRaw = featureRoutingSettings ?? loadFeatureRoutingState(providers);
+    const routing = normalizeFeatureRoutingState(routingRaw, providers);
+    const resolved = resolveModuleRoutingTarget(routing, CAREERS_MODULE_ID);
+    const target = resolved?.target ?? routing.defaultTarget;
+    return {
+      module_id: CAREERS_MODULE_ID,
+      ...(target?.providerId ? { ai_provider_id: target.providerId } : {}),
+      ...(target?.model ? { ai_model: target.model } : {}),
+    };
+  }, [featureRoutingSettings, providers]);
+
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isAIOpen, setIsAIOpen] = useState(false);
   const [editingCareer, setEditingCareer] = useState<Career | null>(null);
@@ -62,7 +82,7 @@ export function CareersView({ novelId }: CareersViewProps) {
   const [aiProgress, setAiProgress] = useState(0);
   const [aiMessage, setAiMessage] = useState('');
 
-  const { data: careersData, refetch: refetchCareers } = useCareersQuery(novelId);
+  const { data: careersData, refetch: refetchCareers } = useCareersQuery(novelId, modelRoutingPayload);
   const createMutation = useCreateCareerMutation();
   const updateMutation = useUpdateCareerMutation();
   const deleteMutation = useDeleteCareerMutation();
@@ -138,10 +158,19 @@ export function CareersView({ novelId }: CareersViewProps) {
 
     try {
       if (editingCareer) {
-        await updateMutation.mutateAsync({ careerId: editingCareer.id, data: payload });
+        await updateMutation.mutateAsync({
+          careerId: editingCareer.id,
+          data: {
+            ...payload,
+            ...modelRoutingPayload,
+          },
+        });
         toast.success('职业更新成功');
       } else {
-        await createMutation.mutateAsync(payload);
+        await createMutation.mutateAsync({
+          ...payload,
+          ...modelRoutingPayload,
+        });
         toast.success('职业创建成功');
       }
       setIsCreateOpen(false);
@@ -173,7 +202,7 @@ export function CareersView({ novelId }: CareersViewProps) {
         mainCareerCount: aiMainCount,
         subCareerCount: aiSubCount,
         userRequirements: aiRequirements || undefined,
-      });
+      }, modelRoutingPayload);
 
       const reader = response.body?.getReader();
       if (!reader) throw new Error('No response body');

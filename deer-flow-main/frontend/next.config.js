@@ -82,6 +82,10 @@ const config = {
         source: "/projects/:path*",
         destination: `${gatewayURL}/projects/:path*`,
       });
+      rewrites.push({
+        source: "/book-import/:path*",
+        destination: `${gatewayURL}/book-import/:path*`,
+      });
     }
 
     return rewrites;

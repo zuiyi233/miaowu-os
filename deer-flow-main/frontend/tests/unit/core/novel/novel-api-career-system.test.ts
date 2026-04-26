@@ -86,6 +86,10 @@ describe('NovelApiService.generateCareerSystem', () => {
       subCareerCount: 6,
       userRequirements: '法师 与 剑士',
       enableMcp: false,
+    }, {
+      module_id: 'novel-careers',
+      ai_provider_id: 'provider-2',
+      ai_model: 'claude-3-5-sonnet',
     });
 
     const [url, options] = fetchMock.mock.calls[0] ?? [];
@@ -95,6 +99,9 @@ describe('NovelApiService.generateCareerSystem', () => {
     expect(options?.method).toBe('GET');
     expect(requestUrl.pathname).toBe('/api/careers/generate-system');
     expect(requestUrl.searchParams.get('project_id')).toBe('proj-query');
+    expect(requestUrl.searchParams.get('module_id')).toBe('novel-careers');
+    expect(requestUrl.searchParams.get('ai_provider_id')).toBe('provider-2');
+    expect(requestUrl.searchParams.get('ai_model')).toBe('claude-3-5-sonnet');
     expect(requestUrl.searchParams.get('main_career_count')).toBe('0');
     expect(requestUrl.searchParams.get('sub_career_count')).toBe('6');
     expect(requestUrl.searchParams.get('user_requirements')).toBe('法师 与 剑士');

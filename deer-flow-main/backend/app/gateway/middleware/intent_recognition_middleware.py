@@ -2020,7 +2020,7 @@ class IntentRecognitionMiddleware:
 
         relationships_text = self._extract_long_text(text, prefixes=("关系描述", "关系：", "relationships_text"), max_len=3000)
         if relationships_text:
-            payload["relationships_text"] = relationships_text
+            payload["relationships"] = relationships_text
 
         return payload
 

@@ -53,6 +53,47 @@ describe('NovelApiService book import contract', () => {
     expect(formData.get('tail_chapter_count')).toBe('20');
   });
 
+  it('passes module routing payload for create/import stream/retry stream', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock
+      .mockResolvedValueOnce(mockJsonResponse({ task_id: 'task-routing' }))
+      .mockResolvedValueOnce({ ok: true, status: 200 } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200 } as Response);
+
+    const routing = {
+      module_id: 'novel-book-import',
+      ai_provider_id: 'provider-1',
+      ai_model: 'gpt-4o-mini',
+    };
+    const file = new File(['dummy'], 'book.txt', { type: 'text/plain' });
+
+    await novelApiService.createBookImportTask(
+      file,
+      { extractMode: 'tail', tailChapterCount: 18 },
+      routing,
+    );
+    await novelApiService.applyBookImportStream('tid', { mode: 'tail' }, routing);
+    await novelApiService.retryBookImportStepsStream('tid', ['outline'], routing);
+
+    const createFormData = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(createFormData.get('module_id')).toBe('novel-book-import');
+    expect(createFormData.get('ai_provider_id')).toBe('provider-1');
+    expect(createFormData.get('ai_model')).toBe('gpt-4o-mini');
+
+    const applyBodyRaw = fetchMock.mock.calls[1]?.[1]?.body;
+    expect(typeof applyBodyRaw).toBe('string');
+    const applyBody = JSON.parse(applyBodyRaw as string);
+    expect(applyBody).toMatchObject(routing);
+
+    const retryBodyRaw = fetchMock.mock.calls[2]?.[1]?.body;
+    expect(typeof retryBodyRaw).toBe('string');
+    const retryBody = JSON.parse(retryBodyRaw as string);
+    expect(retryBody).toMatchObject({
+      ...routing,
+      steps: ['outline'],
+    });
+  });
+
   it('uses /book-import prefix for task status and preview APIs', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock

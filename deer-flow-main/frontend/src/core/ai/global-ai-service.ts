@@ -169,7 +169,6 @@ const ERROR_CATALOG: Record<ErrorCode, AiErrorInfo> = {
   },
 };
 
-const MIN_TOTAL_CHAT_ATTEMPTS = 10;
 const CHAT_RETRY_BASE_DELAY_MS = 3000;
 const STREAM_CHUNK_TIMEOUT_CEILING_MS = 90_000;
 
@@ -268,7 +267,18 @@ async function fetchWithTimeout(
   }
 }
 
-async function fetchWithRetry(
+export function normalizeMaxRetries(maxRetries: number): number {
+  if (!Number.isFinite(maxRetries)) {
+    return 0;
+  }
+  const normalized = Math.floor(maxRetries);
+  if (normalized < 0) {
+    return 0;
+  }
+  return Math.min(normalized, 20);
+}
+
+export async function fetchWithRetry(
   url: string,
   options: RequestInit,
   retries: number,
@@ -276,9 +286,7 @@ async function fetchWithRetry(
   retryDelayMs: number
 ): Promise<Response> {
   let lastError: Error | null = null;
-  // 产品约束：网络波动场景统一执行“最多10次尝试（首3秒线性递增）”。
-  // 这里固定重试预算，避免被历史配置(max_retries=2)覆盖成3次快速重试。
-  const effectiveRetries = MIN_TOTAL_CHAT_ATTEMPTS - 1;
+  const effectiveRetries = normalizeMaxRetries(retries);
 
   for (let attempt = 0; attempt <= effectiveRetries; attempt++) {
     try {

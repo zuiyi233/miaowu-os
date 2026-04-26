@@ -185,6 +185,16 @@ FastAPI application providing REST endpoints for frontend integration:
 - Built-in in-process metrics are available at `/api/features/metrics/novel-pipeline`: success rate, failure rate, retry rate, P95 latency, duplicate-write interception rate.
 - Canary rollout is user-scoped and deterministic (`rollout_percentage` + allow/deny user lists), and rollback can be done by `POST /api/features/{feature_name}/rollback`.
 
+Recent gateway hardening updates (2026-04):
+- `POST /api/user/fetch-provider-models` now enforces SSRF guards for dynamic upstream fetch:
+  - only `http/https` allowed;
+  - blocks loopback/private/link-local/reserved targets and metadata endpoints;
+  - re-validates resolved DNS IPs before outbound request.
+- `POST /api/threads/{id}/suggestions` no longer retries fallback blindly; fallback is now limited to module-routing/config-resolution style errors, avoiding duplicate LLM calls on terminal failures (auth/quota/rate-limit/timeout).
+- Novel recommendation APIs now include an explicit ignore endpoint:
+  - `POST /api/novels/{novel_id}/recommendations/{rec_id}/ignore`
+- `novel-careers` and `book-import` pipelines now accept and propagate model-routing overrides (`module_id`, `ai_provider_id`, `ai_model`) across frontend → API → service paths.
+
 Novel finalize-gate enhancements:
 - `POST /polish/projects/{project_id}/finalize-gate` and `/api/polish/...` accept optional fusion params (`model_gate_signals`, `quality_gate_fusion_feature_enabled`, `fusion_degraded_fallback_mode`, `apply_feedback_backflow`).
 - Gate reports now include per-check fusion metadata (`rule_result`, `fusion.*`) and top-level `gate_fusion` summary while preserving existing keys.

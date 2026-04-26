@@ -133,6 +133,45 @@ def test_generate_suggestions_returns_empty_on_model_error(monkeypatch):
     assert result.suggestions == []
 
 
+def test_generate_suggestions_only_fallbacks_for_routing_parse_failures(monkeypatch):
+    req = _build_req(model_name="gpt-4o", module_id="chat-suggestions")
+    primary_service = MagicMock()
+    primary_service.generate_text_with_messages = AsyncMock(side_effect=ValueError("module routing config parse failed"))
+
+    fallback_service = MagicMock()
+    fallback_service.generate_text_with_messages = AsyncMock(return_value={"content": '["Q1"]'})
+
+    with patch(
+        "app.gateway.routers.suggestions.get_user_ai_service_with_overrides",
+        new_callable=AsyncMock,
+        side_effect=[primary_service, fallback_service],
+    ) as mock_override:
+        result = asyncio.run(
+            suggestions.generate_suggestions("t1", req, request=_make_fake_request(), db=_make_fake_db())
+        )
+
+    assert result.suggestions == ["Q1"]
+    assert mock_override.await_count == 2
+
+
+def test_generate_suggestions_does_not_fallback_on_terminal_auth_error(monkeypatch):
+    req = _build_req(model_name="gpt-4o", module_id="chat-suggestions")
+    primary_service = MagicMock()
+    primary_service.generate_text_with_messages = AsyncMock(side_effect=RuntimeError("403 Authorization failed"))
+
+    with patch(
+        "app.gateway.routers.suggestions.get_user_ai_service_with_overrides",
+        new_callable=AsyncMock,
+        return_value=primary_service,
+    ) as mock_override:
+        result = asyncio.run(
+            suggestions.generate_suggestions("t1", req, request=_make_fake_request(), db=_make_fake_db())
+        )
+
+    assert result.suggestions == []
+    assert mock_override.await_count == 1
+
+
 def test_generate_suggestions_passes_module_id_to_routing(monkeypatch):
     """Verify module_id='chat-suggestions' is forwarded to get_user_ai_service_with_overrides."""
     req = _build_req(module_id="chat-suggestions")

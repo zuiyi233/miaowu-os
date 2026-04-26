@@ -192,6 +192,38 @@ function buildBookImportUrl(path: string, query?: Record<string, QueryValue>) {
   return buildUrlWithPrefix(getBookImportApiPrefix(), path, query);
 }
 
+function withModelRoutingQuery(
+  query: Record<string, QueryValue> | undefined,
+  modelRouting?: AiModelRoutingPayload,
+): Record<string, QueryValue> | undefined {
+  const next: Record<string, QueryValue> = { ...(query ?? {}) };
+  if (modelRouting?.module_id) {
+    next.module_id = modelRouting.module_id;
+  }
+  if (modelRouting?.ai_provider_id) {
+    next.ai_provider_id = modelRouting.ai_provider_id;
+  }
+  if (modelRouting?.ai_model) {
+    next.ai_model = modelRouting.ai_model;
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function withModelRoutingBody<T extends Record<string, unknown>>(
+  body: T,
+  modelRouting?: AiModelRoutingPayload,
+): T & AiModelRoutingPayload {
+  if (!modelRouting) {
+    return body as T & AiModelRoutingPayload;
+  }
+  return {
+    ...body,
+    ...(modelRouting.module_id ? { module_id: modelRouting.module_id } : {}),
+    ...(modelRouting.ai_provider_id ? { ai_provider_id: modelRouting.ai_provider_id } : {}),
+    ...(modelRouting.ai_model ? { ai_model: modelRouting.ai_model } : {}),
+  };
+}
+
 function parseJsonOrText(responseText: string): unknown {
   if (!responseText || !responseText.trim()) {
     return null;
@@ -1226,6 +1258,15 @@ export class NovelApiService {
     );
   }
 
+  async ignoreRecommendation(novelId: string, recommendationId: string) {
+    return request(
+      `/novels/${encodeURIComponent(novelId)}/recommendations/${encodeURIComponent(recommendationId)}/ignore`,
+      {
+        method: 'POST',
+      },
+    );
+  }
+
   async getInteractions(novelId: string) {
     return request(`/novels/${encodeURIComponent(novelId)}/interactions`);
   }
@@ -1313,8 +1354,13 @@ export class NovelApiService {
     });
   }
 
-  async getCareers(projectId: string): Promise<{ total: number; mainCareers: Career[]; subCareers: Career[] }> {
-    const raw = await request<unknown>('/careers', { query: { project_id: projectId } });
+  async getCareers(
+    projectId: string,
+    modelRouting?: AiModelRoutingPayload,
+  ): Promise<{ total: number; mainCareers: Career[]; subCareers: Career[] }> {
+    const raw = await request<unknown>('/careers', {
+      query: withModelRoutingQuery({ project_id: projectId }, modelRouting),
+    });
     if (!isRecord(raw)) return { total: 0, mainCareers: [], subCareers: [] };
     return {
       total: Number(raw.total ?? 0),
@@ -1323,12 +1369,22 @@ export class NovelApiService {
     };
   }
 
-  async createCareer(data: Record<string, unknown>): Promise<unknown> {
-    return request('/careers', { method: 'POST', body: data });
+  async createCareer(data: Record<string, unknown>, modelRouting?: AiModelRoutingPayload): Promise<unknown> {
+    return request('/careers', {
+      method: 'POST',
+      body: withModelRoutingBody(data, modelRouting),
+    });
   }
 
-  async updateCareer(careerId: string, data: Record<string, unknown>): Promise<unknown> {
-    return request(`/careers/${encodeURIComponent(careerId)}`, { method: 'PUT', body: data });
+  async updateCareer(
+    careerId: string,
+    data: Record<string, unknown>,
+    modelRouting?: AiModelRoutingPayload,
+  ): Promise<unknown> {
+    return request(`/careers/${encodeURIComponent(careerId)}`, {
+      method: 'PUT',
+      body: withModelRoutingBody(data, modelRouting),
+    });
   }
 
   async deleteCareer(careerId: string): Promise<void> {
@@ -1338,8 +1394,12 @@ export class NovelApiService {
   async generateCareerSystem(
     projectId: string,
     params?: CareerSystemGenerationParams,
+    modelRouting?: AiModelRoutingPayload,
   ): Promise<CareerSystemGenerationResult> {
-    const query: Record<string, QueryValue> = { project_id: projectId };
+    const query: Record<string, QueryValue> = withModelRoutingQuery(
+      { project_id: projectId },
+      modelRouting,
+    ) ?? {};
     if (params?.mainCareerCount !== undefined) query.main_career_count = params.mainCareerCount;
     if (params?.subCareerCount !== undefined) query.sub_career_count = params.subCareerCount;
     if (params?.userRequirements) query.user_requirements = params.userRequirements;
@@ -1490,11 +1550,24 @@ export class NovelApiService {
     };
   }
 
-  async createBookImportTask(file: File, params: { extractMode: string; tailChapterCount: number }): Promise<{ taskId: string }> {
+  async createBookImportTask(
+    file: File,
+    params: { extractMode: string; tailChapterCount: number },
+    modelRouting?: AiModelRoutingPayload,
+  ): Promise<{ taskId: string }> {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('extract_mode', normalizeBookImportExtractMode(params.extractMode));
     formData.append('tail_chapter_count', String(params.tailChapterCount));
+    if (modelRouting?.module_id) {
+      formData.append('module_id', modelRouting.module_id);
+    }
+    if (modelRouting?.ai_provider_id) {
+      formData.append('ai_provider_id', modelRouting.ai_provider_id);
+    }
+    if (modelRouting?.ai_model) {
+      formData.append('ai_model', modelRouting.ai_model);
+    }
 
     const response = await fetch(buildBookImportUrl('/tasks'), {
       method: 'POST',
@@ -1528,18 +1601,26 @@ export class NovelApiService {
     return normalizeBookImportPreview(raw);
   }
 
-  async applyBookImport(taskId: string, payload: Record<string, unknown>): Promise<unknown> {
+  async applyBookImport(
+    taskId: string,
+    payload: Record<string, unknown>,
+    modelRouting?: AiModelRoutingPayload,
+  ): Promise<unknown> {
     return requestBookImport(`/tasks/${encodeURIComponent(taskId)}/apply`, {
       method: 'POST',
-      body: payload,
+      body: withModelRoutingBody(payload, modelRouting),
     });
   }
 
-  async applyBookImportStream(taskId: string, payload: Record<string, unknown>): Promise<Response> {
+  async applyBookImportStream(
+    taskId: string,
+    payload: Record<string, unknown>,
+    modelRouting?: AiModelRoutingPayload,
+  ): Promise<Response> {
     const response = await fetch(buildBookImportUrl(`/tasks/${encodeURIComponent(taskId)}/apply-stream`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(withModelRoutingBody(payload, modelRouting)),
     });
 
     if (!response.ok) {
@@ -1558,11 +1639,15 @@ export class NovelApiService {
     await requestBookImport(`/tasks/${encodeURIComponent(taskId)}`, { method: 'DELETE' });
   }
 
-  async retryBookImportStepsStream(taskId: string, steps: string[]): Promise<Response> {
+  async retryBookImportStepsStream(
+    taskId: string,
+    steps: string[],
+    modelRouting?: AiModelRoutingPayload,
+  ): Promise<Response> {
     const response = await fetch(buildBookImportUrl(`/tasks/${encodeURIComponent(taskId)}/retry-stream`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ steps }),
+      body: JSON.stringify(withModelRoutingBody({ steps }, modelRouting)),
     });
 
     if (!response.ok) {

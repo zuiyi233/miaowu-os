@@ -643,6 +643,23 @@ class NovelStore:
                     return rec
             return None
 
+    async def ignore_recommendation(self, novel_id: str, rec_id: str) -> dict | None:
+        async with self._lock:
+            recs = self._recommendations.get(novel_id, [])
+            for rec in recs:
+                if rec["id"] == rec_id:
+                    rec["status"] = "ignored"
+                    self._record_audit_locked(
+                        novel_id=novel_id,
+                        action="recommendation.ignore",
+                        entity_type="recommendation",
+                        entity_id=rec_id,
+                        details={"title": rec.get("title")},
+                    )
+                    await self._persist_locked()
+                    return rec
+            return None
+
     # -- Interactions (annotations, collaboration tasks) --
 
     async def list_interactions(self, novel_id: str) -> list[dict]:
@@ -1205,6 +1222,16 @@ async def generate_recommendations(novel_id: str, request: Request):
 async def accept_recommendation(novel_id: str, rec_id: str):
     """Accept a recommendation and mark it as adopted."""
     rec = await _novel_store.accept_recommendation(novel_id, rec_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    return rec
+
+
+@router.post("/novels/{novel_id}/recommendations/{rec_id}/ignore")
+@router.post("/novel/novels/{novel_id}/recommendations/{rec_id}/ignore", deprecated=True)
+async def ignore_recommendation(novel_id: str, rec_id: str):
+    """Ignore a recommendation and mark it as ignored."""
+    rec = await _novel_store.ignore_recommendation(novel_id, rec_id)
     if not rec:
         raise HTTPException(status_code=404, detail="Recommendation not found")
     return rec

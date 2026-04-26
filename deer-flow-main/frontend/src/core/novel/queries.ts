@@ -4,9 +4,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { databaseService } from './database';
 import { executeRemoteFirst, novelApiService } from './novel-api';
-import type { QueryValue } from './novel-api';
+import type { AiModelRoutingPayload, QueryValue } from './novel-api';
 import { emitNovelEvent } from './observability';
-import type { Novel, Chapter, Character, Setting, Faction, Item, PromptTemplate, EntityRelationship, TimelineEvent, GraphLayout, Volume, Career, Foreshadow, ForeshadowStats, BookImportTask, InspirationOption } from './schemas';
+import type { Novel, Chapter, Character, Setting, Faction, Item, PromptTemplate, EntityRelationship, TimelineEvent, GraphLayout, Volume } from './schemas';
 
 export function useNovelQuery(novelTitle?: string) {
   return useQuery({
@@ -559,10 +559,10 @@ export function useSetActivePromptTemplateMutation() {
   });
 }
 
-export function useCareersQuery(projectId: string) {
+export function useCareersQuery(projectId: string, modelRouting?: AiModelRoutingPayload) {
   return useQuery({
-    queryKey: ['careers', projectId],
-    queryFn: () => novelApiService.getCareers(projectId),
+    queryKey: ['careers', projectId, modelRouting?.module_id, modelRouting?.ai_provider_id, modelRouting?.ai_model],
+    queryFn: () => novelApiService.getCareers(projectId, modelRouting),
     enabled: !!projectId,
   });
 }

@@ -29,6 +29,23 @@ test("default proxy mode exposes /projects rewrite to gateway", async () => {
   expect(hasProjectsRewrite).toBe(true);
 });
 
+test("default proxy mode exposes /book-import rewrite to gateway", async () => {
+  delete process.env.NEXT_PUBLIC_BACKEND_BASE_URL;
+
+  const rewrites = (await nextConfig.rewrites?.()) as Array<{
+    source: string;
+    destination?: string;
+  }>;
+  const hasBookImportRewrite = rewrites.some(
+    (item) =>
+      item.source === "/book-import/:path*" &&
+      typeof item.destination === "string" &&
+      item.destination.endsWith("/book-import/:path*"),
+  );
+
+  expect(hasBookImportRewrite).toBe(true);
+});
+
 test("default proxy mode targets the 8551 gateway port", async () => {
   delete process.env.NEXT_PUBLIC_BACKEND_BASE_URL;
 

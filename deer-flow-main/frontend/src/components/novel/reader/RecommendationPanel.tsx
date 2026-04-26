@@ -164,7 +164,7 @@ async function acceptRecommendation(novelId: string, recId: string): Promise<Rec
 
 async function ignoreRecommendation(novelId: string, recId: string): Promise<void> {
   try {
-    await novelApiService.acceptRecommendation(novelId, recId);
+    await novelApiService.ignoreRecommendation(novelId, recId);
     console.debug("[recommendation] ignored remotely: novelId=%s recId=%s", novelId, recId);
   } catch (remoteError) {
     console.warn("[recommendation] remote ignore failed, falling back to local: novelId=%s recId=%s", novelId, recId, remoteError);

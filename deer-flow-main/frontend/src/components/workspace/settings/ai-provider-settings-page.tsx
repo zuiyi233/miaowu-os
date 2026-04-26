@@ -448,6 +448,10 @@ async function fetchModelsFromProviderApi(
   return data.models ?? [];
 }
 
+export function shouldValidateFetchModelsCredentials(providerType: string | undefined): boolean {
+  return providerType === "openai" || providerType === "custom";
+}
+
 export function AiProviderSettingsPage() {
   const {
     hydrated,
@@ -716,7 +720,11 @@ export function AiProviderSettingsPage() {
   }, []);
 
   const handleFetchModels = useCallback(async () => {
-    if (!formData.baseUrl && !formData.apiKey) {
+    if (
+      shouldValidateFetchModelsCredentials(formData.provider) &&
+      !formData.baseUrl &&
+      !formData.apiKey
+    ) {
       setFetchModelsError("请先填写接口地址和 API Key");
       return;
     }

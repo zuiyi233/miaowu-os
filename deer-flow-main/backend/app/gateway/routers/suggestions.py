@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
@@ -29,6 +30,31 @@ class SuggestionsRequest(BaseModel):
 
 class SuggestionsResponse(BaseModel):
     suggestions: list[str] = Field(default_factory=list, description="Suggested follow-up questions")
+
+
+_MODULE_ROUTING_FALLBACK_HINTS = (
+    "module",
+    "feature-routing",
+    "route config",
+    "routing",
+    "provider_id",
+    "module_id",
+    "模块",
+    "路由",
+    "解析",
+    "配置",
+)
+_NO_RETRY_ERROR_HINTS = (
+    "authorization",
+    "auth",
+    "quota",
+    "timeout",
+    "rate limit",
+    "forbidden",
+    "429",
+    "403",
+    "401",
+)
 
 
 def _strip_markdown_code_fence(text: str) -> str:
@@ -94,6 +120,45 @@ def _extract_response_text(content: object) -> str:
     return str(content)
 
 
+def _generate_suggestions_from_raw(raw: str, n: int) -> list[str]:
+    suggestions = _parse_json_string_list(raw) or []
+    cleaned = [s.replace("\n", " ").strip() for s in suggestions if s.strip()]
+    return cleaned[:n]
+
+
+def _should_retry_without_module(exc: Exception) -> bool:
+    message = str(exc).lower()
+    if any(hint in message for hint in _NO_RETRY_ERROR_HINTS):
+        return False
+
+    if isinstance(exc, (KeyError, ValueError, TypeError)):
+        return any(hint in message for hint in _MODULE_ROUTING_FALLBACK_HINTS) if message else True
+
+    return any(hint in message for hint in _MODULE_ROUTING_FALLBACK_HINTS)
+
+
+async def _run_suggestions_generation(
+    *,
+    ai_service: Any,
+    system_instruction: str,
+    user_content: str,
+    n: int,
+    model_name: str | None,
+) -> list[str]:
+    result = await ai_service.generate_text_with_messages(
+        messages=[
+            AiMessage(role="system", content=system_instruction),
+            AiMessage(role="user", content=user_content),
+        ],
+        model=model_name,
+        temperature=0.2,
+        max_tokens=256,
+        auto_mcp=False,
+    )
+    raw = _extract_response_text(result.get("content"))
+    return _generate_suggestions_from_raw(raw, n)
+
+
 def _format_conversation(messages: list[SuggestionMessage]) -> str:
     parts: list[str] = []
     for m in messages:
@@ -150,33 +215,25 @@ async def generate_suggestions(
             ai_model=body.model_name if not body.module_id else None,
         )
 
-        result = await effective_ai_service.generate_text_with_messages(
-            messages=[
-                AiMessage(role="system", content=system_instruction),
-                AiMessage(role="user", content=user_content),
-            ],
-            model=None if body.module_id else body.model_name,
-            temperature=0.2,
-            max_tokens=256,
-            auto_mcp=False,
+        cleaned = await _run_suggestions_generation(
+            ai_service=effective_ai_service,
+            system_instruction=system_instruction,
+            user_content=user_content,
+            n=n,
+            model_name=None if body.module_id else body.model_name,
         )
-        raw = _extract_response_text(result.get("content"))
-        suggestions = _parse_json_string_list(raw) or []
-        cleaned = [s.replace("\n", " ").strip() for s in suggestions if s.strip()]
-        cleaned = cleaned[:n]
         logger.debug(
-            "Suggestions generated: thread_id=%s module_id=%s count=%d raw_length=%d raw_preview=%s cleaned=%s",
+            "Suggestions generated: thread_id=%s module_id=%s count=%d cleaned=%s",
             thread_id,
             body.module_id,
             len(cleaned),
-            len(raw),
-            repr(raw[:500]),
             cleaned,
         )
         return SuggestionsResponse(suggestions=cleaned)
     except Exception as exc:
         logger.exception("Failed to generate suggestions: thread_id=%s module_id=%s model_name=%s err=%s", thread_id, body.module_id, body.model_name, exc)
-        if body.module_id and body.model_name:
+        should_fallback = body.module_id and body.model_name and _should_retry_without_module(exc)
+        if should_fallback:
             logger.info("Retrying suggestions without module_id: thread_id=%s model_name=%s", thread_id, body.model_name)
             try:
                 fallback_service = await get_user_ai_service_with_overrides(
@@ -185,22 +242,22 @@ async def generate_suggestions(
                     module_id=None,
                     ai_model=body.model_name,
                 )
-                result = await fallback_service.generate_text_with_messages(
-                    messages=[
-                        AiMessage(role="system", content=system_instruction),
-                        AiMessage(role="user", content=user_content),
-                    ],
-                    model=body.model_name,
-                    temperature=0.2,
-                    max_tokens=256,
-                    auto_mcp=False,
+                cleaned = await _run_suggestions_generation(
+                    ai_service=fallback_service,
+                    system_instruction=system_instruction,
+                    user_content=user_content,
+                    n=n,
+                    model_name=body.model_name,
                 )
-                raw = _extract_response_text(result.get("content"))
-                suggestions = _parse_json_string_list(raw) or []
-                cleaned = [s.replace("\n", " ").strip() for s in suggestions if s.strip()]
-                cleaned = cleaned[:n]
-                logger.debug("Fallback suggestions generated: thread_id=%s count=%d raw_length=%d", thread_id, len(cleaned), len(raw))
+                logger.debug("Fallback suggestions generated: thread_id=%s count=%d", thread_id, len(cleaned))
                 return SuggestionsResponse(suggestions=cleaned)
             except Exception as fallback_exc:
                 logger.exception("Fallback suggestions also failed: thread_id=%s err=%s", thread_id, fallback_exc)
+        elif body.module_id and body.model_name:
+            logger.info(
+                "Skip fallback retry for terminal suggestions error: thread_id=%s module_id=%s err=%s",
+                thread_id,
+                body.module_id,
+                type(exc).__name__,
+            )
         return SuggestionsResponse(suggestions=[])

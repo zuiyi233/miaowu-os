@@ -83,6 +83,9 @@ class BookImportApplyRequest(BaseModel):
     chapters: list[BookImportChapter]
     outlines: list[BookImportOutline] = Field(default_factory=list)
     import_mode: ImportMode = Field(default="append", description="导入模式")
+    module_id: str | None = Field(default=None, description="功能模块ID，用于路由到模块配置模型")
+    ai_provider_id: str | None = Field(default=None, description="指定AI提供商ID")
+    ai_model: str | None = Field(default=None, description="指定AI模型名称")
 
 
 class BookImportApplyResponse(BaseModel):
@@ -96,3 +99,6 @@ class BookImportApplyResponse(BaseModel):
 class BookImportRetryRequest(BaseModel):
     """重试失败步骤请求"""
     steps: list[str] = Field(..., min_length=1, description="需要重试的步骤名列表，如 world_building / career_system / characters")
+    module_id: str | None = Field(default=None, description="功能模块ID，用于路由到模块配置模型")
+    ai_provider_id: str | None = Field(default=None, description="指定AI提供商ID")
+    ai_model: str | None = Field(default=None, description="指定AI模型名称")

@@ -261,6 +261,13 @@ FastAPI application on port 8001 with health check at `GET /health`.
 - In-process novel pipeline metrics are exposed by `/api/features/metrics/novel-pipeline`: success rate, failure rate, retry rate, P95 latency, duplicate-write interception rate.
 - Feature flags support user-scoped canary release through `FeatureFlagConfig(enabled, rollout_percentage, allow_users, deny_users)` and deterministic hash bucketing.
 - Fast rollback runbook is implemented as one API step: `POST /api/features/{feature_name}/rollback` (forces `enabled=false`, `rollout_percentage=0`).
+- `POST /api/user/fetch-provider-models` now enforces SSRF guards for dynamic upstream probing:
+  - only `http/https` schemes are accepted;
+  - loopback/private/link-local/reserved and metadata targets are blocked;
+  - DNS-resolved addresses are revalidated before outbound requests.
+- `POST /api/threads/{id}/suggestions` fallback is no longer unconditional; retry without module routing only happens for routing/config-resolution style failures, not terminal auth/quota/rate-limit/timeout errors.
+- Novel recommendation endpoints now include explicit ignore semantics: `POST /api/novels/{novel_id}/recommendations/{rec_id}/ignore`.
+- `novel-careers` and `book-import` routes now propagate routing overrides (`module_id`, `ai_provider_id`, `ai_model`) across request → service execution to keep feature-routing behavior consistent.
 
 Finalize gate (`/polish/projects/{project_id}/finalize-gate` and `/api/polish/...`) now supports optional rule+model fusion controls:
 - request fields: `model_gate_signals`, `quality_gate_fusion_feature_enabled`, `fusion_degraded_fallback_mode`, `apply_feedback_backflow`, `feedback_evidence_key_prefix`.

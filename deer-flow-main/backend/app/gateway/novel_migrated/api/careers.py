@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
-from app.gateway.novel_migrated.api.settings import get_user_ai_service
+from app.gateway.novel_migrated.api.settings import get_user_ai_service_with_overrides
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.career import Career, CharacterCareer
@@ -24,7 +24,6 @@ from app.gateway.novel_migrated.schemas.career import (
     SetMainCareerRequest,
     UpdateCareerStageRequest,
 )
-from app.gateway.novel_migrated.services.ai_service import AIService
 from app.gateway.novel_migrated.utils.sse_response import SSEResponse, WizardProgressTracker, create_sse_response
 
 router = APIRouter(prefix="/api/careers", tags=["职业管理"])
@@ -180,9 +179,11 @@ async def generate_career_system(
     sub_career_count: int = 6,
     user_requirements: str = "",
     enable_mcp: bool = False,
+    module_id: str | None = None,
+    ai_provider_id: str | None = None,
+    ai_model: str | None = None,
     http_request: Request = None,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service),
     user_id: str | None = None,
 ):
     """
@@ -190,11 +191,19 @@ async def generate_career_system(
     
     通过Server-Sent Events返回实时进度信息
     """
+    effective_user_id = user_id if user_id else get_user_id(http_request) if http_request else "local_single_user"
+    effective_ai_service = await get_user_ai_service_with_overrides(
+        request=http_request,
+        db=db,
+        module_id=module_id,
+        ai_provider_id=ai_provider_id,
+        ai_model=ai_model,
+    )
+
     async def generate() -> AsyncGenerator[str, None]:
         tracker = WizardProgressTracker("职业体系")
         try:
             # 验证用户权限和项目是否存在
-            effective_user_id = user_id if user_id else get_user_id(http_request) if http_request else "local_single_user"
             project = await verify_project_access(project_id, effective_user_id, db)
             
             yield await tracker.start()
@@ -335,7 +344,7 @@ async def generate_career_system(
                 chunk_count = 0
                 estimated_total = max(3000, len(prompt) * 8)
                 
-                async for chunk in user_ai_service.generate_text_stream(prompt=prompt):
+                async for chunk in effective_ai_service.generate_text_stream(prompt=prompt):
                     chunk_count += 1
                     ai_response += chunk
                     
@@ -363,7 +372,7 @@ async def generate_career_system(
             
             # 清洗并解析JSON
             try:
-                cleaned_response = user_ai_service._clean_json_response(ai_response)
+                cleaned_response = effective_ai_service._clean_json_response(ai_response)
                 career_data = json.loads(cleaned_response)
                 logger.info("✅ 职业体系JSON解析成功")
             except json.JSONDecodeError as e:

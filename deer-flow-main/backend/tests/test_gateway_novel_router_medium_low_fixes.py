@@ -180,3 +180,29 @@ def test_delete_chapter_forwards_idempotency_header(monkeypatch):
     assert captured["chapter_id"] == "chapter-1"
     assert captured["idempotency_key"] == "header-del-key"
 
+
+def test_ignore_recommendation_route_marks_recommendation_as_ignored(monkeypatch):
+    async def _fake_ignore_recommendation(novel_id: str, rec_id: str) -> dict[str, Any]:
+        return {"id": rec_id, "novelId": novel_id, "status": "ignored"}
+
+    monkeypatch.setattr(novel_router._novel_store, "ignore_recommendation", _fake_ignore_recommendation)
+
+    result = asyncio.run(novel_router.ignore_recommendation("novel-1", "rec-1"))
+
+    assert result["status"] == "ignored"
+
+
+def test_ignore_recommendation_route_returns_404_when_missing(monkeypatch):
+    async def _fake_ignore_recommendation(_novel_id: str, _rec_id: str):
+        return None
+
+    monkeypatch.setattr(novel_router._novel_store, "ignore_recommendation", _fake_ignore_recommendation)
+
+    try:
+        asyncio.run(novel_router.ignore_recommendation("novel-1", "missing"))
+        assert False, "expected HTTPException"
+    except Exception as exc:  # noqa: BLE001
+        from fastapi import HTTPException
+
+        assert isinstance(exc, HTTPException)
+        assert exc.status_code == 404

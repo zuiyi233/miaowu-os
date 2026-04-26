@@ -1,7 +1,7 @@
 'use client';
 
 import {
-  Upload, Play, RefreshCw, X, RotateCcw,
+  Play, RefreshCw, X, RotateCcw,
   AlertTriangle, Redo, Inbox, CheckCircle, FileText,
   Loader2, ChevronRight, BookOpen, Settings
 } from 'lucide-react';
@@ -37,18 +37,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
-import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { useAiProviderStore } from '@/core/ai/ai-provider-store';
+import {
+  loadFeatureRoutingState,
+  normalizeFeatureRoutingState,
+  resolveModuleRoutingTarget,
+} from '@/core/ai/feature-routing';
 import { novelApiService } from '@/core/novel/novel-api';
-import type { BookImportTask, BookImportPreview, BookImportChapter, BookImportWarning, BookImportStepFailure } from '@/core/novel/schemas';
+import type { AiModelRoutingPayload } from '@/core/novel/novel-api';
+import type { BookImportPreview, BookImportChapter, BookImportStepFailure } from '@/core/novel/schemas';
 import { cn } from '@/lib/utils';
 
 type PageStep = 'upload' | 'parsing' | 'preview' | 'applying';
 
 const CACHE_KEY = 'book_import_page_cache_v1';
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const BOOK_IMPORT_MODULE_ID = 'novel-book-import';
 
 interface CacheState {
   taskId: string;
@@ -81,6 +86,20 @@ function clearCache() { sessionStorage.removeItem(CACHE_KEY); }
 
 export function BookImportPage() {
   const router = useRouter();
+  const providers = useAiProviderStore((state) => state.effective.providers);
+  const featureRoutingSettings = useAiProviderStore((state) => state.effective.featureRoutingSettings);
+
+  const modelRoutingPayload: AiModelRoutingPayload = (() => {
+    const routingRaw = featureRoutingSettings ?? loadFeatureRoutingState(providers);
+    const routing = normalizeFeatureRoutingState(routingRaw, providers);
+    const resolved = resolveModuleRoutingTarget(routing, BOOK_IMPORT_MODULE_ID);
+    const target = resolved?.target ?? routing.defaultTarget;
+    return {
+      module_id: BOOK_IMPORT_MODULE_ID,
+      ...(target?.providerId ? { ai_provider_id: target.providerId } : {}),
+      ...(target?.model ? { ai_model: target.model } : {}),
+    };
+  })();
 
   // File upload state
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -176,7 +195,7 @@ export function BookImportPage() {
       const result = await novelApiService.createBookImportTask(file, {
         extractMode: parseRange,
         tailChapterCount: tailChapters,
-      });
+      }, modelRoutingPayload);
 
       const tid = result.taskId;
       if (!tid) throw new Error('No task ID returned');
@@ -275,7 +294,7 @@ export function BookImportPage() {
           : [],
       };
 
-      const response = await novelApiService.applyBookImportStream(taskId, payload);
+      const response = await novelApiService.applyBookImportStream(taskId, payload, modelRoutingPayload);
       await readSSEStream(response, false);
     } catch (err: any) {
       const errorMessage = err instanceof Error ? err.message : '导入失败';
@@ -439,7 +458,7 @@ export function BookImportPage() {
 
     try {
       const stepNames = failedSteps.map((s) => s.stepName);
-      const response = await novelApiService.retryBookImportStepsStream(taskId, stepNames);
+      const response = await novelApiService.retryBookImportStepsStream(taskId, stepNames, modelRoutingPayload);
       setFailedSteps([]);
       setApplyError(null);
       await readSSEStream(response, true);

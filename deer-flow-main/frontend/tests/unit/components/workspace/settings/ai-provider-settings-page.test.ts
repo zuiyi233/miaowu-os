@@ -2,7 +2,10 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vitest";
 
-import { ProviderCard } from "@/components/workspace/settings/ai-provider-settings-page";
+import {
+  ProviderCard,
+  shouldValidateFetchModelsCredentials,
+} from "@/components/workspace/settings/ai-provider-settings-page";
 
 function createProviderCardMarkup(
   overrides?: Partial<{
@@ -75,4 +78,11 @@ test("provider card does not display active badge when isActive is false", () =>
 test("provider card shows set-as-default button when not active", () => {
   const html = createProviderCardMarkup({ isActive: false });
   expect(html).toContain("设为默认");
+});
+
+test("fetch models validation keeps openai/custom required while allowing anthropic/google empty credentials", () => {
+  expect(shouldValidateFetchModelsCredentials("openai")).toBe(true);
+  expect(shouldValidateFetchModelsCredentials("custom")).toBe(true);
+  expect(shouldValidateFetchModelsCredentials("anthropic")).toBe(false);
+  expect(shouldValidateFetchModelsCredentials("google")).toBe(false);
 });

@@ -645,6 +645,15 @@ def test_execute_pending_action_returns_execute_result_in_protocol(monkeypatch):
     assert protocol["execute_result"]["target_id"] == "chapter-3"
 
 
+def test_extract_character_payload_writes_relationships_field(monkeypatch):
+    middleware = IntentRecognitionMiddleware()
+
+    payload = middleware._extract_character_create_payload("角色名为林彻，关系描述：与周舟是搭档")
+
+    assert payload.get("relationships") == "与周舟是搭档"
+    assert "relationships_text" not in payload
+
+
 class _RollbackTrackingSession:
     def __init__(self, *, in_transaction: bool = True) -> None:
         self._in_transaction = in_transaction

@@ -49,6 +49,54 @@ from app.gateway.novel_migrated.services.txt_parser_service import txt_parser_se
 logger = get_logger(__name__)
 
 
+def _routing_non_empty_str(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def _extract_routing_target(node: Any) -> tuple[str | None, str | None]:
+    if not isinstance(node, dict):
+        return None, None
+
+    provider_id = _routing_non_empty_str(node.get("providerId") or node.get("provider_id"))
+    model_name = _routing_non_empty_str(node.get("model") or node.get("model_name"))
+    return provider_id, model_name
+
+
+def _resolve_book_import_routing_target(bundle: dict[str, Any], module_id: str | None) -> tuple[str | None, str | None]:
+    feature_settings = bundle.get("feature_routing_settings")
+    if not isinstance(feature_settings, dict):
+        return None, None
+
+    if module_id:
+        modules = feature_settings.get("modules")
+        if isinstance(modules, list):
+            matched_module = next(
+                (
+                    item
+                    for item in modules
+                    if isinstance(item, dict) and _routing_non_empty_str(item.get("moduleId")) == module_id
+                ),
+                None,
+            )
+            if isinstance(matched_module, dict):
+                current_mode = _routing_non_empty_str(matched_module.get("currentMode")) or "primary"
+                backup_provider_id, backup_model = _extract_routing_target(matched_module.get("backupTarget"))
+                primary_provider_id, primary_model = _extract_routing_target(matched_module.get("primaryTarget"))
+                module_default_provider_id, module_default_model = _extract_routing_target(matched_module.get("defaultTarget"))
+
+                if current_mode == "backup" and backup_provider_id and backup_model:
+                    return backup_provider_id, backup_model
+                if primary_provider_id and primary_model:
+                    return primary_provider_id, primary_model
+                if module_default_provider_id and module_default_model:
+                    return module_default_provider_id, module_default_model
+
+    return _extract_routing_target(feature_settings.get("defaultTarget"))
+
+
 def normalize_narrative_perspective(value: Any, fallback: str = "第三人称") -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -192,6 +240,9 @@ class BookImportService:
         user_id: str,
         payload: BookImportApplyRequest,
         db: AsyncSession,
+        module_id: str | None = None,
+        ai_provider_id: str | None = None,
+        ai_model: str | None = None,
     ) -> BookImportApplyResponse:
         task = await self._get_task(task_id=task_id, user_id=user_id)
         if task.status != "completed":
@@ -256,6 +307,9 @@ class BookImportService:
                 user_id=user_id,
                 project=project,
                 character_count=max(project.character_count or 0, 8),
+                module_id=module_id,
+                ai_provider_id=ai_provider_id,
+                ai_model=ai_model,
             )
             statistics["generated_world_building"] = generated_world
             statistics["generated_careers"] = generated_careers
@@ -285,6 +339,9 @@ class BookImportService:
         payload: BookImportApplyRequest,
         db: AsyncSession,
         progress_callback: Any = None,
+        module_id: str | None = None,
+        ai_provider_id: str | None = None,
+        ai_model: str | None = None,
     ) -> BookImportApplyResponse:
         """
         与 apply_import 相同的落库逻辑，但通过 progress_callback 推送细粒度进度。
@@ -372,6 +429,9 @@ class BookImportService:
                     progress_callback=progress_callback,
                     progress_range=(22, 40),
                     raise_on_error=True,
+                    module_id=module_id,
+                    ai_provider_id=ai_provider_id,
+                    ai_model=ai_model,
                 )
                 statistics["generated_world_building"] = generated_world
                 await _notify("🌍 世界观生成完成", 40)
@@ -393,6 +453,9 @@ class BookImportService:
                     project=project,
                     progress_callback=progress_callback,
                     progress_range=(42, 65),
+                    module_id=module_id,
+                    ai_provider_id=ai_provider_id,
+                    ai_model=ai_model,
                 )
                 statistics["generated_careers"] = generated_careers
                 await _notify(f"💼 职业体系生成完成（{generated_careers}个）", 65)
@@ -416,6 +479,9 @@ class BookImportService:
                     count=character_count_target,
                     progress_callback=progress_callback,
                     progress_range=(67, 92),
+                    module_id=module_id,
+                    ai_provider_id=ai_provider_id,
+                    ai_model=ai_model,
                 )
                 statistics["generated_entities"] = generated_entities
                 await _notify(f"👥 角色/组织生成完成（{generated_entities}个）", 92)
@@ -483,6 +549,9 @@ class BookImportService:
         steps_to_retry: list[str],
         db: AsyncSession,
         progress_callback: Any = None,
+        module_id: str | None = None,
+        ai_provider_id: str | None = None,
+        ai_model: str | None = None,
     ) -> dict:
         """
         仅重试之前导入时失败的AI生成步骤。
@@ -532,6 +601,9 @@ class BookImportService:
                             progress_callback=progress_callback,
                             progress_range=(step_start_pct, step_end_pct),
                             raise_on_error=True,
+                            module_id=module_id,
+                            ai_provider_id=ai_provider_id,
+                            ai_model=ai_model,
                         )
                         retry_results["generated_world_building"] = result
                         await _notify("✅ 世界观重试成功", step_end_pct)
@@ -554,6 +626,9 @@ class BookImportService:
                             project=project,
                             progress_callback=progress_callback,
                             progress_range=(step_start_pct, step_end_pct),
+                            module_id=module_id,
+                            ai_provider_id=ai_provider_id,
+                            ai_model=ai_model,
                         )
                         retry_results["generated_careers"] = result
                         await _notify(f"✅ 职业体系重试成功（{result}个）", step_end_pct)
@@ -578,6 +653,9 @@ class BookImportService:
                             count=character_count_target,
                             progress_callback=progress_callback,
                             progress_range=(step_start_pct, step_end_pct),
+                            module_id=module_id,
+                            ai_provider_id=ai_provider_id,
+                            ai_model=ai_model,
                         )
                         retry_results["generated_entities"] = result
                         await _notify(f"✅ 角色/组织重试成功（{result}个）", step_end_pct)
@@ -1589,6 +1667,7 @@ class BookImportService:
         *,
         db: AsyncSession,
         user_id: str,
+        module_id: str | None = None,
         ai_provider_id: str | None = None,
         ai_model: str | None = None,
     ) -> AIService:
@@ -1615,12 +1694,19 @@ class BookImportService:
         resolved_max_tokens = user_settings.max_tokens if user_settings.max_tokens is not None else 2000
 
         provider_id = (ai_provider_id or "").strip()
-        if provider_id:
+        if provider_id or module_id:
             try:
                 raw_preferences = user_settings.preferences or "{}"
                 preferences = json.loads(raw_preferences) if isinstance(raw_preferences, str) else raw_preferences
                 if isinstance(preferences, dict):
                     bundle = preferences.get("ai_provider_settings")
+                    if isinstance(bundle, dict):
+                        if not provider_id:
+                            routed_provider_id, routed_model = _resolve_book_import_routing_target(bundle, module_id)
+                            if routed_provider_id:
+                                provider_id = routed_provider_id
+                            if routed_model and not (isinstance(ai_model, str) and ai_model.strip()):
+                                resolved_model = routed_model
                     providers = bundle.get("providers") if isinstance(bundle, dict) else None
                     if isinstance(providers, list):
                         for provider_record in providers:
@@ -1691,6 +1777,9 @@ class BookImportService:
         user_id: str,
         project: Project,
         character_count: int,
+        module_id: str | None = None,
+        ai_provider_id: str | None = None,
+        ai_model: str | None = None,
     ) -> tuple[int, int, int]:
         """
         走“向导前3步”的核心链路：
@@ -1703,12 +1792,18 @@ class BookImportService:
             db=db,
             user_id=user_id,
             project=project,
+            module_id=module_id,
+            ai_provider_id=ai_provider_id,
+            ai_model=ai_model,
         )
 
         generated_careers = await self._generate_career_system_from_project(
             db=db,
             user_id=user_id,
             project=project,
+            module_id=module_id,
+            ai_provider_id=ai_provider_id,
+            ai_model=ai_model,
         )
 
         generated_entities = await self._generate_characters_and_organizations_from_project(
@@ -1716,6 +1811,9 @@ class BookImportService:
             user_id=user_id,
             project=project,
             count=character_count,
+            module_id=module_id,
+            ai_provider_id=ai_provider_id,
+            ai_model=ai_model,
         )
 
         # 拆书导入场景不需要继续到大纲，直接标记流程完成，避免项目列表再次跳向导生成大纲
@@ -1734,6 +1832,7 @@ class BookImportService:
         progress_callback: Any = None,
         progress_range: tuple[int, int] = (0, 100),
         raise_on_error: bool = False,
+        module_id: str | None = None,
         ai_provider_id: str | None = None,
         ai_model: str | None = None,
     ) -> int:
@@ -1749,6 +1848,7 @@ class BookImportService:
             ai_service = await self._build_user_ai_service(
                 db=db,
                 user_id=user_id,
+                module_id=module_id,
                 ai_provider_id=ai_provider_id,
                 ai_model=ai_model,
             )
@@ -1808,6 +1908,7 @@ class BookImportService:
         project: Project,
         progress_callback: Any = None,
         progress_range: tuple[int, int] = (0, 100),
+        module_id: str | None = None,
         ai_provider_id: str | None = None,
         ai_model: str | None = None,
     ) -> int:
@@ -1822,6 +1923,7 @@ class BookImportService:
         ai_service = await self._build_user_ai_service(
             db=db,
             user_id=user_id,
+            module_id=module_id,
             ai_provider_id=ai_provider_id,
             ai_model=ai_model,
         )
@@ -1914,6 +2016,7 @@ class BookImportService:
         count: int,
         progress_callback: Any = None,
         progress_range: tuple[int, int] = (0, 100),
+        module_id: str | None = None,
         ai_provider_id: str | None = None,
         ai_model: str | None = None,
     ) -> int:
@@ -1934,6 +2037,7 @@ class BookImportService:
         ai_service = await self._build_user_ai_service(
             db=db,
             user_id=user_id,
+            module_id=module_id,
             ai_provider_id=ai_provider_id,
             ai_model=ai_model,
         )

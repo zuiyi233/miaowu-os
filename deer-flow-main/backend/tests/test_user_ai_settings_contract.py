@@ -563,3 +563,81 @@ def test_activate_preset_supports_encrypted_secret_field() -> None:
     assert crypto.safe_decrypt(fake_db.settings.api_key) == "sk-new-active"
     stored_preferences = json.loads(fake_db.settings.preferences or "{}")
     assert stored_preferences["presets"][0]["is_active"] is True
+
+
+def test_fetch_provider_models_allows_anthropic_without_base_url() -> None:
+    app = _build_user_settings_app(_FakeDB())
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/user/fetch-provider-models",
+            json={"provider_type": "anthropic", "base_url": ""},
+        )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert isinstance(payload["models"], list)
+    assert payload["models"]
+
+
+def test_fetch_provider_models_rejects_non_http_scheme() -> None:
+    app = _build_user_settings_app(_FakeDB())
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/user/fetch-provider-models",
+            json={"provider_type": "openai", "base_url": "ftp://example.com"},
+        )
+
+    assert resp.status_code == 400
+    assert "http/https" in resp.json()["detail"]
+
+
+def test_fetch_provider_models_rejects_localhost_target() -> None:
+    app = _build_user_settings_app(_FakeDB())
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/user/fetch-provider-models",
+            json={"provider_type": "openai", "base_url": "http://localhost:8000"},
+        )
+
+    assert resp.status_code == 400
+    assert "受限目标" in resp.json()["detail"] or "受限网络地址" in resp.json()["detail"]
+
+
+def test_fetch_provider_models_rejects_private_ip_target() -> None:
+    app = _build_user_settings_app(_FakeDB())
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/user/fetch-provider-models",
+            json={"provider_type": "openai", "base_url": "http://10.1.2.3:8000"},
+        )
+
+    assert resp.status_code == 400
+    assert "受限网络地址" in resp.json()["detail"]
+
+
+def test_fetch_provider_models_allows_public_https_and_parses_models(monkeypatch) -> None:
+    app = _build_user_settings_app(_FakeDB())
+
+    async def _fake_fetch(url: str, api_key: str) -> list[str]:
+        assert url == "https://api.example.com/v1/models"
+        assert api_key == "sk-test"
+        return ["model-a", "model-b"]
+
+    monkeypatch.setattr(user_settings, "_fetch_models_from_upstream", _fake_fetch)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/user/fetch-provider-models",
+            json={
+                "provider_type": "openai",
+                "base_url": "https://api.example.com",
+                "api_key": "sk-test",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["models"] == ["model-a", "model-b"]

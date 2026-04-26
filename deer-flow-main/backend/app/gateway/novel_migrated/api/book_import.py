@@ -115,6 +115,9 @@ async def apply_book_import(
         user_id=user_id,
         payload=payload,
         db=db,
+        module_id=payload.module_id,
+        ai_provider_id=payload.ai_provider_id,
+        ai_model=payload.ai_model,
     )
 
 
@@ -160,6 +163,9 @@ async def apply_book_import_stream(
                 payload=payload,
                 db=db,
                 progress_callback=_progress_callback,
+                module_id=payload.module_id,
+                ai_provider_id=payload.ai_provider_id,
+                ai_model=payload.ai_model,
             )
 
             # 发送结果
@@ -231,6 +237,9 @@ async def retry_failed_steps_stream(
                 steps_to_retry=payload.steps,
                 db=db,
                 progress_callback=_progress_callback,
+                module_id=payload.module_id,
+                ai_provider_id=payload.ai_provider_id,
+                ai_model=payload.ai_model,
             )
 
             await progress_queue.put(await SSEResponse.send_result(result))

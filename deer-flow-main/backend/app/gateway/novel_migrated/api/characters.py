@@ -5,7 +5,7 @@ import json
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,7 +36,10 @@ class CharacterCreateRequest(BaseModel):
     organization_type: Optional[str] = None
     organization_purpose: Optional[str] = None
     traits: Optional[list] = None
-    relationships: Optional[str] = None
+    relationships: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("relationships", "relationships_text"),
+    )
 
 
 class CharacterUpdateRequest(BaseModel):
@@ -51,7 +54,10 @@ class CharacterUpdateRequest(BaseModel):
     organization_purpose: Optional[str] = None
     current_state: Optional[str] = None
     traits: Optional[list] = None
-    relationships: Optional[str] = None
+    relationships: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("relationships", "relationships_text"),
+    )
 
 
 class SingleGenerateRequest(BaseModel):
@@ -235,7 +241,7 @@ async def generate_single_character(
             organization_type=char_data.get("organization_type"),
             organization_purpose=char_data.get("organization_purpose"),
             traits=json.dumps(char_data.get("traits", []), ensure_ascii=False),
-            relationships=char_data.get("relationships_text") or char_data.get("relationships"),
+            relationships=char_data.get("relationships") or char_data.get("relationships_text"),
         )
         db.add(character)
         await db.flush()
