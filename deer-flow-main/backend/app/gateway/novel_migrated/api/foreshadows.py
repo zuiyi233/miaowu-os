@@ -25,17 +25,26 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/foreshadows", tags=["foreshadows"])
 
 
+def _resolve_user_id_from_request(request: Request | None, user_id: str | None = None) -> str:
+    if user_id:
+        return user_id
+    if request is not None:
+        return get_user_id(request)
+    return "local_single_user"
+
+
 @router.get("/projects/{project_id}", response_model=ForeshadowListResponse)
 async def get_project_foreshadows(
     project_id: str,
-    request: Request,
+    request: Request = None,
     status: str | None = Query(None, description="状态筛选: pending/planted/resolved/abandoned"),
     category: str | None = Query(None, description="分类筛选"),
     source_type: str | None = Query(None, description="来源筛选: analysis/manual"),
     is_long_term: bool | None = Query(None, description="是否长线伏笔"),
     page: int = Query(1, ge=1, description="页码"),
     limit: int = Query(50, ge=1, le=100, description="每页数量"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = None,
 ):
     """
     获取项目所有伏笔
@@ -43,8 +52,8 @@ async def get_project_foreshadows(
     支持按状态、分类、来源筛选，支持分页
     """
     try:
-        user_id = get_user_id(request)
-        await verify_project_access(project_id, user_id, db)
+        effective_user_id = _resolve_user_id_from_request(request, user_id)
+        await verify_project_access(project_id, effective_user_id, db)
         
         result = await foreshadow_service.get_project_foreshadows(
             db=db,
@@ -69,14 +78,15 @@ async def get_project_foreshadows(
 @router.get("/projects/{project_id}/stats", response_model=ForeshadowStatsResponse)
 async def get_foreshadow_stats(
     project_id: str,
-    request: Request,
+    request: Request = None,
     current_chapter: int | None = Query(None, ge=1, description="当前章节号(用于计算超期)"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = None,
 ):
     """获取项目伏笔统计"""
     try:
-        user_id = get_user_id(request)
-        await verify_project_access(project_id, user_id, db)
+        effective_user_id = _resolve_user_id_from_request(request, user_id)
+        await verify_project_access(project_id, effective_user_id, db)
         
         stats = await foreshadow_service.get_stats(db, project_id, current_chapter)
         return stats
@@ -92,11 +102,12 @@ async def get_foreshadow_stats(
 async def get_chapter_foreshadow_context(
     project_id: str,
     chapter_number: int,
-    request: Request,
+    request: Request = None,
     include_pending: bool = Query(True, description="包含待埋入伏笔"),
     include_overdue: bool = Query(True, description="包含超期伏笔"),
     lookahead: int = Query(5, ge=1, le=20, description="向前看几章"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = None,
 ):
     """
     获取章节生成的伏笔上下文
@@ -104,8 +115,8 @@ async def get_chapter_foreshadow_context(
     用于在章节生成时提供伏笔提醒
     """
     try:
-        user_id = get_user_id(request)
-        await verify_project_access(project_id, user_id, db)
+        effective_user_id = _resolve_user_id_from_request(request, user_id)
+        await verify_project_access(project_id, effective_user_id, db)
         
         context = await foreshadow_service.build_chapter_context(
             db=db,
@@ -128,15 +139,16 @@ async def get_chapter_foreshadow_context(
 @router.get("/projects/{project_id}/pending-resolve")
 async def get_pending_resolve_foreshadows(
     project_id: str,
-    request: Request,
+    request: Request = None,
     current_chapter: int = Query(..., ge=1, description="当前章节号"),
     lookahead: int = Query(5, ge=1, le=20, description="向前看几章"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = None,
 ):
     """获取待回收伏笔列表(用于章节生成提醒)"""
     try:
-        user_id = get_user_id(request)
-        await verify_project_access(project_id, user_id, db)
+        effective_user_id = _resolve_user_id_from_request(request, user_id)
+        await verify_project_access(project_id, effective_user_id, db)
         
         foreshadows = await foreshadow_service.get_pending_resolve_foreshadows(
             db=db,
@@ -160,8 +172,9 @@ async def get_pending_resolve_foreshadows(
 @router.get("/{foreshadow_id}", response_model=ForeshadowResponse)
 async def get_foreshadow(
     foreshadow_id: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = None,
 ):
     """获取单个伏笔详情"""
     try:
@@ -170,9 +183,8 @@ async def get_foreshadow(
         if not foreshadow:
             raise HTTPException(status_code=404, detail="伏笔不存在")
         
-        # 验证权限
-        user_id = get_user_id(request)
-        await verify_project_access(foreshadow.project_id, user_id, db)
+        effective_user_id = _resolve_user_id_from_request(request, user_id)
+        await verify_project_access(foreshadow.project_id, effective_user_id, db)
         
         return foreshadow.to_dict()
         
@@ -186,8 +198,9 @@ async def get_foreshadow(
 @router.post("", response_model=ForeshadowResponse)
 async def create_foreshadow(
     data: ForeshadowCreate,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = None,
 ):
     """
     创建伏笔(手动添加)
@@ -195,8 +208,8 @@ async def create_foreshadow(
     创建一个新的自定义伏笔
     """
     try:
-        user_id = get_user_id(request)
-        await verify_project_access(data.project_id, user_id, db)
+        effective_user_id = _resolve_user_id_from_request(request, user_id)
+        await verify_project_access(data.project_id, effective_user_id, db)
         
         foreshadow = await foreshadow_service.create_foreshadow(db, data)
         return foreshadow.to_dict()
@@ -212,8 +225,9 @@ async def create_foreshadow(
 async def update_foreshadow(
     foreshadow_id: str,
     data: ForeshadowUpdate,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = None,
 ):
     """更新伏笔"""
     try:
@@ -222,8 +236,8 @@ async def update_foreshadow(
         if not foreshadow:
             raise HTTPException(status_code=404, detail="伏笔不存在")
         
-        user_id = get_user_id(request)
-        await verify_project_access(foreshadow.project_id, user_id, db)
+        effective_user_id = _resolve_user_id_from_request(request, user_id)
+        await verify_project_access(foreshadow.project_id, effective_user_id, db)
         
         updated = await foreshadow_service.update_foreshadow(db, foreshadow_id, data)
         return updated.to_dict()
@@ -238,8 +252,9 @@ async def update_foreshadow(
 @router.delete("/{foreshadow_id}")
 async def delete_foreshadow(
     foreshadow_id: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = None,
 ):
     """删除伏笔"""
     try:
@@ -248,8 +263,8 @@ async def delete_foreshadow(
         if not foreshadow:
             raise HTTPException(status_code=404, detail="伏笔不存在")
         
-        user_id = get_user_id(request)
-        await verify_project_access(foreshadow.project_id, user_id, db)
+        effective_user_id = _resolve_user_id_from_request(request, user_id)
+        await verify_project_access(foreshadow.project_id, effective_user_id, db)
         
         await foreshadow_service.delete_foreshadow(db, foreshadow_id)
         
@@ -266,8 +281,9 @@ async def delete_foreshadow(
 async def plant_foreshadow(
     foreshadow_id: str,
     data: PlantForeshadowRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = None,
 ):
     """
     标记伏笔为已埋入
@@ -280,8 +296,8 @@ async def plant_foreshadow(
         if not foreshadow:
             raise HTTPException(status_code=404, detail="伏笔不存在")
         
-        user_id = get_user_id(request)
-        await verify_project_access(foreshadow.project_id, user_id, db)
+        effective_user_id = _resolve_user_id_from_request(request, user_id)
+        await verify_project_access(foreshadow.project_id, effective_user_id, db)
         
         updated = await foreshadow_service.mark_as_planted(db, foreshadow_id, data)
         return updated.to_dict()
@@ -297,8 +313,9 @@ async def plant_foreshadow(
 async def resolve_foreshadow(
     foreshadow_id: str,
     data: ResolveForeshadowRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = None,
 ):
     """
     标记伏笔为已回收
@@ -311,8 +328,8 @@ async def resolve_foreshadow(
         if not foreshadow:
             raise HTTPException(status_code=404, detail="伏笔不存在")
         
-        user_id = get_user_id(request)
-        await verify_project_access(foreshadow.project_id, user_id, db)
+        effective_user_id = _resolve_user_id_from_request(request, user_id)
+        await verify_project_access(foreshadow.project_id, effective_user_id, db)
         
         updated = await foreshadow_service.mark_as_resolved(db, foreshadow_id, data)
         return updated.to_dict()
@@ -327,9 +344,10 @@ async def resolve_foreshadow(
 @router.post("/{foreshadow_id}/abandon", response_model=ForeshadowResponse)
 async def abandon_foreshadow(
     foreshadow_id: str,
-    request: Request,
+    request: Request = None,
     reason: str | None = Query(None, description="废弃原因"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = None,
 ):
     """
     标记伏笔为已废弃
@@ -342,8 +360,8 @@ async def abandon_foreshadow(
         if not foreshadow:
             raise HTTPException(status_code=404, detail="伏笔不存在")
         
-        user_id = get_user_id(request)
-        await verify_project_access(foreshadow.project_id, user_id, db)
+        effective_user_id = _resolve_user_id_from_request(request, user_id)
+        await verify_project_access(foreshadow.project_id, effective_user_id, db)
         
         updated = await foreshadow_service.mark_as_abandoned(db, foreshadow_id, reason)
         return updated.to_dict()
@@ -359,8 +377,9 @@ async def abandon_foreshadow(
 async def sync_foreshadows_from_analysis(
     project_id: str,
     data: SyncFromAnalysisRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = None,
 ):
     """
     从分析结果同步伏笔
@@ -368,8 +387,8 @@ async def sync_foreshadows_from_analysis(
     从章节分析结果中提取伏笔信息，同步到伏笔管理表
     """
     try:
-        user_id = get_user_id(request)
-        await verify_project_access(project_id, user_id, db)
+        effective_user_id = _resolve_user_id_from_request(request, user_id)
+        await verify_project_access(project_id, effective_user_id, db)
         
         result = await foreshadow_service.sync_from_analysis(db, project_id, data)
         return result

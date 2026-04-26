@@ -8,7 +8,6 @@ the tool defers to the session flow rather than bypassing the confirmation gate.
 from __future__ import annotations
 
 import asyncio
-import importlib
 import logging
 import os
 import time
@@ -20,6 +19,15 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import InjectedToolArg
 from langgraph.config import get_stream_writer
 
+from deerflow.tools.builtins.novel_internal import (
+    load_attr as _load_attr,
+)
+from deerflow.tools.builtins.novel_internal import (
+    resolve_user_id as _resolve_user_id,
+)
+from deerflow.tools.builtins.novel_internal import (
+    to_dict as _to_dict,
+)
 from deerflow.tools.builtins.novel_tool_helpers import (
     SESSION_CONTEXT_KEYS,
     USER_CONTEXT_KEYS,
@@ -43,16 +51,6 @@ _DEFAULT_CREATE_NOVEL_MAX_ATTEMPTS = 2
 _DEFAULT_CREATE_NOVEL_RETRY_BACKOFF_MS = 600
 
 _StreamWriter = Callable[[dict[str, Any]], None]
-
-
-def _load_optional_attr(module_path: str, attr_name: str) -> Any | None:
-    try:
-        module = importlib.import_module(module_path)
-    except Exception as exc:
-        logger.debug("create_novel optional import skipped: %s (%s)", module_path, exc)
-        return None
-
-    return getattr(module, attr_name, None)
 
 
 def _parse_float_env(name: str, default: float) -> float:
@@ -190,25 +188,8 @@ class _ProgressTracer:
         }
 
 
-def _resolve_user_id(raw_user_id: str | None) -> str:
-    resolver = _load_optional_attr(
-        "app.gateway.novel_migrated.core.user_context",
-        "resolve_user_id",
-    )
-    if callable(resolver):
-        try:
-            resolved = resolver(raw_user_id)
-            if isinstance(resolved, str) and resolved.strip():
-                return resolved.strip()
-        except Exception:
-            logger.debug("create_novel resolve_user_id failed, fallback to local default", exc_info=True)
-
-    normalized = (raw_user_id or "").strip()
-    return normalized or "local_single_user"
-
-
 def _resolve_intent_middleware() -> Any | None:
-    return _load_optional_attr("app.gateway.api.ai_provider", "_INTENT_RECOGNITION_MIDDLEWARE")
+    return _load_attr("app.gateway.api.ai_provider", "_INTENT_RECOGNITION_MIDDLEWARE")
 
 
 def _resolve_gate_scope(
@@ -284,12 +265,13 @@ async def _create_project_via_internal(
     modern_payload: dict[str, Any],
     user_id: str | None,
 ) -> dict[str, Any]:
-    init_db_schema = _load_optional_attr("app.gateway.novel_migrated.core.database", "init_db_schema")
-    async_session_local = _load_optional_attr("app.gateway.novel_migrated.core.database", "AsyncSessionLocal")
-    project_create_request_cls = _load_optional_attr("app.gateway.novel_migrated.api.projects", "ProjectCreateRequest")
-    create_project = _load_optional_attr("app.gateway.novel_migrated.api.projects", "create_project")
+    from deerflow.tools.builtins.novel_internal import get_internal_db
 
-    if not callable(init_db_schema) or async_session_local is None or project_create_request_cls is None or not callable(create_project):
+    AsyncSessionLocal = await get_internal_db()
+    project_create_request_cls = _load_attr("app.gateway.novel_migrated.api.projects", "ProjectCreateRequest")
+    create_project = _load_attr("app.gateway.novel_migrated.api.projects", "create_project")
+
+    if project_create_request_cls is None or not callable(create_project):
         raise RuntimeError("internal modern project api unavailable")
 
     req = project_create_request_cls(
@@ -299,21 +281,12 @@ async def _create_project_via_internal(
         genre=str(modern_payload.get("genre") or ""),
     )
 
-    await init_db_schema()
     effective_user_id = _resolve_user_id(user_id)
 
-    async with async_session_local() as db_session:
+    async with AsyncSessionLocal() as db_session:
         project = await create_project(req=req, user_id=effective_user_id, db=db_session)
 
-    if hasattr(project, "model_dump"):
-        model_dump = getattr(project, "model_dump")
-        if callable(model_dump):
-            project = model_dump()
-
-    if isinstance(project, dict):
-        return project
-
-    raise RuntimeError("internal modern project api returned non-dict payload")
+    return _to_dict(project)
 
 
 async def _create_project_via_http(
@@ -332,7 +305,7 @@ async def _create_project_via_http(
 
 
 async def _create_legacy_via_internal(legacy_payload: dict[str, Any]) -> dict[str, Any]:
-    novel_store = _load_optional_attr("app.gateway.routers.novel", "_novel_store")
+    novel_store = _load_attr("app.gateway.routers.novel", "_novel_store")
     if novel_store is None:
         raise RuntimeError("legacy novel store is unavailable")
 
@@ -367,7 +340,7 @@ async def _record_dual_write_failure(
     legacy_payload: dict[str, Any],
     error: str,
 ) -> None:
-    record_fn = _load_optional_attr(
+    record_fn = _load_attr(
         "app.gateway.novel_migrated.services.dual_write_service",
         "record_dual_write_failure",
     )

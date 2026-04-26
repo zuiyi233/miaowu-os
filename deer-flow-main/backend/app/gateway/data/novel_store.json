@@ -1,52 +1,23 @@
 {
   "novels": {
-    "bd504f64-7a2b-48cd-8cfc-e26b249eb8d6": {
-      "id": "bd504f64-7a2b-48cd-8cfc-e26b249eb8d6",
-      "title": "没钱修什么仙",
+    "novel-123": {
+      "id": "novel-123",
+      "title": "星海回声",
       "outline": "",
       "coverImage": null,
       "metadata": {
-        "genre": "修仙",
-        "description": "",
-        "created_by": "deerflow_create_novel_tool_dual_write",
-        "modern_project_id": "bd504f64-7a2b-48cd-8cfc-e26b249eb8d6"
+        "genre": "科幻",
+        "theme": "文明冲突",
+        "audience": "青少年",
+        "target_words": 180000,
+        "description": "主题: 文明冲突\n目标受众: 青少年",
+        "created_by": "intent_recognition_dual_write",
+        "modern_project_id": "novel-123"
       },
       "syncStatus": "local",
       "version": 1,
-      "createdAt": "2026-04-25T07:38:07.869935+00:00",
-      "updatedAt": "2026-04-25T07:38:07.869935+00:00"
-    },
-    "88fef631-fa7f-42d9-8c90-d29c118a6d04": {
-      "id": "88fef631-fa7f-42d9-8c90-d29c118a6d04",
-      "title": "没钱修什么仙",
-      "outline": "",
-      "coverImage": null,
-      "metadata": {
-        "genre": "修仙",
-        "description": "",
-        "created_by": "deerflow_create_novel_tool_dual_write",
-        "modern_project_id": "88fef631-fa7f-42d9-8c90-d29c118a6d04"
-      },
-      "syncStatus": "local",
-      "version": 1,
-      "createdAt": "2026-04-25T10:59:22.424360+00:00",
-      "updatedAt": "2026-04-25T10:59:22.424360+00:00"
-    },
-    "02a3f0c1-938c-4c73-87e5-2f59d91dab15": {
-      "id": "02a3f0c1-938c-4c73-87e5-2f59d91dab15",
-      "title": "九天神途",
-      "outline": "",
-      "coverImage": null,
-      "metadata": {
-        "genre": "玄幻修仙",
-        "description": "一个现代青年意外穿越到修仙世界，从凡人开始踏上逆天修行之路的故事",
-        "created_by": "deerflow_create_novel_tool_dual_write",
-        "modern_project_id": "02a3f0c1-938c-4c73-87e5-2f59d91dab15"
-      },
-      "syncStatus": "local",
-      "version": 1,
-      "createdAt": "2026-04-25T20:38:56.871071+00:00",
-      "updatedAt": "2026-04-25T20:38:56.871071+00:00"
+      "createdAt": "2026-04-26T11:10:02.331105+00:00",
+      "updatedAt": "2026-04-26T11:10:02.331105+00:00"
     }
   },
   "chapters": {},
@@ -56,50 +27,7 @@
   "graphs": {},
   "recommendations": {},
   "interactions": {},
-  "quality_reports": {
-    "bd504f64-7a2b-48cd-8cfc-e26b249eb8d6": {
-      "novelId": "bd504f64-7a2b-48cd-8cfc-e26b249eb8d6",
-      "score": 60,
-      "metrics": {
-        "wordCount": 0,
-        "chapterCount": 0,
-        "characterCount": 0,
-        "timelineEventCount": 0
-      },
-      "issues": [
-        {
-          "type": "low_word_count",
-          "severity": "warning",
-          "message": "小说总字数较少，建议继续完善内容。",
-          "details": {
-            "wordCount": 0
-          }
-        }
-      ],
-      "generatedAt": "2026-04-25T10:48:10.745836+00:00"
-    },
-    "02a3f0c1-938c-4c73-87e5-2f59d91dab15": {
-      "novelId": "02a3f0c1-938c-4c73-87e5-2f59d91dab15",
-      "score": 60,
-      "metrics": {
-        "wordCount": 0,
-        "chapterCount": 0,
-        "characterCount": 0,
-        "timelineEventCount": 0
-      },
-      "issues": [
-        {
-          "type": "low_word_count",
-          "severity": "warning",
-          "message": "小说总字数较少，建议继续完善内容。",
-          "details": {
-            "wordCount": 0
-          }
-        }
-      ],
-      "generatedAt": "2026-04-25T21:05:08.025617+00:00"
-    }
-  },
+  "quality_reports": {},
   "audits": {
     "novel-1483b1229933": [
       {
@@ -147,49 +75,19 @@
         "createdAt": "2026-04-24T20:43:28.346504+00:00"
       }
     ],
-    "bd504f64-7a2b-48cd-8cfc-e26b249eb8d6": [
+    "novel-123": [
       {
-        "id": "audit-c6c469c84250",
-        "novelId": "bd504f64-7a2b-48cd-8cfc-e26b249eb8d6",
+        "id": "audit-6893bcc9732e",
+        "novelId": "novel-123",
         "action": "novel.create",
         "entityType": "novel",
-        "entityId": "bd504f64-7a2b-48cd-8cfc-e26b249eb8d6",
+        "entityId": "novel-123",
         "author": "system",
         "details": {
-          "title": "没钱修什么仙",
+          "title": "星海回声",
           "version": 1
         },
-        "createdAt": "2026-04-25T07:38:07.869935+00:00"
-      }
-    ],
-    "88fef631-fa7f-42d9-8c90-d29c118a6d04": [
-      {
-        "id": "audit-8635e4f06132",
-        "novelId": "88fef631-fa7f-42d9-8c90-d29c118a6d04",
-        "action": "novel.create",
-        "entityType": "novel",
-        "entityId": "88fef631-fa7f-42d9-8c90-d29c118a6d04",
-        "author": "system",
-        "details": {
-          "title": "没钱修什么仙",
-          "version": 1
-        },
-        "createdAt": "2026-04-25T10:59:22.424874+00:00"
-      }
-    ],
-    "02a3f0c1-938c-4c73-87e5-2f59d91dab15": [
-      {
-        "id": "audit-8ad32e2e3fe1",
-        "novelId": "02a3f0c1-938c-4c73-87e5-2f59d91dab15",
-        "action": "novel.create",
-        "entityType": "novel",
-        "entityId": "02a3f0c1-938c-4c73-87e5-2f59d91dab15",
-        "author": "system",
-        "details": {
-          "title": "九天神途",
-          "version": 1
-        },
-        "createdAt": "2026-04-25T20:38:56.871071+00:00"
+        "createdAt": "2026-04-26T11:10:02.331105+00:00"
       }
     ]
   }

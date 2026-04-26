@@ -55,8 +55,10 @@ class ChapterUpdateRequest(_WriteRequestBase):
 
 class BatchGenerateRequest(_WriteRequestBase):
     project_id: str
-    start_chapter_number: int
+    start_chapter_number: int | None = 1
     chapter_count: int = 1
+    chapter_ids: list[str] | None = None
+    outline_ids: list[str] | None = None
     target_word_count: int = 3000
     style_id: int | None = None
     enable_analysis: bool = False
@@ -124,7 +126,9 @@ def _request_payload_for_idempotency(request_model: _WriteRequestBase | None) ->
     return payload
 
 
-def _bind_idempotency_context(request: Request, request_model: _WriteRequestBase | None = None) -> str | None:
+def _bind_idempotency_context(request: Request | None, request_model: _WriteRequestBase | None = None) -> str | None:
+    if request is None:
+        return None
     payload = _request_payload_for_idempotency(request_model)
     idempotency_key = _extract_idempotency_key(request, payload)
     if idempotency_key:
@@ -274,43 +278,75 @@ async def delete_chapter(
 @router.post("/batch-generate")
 async def batch_generate_chapters(
     req: BatchGenerateRequest,
-    request: Request,
-    user_id: str = Depends(get_user_id),
+    request: Request = None,
+    user_id: str | None = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
     ai_service: AIService = Depends(get_user_ai_service),
 ):
     _bind_idempotency_context(request, req)
-    await verify_project_access(req.project_id, user_id, db)
+    effective_user_id = user_id if user_id else get_user_id(request) if request else "local_single_user"
+    await verify_project_access(req.project_id, effective_user_id, db)
 
-    chapter_ids = []
-    for i in range(req.chapter_count):
-        cn = req.start_chapter_number + i
-        existing = await db.execute(
+    chapter_ids: list[str] = []
+    start_chapter_number = max(1, int(req.start_chapter_number or 1))
+    chapter_count = max(1, int(req.chapter_count or 1))
+
+    if req.chapter_ids or req.outline_ids:
+        requested_ids = [chapter_id for chapter_id in (req.chapter_ids or []) if chapter_id]
+        if req.outline_ids:
+            outline_result = await db.execute(
+                select(Chapter.id).where(
+                    Chapter.project_id == req.project_id,
+                    Chapter.outline_id.in_(req.outline_ids),
+                )
+            )
+            requested_ids.extend(outline_result.scalars().all())
+
+        dedup_ids = list(dict.fromkeys(requested_ids))
+        if not dedup_ids:
+            raise HTTPException(status_code=404, detail="未找到可生成章节")
+
+        selected_result = await db.execute(
             select(Chapter).where(
                 Chapter.project_id == req.project_id,
-                Chapter.chapter_number == cn))
-        ch = existing.scalar_one_or_none()
-        if not ch:
-            ch = Chapter(
-                project_id=req.project_id,
-                chapter_number=cn,
-                title=f"第{cn}章",
-                status="planned",
-            )
-            db.add(ch)
-            await db.flush()
-        chapter_ids.append(ch.id)
+                Chapter.id.in_(dedup_ids),
+            ).order_by(Chapter.chapter_number.asc())
+        )
+        selected_chapters = list(selected_result.scalars().all())
+        if not selected_chapters:
+            raise HTTPException(status_code=404, detail="未找到可生成章节")
+        chapter_ids = [chapter.id for chapter in selected_chapters]
+        start_chapter_number = selected_chapters[0].chapter_number
+        chapter_count = len(chapter_ids)
+    else:
+        for i in range(chapter_count):
+            cn = start_chapter_number + i
+            existing = await db.execute(
+                select(Chapter).where(
+                    Chapter.project_id == req.project_id,
+                    Chapter.chapter_number == cn))
+            ch = existing.scalar_one_or_none()
+            if not ch:
+                ch = Chapter(
+                    project_id=req.project_id,
+                    chapter_number=cn,
+                    title=f"第{cn}章",
+                    status="planned",
+                )
+                db.add(ch)
+                await db.flush()
+            chapter_ids.append(ch.id)
 
     task = BatchGenerationTask(
         project_id=req.project_id,
-        user_id=user_id,
-        start_chapter_number=req.start_chapter_number,
-        chapter_count=req.chapter_count,
+        user_id=effective_user_id,
+        start_chapter_number=start_chapter_number,
+        chapter_count=chapter_count,
         chapter_ids=chapter_ids,
         style_id=req.style_id,
         target_word_count=req.target_word_count,
         enable_analysis=req.enable_analysis,
-        total_chapters=req.chapter_count,
+        total_chapters=chapter_count,
         status="pending",
     )
     db.add(task)
@@ -404,7 +440,7 @@ async def get_active_batch_task(
 @router.post("/regenerate")
 async def regenerate_chapter(
     req: RegenerateRequest,
-    request: Request,
+    request: Request = None,
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
@@ -467,7 +503,7 @@ async def get_regen_task_status(
 @router.post("/partial-regenerate")
 async def partial_regenerate(
     req: PartialRegenerateRequest,
-    request: Request,
+    request: Request = None,
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
     ai_service: AIService = Depends(get_user_ai_service),

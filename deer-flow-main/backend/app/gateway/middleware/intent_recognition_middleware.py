@@ -47,6 +47,8 @@ _MAX_SKILL_ENTRIES = 12
 _SESSION_STORE_PATH_ENV = "DEERFLOW_INTENT_SESSION_STORE_PATH"
 _SESSION_BACKEND_ENV = "DEERFLOW_INTENT_SESSION_BACKEND"
 _SKILL_GOVERNANCE_FALLBACK_MODE_ENV = "DEERFLOW_INTENT_SKILL_GOVERNANCE_FALLBACK_MODE"
+_CREATE_SESSION_SKILL_WHITELIST_PATH_ENV = "DEERFLOW_CREATE_NOVEL_SKILL_WHITELIST_PATH"
+_CREATE_SESSION_SKILL_WHITELIST_DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data" / "novel_create_skill_whitelist.json"
 _DATABASE_STORAGE_BACKENDS = {"database", "db", "sqlite"}
 _FILE_STORAGE_BACKENDS = {"file", "json"}
 _SESSION_CONTEXT_KEYS: tuple[str, ...] = (
@@ -2455,6 +2457,10 @@ class IntentRecognitionMiddleware:
                 governance_result = None
                 selected_names = enabled_names
 
+            selected_names = self._apply_create_session_skill_whitelist(
+                selected_names=selected_names,
+                session=session,
+            )
             entries = [all_entries_by_name[name] for name in selected_names if name in all_entries_by_name]
             entries = entries[:_MAX_SKILL_ENTRIES]
             for item in entries:
@@ -2477,6 +2483,69 @@ class IntentRecognitionMiddleware:
             self._skills_cache_at = now
             self._skills_cache_config_mtime = config_mtime
         return entries
+
+    def _apply_create_session_skill_whitelist(
+        self,
+        *,
+        selected_names: list[str],
+        session: _NovelCreationSession | None,
+    ) -> list[str]:
+        if session is None or session.mode != "create":
+            return list(selected_names)
+
+        whitelist = self._get_create_session_skill_whitelist()
+        if not whitelist:
+            return list(selected_names)
+
+        filtered = [name for name in selected_names if name in whitelist]
+        if filtered:
+            return filtered
+
+        logger.warning(
+            "create session skill whitelist configured but none matched selected skills, fallback to original selection: whitelist=%s selected=%s",
+            sorted(whitelist),
+            selected_names,
+        )
+        return list(selected_names)
+
+    @classmethod
+    def _get_create_session_skill_whitelist(cls) -> set[str]:
+        path = cls._resolve_create_session_skill_whitelist_path()
+        if not path.exists():
+            return set()
+
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("failed to parse create-session skill whitelist file %s: %s", path, exc)
+            return set()
+
+        raw_names: list[Any]
+        if isinstance(payload, dict):
+            candidates = payload.get("skills")
+            if not isinstance(candidates, list):
+                candidates = payload.get("whitelist")
+            if not isinstance(candidates, list):
+                candidates = payload.get("enabled_skills")
+            raw_names = candidates if isinstance(candidates, list) else []
+        elif isinstance(payload, list):
+            raw_names = payload
+        else:
+            return set()
+
+        names: set[str] = set()
+        for item in raw_names:
+            normalized = str(item or "").strip()
+            if normalized:
+                names.add(normalized)
+        return names
+
+    @classmethod
+    def _resolve_create_session_skill_whitelist_path(cls) -> Path:
+        raw = str(os.getenv(_CREATE_SESSION_SKILL_WHITELIST_PATH_ENV, "") or "").strip()
+        if raw:
+            return Path(raw).expanduser()
+        return _CREATE_SESSION_SKILL_WHITELIST_DEFAULT_PATH
 
     @staticmethod
     def _get_extensions_config_mtime() -> float | None:

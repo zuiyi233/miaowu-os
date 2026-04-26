@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 from urllib.parse import quote
 
+import httpx
 from langchain.tools import tool
 
 from deerflow.tools.builtins.novel_idempotency import check_idempotency
-from deerflow.tools.builtins.novel_tool_helpers import _fail, _ok, get_base_url, get_json, post_json
+from deerflow.tools.builtins.novel_tool_helpers import _fail, _ok, build_headers, get_base_url, get_json, get_timeout_seconds, post_json
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,169 @@ def _normalize_required_id(value: str, field_name: str) -> tuple[str | None, dic
 
 def _safe_path_segment(value: str) -> str:
     return quote(value, safe="")
+
+
+async def _regenerate_chapter_internal(project_id, chapter_id, modification_instructions="", custom_instructions="", target_word_count=3000, focus_areas=None, preserve_elements=None):
+    from deerflow.tools.builtins.novel_internal import (
+        get_internal_db,
+        load_attr,
+        resolve_user_id,
+        to_dict,
+    )
+
+    AsyncSessionLocal = await get_internal_db()
+    RegenerateRequest = load_attr("app.gateway.novel_migrated.api.chapters", "RegenerateRequest")
+    regen_fn = load_attr("app.gateway.novel_migrated.api.chapters", "regenerate_chapter")
+    if RegenerateRequest is None or not callable(regen_fn):
+        raise RuntimeError("internal regenerate_chapter unavailable")
+    req = RegenerateRequest(
+        project_id=project_id, chapter_id=chapter_id,
+        modification_instructions=modification_instructions,
+        custom_instructions=custom_instructions, target_word_count=target_word_count,
+        focus_areas=focus_areas, preserve_elements=preserve_elements,
+    )
+    user_id = resolve_user_id(None)
+    async with AsyncSessionLocal() as db:
+        result = await regen_fn(req=req, request=None, user_id=user_id, db=db)
+    return _ok(to_dict(result), source="novel_migrated.regenerate.internal")
+
+
+async def _partial_regenerate_internal(project_id, chapter_id, selected_text, context_before="", context_after="", user_instructions=""):
+    from deerflow.tools.builtins.novel_internal import (
+        get_internal_ai_service,
+        get_internal_db,
+        load_attr,
+        resolve_user_id,
+        to_dict,
+    )
+
+    AsyncSessionLocal = await get_internal_db()
+    ai_service = await get_internal_ai_service(module_id="novel-chapter-ai-edit")
+    PartialRegenerateRequest = load_attr("app.gateway.novel_migrated.api.chapters", "PartialRegenerateRequest")
+    partial_fn = load_attr("app.gateway.novel_migrated.api.chapters", "partial_regenerate")
+    if PartialRegenerateRequest is None or not callable(partial_fn):
+        raise RuntimeError("internal partial_regenerate unavailable")
+    req = PartialRegenerateRequest(
+        project_id=project_id, chapter_id=chapter_id, selected_text=selected_text,
+        context_before=context_before, context_after=context_after, user_instructions=user_instructions,
+    )
+    user_id = resolve_user_id(None)
+    async with AsyncSessionLocal() as db:
+        result = await partial_fn(req=req, request=None, user_id=user_id, db=db, ai_service=ai_service)
+    return _ok(to_dict(result), source="novel_migrated.partial_regenerate.internal")
+
+
+async def _finalize_project_internal(project_id):
+    from deerflow.tools.builtins.novel_internal import (
+        get_internal_db,
+        load_attr,
+        resolve_user_id,
+        to_dict,
+    )
+
+    AsyncSessionLocal = await get_internal_db()
+    user_id = resolve_user_id(None)
+
+    report_fn = load_attr("app.gateway.novel_migrated.api.polish", "get_project_consistency_report")
+    if callable(report_fn):
+        async with AsyncSessionLocal() as db:
+            gate_data = await report_fn(project_id=project_id, user_id=user_id, db=db)
+        gate_dict = to_dict(gate_data)
+        if gate_dict.get("success") is False:
+            return _ok(gate_dict, source="novel_migrated.finalize_gate.internal")
+
+    finalize_fn = load_attr("app.gateway.novel_migrated.api.polish", "finalize_project")
+    if not callable(finalize_fn):
+        raise RuntimeError("internal finalize_project unavailable")
+    async with AsyncSessionLocal() as db:
+        result = await finalize_fn(project_id=project_id, req=None, user_id=user_id, db=db)
+    return _ok(to_dict(result), source="novel_migrated.finalize.internal")
+
+
+async def _import_book_internal(file_path, project_title=""):
+    from deerflow.tools.builtins.novel_internal import (
+        load_attr,
+        resolve_user_id,
+        to_dict,
+    )
+
+    filename = os.path.basename(file_path)
+    with open(file_path, "rb") as f:
+        content = f.read()
+    service = load_attr("app.gateway.novel_migrated.services.book_import_service", "book_import_service")
+    if service is None:
+        raise RuntimeError("book_import_service unavailable")
+    user_id = resolve_user_id(None)
+    result = await service.create_task(
+        user_id=user_id,
+        filename=filename,
+        file_content=content,
+        project_id=None,
+        create_new_project=True,
+        import_mode="append",
+        extract_mode="tail",
+        tail_chapter_count=10,
+    )
+    return _ok(to_dict(result), source="novel_migrated.import_book.internal")
+
+
+async def _update_character_states_internal(chapter_id, project_id=""):
+    from deerflow.tools.builtins.novel_internal import (
+        get_internal_ai_service,
+        get_internal_db,
+        load_attr,
+        resolve_user_id,
+        to_dict,
+    )
+
+    AsyncSessionLocal = await get_internal_db()
+    ai_service = await get_internal_ai_service(module_id="memory-ai")
+    analyze_fn = load_attr("app.gateway.novel_migrated.api.memories", "analyze_chapter")
+    if not callable(analyze_fn):
+        raise RuntimeError("internal memories.analyze_chapter unavailable")
+    user_id = resolve_user_id(None)
+    async with AsyncSessionLocal() as db:
+        result = await analyze_fn(
+            project_id=project_id,
+            chapter_id=chapter_id,
+            request=None,
+            db=db,
+            user_id=user_id,
+            ai_service=ai_service,
+        )
+    return _ok(to_dict(result), source="novel_migrated.character_states.internal")
+
+
+async def _post_book_import_multipart(
+    *,
+    url: str,
+    file_path: str,
+    project_title: str = "",
+    timeout_seconds: float | None = None,
+) -> dict[str, Any]:
+    timeout = httpx.Timeout(get_timeout_seconds() if timeout_seconds is None else max(1.0, float(timeout_seconds)))
+    headers = build_headers()
+    headers.pop("Content-Type", None)
+
+    filename = os.path.basename(file_path)
+    with open(file_path, "rb") as file_obj:
+        files = {"file": (filename, file_obj, "text/plain")}
+        data: dict[str, Any] = {
+            "create_new_project": "true",
+            "import_mode": "append",
+            "extract_mode": "tail",
+            "tail_chapter_count": "10",
+        }
+        if project_title:
+            data["project_title"] = project_title
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, data=data, files=files, headers=headers)
+            response.raise_for_status()
+            payload = response.json()
+            if isinstance(payload, dict):
+                return payload
+            return {"raw": payload}
 
 
 @tool("regenerate_chapter", parse_docstring=True)
@@ -61,6 +226,17 @@ async def regenerate_chapter(
     normalized_chapter_id, validation_error = _normalize_required_id(chapter_id, "chapter_id")
     if validation_error:
         return validation_error
+
+    try:
+        return await _regenerate_chapter_internal(
+            project_id=normalized_project_id, chapter_id=normalized_chapter_id,
+            modification_instructions=modification_instructions,
+            custom_instructions=custom_instructions, target_word_count=target_word_count,
+            focus_areas=focus_areas, preserve_elements=preserve_elements,
+        )
+    except Exception as exc:
+        logger.warning("regenerate_chapter internal failed: %s, falling back to HTTP", exc)
+
     base_url = get_base_url()
     payload: dict[str, Any] = {
         "project_id": normalized_project_id,
@@ -117,6 +293,16 @@ async def partial_regenerate(
     normalized_chapter_id, validation_error = _normalize_required_id(chapter_id, "chapter_id")
     if validation_error:
         return validation_error
+
+    try:
+        return await _partial_regenerate_internal(
+            project_id=normalized_project_id, chapter_id=normalized_chapter_id,
+            selected_text=selected_text, context_before=context_before,
+            context_after=context_after, user_instructions=user_instructions,
+        )
+    except Exception as exc:
+        logger.warning("partial_regenerate internal failed: %s, falling back to HTTP", exc)
+
     base_url = get_base_url()
     payload: dict[str, Any] = {
         "project_id": normalized_project_id,
@@ -157,6 +343,12 @@ async def finalize_project(
     normalized_project_id, validation_error = _normalize_required_id(project_id, "project_id")
     if validation_error:
         return validation_error
+
+    try:
+        return await _finalize_project_internal(project_id=normalized_project_id)
+    except Exception as exc:
+        logger.warning("finalize_project internal failed: %s, falling back to HTTP", exc)
+
     project_path_id = _safe_path_segment(normalized_project_id)
     base_url = get_base_url()
     try:
@@ -195,12 +387,19 @@ async def import_book(
     dup = check_idempotency("import_book", idempotency_key)
     if dup["is_duplicate"]:
         return _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.import_book")
-    base_url = get_base_url()
-    payload: dict[str, Any] = {"file_path": file_path}
-    if project_title:
-        payload["project_title"] = project_title
+
     try:
-        data = await post_json(f"{base_url}/book-import/tasks", payload)
+        return await _import_book_internal(file_path=file_path, project_title=project_title)
+    except Exception as exc:
+        logger.warning("import_book internal failed: %s, falling back to HTTP", exc)
+
+    base_url = get_base_url()
+    try:
+        data = await _post_book_import_multipart(
+            url=f"{base_url}/book-import/tasks",
+            file_path=file_path,
+            project_title=project_title,
+        )
         return _ok(data, source="novel_migrated.import_book")
     except Exception as exc:
         logger.error("import_book failed: %s", exc)
@@ -236,6 +435,14 @@ async def update_character_states(
     normalized_project_id, validation_error = _normalize_required_id(project_id, "project_id")
     if validation_error:
         return validation_error
+
+    try:
+        return await _update_character_states_internal(
+            chapter_id=normalized_chapter_id, project_id=normalized_project_id,
+        )
+    except Exception as exc:
+        logger.warning("update_character_states internal failed: %s, falling back to HTTP", exc)
+
     base_url = get_base_url()
     payload: dict[str, Any] = {"chapter_id": normalized_chapter_id, "project_id": normalized_project_id}
     project_path_id = _safe_path_segment(normalized_project_id)

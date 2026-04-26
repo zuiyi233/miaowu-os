@@ -1,5 +1,6 @@
 """记忆管理API - 提供记忆的查询、分析等接口"""
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import and_, desc, select
@@ -24,8 +25,10 @@ MEMORY_MODULE_ID = "memory-ai"
 async def analyze_chapter(
     project_id: str,
     chapter_id: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = None,
+    ai_service: Any | None = None,
 ):
     """
     分析章节并生成记忆
@@ -33,10 +36,10 @@ async def analyze_chapter(
     对指定章节进行剧情分析,提取钩子、伏笔、情节点等,并存入记忆系统
     """
     try:
-        user_id = get_user_id(request)
+        effective_user_id = user_id if user_id else get_user_id(request) if request else "local_single_user"
         
         # 验证用户权限
-        await verify_project_access(project_id, user_id, db)
+        await verify_project_access(project_id, effective_user_id, db)
         
         # 获取章节内容
         result = await db.execute(
@@ -55,12 +58,40 @@ async def analyze_chapter(
         if not chapter.content:
             raise HTTPException(status_code=400, detail="章节内容为空,无法分析")
         
-        # 记忆分析统一走全局能力路由（memory-ai），避免受主项目会话模型影响。
-        ai_service = await get_user_ai_service_with_overrides(
-            request,
-            db,
-            module_id=MEMORY_MODULE_ID,
-        )
+        if ai_service is None:
+            if request is not None:
+                ai_service = await get_user_ai_service_with_overrides(
+                    request,
+                    db,
+                    module_id=MEMORY_MODULE_ID,
+                )
+            else:
+                from sqlalchemy import select as _sel
+
+                from app.gateway.novel_migrated.api.settings import _resolve_user_ai_runtime_config
+                from app.gateway.novel_migrated.models.settings import Settings as _Settings
+                from app.gateway.novel_migrated.services.ai_service import create_user_ai_service
+
+                _sresult = await db.execute(_sel(_Settings).where(_Settings.user_id == effective_user_id))
+                _settings = _sresult.scalar_one_or_none()
+                if _settings is None:
+                    _settings = _Settings(user_id=effective_user_id)
+                    db.add(_settings)
+                    await db.commit()
+                    await db.refresh(_settings)
+                _runtime, _ = _resolve_user_ai_runtime_config(_settings, module_id=MEMORY_MODULE_ID)
+                ai_service = create_user_ai_service(
+                    api_provider=_runtime["api_provider"],
+                    api_key=_runtime["api_key"],
+                    api_base_url=_runtime["api_base_url"],
+                    model_name=_runtime["model_name"],
+                    temperature=_runtime["temperature"],
+                    max_tokens=_runtime["max_tokens"],
+                    system_prompt=getattr(_settings, "system_prompt", None),
+                    user_id=effective_user_id,
+                    db_session=db,
+                    enable_mcp=True,
+                )
         
         # 获取已埋入的伏笔列表（用于回收匹配）
         existing_foreshadows = await foreshadow_service.get_planted_foreshadows_for_analysis(
@@ -76,7 +107,7 @@ async def analyze_chapter(
             title=chapter.title,
             content=chapter.content,
             word_count=chapter.word_count or len(chapter.content),
-            user_id=user_id,
+            user_id=effective_user_id,
             db=db,
             existing_foreshadows=existing_foreshadows
         )
@@ -145,10 +176,10 @@ async def analyze_chapter(
             await db.delete(old_mem)
         await db.flush()
 
-        if user_id:
+        if effective_user_id:
             try:
                 await memory_service.delete_chapter_memories(
-                    user_id=user_id,
+                    user_id=effective_user_id,
                     project_id=project_id,
                     chapter_id=chapter_id
                 )
@@ -176,7 +207,7 @@ async def analyze_chapter(
 
             # 保存到向量库
             await memory_service.add_memory(
-                user_id=user_id,
+                user_id=effective_user_id,
                 project_id=project_id,
                 memory_id=memory_id,
                 content=mem_data['content'],
@@ -358,8 +389,8 @@ async def get_chapter_analysis(
 @router.post("/projects/{project_id}/search")
 async def search_memories(
     project_id: str,
-    request: Request,
     query: str,
+    request: Request = None,
     memory_types: list[str] | None = None,
     limit: int = 10,
     api_version: str = Query(
@@ -373,14 +404,15 @@ async def search_memories(
         deprecated=True,
         description="已弃用（计划于 2026-08-31 移除），请改用 min_similarity。",
     ),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = None,
 ):
     """语义搜索项目记忆"""
     try:
-        user_id = get_user_id(request)
+        effective_user_id = user_id if user_id else get_user_id(request) if request else "local_single_user"
         
         # 验证用户权限
-        await verify_project_access(project_id, user_id, db)
+        await verify_project_access(project_id, effective_user_id, db)
         
         # 统一语义：内部只使用 min_similarity。
         # v1 兼容旧客户端：若传入已弃用的 min_importance，则作为别名映射。
@@ -398,7 +430,7 @@ async def search_memories(
             )
 
         memories = await memory_service.search_memories(
-            user_id=user_id,
+            user_id=effective_user_id,
             project_id=project_id,
             query=query,
             memory_types=memory_types,

@@ -251,6 +251,11 @@ def test_load_enabled_novel_skills_uses_three_layer_governance_when_feature_on(m
         "_derive_session_candidate_skills",
         lambda *, all_entries, session: ["character-skill"],
     )
+    monkeypatch.setattr(
+        middleware,
+        "_get_create_session_skill_whitelist",
+        lambda: {"character-skill"},
+    )
 
     session = _NovelCreationSession(
         session_key="governance-session",
@@ -267,6 +272,126 @@ def test_load_enabled_novel_skills_uses_three_layer_governance_when_feature_on(m
     )
 
     assert [item["name"] for item in result] == ["character-skill"]
+
+
+def test_load_enabled_novel_skills_applies_create_session_whitelist(monkeypatch, tmp_path):
+    middleware = IntentRecognitionMiddleware()
+
+    skill_a_file = tmp_path / "skill-a.md"
+    skill_a_file.write_text("novel writing guidance", encoding="utf-8")
+    skill_b_file = tmp_path / "skill-b.md"
+    skill_b_file.write_text("chapter architecture and pacing", encoding="utf-8")
+    skill_c_file = tmp_path / "skill-c.md"
+    skill_c_file.write_text("generic assistant skill", encoding="utf-8")
+
+    class _FakeSkill:
+        def __init__(self, name: str, description: str, skill_file, category: str = "public"):
+            self.name = name
+            self.description = description
+            self.skill_file = skill_file
+            self.category = category
+
+    fake_skills = [
+        _FakeSkill("novel-control-station", "小说控制台", skill_a_file),
+        _FakeSkill("novel-creation-skill", "小说创作", skill_b_file),
+        _FakeSkill("generic-skill", "通用技能", skill_c_file),
+    ]
+
+    class _FakeExtensionsConfig:
+        @staticmethod
+        def is_skill_enabled(skill_name: str, skill_category: str) -> bool:
+            assert skill_category == "public"
+            return True
+
+    monkeypatch.setattr(
+        "app.gateway.middleware.intent_recognition_middleware.load_skills",
+        lambda enabled_only=False: fake_skills,
+    )
+    monkeypatch.setattr(
+        "app.gateway.middleware.intent_recognition_middleware.ExtensionsConfig.from_file",
+        lambda: _FakeExtensionsConfig(),
+    )
+    monkeypatch.setattr(
+        middleware,
+        "_get_create_session_skill_whitelist",
+        lambda: {"novel-control-station", "novel-creation-skill"},
+    )
+
+    session = _NovelCreationSession(
+        session_key="create-whitelist-session",
+        user_id="create-whitelist-user",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        mode="create",
+    )
+    result = middleware._load_enabled_novel_skills(
+        force_refresh=True,
+        session=session,
+        user_id=session.user_id,
+    )
+
+    assert [item["name"] for item in result] == ["novel-control-station", "novel-creation-skill"]
+
+
+def test_load_enabled_novel_skills_manage_session_not_limited_by_create_whitelist(monkeypatch, tmp_path):
+    middleware = IntentRecognitionMiddleware()
+
+    skill_a_file = tmp_path / "skill-a.md"
+    skill_a_file.write_text("novel writing guidance", encoding="utf-8")
+    skill_b_file = tmp_path / "skill-b.md"
+    skill_b_file.write_text("chapter architecture and pacing", encoding="utf-8")
+    skill_c_file = tmp_path / "skill-c.md"
+    skill_c_file.write_text("generic assistant skill", encoding="utf-8")
+
+    class _FakeSkill:
+        def __init__(self, name: str, description: str, skill_file, category: str = "public"):
+            self.name = name
+            self.description = description
+            self.skill_file = skill_file
+            self.category = category
+
+    fake_skills = [
+        _FakeSkill("novel-control-station", "小说控制台", skill_a_file),
+        _FakeSkill("novel-creation-skill", "小说创作", skill_b_file),
+        _FakeSkill("generic-skill", "通用技能", skill_c_file),
+    ]
+
+    class _FakeExtensionsConfig:
+        @staticmethod
+        def is_skill_enabled(skill_name: str, skill_category: str) -> bool:
+            assert skill_category == "public"
+            return True
+
+    monkeypatch.setattr(
+        "app.gateway.middleware.intent_recognition_middleware.load_skills",
+        lambda enabled_only=False: fake_skills,
+    )
+    monkeypatch.setattr(
+        "app.gateway.middleware.intent_recognition_middleware.ExtensionsConfig.from_file",
+        lambda: _FakeExtensionsConfig(),
+    )
+    monkeypatch.setattr(
+        middleware,
+        "_get_create_session_skill_whitelist",
+        lambda: {"novel-control-station", "novel-creation-skill"},
+    )
+
+    session = _NovelCreationSession(
+        session_key="manage-whitelist-session",
+        user_id="manage-whitelist-user",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        mode="manage",
+    )
+    result = middleware._load_enabled_novel_skills(
+        force_refresh=True,
+        session=session,
+        user_id=session.user_id,
+    )
+
+    result_names = [item["name"] for item in result]
+    assert "generic-skill" in result_names
+    assert "novel-control-station" in result_names
 
 
 def test_has_active_creation_session_is_scoped_by_user_and_session():

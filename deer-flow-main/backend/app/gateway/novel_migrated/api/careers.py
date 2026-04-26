@@ -182,7 +182,8 @@ async def generate_career_system(
     enable_mcp: bool = False,
     http_request: Request = None,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_user_ai_service),
+    user_id: str | None = None,
 ):
     """
     使用AI生成新职业（增量式，基于已有职业补充，支持SSE流式进度显示）
@@ -193,8 +194,8 @@ async def generate_career_system(
         tracker = WizardProgressTracker("职业体系")
         try:
             # 验证用户权限和项目是否存在
-            user_id = get_user_id(http_request)
-            project = await verify_project_access(project_id, user_id, db)
+            effective_user_id = user_id if user_id else get_user_id(http_request) if http_request else "local_single_user"
+            project = await verify_project_access(project_id, effective_user_id, db)
             
             yield await tracker.start()
             

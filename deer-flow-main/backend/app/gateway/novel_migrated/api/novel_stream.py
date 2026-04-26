@@ -1233,19 +1233,20 @@ async def generate_novel_characters_stream(
 @router.post("/api/chapters/{chapter_id}/analyze", summary="兼容路由：手动触发章节分析")
 async def analyze_chapter(
     chapter_id: str,
-    request: Request,
+    request: Request = None,
     payload: AnalyzeChapterRequest | None = None,
     force: bool = False,
     db: AsyncSession = Depends(get_db),
     user_ai_service: AIService = Depends(get_user_ai_service),
+    user_id: str | None = None,
 ):
-    user_id = get_user_id(request)
-    _enforce_stream_rate_limit(user_id=user_id, action="analyze_chapter")
+    effective_user_id = user_id if user_id else get_user_id(request) if request else "local_single_user"
+    _enforce_stream_rate_limit(user_id=effective_user_id, action="analyze_chapter")
     _cleanup_analysis_cache()
     project, chapter = await _get_chapter_with_project_access(
         chapter_id=chapter_id,
         novel_id=None,
-        user_id=user_id,
+        user_id=effective_user_id,
         db=db,
     )
 
@@ -1259,7 +1260,7 @@ async def analyze_chapter(
             db=db,
             chapter=chapter,
             project_id=project.id,
-            user_id=user_id,
+            user_id=effective_user_id,
             ai_service=user_ai_service,
             idempotency_key=analysis_idem,
             force=force_analysis,
