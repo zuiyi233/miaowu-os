@@ -71,7 +71,7 @@ async def get_project_foreshadows(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 获取伏笔列表失败: {str(e)}")
+        logger.error("❌ 获取伏笔列表失败: %s", e)
         raise HTTPException(status_code=500, detail=f"获取伏笔列表失败: {str(e)}")
 
 
@@ -94,7 +94,7 @@ async def get_foreshadow_stats(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 获取伏笔统计失败: {str(e)}")
+        logger.error("❌ 获取伏笔统计失败: %s", e)
         raise HTTPException(status_code=500, detail=f"获取伏笔统计失败: {str(e)}")
 
 
@@ -132,7 +132,7 @@ async def get_chapter_foreshadow_context(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 获取伏笔上下文失败: {str(e)}")
+        logger.error("❌ 获取伏笔上下文失败: %s", e)
         raise HTTPException(status_code=500, detail=f"获取伏笔上下文失败: {str(e)}")
 
 
@@ -165,7 +165,7 @@ async def get_pending_resolve_foreshadows(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 获取待回收伏笔失败: {str(e)}")
+        logger.error("❌ 获取待回收伏笔失败: %s", e)
         raise HTTPException(status_code=500, detail=f"获取待回收伏笔失败: {str(e)}")
 
 
@@ -191,7 +191,7 @@ async def get_foreshadow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 获取伏笔详情失败: {str(e)}")
+        logger.error("❌ 获取伏笔详情失败: %s", e)
         raise HTTPException(status_code=500, detail=f"获取伏笔详情失败: {str(e)}")
 
 
@@ -217,7 +217,7 @@ async def create_foreshadow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 创建伏笔失败: {str(e)}")
+        logger.error("❌ 创建伏笔失败: %s", e)
         raise HTTPException(status_code=500, detail=f"创建伏笔失败: {str(e)}")
 
 
@@ -245,7 +245,7 @@ async def update_foreshadow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 更新伏笔失败: {str(e)}")
+        logger.error("❌ 更新伏笔失败: %s", e)
         raise HTTPException(status_code=500, detail=f"更新伏笔失败: {str(e)}")
 
 
@@ -273,7 +273,7 @@ async def delete_foreshadow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 删除伏笔失败: {str(e)}")
+        logger.error("❌ 删除伏笔失败: %s", e)
         raise HTTPException(status_code=500, detail=f"删除伏笔失败: {str(e)}")
 
 
@@ -305,7 +305,7 @@ async def plant_foreshadow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 标记伏笔埋入失败: {str(e)}")
+        logger.error("❌ 标记伏笔埋入失败: %s", e)
         raise HTTPException(status_code=500, detail=f"标记伏笔埋入失败: {str(e)}")
 
 
@@ -337,7 +337,7 @@ async def resolve_foreshadow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 标记伏笔回收失败: {str(e)}")
+        logger.error("❌ 标记伏笔回收失败: %s", e)
         raise HTTPException(status_code=500, detail=f"标记伏笔回收失败: {str(e)}")
 
 
@@ -369,7 +369,7 @@ async def abandon_foreshadow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 标记伏笔废弃失败: {str(e)}")
+        logger.error("❌ 标记伏笔废弃失败: %s", e)
         raise HTTPException(status_code=500, detail=f"标记伏笔废弃失败: {str(e)}")
 
 
@@ -396,5 +396,5 @@ async def sync_foreshadows_from_analysis(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 同步伏笔失败: {str(e)}")
+        logger.error("❌ 同步伏笔失败: %s", e)
         raise HTTPException(status_code=500, detail=f"同步伏笔失败: {str(e)}")

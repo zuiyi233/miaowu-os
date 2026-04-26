@@ -69,6 +69,12 @@ def test_chat_returns_intent_result_and_bypass_headers(monkeypatch):
                     "slot_schema": {"title": {"required": True, "value": "测试"}},
                     "missing_slots": ["genre"],
                     "confirmation_required": False,
+                    "execution_mode": {
+                        "status": "readonly",
+                        "enabled": False,
+                        "updated_at": "2026-01-01T00:00:00+00:00",
+                    },
+                    "pending_action": None,
                     "execute_result": None,
                 },
             },
@@ -91,6 +97,7 @@ def test_chat_returns_intent_result_and_bypass_headers(monkeypatch):
     assert data["novel"]["id"] == "novel-1"
     assert data["session"]["action_protocol"]["action_type"] == "create_novel"
     assert data["action_protocol"]["missing_slots"] == ["genre"]
+    assert data["action_protocol"]["execution_mode"]["status"] == "readonly"
     assert response.headers.get("x-prompt-cache") == "bypass"
     assert response.headers.get("cache-control") == "no-store"
 

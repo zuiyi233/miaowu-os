@@ -1,12 +1,13 @@
 'use client';
 
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   Play, RefreshCw, X, RotateCcw,
   AlertTriangle, Redo, Inbox, CheckCircle, FileText,
   Loader2, ChevronRight, BookOpen, Settings
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -29,7 +30,6 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
   SelectContent,
@@ -89,7 +89,7 @@ export function BookImportPage() {
   const providers = useAiProviderStore((state) => state.effective.providers);
   const featureRoutingSettings = useAiProviderStore((state) => state.effective.featureRoutingSettings);
 
-  const modelRoutingPayload: AiModelRoutingPayload = (() => {
+  const modelRoutingPayload: AiModelRoutingPayload = useMemo(() => {
     const routingRaw = featureRoutingSettings ?? loadFeatureRoutingState(providers);
     const routing = normalizeFeatureRoutingState(routingRaw, providers);
     const resolved = resolveModuleRoutingTarget(routing, BOOK_IMPORT_MODULE_ID);
@@ -99,10 +99,11 @@ export function BookImportPage() {
       ...(target?.providerId ? { ai_provider_id: target.providerId } : {}),
       ...(target?.model ? { ai_model: target.model } : {}),
     };
-  })();
+  }, [featureRoutingSettings, providers]);
 
   // File upload state
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const chapterListRef = useRef<HTMLDivElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [parseRange, setParseRange] = useState<'tail' | 'full'>('tail');
@@ -123,6 +124,13 @@ export function BookImportPage() {
   const [narrativeAngle, setNarrativeAngle] = useState('');
   const [targetWordCount, setTargetWordCount] = useState(50000);
   const [chapters, setChapters] = useState<BookImportChapter[]>([]);
+
+  const chapterVirtualizer = useVirtualizer({
+    count: chapters.length,
+    getScrollElement: () => chapterListRef.current,
+    estimateSize: () => 48,
+    overscan: 5,
+  });
 
   // Apply state
   const [applyProgress, setApplyProgress] = useState(0);
@@ -313,6 +321,8 @@ export function BookImportPage() {
     let buffer = '';
     let shouldSyncRetryCache = true;
     let reachedTerminalEvent = false;
+    let lastProgressUpdate = 0;
+    const PROGRESS_THROTTLE_MS = 200;
 
     const handleSSELine = (line: string) => {
       if (!line.startsWith('data:')) {
@@ -323,9 +333,13 @@ export function BookImportPage() {
         const data = JSON.parse(line.slice(5).trim());
 
         if (data.type === 'progress') {
-          setApplyProgress(data.progress ?? applyProgress);
-          setApplyStatus(data.status || 'processing');
-          updateCache({ applyProgress: data.progress ?? applyProgress, applyStatus: data.status || 'processing' });
+          const now = Date.now();
+          if (now - lastProgressUpdate >= PROGRESS_THROTTLE_MS) {
+            lastProgressUpdate = now;
+            setApplyProgress(data.progress ?? applyProgress);
+            setApplyStatus(data.status || 'processing');
+            updateCache({ applyProgress: data.progress ?? applyProgress, applyStatus: data.status || 'processing' });
+          }
           return;
         }
 
@@ -667,52 +681,74 @@ export function BookImportPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <ScrollArea className="max-h-[500px]">
-                  <div className="space-y-2 pr-4">
-                    {chapters.map((chapter, idx) => (
-                      <Collapsible key={idx}>
-                        <CollapsibleTrigger asChild>
-                          <div className="flex items-center justify-between rounded-md border px-3 py-2 hover:bg-accent cursor-pointer">
-                            <span className="text-sm font-medium truncate">
-                              第{chapter.chapterNumber}章: {chapter.title}
-                            </span>
-                            <Badge variant="outline" className="text-xs shrink-0 ml-2">
-                              {chapter.content ? `${(chapter.content.length / 2).toFixed(0)}字` : '?字'}
-                            </Badge>
-                          </div>
-                        </CollapsibleTrigger>
-                        <CollapsibleContent className="space-y-3 pl-4 pt-2">
-                          <div>
-                            <Label className="text-xs">章节标题</Label>
-                            <Input
-                              value={chapter.title || ''}
-                              onChange={(e) => updateChapter(idx, 'title', e.target.value)}
-                              className="mt-1 h-8 text-sm"
-                            />
-                          </div>
-                          <div>
-                            <Label className="text-xs">摘要</Label>
-                            <Textarea
-                              rows={2}
-                              value={chapter.summary || ''}
-                              onChange={(e) => updateChapter(idx, 'summary', e.target.value)}
-                              className="mt-1 text-sm"
-                            />
-                          </div>
-                          <div>
-                            <Label className="text-xs">正文（可编辑）</Label>
-                            <Textarea
-                              rows={6}
-                              value={chapter.content || ''}
-                              onChange={(e) => updateChapter(idx, 'content', e.target.value)}
-                              className="mt-1 text-sm font-mono"
-                            />
-                          </div>
-                        </CollapsibleContent>
-                      </Collapsible>
-                    ))}
+                <div ref={chapterListRef} className="max-h-[500px] overflow-y-auto">
+                  <div
+                    style={{
+                      height: `${chapterVirtualizer.getTotalSize()}px`,
+                      width: '100%',
+                      position: 'relative',
+                    }}
+                  >
+                    {chapterVirtualizer.getVirtualItems().map((virtualItem) => {
+                      const idx = virtualItem.index;
+                      const chapter = chapters[idx];
+                      if (!chapter) return null;
+                      return (
+                        <div
+                          key={idx}
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: '100%',
+                            transform: `translateY(${virtualItem.start}px)`,
+                          }}
+                        >
+                          <Collapsible>
+                            <CollapsibleTrigger asChild>
+                              <div className="flex items-center justify-between rounded-md border px-3 py-2 hover:bg-accent cursor-pointer">
+                                <span className="text-sm font-medium truncate">
+                                  第{chapter.chapterNumber}章: {chapter.title}
+                                </span>
+                                <Badge variant="outline" className="text-xs shrink-0 ml-2">
+                                  {chapter.content ? `${(chapter.content.length / 2).toFixed(0)}字` : '?字'}
+                                </Badge>
+                              </div>
+                            </CollapsibleTrigger>
+                            <CollapsibleContent className="space-y-3 pl-4 pt-2">
+                              <div>
+                                <Label className="text-xs">章节标题</Label>
+                                <Input
+                                  value={chapter.title || ''}
+                                  onChange={(e) => updateChapter(idx, 'title', e.target.value)}
+                                  className="mt-1 h-8 text-sm"
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-xs">摘要</Label>
+                                <Textarea
+                                  rows={2}
+                                  value={chapter.summary || ''}
+                                  onChange={(e) => updateChapter(idx, 'summary', e.target.value)}
+                                  className="mt-1 text-sm"
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-xs">正文（可编辑）</Label>
+                                <Textarea
+                                  rows={6}
+                                  value={chapter.content || ''}
+                                  onChange={(e) => updateChapter(idx, 'content', e.target.value)}
+                                  className="mt-1 text-sm font-mono"
+                                />
+                              </div>
+                            </CollapsibleContent>
+                          </Collapsible>
+                        </div>
+                      );
+                    })}
                   </div>
-                </ScrollArea>
+                </div>
               </CardContent>
             </Card>
 

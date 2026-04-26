@@ -1,0 +1,41 @@
+"""Shared protocol helpers used across gateway and agent runtimes."""
+
+from .execution_protocol import (
+    EXECUTION_MODE_ACTIVE,
+    EXECUTION_MODE_AWAITING_AUTHORIZATION,
+    EXECUTION_MODE_READONLY,
+    EXECUTION_MODE_REVOKED,
+    build_execution_mode_payload,
+    build_pending_action_payload,
+    coerce_execution_gate_state,
+    default_execution_gate_state,
+    has_explicit_execution_intent,
+    is_authorization_command,
+    is_high_risk_action,
+    is_high_risk_tool_call,
+    is_question_like,
+    is_revoke_command,
+    should_answer_only,
+    summarize_args_for_protocol,
+    update_execution_gate_state,
+)
+
+__all__ = [
+    "EXECUTION_MODE_ACTIVE",
+    "EXECUTION_MODE_AWAITING_AUTHORIZATION",
+    "EXECUTION_MODE_READONLY",
+    "EXECUTION_MODE_REVOKED",
+    "build_execution_mode_payload",
+    "build_pending_action_payload",
+    "coerce_execution_gate_state",
+    "default_execution_gate_state",
+    "has_explicit_execution_intent",
+    "is_authorization_command",
+    "is_high_risk_action",
+    "is_high_risk_tool_call",
+    "is_question_like",
+    "is_revoke_command",
+    "should_answer_only",
+    "summarize_args_for_protocol",
+    "update_execution_gate_state",
+]

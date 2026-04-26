@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
@@ -169,12 +170,28 @@ class _BookImportTask:
     failed_steps: list[_StepFailure] = field(default_factory=list)
 
 
+_COMPLETED_TASK_TTL_SECONDS = 30 * 60
+
+
 class BookImportService:
     """拆书导入服务（首版：内存任务 + 规则解析）"""
 
     def __init__(self) -> None:
         self._tasks: dict[str, _BookImportTask] = {}
         self._tasks_lock = asyncio.Lock()
+        self._ai_service_cache: dict[str, tuple[AIService, float]] = {}
+        self._AI_SERVICE_CACHE_TTL = 60.0
+
+    def _cleanup_expired_tasks(self) -> None:
+        now = datetime.utcnow()
+        expired_keys = [
+            tid
+            for tid, task in self._tasks.items()
+            if task.status in {"completed", "failed", "cancelled"}
+            and (now - task.updated_at).total_seconds() > _COMPLETED_TASK_TTL_SECONDS
+        ]
+        for key in expired_keys:
+            self._tasks.pop(key, None)
 
     async def create_task(
         self,
@@ -207,6 +224,7 @@ class BookImportService:
             tail_chapter_count=normalized_tail_count,
         )
         async with self._tasks_lock:
+            self._cleanup_expired_tasks()
             self._tasks[task_id] = task
 
         asyncio.create_task(self._run_pipeline(task_id=task_id, file_content=file_content))
@@ -1672,6 +1690,11 @@ class BookImportService:
         ai_model: str | None = None,
     ) -> AIService:
         """读取用户AI配置并创建支持MCP的AI服务实例。"""
+        cache_key = f"{user_id}:{module_id}:{ai_provider_id}:{ai_model}"
+        cached = self._ai_service_cache.get(cache_key)
+        if cached and (time.monotonic() - cached[1]) < self._AI_SERVICE_CACHE_TTL:
+            return cached[0]
+
         settings_result = await db.execute(select(Settings).where(Settings.user_id == user_id))
         user_settings = settings_result.scalar_one_or_none()
 
@@ -1757,7 +1780,7 @@ class BookImportService:
             except Exception as exc:
                 logger.warning("解析 ai_provider_settings 失败，回退到默认用户设置: %s", exc)
 
-        return create_user_ai_service_with_mcp(
+        service = create_user_ai_service_with_mcp(
             api_provider=resolved_provider,
             api_key=resolved_api_key,
             api_base_url=resolved_base_url,
@@ -1769,6 +1792,8 @@ class BookImportService:
             system_prompt=user_settings.system_prompt,
             enable_mcp=enable_mcp,
         )
+        self._ai_service_cache[cache_key] = (service, time.monotonic())
+        return service
 
     async def _run_post_import_wizard_generation(
         self,

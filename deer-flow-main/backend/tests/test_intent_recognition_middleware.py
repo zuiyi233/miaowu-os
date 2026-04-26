@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from app.gateway.middleware.intent_recognition_middleware import (
     IntentRecognitionMiddleware,
+    IntentRecognitionResult,
     _NovelCreationSession,
     _PendingAction,
 )
@@ -547,6 +548,8 @@ def test_manage_session_returns_action_protocol_for_missing_slots(monkeypatch):
     assert "chapter_selector" in protocol["missing_slots"]
     assert "chapter_updates" in protocol["missing_slots"]
     assert protocol["confirmation_required"] is False
+    assert protocol["execution_mode"]["status"] in {"readonly", "execution_mode_active"}
+    assert protocol["pending_action"]["action_type"] == "update_chapter"
 
 
 def test_manage_confirmation_step_exposes_confirmation_required_in_protocol(monkeypatch):
@@ -594,6 +597,8 @@ def test_manage_confirmation_step_exposes_confirmation_required_in_protocol(monk
     assert protocol["action_type"] == "update_chapter"
     assert protocol["missing_slots"] == []
     assert protocol["confirmation_required"] is True
+    assert protocol["execution_mode"]["status"] == "awaiting_authorization"
+    assert protocol["pending_action"]["action_type"] == "update_chapter"
 
 
 def test_execute_pending_action_returns_execute_result_in_protocol(monkeypatch):
@@ -643,6 +648,8 @@ def test_execute_pending_action_returns_execute_result_in_protocol(monkeypatch):
     assert protocol["action_type"] == "update_chapter"
     assert protocol["execute_result"]["status"] == "success"
     assert protocol["execute_result"]["target_id"] == "chapter-3"
+    assert protocol["execution_mode"]["status"] in {"readonly", "execution_mode_active"}
+    assert protocol["pending_action"]["action_type"] == "update_chapter"
 
 
 def test_extract_character_payload_writes_relationships_field(monkeypatch):
@@ -710,3 +717,206 @@ def test_execute_pending_action_rolls_back_session_on_dispatch_error(monkeypatch
     assert result.handled is True
     assert "执行失败" in result.content
     assert db_session.rollback_calls == 1
+
+
+def test_manage_session_question_priority_returns_not_handled():
+    middleware = IntentRecognitionMiddleware()
+    session = _NovelCreationSession(
+        session_key="manage-question-priority",
+        user_id="user-question",
+        mode="manage",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        fields=middleware._initialize_fields({}),
+        active_project_id="proj-question",
+        active_project_title="问答项目",
+        idempotency_key="idem-question-priority",
+    )
+
+    result = asyncio.run(
+        middleware._handle_manage_session(
+            session=session,
+            user_message="灵石体系如何运作？",
+            db_session=object(),
+            ai_service=None,
+            opening=False,
+        )
+    )
+
+    assert result.handled is False
+
+
+def test_manage_confirmation_enter_execution_mode_executes_pending_action(monkeypatch):
+    middleware = IntentRecognitionMiddleware()
+    action = _PendingAction(
+        action="update_chapter",
+        entity="chapter",
+        operation="update",
+        project_id="proj-exec-mode",
+        target_id="chapter-exec-mode",
+        target_label="第5章",
+        payload={"content": "已授权执行"},
+    )
+    session = _NovelCreationSession(
+        session_key="manage-enter-execution-mode",
+        user_id="user-exec-mode",
+        mode="manage",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        fields=middleware._initialize_fields({}),
+        awaiting_confirm=True,
+        active_project_id="proj-exec-mode",
+        active_project_title="执行模式项目",
+        pending_action=action,
+        idempotency_key="idem-exec-mode",
+    )
+
+    captured: dict[str, object] = {}
+
+    async def _fake_execute_pending_action(*, session: _NovelCreationSession, db_session: object):
+        captured["gate"] = dict(session.execution_gate)
+        return IntentRecognitionResult(
+            handled=True,
+            content="执行成功",
+            session=middleware._session_brief(session),
+        )
+
+    monkeypatch.setattr(middleware, "_execute_pending_action", _fake_execute_pending_action)
+
+    result = asyncio.run(
+        middleware._handle_manage_confirmation_step(
+            session=session,
+            user_message="进入执行模式",
+            lowered="进入执行模式",
+            db_session=object(),
+        )
+    )
+
+    assert result.handled is True
+    gate = captured["gate"]
+    assert gate["execution_mode"] is True
+    assert gate["status"] == "execution_mode_active"
+
+
+def test_manage_session_executes_next_action_directly_when_execution_mode_active(monkeypatch):
+    middleware = IntentRecognitionMiddleware()
+    session = _NovelCreationSession(
+        session_key="manage-exec-direct",
+        user_id="user-exec-direct",
+        mode="manage",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        fields=middleware._initialize_fields({}),
+        active_project_id="proj-exec-direct",
+        active_project_title="直通执行项目",
+    )
+    middleware._set_execution_gate(
+        session,
+        status="execution_mode_active",
+        execution_mode=True,
+        pending_action=None,
+        confirmation_required=False,
+    )
+
+    async def _fake_build(*, session: _NovelCreationSession, user_message: str, db_session: object):
+        assert "第1章" in user_message
+        return _PendingAction(
+            action="update_chapter",
+            entity="chapter",
+            operation="update",
+            project_id=session.active_project_id,
+            target_id="chapter-direct-1",
+            target_label="第1章",
+            payload={"content": "执行模式直通更新"},
+        )
+
+    async def _fake_dispatch_manage_action(*, action: _PendingAction, session: _NovelCreationSession, db_session: object):
+        assert action.action == "update_chapter"
+        return {"id": action.target_id, "updated": True}
+
+    monkeypatch.setattr(middleware._manage_action_router, "build", _fake_build)
+    monkeypatch.setattr(middleware, "_dispatch_manage_action", _fake_dispatch_manage_action)
+
+    result = asyncio.run(
+        middleware._handle_manage_session(
+            session=session,
+            user_message="把第1章正文改成最新版本",
+            db_session=object(),
+            ai_service=None,
+            opening=False,
+        )
+    )
+
+    assert result.handled is True
+    assert "已完成操作：update_chapter" in result.content
+    assert result.session is not None
+    protocol = result.session["action_protocol"]
+    assert protocol["confirmation_required"] is False
+    assert protocol["execute_result"]["status"] == "success"
+    assert protocol["execution_mode"]["status"] == "execution_mode_active"
+
+
+def test_manage_session_revoke_then_requires_authorization_again(monkeypatch):
+    middleware = IntentRecognitionMiddleware()
+    session = _NovelCreationSession(
+        session_key="manage-revoke-then-block",
+        user_id="user-revoke-then-block",
+        mode="manage",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        fields=middleware._initialize_fields({}),
+        active_project_id="proj-revoke-then-block",
+        active_project_title="撤销授权项目",
+    )
+    middleware._set_execution_gate(
+        session,
+        status="execution_mode_active",
+        execution_mode=True,
+        pending_action=None,
+        confirmation_required=False,
+    )
+
+    revoke_result = asyncio.run(
+        middleware._handle_manage_session(
+            session=session,
+            user_message="退出执行模式",
+            db_session=object(),
+            ai_service=None,
+            opening=False,
+        )
+    )
+
+    assert revoke_result.handled is True
+    assert session.execution_gate["execution_mode"] is False
+    assert session.execution_gate["status"] == "revoked"
+
+    async def _fake_build(*, session: _NovelCreationSession, user_message: str, db_session: object):
+        assert "第2章" in user_message
+        return _PendingAction(
+            action="update_chapter",
+            entity="chapter",
+            operation="update",
+            project_id=session.active_project_id,
+            target_id="chapter-revoke-2",
+            target_label="第2章",
+            payload={"content": "撤销后应二次确认"},
+        )
+
+    monkeypatch.setattr(middleware._manage_action_router, "build", _fake_build)
+
+    blocked_result = asyncio.run(
+        middleware._handle_manage_session(
+            session=session,
+            user_message="把第2章改一下",
+            db_session=object(),
+            ai_service=None,
+            opening=False,
+        )
+    )
+
+    assert blocked_result.handled is True
+    assert blocked_result.session is not None
+    protocol = blocked_result.session["action_protocol"]
+    assert protocol["confirmation_required"] is True
+    assert protocol["execution_mode"]["status"] == "awaiting_authorization"
+    assert protocol["pending_action"]["action_type"] == "update_chapter"

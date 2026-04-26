@@ -50,7 +50,7 @@ DeerFlow is a LangGraph-based AI super agent with sandbox execution, persistent 
 The single LangGraph agent (`lead_agent`) is the runtime entry point, created via `make_lead_agent(config)`. It combines:
 
 - **Dynamic model selection** with thinking and vision support
-- **Middleware chain** for cross-cutting concerns (9 middlewares)
+- **Middleware chain** for cross-cutting concerns (10 middlewares)
 - **Tool system** with sandbox, MCP, community, and built-in tools
 - **Subagent delegation** for parallel task execution
 - **System prompt** with skills injection, memory context, and working directory guidance
@@ -64,12 +64,13 @@ Middlewares execute in strict order, each handling a specific concern:
 | 1 | **ThreadDataMiddleware** | Creates per-thread isolated directories (workspace, uploads, outputs) |
 | 2 | **UploadsMiddleware** | Injects newly uploaded files into conversation context |
 | 3 | **SandboxMiddleware** | Acquires sandbox environment for code execution |
-| 4 | **SummarizationMiddleware** | Reduces context when approaching token limits (optional) |
-| 5 | **TodoListMiddleware** | Tracks multi-step tasks in plan mode (optional) |
-| 6 | **TitleMiddleware** | Auto-generates conversation titles after first exchange |
-| 7 | **MemoryMiddleware** | Queues conversations for async memory extraction |
-| 8 | **ViewImageMiddleware** | Injects image data for vision-capable models (conditional) |
-| 9 | **ClarificationMiddleware** | Intercepts clarification requests and interrupts execution (must be last) |
+| 4 | **ExecutionGateMiddleware** | Thread-level high-risk write gate (问答优先 + 执行授权 + 待执行动作重放) |
+| 5 | **SummarizationMiddleware** | Reduces context when approaching token limits (optional) |
+| 6 | **TodoListMiddleware** | Tracks multi-step tasks in plan mode (optional) |
+| 7 | **TitleMiddleware** | Auto-generates conversation titles after first exchange |
+| 8 | **MemoryMiddleware** | Queues conversations for async memory extraction |
+| 9 | **ViewImageMiddleware** | Injects image data for vision-capable models (conditional) |
+| 10 | **ClarificationMiddleware** | Intercepts clarification requests and interrupts execution (must be last) |
 
 ### Sandbox System
 
@@ -168,11 +169,12 @@ FastAPI application providing REST endpoints for frontend integration:
 - `ManageActionRouter` now owns manage-flow action building/merging/dispatch and missing-slot rules, reducing `intent_recognition_middleware.py` single-file responsibility.
 - Intent session state and idempotency keys are persisted in shared `novel_migrated` database tables (`intent_session_states`, `intent_idempotency_keys`) by default for cross-worker consistency.
 - Set `DEERFLOW_INTENT_SESSION_BACKEND=file` to force legacy JSON-file storage (`DEERFLOW_INTENT_SESSION_STORE_PATH`).
-- For side-effect actions (create/update/delete and other writes), the middleware requires explicit confirmation before execution.
+- High-risk write actions now follow a thread-scoped execution authorization protocol: default `readonly` -> `awaiting_authorization` -> `execution_mode_active` -> `revoked`. Commands `确认执行` / `进入执行模式` grant authorization; `退出执行模式` / `取消授权` revoke it.
+- Question-priority is enforced ahead of authorization: question-like turns default to answer-only and do not execute high-risk writes unless the user gives explicit execution intent.
 - If a manage-action dispatch fails and the request `db_session` still has an active transaction, `ManageActionRouter` now performs best-effort rollback before returning the failure response (transactional consistency guard).
 - During intent sessions, skill context is loaded strictly from enabled entries in `extensions_config.json` (prioritized by novel relevance), and users can send `技能推荐` to force-refresh suggestions.
 - Intent skill loading now supports a three-layer governance policy (system defaults -> workspace enabled -> session candidates), guarded by feature flag `intent_skill_governance` with degraded fallback controlled by `DEERFLOW_INTENT_SKILL_GOVERNANCE_FALLBACK_MODE` (`workspace_only|system_only|intersection`).
-- Intent workflow session payloads include structured `action_protocol` fields (`action_type`, `slot_schema`, `missing_slots`, `confirmation_required`, `execute_result`) and keep legacy aliases for backward compatibility.
+- Intent workflow session payloads include structured `action_protocol` fields (`action_type`, `slot_schema`, `missing_slots`, `confirmation_required`, `execution_mode`, `pending_action`, `execute_result`) and keep legacy aliases for backward compatibility.
 - Guided/side-effect intent responses set `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches these intent-session workflow responses.
 - Request trace context is normalized across gateway logs via `request_id/thread_id/project_id/session_key/idempotency_key`.
 - Lifecycle traces additionally include `lifecycle_state/lifecycle_transition/lifecycle_mode/lifecycle_replay/lifecycle_token` to support replay and rollback diagnostics.

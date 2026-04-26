@@ -948,3 +948,35 @@ def create_user_ai_service_with_mcp(*args: Any, **kwargs: Any) -> AIService:
         *args,
         **kwargs,
     )
+
+
+async def create_user_ai_service_from_db(
+    db: Any,
+    user_id: str,
+    module_id: str | None = None,
+) -> AIService:
+    from sqlalchemy import select as _sel
+
+    from app.gateway.novel_migrated.api.settings import _resolve_user_ai_runtime_config
+    from app.gateway.novel_migrated.models.settings import Settings as _Settings
+
+    _sresult = await db.execute(_sel(_Settings).where(_Settings.user_id == user_id))
+    _settings = _sresult.scalar_one_or_none()
+    if _settings is None:
+        _settings = _Settings(user_id=user_id)
+        db.add(_settings)
+        await db.commit()
+        await db.refresh(_settings)
+    _runtime, _ = _resolve_user_ai_runtime_config(_settings, module_id=module_id)
+    return create_user_ai_service(
+        api_provider=_runtime["api_provider"],
+        api_key=_runtime["api_key"],
+        api_base_url=_runtime["api_base_url"],
+        model_name=_runtime["model_name"],
+        temperature=_runtime["temperature"],
+        max_tokens=_runtime["max_tokens"],
+        system_prompt=getattr(_settings, "system_prompt", None),
+        user_id=user_id,
+        db_session=db,
+        enable_mcp=True,
+    )

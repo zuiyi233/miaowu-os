@@ -1,7 +1,7 @@
 'use client';
 
 import { Trophy, Plus, Pencil, Trash2, Zap, Loader2 } from 'lucide-react';
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, memo, useRef } from 'react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -45,6 +45,79 @@ interface CareersViewProps {
 
 const CAREERS_MODULE_ID = 'novel-careers';
 
+function parseStages(text: string): CareerStage[] {
+  return text
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line, index) => {
+      const match = /^(\d+)\.\s*([^-]+)(?:\s*-\s*(.*))?$/.exec(line);
+      if (match) {
+        return { level: parseInt(match[1]!), name: (match[2] ?? '').trim(), description: (match[3] ?? '').trim() };
+      }
+      return { level: index + 1, name: line.trim(), description: '' };
+    });
+}
+
+const CareerCard = memo(function CareerCard({
+  career,
+  onEdit,
+  onDelete,
+}: {
+  career: Career;
+  onEdit: (career: Career) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <Card className="mb-4 transition-shadow hover:shadow-md">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 min-w-0">
+            <Trophy className="h-4 w-4 shrink-0 text-primary" />
+            <CardTitle className="text-base truncate">{career.name}</CardTitle>
+            <Badge variant={career.source === 'ai' ? 'default' : 'secondary'} className="shrink-0">
+              {career.source === 'ai' ? 'AI生成' : '手动创建'}
+            </Badge>
+            {career.category && (
+              <Badge variant="outline" className="shrink-0">{career.category}</Badge>
+            )}
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onEdit(career)}>
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => onDelete(career.id)}>
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <p className="text-sm text-muted-foreground line-clamp-2">{career.description || '暂无描述'}</p>
+        <Separator className="my-3" />
+        <p className="text-sm font-medium mb-2">阶段体系（共{career.maxStage}个）：</p>
+        <div className="max-h-[120px] overflow-y-auto space-y-1 pl-2">
+          {career.stages.slice(0, 5).map((stage) => (
+            <p key={stage.level} className="text-xs text-muted-foreground">
+              {stage.level}. {stage.name}
+              {stage.description && <span className="ml-1">- {stage.description}</span>}
+            </p>
+          ))}
+          {career.stages.length > 5 && (
+            <p className="text-xs text-muted-foreground pl-2">...还有{career.stages.length - 5}个阶段</p>
+          )}
+        </div>
+        {career.specialAbilities && (
+          <>
+            <Separator className="my-3" />
+            <p className="text-sm font-medium">特殊能力：</p>
+            <p className="text-sm text-muted-foreground line-clamp-2 mt-1">{career.specialAbilities}</p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+});
+
 export function CareersView({ novelId }: CareersViewProps) {
   const providers = useAiProviderStore((state) => state.effective.providers);
   const featureRoutingSettings = useAiProviderStore((state) => state.effective.featureRoutingSettings);
@@ -81,6 +154,7 @@ export function CareersView({ novelId }: CareersViewProps) {
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiProgress, setAiProgress] = useState(0);
   const [aiMessage, setAiMessage] = useState('');
+  const aiReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
 
   const { data: careersData, refetch: refetchCareers } = useCareersQuery(novelId, modelRoutingPayload);
   const createMutation = useCreateCareerMutation();
@@ -122,18 +196,13 @@ export function CareersView({ novelId }: CareersViewProps) {
     setIsCreateOpen(true);
   };
 
-  const parseStages = (text: string): CareerStage[] => {
-    return text
-      .split('\n')
-      .filter((line) => line.trim())
-      .map((line, index) => {
-        const match = /^(\d+)\.\s*([^-]+)(?:\s*-\s*(.*))?$/.exec(line);
-        if (match) {
-          return { level: parseInt(match[1]!), name: (match[2] ?? '').trim(), description: (match[3] ?? '').trim() };
-        }
-        return { level: index + 1, name: line.trim(), description: '' };
-      });
-  };
+  const handleOpenEdit = useCallback((career: Career) => {
+    openEditDialog(career);
+  }, []);
+
+  const handleDeleteCareer = useCallback((id: string) => {
+    setDeleteTarget(id);
+  }, []);
 
   const handleSubmit = async () => {
     if (!formName.trim()) {
@@ -206,6 +275,7 @@ export function CareersView({ novelId }: CareersViewProps) {
 
       const reader = response.body?.getReader();
       if (!reader) throw new Error('No response body');
+      aiReaderRef.current = reader;
 
       const decoder = new TextDecoder();
       while (true) {
@@ -237,59 +307,16 @@ export function CareersView({ novelId }: CareersViewProps) {
       }
     } catch {
       setAiGenerating(false);
+      aiReaderRef.current = null;
       toast.error('连接中断，生成失败');
     }
   };
 
-  const renderCareerCard = (career: Career) => (
-    <Card key={career.id} className="mb-4 transition-shadow hover:shadow-md">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 min-w-0">
-            <Trophy className="h-4 w-4 shrink-0 text-primary" />
-            <CardTitle className="text-base truncate">{career.name}</CardTitle>
-            <Badge variant={career.source === 'ai' ? 'default' : 'secondary'} className="shrink-0">
-              {career.source === 'ai' ? 'AI生成' : '手动创建'}
-            </Badge>
-            {career.category && (
-              <Badge variant="outline" className="shrink-0">{career.category}</Badge>
-            )}
-          </div>
-          <div className="flex items-center gap-1 shrink-0">
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditDialog(career)}>
-              <Pencil className="h-4 w-4" />
-            </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => setDeleteTarget(career.id)}>
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="pt-0">
-        <p className="text-sm text-muted-foreground line-clamp-2">{career.description || '暂无描述'}</p>
-        <Separator className="my-3" />
-        <p className="text-sm font-medium mb-2">阶段体系（共{career.maxStage}个）：</p>
-        <div className="max-h-[120px] overflow-y-auto space-y-1 pl-2">
-          {career.stages.slice(0, 5).map((stage) => (
-            <p key={stage.level} className="text-xs text-muted-foreground">
-              {stage.level}. {stage.name}
-              {stage.description && <span className="ml-1">- {stage.description}</span>}
-            </p>
-          ))}
-          {career.stages.length > 5 && (
-            <p className="text-xs text-muted-foreground pl-2">...还有{career.stages.length - 5}个阶段</p>
-          )}
-        </div>
-        {career.specialAbilities && (
-          <>
-            <Separator className="my-3" />
-            <p className="text-sm font-medium">特殊能力：</p>
-            <p className="text-sm text-muted-foreground line-clamp-2 mt-1">{career.specialAbilities}</p>
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
+  const cancelAiGenerate = useCallback(() => {
+    aiReaderRef.current?.cancel().catch(() => {});
+    aiReaderRef.current = null;
+    setAiGenerating(false);
+  }, []);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -324,7 +351,9 @@ export function CareersView({ novelId }: CareersViewProps) {
           </TabsList>
 
           <TabsContent value="main" className="mt-4">
-            {mainCareers.length > 0 ? mainCareers.map(renderCareerCard) : (
+            {mainCareers.length > 0 ? mainCareers.map((career) => (
+              <CareerCard key={career.id} career={career} onEdit={handleOpenEdit} onDelete={handleDeleteCareer} />
+            )) : (
               <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                 <Trophy className="h-12 w-12 mb-3 opacity-30" />
                 <p>还没有主职业</p>
@@ -334,7 +363,9 @@ export function CareersView({ novelId }: CareersViewProps) {
           </TabsContent>
 
           <TabsContent value="sub" className="mt-4">
-            {subCareers.length > 0 ? subCareers.map(renderCareerCard) : (
+            {subCareers.length > 0 ? subCareers.map((career) => (
+              <CareerCard key={career.id} career={career} onEdit={handleOpenEdit} onDelete={handleDeleteCareer} />
+            )) : (
               <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                 <Trophy className="h-12 w-12 mb-3 opacity-30" />
                 <p>还没有副职业</p>
@@ -466,7 +497,7 @@ export function CareersView({ novelId }: CareersViewProps) {
               </div>
               <Progress value={aiProgress} />
               <p className="text-sm text-muted-foreground">{aiMessage}</p>
-              <Button variant="outline" size="sm" onClick={() => setAiGenerating(false)}>取消</Button>
+              <Button variant="outline" size="sm" onClick={cancelAiGenerate}>取消</Button>
             </div>
           </Card>
         </div>

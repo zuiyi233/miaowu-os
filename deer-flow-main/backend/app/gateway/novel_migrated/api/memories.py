@@ -1,9 +1,10 @@
 """记忆管理API - 提供记忆的查询、分析等接口"""
+import asyncio
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
@@ -12,6 +13,7 @@ from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.chapter import Chapter
 from app.gateway.novel_migrated.models.memory import PlotAnalysis, StoryMemory
+from app.gateway.novel_migrated.services.ai_service import create_user_ai_service_from_db
 from app.gateway.novel_migrated.services.foreshadow_service import foreshadow_service
 from app.gateway.novel_migrated.services.memory_service import memory_service
 from app.gateway.novel_migrated.services.plot_analyzer import get_plot_analyzer
@@ -66,31 +68,10 @@ async def analyze_chapter(
                     module_id=MEMORY_MODULE_ID,
                 )
             else:
-                from sqlalchemy import select as _sel
-
-                from app.gateway.novel_migrated.api.settings import _resolve_user_ai_runtime_config
-                from app.gateway.novel_migrated.models.settings import Settings as _Settings
-                from app.gateway.novel_migrated.services.ai_service import create_user_ai_service
-
-                _sresult = await db.execute(_sel(_Settings).where(_Settings.user_id == effective_user_id))
-                _settings = _sresult.scalar_one_or_none()
-                if _settings is None:
-                    _settings = _Settings(user_id=effective_user_id)
-                    db.add(_settings)
-                    await db.commit()
-                    await db.refresh(_settings)
-                _runtime, _ = _resolve_user_ai_runtime_config(_settings, module_id=MEMORY_MODULE_ID)
-                ai_service = create_user_ai_service(
-                    api_provider=_runtime["api_provider"],
-                    api_key=_runtime["api_key"],
-                    api_base_url=_runtime["api_base_url"],
-                    model_name=_runtime["model_name"],
-                    temperature=_runtime["temperature"],
-                    max_tokens=_runtime["max_tokens"],
-                    system_prompt=getattr(_settings, "system_prompt", None),
+                ai_service = await create_user_ai_service_from_db(
+                    db=db,
                     user_id=effective_user_id,
-                    db_session=db,
-                    enable_mcp=True,
+                    module_id=MEMORY_MODULE_ID,
                 )
         
         # 获取已埋入的伏笔列表（用于回收匹配）
@@ -172,9 +153,9 @@ async def analyze_chapter(
             select(StoryMemory).where(StoryMemory.chapter_id == chapter_id)
         )
         old_memories = old_memories_result.scalars().all()
-        for old_mem in old_memories:
-            await db.delete(old_mem)
-        await db.flush()
+        if old_memories:
+            await db.execute(delete(StoryMemory).where(StoryMemory.chapter_id == chapter_id))
+            await db.flush()
 
         if effective_user_id:
             try:
@@ -188,10 +169,9 @@ async def analyze_chapter(
 
         # 保存记忆到数据库和向量库
         saved_count = 0
+        memory_entries = []
         for mem_data in memories_data:
             memory_id = str(uuid.uuid4())
-
-            # 保存到关系数据库
             memory = StoryMemory(
                 id=memory_id,
                 project_id=project_id,
@@ -204,17 +184,31 @@ async def analyze_chapter(
                 **mem_data['metadata']
             )
             db.add(memory)
+            memory_entries.append((memory_id, mem_data))
 
-            # 保存到向量库
-            await memory_service.add_memory(
-                user_id=effective_user_id,
-                project_id=project_id,
-                memory_id=memory_id,
-                content=mem_data['content'],
-                memory_type=mem_data['type'],
-                metadata=mem_data['metadata']
+        await db.flush()
+
+        if effective_user_id:
+            async def _add_vector(mid: str, md: dict) -> None:
+                await memory_service.add_memory(
+                    user_id=effective_user_id,
+                    project_id=project_id,
+                    memory_id=mid,
+                    content=md['content'],
+                    memory_type=md['type'],
+                    metadata=md['metadata']
+                )
+
+            results = await asyncio.gather(
+                *[_add_vector(mid, md) for mid, md in memory_entries],
+                return_exceptions=True,
             )
-            saved_count += 1
+            saved_count = sum(1 for r in results if not isinstance(r, Exception))
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.warning("⚠️ 向量库写入失败: %s", r)
+        else:
+            saved_count = len(memory_entries)
 
         await db.commit()
 

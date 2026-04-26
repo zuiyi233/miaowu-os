@@ -150,6 +150,8 @@ class NovelActionProtocol:
     slot_schema: dict[str, Any] = field(default_factory=dict)
     missing_slots: list[str] = field(default_factory=list)
     confirmation_required: bool = False
+    execution_mode: dict[str, Any] | None = None
+    pending_action: dict[str, Any] | None = None
     execute_result: ExecuteResult | dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -158,11 +160,9 @@ class NovelActionProtocol:
             "slot_schema": self.slot_schema,
             "missing_slots": self.missing_slots,
             "confirmation_required": self.confirmation_required,
-            "execute_result": (
-                self.execute_result.to_dict()
-                if isinstance(self.execute_result, ExecuteResult)
-                else self.execute_result
-            ),
+            "execution_mode": self.execution_mode,
+            "pending_action": self.pending_action,
+            "execute_result": (self.execute_result.to_dict() if isinstance(self.execute_result, ExecuteResult) else self.execute_result),
         }
         # Keep legacy aliases for backward compatibility.
         payload["action"] = payload["action_type"]
@@ -176,6 +176,8 @@ def build_action_protocol(
     slot_schema: dict[str, Any] | None = None,
     missing_slots: list[str] | None = None,
     confirmation_required: bool = False,
+    execution_mode: dict[str, Any] | None = None,
+    pending_action: dict[str, Any] | None = None,
     execute_result: ExecuteResult | dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     protocol = NovelActionProtocol(
@@ -183,6 +185,8 @@ def build_action_protocol(
         slot_schema=slot_schema or {},
         missing_slots=list(missing_slots or []),
         confirmation_required=confirmation_required,
+        execution_mode=execution_mode,
+        pending_action=pending_action,
         execute_result=execute_result,
     )
     return protocol.to_dict()
@@ -198,14 +202,18 @@ class DomainScope:
     writing_mode: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {k: v for k, v in {
-            "user_id": self.user_id,
-            "project_id": self.project_id,
-            "thread_id": self.thread_id,
-            "novel_id": self.novel_id,
-            "chapter_id": self.chapter_id,
-            "writing_mode": self.writing_mode,
-        }.items() if v is not None}
+        return {
+            k: v
+            for k, v in {
+                "user_id": self.user_id,
+                "project_id": self.project_id,
+                "thread_id": self.thread_id,
+                "novel_id": self.novel_id,
+                "chapter_id": self.chapter_id,
+                "writing_mode": self.writing_mode,
+            }.items()
+            if v is not None
+        }
 
     @classmethod
     def from_context(cls, context: dict[str, Any] | None) -> DomainScope:
@@ -233,26 +241,37 @@ class SessionBrief:
     idempotency_key: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {k: v for k, v in {
-            "mode": self.mode.value,
-            "status": self.status.value,
-            "missing_fields": self.missing_fields,
-            "awaiting_confirm": self.awaiting_confirm,
-            "active_project_id": self.active_project_id,
-            "active_project_title": self.active_project_title,
-            "pending_action": self.pending_action,
-            "idempotency_key": self.idempotency_key,
-        }.items() if v is not None and v != [] and v is not False}
+        return {
+            k: v
+            for k, v in {
+                "mode": self.mode.value,
+                "status": self.status.value,
+                "missing_fields": self.missing_fields,
+                "awaiting_confirm": self.awaiting_confirm,
+                "active_project_id": self.active_project_id,
+                "active_project_title": self.active_project_title,
+                "pending_action": self.pending_action,
+                "idempotency_key": self.idempotency_key,
+            }.items()
+            if v is not None and v != [] and v is not False
+        }
 
 
 CONTEXT_FIELD_WHITELIST: tuple[str, ...] = (
-    "novel_id", "novelId",
-    "project_id", "projectId",
-    "chapter_id", "chapterId",
-    "writing_mode", "writingMode",
-    "scene_id", "sceneId",
-    "thread_id", "threadId",
-    "user_id", "userId",
+    "novel_id",
+    "novelId",
+    "project_id",
+    "projectId",
+    "chapter_id",
+    "chapterId",
+    "writing_mode",
+    "writingMode",
+    "scene_id",
+    "sceneId",
+    "thread_id",
+    "threadId",
+    "user_id",
+    "userId",
 )
 
 

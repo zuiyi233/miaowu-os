@@ -546,6 +546,26 @@ export function AiProviderSettingsPage() {
     [mutateRouting],
   );
 
+  const createPrimaryChangeHandler = useCallback(
+    (moduleId: string, parallelTargets: AiFeatureModuleRoute["parallelTargets"]) =>
+      (target: AiModelTarget | null) =>
+        patchModule(moduleId, {
+          primaryTarget: target,
+          parallelTargets: parallelTargets.length > 0 ? parallelTargets : target ? [target] : [],
+        }),
+    [patchModule],
+  );
+
+  const createBackupChangeHandler = useCallback(
+    (moduleId: string, currentMode: AiFeatureModuleRoute["currentMode"]) =>
+      (target: AiModelTarget | null) =>
+        patchModule(moduleId, {
+          backupTarget: target,
+          currentMode: !target && currentMode === "backup" ? "primary" : currentMode,
+        }),
+    [patchModule],
+  );
+
   const isModuleUsingGlobal = useCallback(
     (module: AiFeatureModuleRoute) => {
       if (!defaultTarget) return module.primaryTarget === null;
@@ -1053,17 +1073,7 @@ export function AiProviderSettingsPage() {
                         target={moduleRoute.primaryTarget}
                         providers={providers}
                         allowEmpty
-                        onChange={(target) =>
-                          patchModule(moduleRoute.moduleId, {
-                            primaryTarget: target,
-                            parallelTargets:
-                              moduleRoute.parallelTargets.length > 0
-                                ? moduleRoute.parallelTargets
-                                : target
-                                ? [target]
-                                : [],
-                          })
-                        }
+                        onChange={createPrimaryChangeHandler(moduleRoute.moduleId, moduleRoute.parallelTargets)}
                       />
                       <SearchableModelSelector
                         label="备用模型"
@@ -1071,12 +1081,7 @@ export function AiProviderSettingsPage() {
                         target={moduleRoute.backupTarget}
                         providers={providers}
                         allowEmpty
-                        onChange={(target) =>
-                          patchModule(moduleRoute.moduleId, {
-                            backupTarget: target,
-                            currentMode: !target && moduleRoute.currentMode === "backup" ? "primary" : moduleRoute.currentMode,
-                          })
-                        }
+                        onChange={createBackupChangeHandler(moduleRoute.moduleId, moduleRoute.currentMode)}
                       />
                     </div>
 

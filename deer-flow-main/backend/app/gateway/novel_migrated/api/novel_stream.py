@@ -110,6 +110,10 @@ def _cleanup_analysis_cache() -> None:
         for key in oldest_keys:
             mapping.pop(key, None)
 
+    empty_window_keys = [k for k, v in _STREAM_REQUEST_WINDOWS.items() if not v]
+    for key in empty_window_keys:
+        _STREAM_REQUEST_WINDOWS.pop(key, None)
+
 
 class ChapterGenerateStreamRequest(BaseModel):
     target_word_count: int = Field(default=3000, ge=500, le=10000)

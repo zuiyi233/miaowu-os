@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Lightbulb, Loader2, MessageSquare, SkipForward, TrendingUp, Users, Clock } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -107,7 +107,7 @@ async function fetchRecommendations(novelId: string): Promise<RecommendationItem
     () => databaseService.getRecommendationItems(novelId),
     'RecommendationPanel.fetchRecommendations',
     async (items) => {
-      await Promise.all(items.map((item) => databaseService.updateRecommendationItem(item)));
+      await databaseService.batchUpdateRecommendationItems(items);
     },
   );
 }
@@ -131,7 +131,7 @@ async function generateRecommendations(novelId: string): Promise<RecommendationI
     () => databaseService.getRecommendationItems(novelId),
     'RecommendationPanel.generateRecommendations',
     async (items) => {
-      await Promise.all(items.map((item) => databaseService.updateRecommendationItem(item)));
+      await databaseService.batchUpdateRecommendationItems(items);
     },
   );
 }
@@ -222,9 +222,10 @@ export function RecommendationPanel({ novelId }: RecommendationPanelProps) {
     [acceptMutation]
   );
 
-  const filteredRecommendations = recommendations?.filter((r) =>
-    activeFilter === 'all' || r.type === activeFilter
-  );
+  const filteredRecommendations = useMemo(() =>
+    recommendations?.filter((r) =>
+      activeFilter === 'all' || r.type === activeFilter
+    ), [recommendations, activeFilter]);
 
   if (isLoading) {
     return (

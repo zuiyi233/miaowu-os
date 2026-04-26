@@ -154,9 +154,16 @@ function toStringOr(value: unknown, fallback = ''): string {
   return toOptionalString(value) ?? fallback;
 }
 
+let _cachedApiPrefix: string | undefined;
+let _cachedPrefixBase: string | undefined;
+
 function getNovelApiPrefix() {
   const backendBase = getBackendBaseURL();
-  return `${backendBase}/api`;
+  if (_cachedPrefixBase !== backendBase) {
+    _cachedPrefixBase = backendBase;
+    _cachedApiPrefix = `${backendBase}/api`;
+  }
+  return _cachedApiPrefix!;
 }
 
 function buildUrl(path: string, query?: Record<string, QueryValue>) {
@@ -426,15 +433,18 @@ function normalizeNovel(raw: unknown): Novel {
 
   const entities = Array.isArray(raw.entities) ? raw.entities : [];
 
-  const settings = entities.filter(
-    (entity) => isRecord(entity) && (entity.type === 'setting' || entity.type === 'settings'),
-  ) as Setting[];
-  const factions = entities.filter(
-    (entity) => isRecord(entity) && (entity.type === 'faction' || entity.type === 'factions'),
-  ) as Faction[];
-  const items = entities.filter(
-    (entity) => isRecord(entity) && (entity.type === 'item' || entity.type === 'items'),
-  ) as Item[];
+  const { settings, factions, items } = entities.reduce<{
+    settings: Setting[];
+    factions: Faction[];
+    items: Item[];
+  }>((acc, entity) => {
+    if (!isRecord(entity)) return acc;
+    const t = entity.type as string;
+    if (t === 'setting' || t === 'settings') acc.settings.push(entity as Setting);
+    else if (t === 'faction' || t === 'factions') acc.factions.push(entity as Faction);
+    else if (t === 'item' || t === 'items') acc.items.push(entity as Item);
+    return acc;
+  }, { settings: [], factions: [], items: [] });
 
   return {
     ...(raw as Novel),
@@ -1076,13 +1086,33 @@ export class NovelApiService {
   }
 
   async getCharacters(novelId: string): Promise<Character[]> {
-    const novel = await this.getNovelByIdOrTitle(novelId);
+    const novel = await this.getNovelCached(novelId);
     return novel?.characters ?? [];
   }
 
   async getChapters(novelId: string): Promise<Chapter[]> {
-    const novel = await this.getNovelByIdOrTitle(novelId);
+    const novel = await this.getNovelCached(novelId);
     return novel?.chapters ?? [];
+  }
+
+  private _novelCache = new Map<string, { data: Novel; ts: number }>();
+  private static CACHE_TTL = 30_000;
+
+  async getNovelCached(novelId: string): Promise<Novel | null> {
+    const cached = this._novelCache.get(novelId);
+    if (cached && Date.now() - cached.ts < NovelApiService.CACHE_TTL) {
+      return cached.data;
+    }
+    const novel = await this.getNovelByIdOrTitle(novelId);
+    if (novel) {
+      this._novelCache.set(novelId, { data: novel, ts: Date.now() });
+    }
+    return novel;
+  }
+
+  clearNovelCache(novelId?: string) {
+    if (novelId) this._novelCache.delete(novelId);
+    else this._novelCache.clear();
   }
 
   async getOutlines(novelId: string): Promise<Outline[]> {

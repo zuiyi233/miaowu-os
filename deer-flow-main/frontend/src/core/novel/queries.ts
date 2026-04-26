@@ -63,9 +63,8 @@ export function useUpdateNovelMutation() {
         'useUpdateNovelMutation',
         () => databaseService.updateNovel(novelId, updates),
       ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['novel'] });
-      queryClient.invalidateQueries({ queryKey: ['novels'] });
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['novel', String(variables.novelId)] });
     },
   });
 }
@@ -84,7 +83,6 @@ export function useDeleteNovelMutation() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['novel'] });
-      queryClient.invalidateQueries({ queryKey: ['novels'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
     },
   });
@@ -145,8 +143,8 @@ export function useUpdateCharacterMutation() {
         'useUpdateCharacterMutation',
         () => databaseService.updateCharacter(character),
       ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['novel'] });
+    onSuccess: (_, character) => {
+      queryClient.invalidateQueries({ queryKey: ['novel', character.novelId] });
     },
   });
 }
@@ -187,8 +185,8 @@ export function useUpdateFactionMutation() {
         'useUpdateFactionMutation',
         () => databaseService.updateFaction(faction),
       ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['novel'] });
+    onSuccess: (_, faction) => {
+      queryClient.invalidateQueries({ queryKey: ['novel', faction.novelId] });
     },
   });
 }
@@ -229,8 +227,8 @@ export function useUpdateSettingMutation() {
         'useUpdateSettingMutation',
         () => databaseService.updateSetting(setting),
       ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['novel'] });
+    onSuccess: (_, setting) => {
+      queryClient.invalidateQueries({ queryKey: ['novel', setting.novelId] });
     },
   });
 }
@@ -271,8 +269,8 @@ export function useUpdateItemMutation() {
         'useUpdateItemMutation',
         () => databaseService.updateItem(item),
       ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['novel'] });
+    onSuccess: (_, item) => {
+      queryClient.invalidateQueries({ queryKey: ['novel', item.novelId] });
     },
   });
 }
@@ -500,7 +498,7 @@ export function useImportDataMutation() {
   return useMutation({
     mutationFn: (data: any) => databaseService.importData(data),
     onSuccess: () => {
-      queryClient.invalidateQueries();
+      queryClient.invalidateQueries({ queryKey: ['novel'] });
     },
   });
 }
@@ -561,7 +559,7 @@ export function useSetActivePromptTemplateMutation() {
 
 export function useCareersQuery(projectId: string, modelRouting?: AiModelRoutingPayload) {
   return useQuery({
-    queryKey: ['careers', projectId, modelRouting?.module_id, modelRouting?.ai_provider_id, modelRouting?.ai_model],
+    queryKey: ['careers', projectId, modelRouting ? JSON.stringify(modelRouting) : undefined],
     queryFn: () => novelApiService.getCareers(projectId, modelRouting),
     enabled: !!projectId,
   });
@@ -600,7 +598,7 @@ export function useDeleteCareerMutation() {
 
 export function useForeshadowsQuery(projectId: string, params?: Record<string, unknown>) {
   return useQuery({
-    queryKey: ['foreshadows', projectId, params],
+    queryKey: ['foreshadows', projectId, params ? JSON.stringify(params) : undefined],
     queryFn: () => novelApiService.getForeshadows(projectId, params as Record<string, QueryValue>),
     enabled: !!projectId,
   });

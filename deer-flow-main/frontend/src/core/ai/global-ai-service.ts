@@ -802,7 +802,8 @@ function syncFeatureRoutingStateToServerBestEffort(
 }
 
 export class GlobalAiService {
-  private abortController: AbortController | null = null;
+  private abortControllers = new Map<string, AbortController>();
+  private _requestCounter = 0;
 
   private getContext(serviceContext?: AiServiceContext): AiServiceContext {
     if (serviceContext) {
@@ -888,13 +889,15 @@ export class GlobalAiService {
       model = routedModelTarget?.model ?? provider?.models[0],
     } = options;
 
-    this.abortController = new AbortController();
+    const requestId = String(++this._requestCounter);
+    const controller = new AbortController();
+    this.abortControllers.set(requestId, controller);
 
     const signal =
       mergeAbortSignals([
-        this.abortController.signal,
+        controller.signal,
         callbacks?.abortSignal,
-      ]) ?? this.abortController.signal;
+      ]) ?? controller.signal;
 
     try {
       const endpoint = `${getApiBaseUrl()}/api/ai/chat`;
@@ -1020,7 +1023,7 @@ export class GlobalAiService {
       callbacks?.onError?.(err);
       throw err;
     } finally {
-      this.abortController = null;
+      this.abortControllers.delete(requestId);
     }
   }
 
@@ -1039,22 +1042,19 @@ export class GlobalAiService {
     let buffer = "";
     let lastStructured: AiStructuredResponse | undefined;
 
+    let _timeoutId: ReturnType<typeof setTimeout> | undefined;
     const readWithTimeout = async () => {
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      try {
-        return await Promise.race([
-          reader.read(),
-          new Promise<never>((_, reject) => {
-            timeoutId = setTimeout(() => {
-              reject(new Error(`SSE stream timed out after ${timeoutMs}ms`));
-            }, timeoutMs);
-          }),
-        ]);
-      } finally {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-      }
+      if (_timeoutId) clearTimeout(_timeoutId);
+      return Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) => {
+          _timeoutId = setTimeout(() => {
+            reject(new Error(`SSE stream timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
+        }),
+      ]).finally(() => {
+        if (_timeoutId) { clearTimeout(_timeoutId); _timeoutId = undefined; }
+      });
     };
 
     const processLine = (rawLine: string) => {
@@ -1148,8 +1148,10 @@ export class GlobalAiService {
   }
 
   abort(): void {
-    this.abortController?.abort();
-    this.abortController = null;
+    for (const controller of this.abortControllers.values()) {
+      controller.abort();
+    }
+    this.abortControllers.clear();
   }
 
   async testConnection(

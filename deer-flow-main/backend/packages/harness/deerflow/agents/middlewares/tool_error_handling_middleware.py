@@ -69,6 +69,7 @@ def _build_runtime_middlewares(
     *,
     include_uploads: bool,
     include_dangling_tool_call_patch: bool,
+    include_execution_gate: bool,
     lazy_init: bool = True,
 ) -> list[AgentMiddleware]:
     """Build shared base middlewares for agent execution."""
@@ -92,6 +93,11 @@ def _build_runtime_middlewares(
         middlewares.append(DanglingToolCallMiddleware())
 
     middlewares.append(LLMErrorHandlingMiddleware())
+
+    if include_execution_gate:
+        from deerflow.agents.middlewares.execution_gate_middleware import ExecutionGateMiddleware
+
+        middlewares.append(ExecutionGateMiddleware())
 
     # Guardrail middleware (if configured)
     from deerflow.config.guardrails_config import get_guardrails_config
@@ -130,6 +136,7 @@ def build_lead_runtime_middlewares(*, lazy_init: bool = True) -> list[AgentMiddl
     return _build_runtime_middlewares(
         include_uploads=True,
         include_dangling_tool_call_patch=True,
+        include_execution_gate=True,
         lazy_init=lazy_init,
     )
 
@@ -139,5 +146,6 @@ def build_subagent_runtime_middlewares(*, lazy_init: bool = True) -> list[AgentM
     return _build_runtime_middlewares(
         include_uploads=False,
         include_dangling_tool_call_patch=True,
+        include_execution_gate=False,
         lazy_init=lazy_init,
     )

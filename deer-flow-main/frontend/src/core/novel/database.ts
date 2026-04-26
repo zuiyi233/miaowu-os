@@ -671,6 +671,10 @@ export class DatabaseService {
     await this.db.recommendationItems.put(item);
   }
 
+  async batchUpdateRecommendationItems(items: RecommendationItem[]): Promise<void> {
+    await this.db.recommendationItems.bulkPut(items);
+  }
+
   async deleteRecommendationItem(id: string): Promise<void> {
     await this.db.recommendationItems.delete(id);
   }

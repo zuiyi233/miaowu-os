@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import AliasChoices, BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, over, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
@@ -147,19 +147,19 @@ async def list_chapters(
     limit: int = Query(50, ge=1, le=200),
 ):
     await verify_project_access(project_id, user_id, db)
-    query = select(Chapter).where(Chapter.project_id == project_id)
+    base_filter = Chapter.project_id == project_id
     if outline_id:
-        query = query.where(Chapter.outline_id == outline_id)
+        base_filter = and_(base_filter, Chapter.outline_id == outline_id)
     if status:
-        query = query.where(Chapter.status == status)
+        base_filter = and_(base_filter, Chapter.status == status)
+
+    query = select(Chapter, over(func.count(Chapter.id)).order_by(None)).where(base_filter)
     query = query.order_by(Chapter.chapter_number, Chapter.sub_index).offset(offset).limit(limit)
 
     result = await db.execute(query)
-    chapters = result.scalars().all()
-
-    count_result = await db.execute(
-        select(func.count(Chapter.id)).where(Chapter.project_id == project_id))
-    total = count_result.scalar() or 0
+    rows = result.all()
+    total = rows[0][1] if rows else 0
+    chapters = [row[0] for row in rows]
 
     return {
         "chapters": [_serialize_chapter(c) for c in chapters],
@@ -319,13 +319,16 @@ async def batch_generate_chapters(
         start_chapter_number = selected_chapters[0].chapter_number
         chapter_count = len(chapter_ids)
     else:
-        for i in range(chapter_count):
-            cn = start_chapter_number + i
-            existing = await db.execute(
-                select(Chapter).where(
-                    Chapter.project_id == req.project_id,
-                    Chapter.chapter_number == cn))
-            ch = existing.scalar_one_or_none()
+        chapter_numbers = [start_chapter_number + i for i in range(chapter_count)]
+        existing_result = await db.execute(
+            select(Chapter).where(
+                Chapter.project_id == req.project_id,
+                Chapter.chapter_number.in_(chapter_numbers),
+            )
+        )
+        existing_map = {ch.chapter_number: ch for ch in existing_result.scalars().all()}
+        for cn in chapter_numbers:
+            ch = existing_map.get(cn)
             if not ch:
                 ch = Chapter(
                     project_id=req.project_id,

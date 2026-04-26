@@ -191,6 +191,8 @@ export function groupMessages<T>(
   }
 
   const groups: MessageGroup[] = [];
+  const pendingToolMessagesByCallId = new Map<string, Message[]>();
+  const orphanToolMessagesWithoutCallId: Message[] = [];
 
   // Returns the last group if it can still accept tool messages
   // (i.e. it's an in-flight processing group, not a terminal human/assistant group).
@@ -236,10 +238,17 @@ export function groupMessages<T>(
         if (open) {
           open.messages.push(message);
         } else {
-          console.error(
-            "Unexpected tool message outside a processing group",
-            message,
-          );
+          const callId =
+            typeof message.tool_call_id === "string"
+              ? message.tool_call_id
+              : undefined;
+          if (callId) {
+            const queued = pendingToolMessagesByCallId.get(callId) ?? [];
+            queued.push(message);
+            pendingToolMessagesByCallId.set(callId, queued);
+          } else {
+            orphanToolMessagesWithoutCallId.push(message);
+          }
         }
       }
       continue;
@@ -261,14 +270,26 @@ export function groupMessages<T>(
       } else if (hasReasoning(message) || hasToolCalls(message)) {
         const lastGroup = groups[groups.length - 1];
         // Accumulate consecutive intermediate AI messages into one processing group.
+        let processingGroup: AssistantProcessingGroup;
         if (lastGroup?.type !== "assistant:processing") {
-          groups.push({
+          processingGroup = {
             id: message.id,
             type: "assistant:processing",
             messages: [message],
-          });
+          };
+          groups.push(processingGroup);
         } else {
           lastGroup.messages.push(message);
+          processingGroup = lastGroup;
+        }
+
+        const toolCalls = getToolCalls(message);
+        for (const toolCall of toolCalls) {
+          if (!toolCall.id) continue;
+          const queued = pendingToolMessagesByCallId.get(toolCall.id);
+          if (!queued || queued.length === 0) continue;
+          processingGroup.messages.push(...queued);
+          pendingToolMessagesByCallId.delete(toolCall.id);
         }
       }
 
@@ -278,6 +299,23 @@ export function groupMessages<T>(
         groups.push({ id: message.id, type: "assistant", messages: [message] });
       }
     }
+  }
+
+  // Flush unmatched tool messages so they remain visible instead of being dropped.
+  for (const queuedMessages of pendingToolMessagesByCallId.values()) {
+    if (queuedMessages.length === 0) continue;
+    groups.push({
+      id: queuedMessages[0]?.id,
+      type: "assistant",
+      messages: queuedMessages,
+    });
+  }
+  for (const toolMessage of orphanToolMessagesWithoutCallId) {
+    groups.push({
+      id: toolMessage.id,
+      type: "assistant",
+      messages: [toolMessage],
+    });
   }
 
   return groups
