@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import AliasChoices, BaseModel, Field
-from sqlalchemy import and_, func, over, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
@@ -153,12 +153,16 @@ async def list_chapters(
     if status:
         base_filter = and_(base_filter, Chapter.status == status)
 
-    query = select(Chapter, over(func.count(Chapter.id)).order_by(None)).where(base_filter)
+    query = select(Chapter, func.count(Chapter.id).over().label("total_count")).where(base_filter)
     query = query.order_by(Chapter.chapter_number, Chapter.sub_index).offset(offset).limit(limit)
 
     result = await db.execute(query)
     rows = result.all()
-    total = rows[0][1] if rows else 0
+    if rows:
+        total = rows[0][1] or 0
+    else:
+        count_result = await db.execute(select(func.count(Chapter.id)).where(base_filter))
+        total = count_result.scalar() or 0
     chapters = [row[0] for row in rows]
 
     return {

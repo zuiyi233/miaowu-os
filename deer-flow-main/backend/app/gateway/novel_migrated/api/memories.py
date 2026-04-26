@@ -1,7 +1,6 @@
 """记忆管理API - 提供记忆的查询、分析等接口"""
 import asyncio
 import uuid
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import and_, delete, desc, select
@@ -30,7 +29,6 @@ async def analyze_chapter(
     request: Request = None,
     db: AsyncSession = Depends(get_db),
     user_id: str | None = None,
-    ai_service: Any | None = None,
 ):
     """
     分析章节并生成记忆
@@ -60,19 +58,18 @@ async def analyze_chapter(
         if not chapter.content:
             raise HTTPException(status_code=400, detail="章节内容为空,无法分析")
         
-        if ai_service is None:
-            if request is not None:
-                ai_service = await get_user_ai_service_with_overrides(
-                    request,
-                    db,
-                    module_id=MEMORY_MODULE_ID,
-                )
-            else:
-                ai_service = await create_user_ai_service_from_db(
-                    db=db,
-                    user_id=effective_user_id,
-                    module_id=MEMORY_MODULE_ID,
-                )
+        if request is not None:
+            ai_service = await get_user_ai_service_with_overrides(
+                request,
+                db,
+                module_id=MEMORY_MODULE_ID,
+            )
+        else:
+            ai_service = await create_user_ai_service_from_db(
+                db=db,
+                user_id=effective_user_id,
+                module_id=MEMORY_MODULE_ID,
+            )
         
         # 获取已埋入的伏笔列表（用于回收匹配）
         existing_foreshadows = await foreshadow_service.get_planted_foreshadows_for_analysis(

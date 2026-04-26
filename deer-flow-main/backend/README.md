@@ -193,6 +193,10 @@ Recent gateway hardening updates (2026-04):
   - blocks loopback/private/link-local/reserved targets and metadata endpoints;
   - re-validates resolved DNS IPs before outbound request.
 - `POST /api/threads/{id}/suggestions` no longer retries fallback blindly; fallback is now limited to module-routing/config-resolution style errors, avoiding duplicate LLM calls on terminal failures (auth/quota/rate-limit/timeout).
+- `novel_migrated` security hardening:
+  - foreshadow routes no longer accept `user_id` via query parameters; identity now comes from request-context dependency only.
+  - memory chapter-analysis route no longer exposes internal `ai_service` injection as a public query parameter.
+- chapter list pagination fix: when requested page is empty (`offset` beyond last page), `GET /chapters/project/{project_id}` now returns the real filtered `total` instead of `0`.
 - Novel recommendation APIs now include an explicit ignore endpoint:
   - `POST /api/novels/{novel_id}/recommendations/{rec_id}/ignore`
 - `novel-careers` and `book-import` pipelines now accept and propagate model-routing overrides (`module_id`, `ai_provider_id`, `ai_model`) across frontend → API → service paths.

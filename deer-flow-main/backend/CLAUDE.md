@@ -271,6 +271,10 @@ FastAPI application on port 8001 with health check at `GET /health`.
 - `POST /api/threads/{id}/suggestions` fallback is no longer unconditional; retry without module routing only happens for routing/config-resolution style failures, not terminal auth/quota/rate-limit/timeout errors.
 - Novel recommendation endpoints now include explicit ignore semantics: `POST /api/novels/{novel_id}/recommendations/{rec_id}/ignore`.
 - `novel-careers` and `book-import` routes now propagate routing overrides (`module_id`, `ai_provider_id`, `ai_model`) across request → service execution to keep feature-routing behavior consistent.
+- `novel_migrated` route hardening:
+  - foreshadow APIs no longer accept `user_id` as a query parameter; request identity is resolved via dependency/context only.
+  - memory chapter-analysis API no longer exposes internal `ai_service` injection through public query parameters.
+- chapter list pagination keeps accurate totals even when the requested page has no rows (`offset` overflow): `GET /chapters/project/{project_id}` now falls back to a filtered count query instead of returning `total=0`.
 
 Finalize gate (`/polish/projects/{project_id}/finalize-gate` and `/api/polish/...`) now supports optional rule+model fusion controls:
 - request fields: `model_gate_signals`, `quality_gate_fusion_feature_enabled`, `fusion_degraded_fallback_mode`, `apply_feedback_backflow`, `feedback_evidence_key_prefix`.

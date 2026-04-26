@@ -1,41 +1,5 @@
 {
-  "novels": {
-    "novel-123": {
-      "id": "novel-123",
-      "title": "星海回声",
-      "outline": "",
-      "coverImage": null,
-      "metadata": {
-        "genre": "科幻",
-        "theme": "文明冲突",
-        "audience": "青少年",
-        "target_words": 180000,
-        "description": "主题: 文明冲突\n目标受众: 青少年",
-        "created_by": "intent_recognition_dual_write",
-        "modern_project_id": "novel-123"
-      },
-      "syncStatus": "local",
-      "version": 1,
-      "createdAt": "2026-04-26T11:10:02.331105+00:00",
-      "updatedAt": "2026-04-26T11:10:02.331105+00:00"
-    },
-    "d15ae8f3-9620-405b-9eab-81fd290cd428": {
-      "id": "d15ae8f3-9620-405b-9eab-81fd290cd428",
-      "title": "没钱修什么仙",
-      "outline": "",
-      "coverImage": null,
-      "metadata": {
-        "genre": "仙侠",
-        "description": "一个现代青年穿越到修仙世界，发现修仙比现实生活还要烧钱，于是用现代商业思维开创另类修仙之路的故事",
-        "created_by": "deerflow_create_novel_tool_dual_write",
-        "modern_project_id": "d15ae8f3-9620-405b-9eab-81fd290cd428"
-      },
-      "syncStatus": "local",
-      "version": 1,
-      "createdAt": "2026-04-26T13:54:50.341507+00:00",
-      "updatedAt": "2026-04-26T13:54:50.341507+00:00"
-    }
-  },
+  "novels": {},
   "chapters": {},
   "characters": {},
   "entities": {},
@@ -89,36 +53,6 @@
           }
         },
         "createdAt": "2026-04-24T20:43:28.346504+00:00"
-      }
-    ],
-    "novel-123": [
-      {
-        "id": "audit-6893bcc9732e",
-        "novelId": "novel-123",
-        "action": "novel.create",
-        "entityType": "novel",
-        "entityId": "novel-123",
-        "author": "system",
-        "details": {
-          "title": "星海回声",
-          "version": 1
-        },
-        "createdAt": "2026-04-26T11:10:02.331105+00:00"
-      }
-    ],
-    "d15ae8f3-9620-405b-9eab-81fd290cd428": [
-      {
-        "id": "audit-c9101e9dc2f7",
-        "novelId": "d15ae8f3-9620-405b-9eab-81fd290cd428",
-        "action": "novel.create",
-        "entityType": "novel",
-        "entityId": "d15ae8f3-9620-405b-9eab-81fd290cd428",
-        "author": "system",
-        "details": {
-          "title": "没钱修什么仙",
-          "version": 1
-        },
-        "createdAt": "2026-04-26T13:54:50.341507+00:00"
       }
     ]
   }
