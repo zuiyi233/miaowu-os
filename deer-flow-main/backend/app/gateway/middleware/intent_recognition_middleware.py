@@ -24,6 +24,7 @@ from typing import Any
 
 from app.gateway.middleware.domain_protocol import ExecuteResult, build_action_protocol
 from app.gateway.middleware.intent_components import (
+    IntentDecisionEngine,
     IntentDetector,
     ManageActionRouter,
     SessionManager,
@@ -34,7 +35,13 @@ from app.gateway.novel_migrated.services.skill_governance_service import (
     resolve_skill_governance,
 )
 from app.gateway.observability.context import extract_trace_fields_from_context, update_trace_context
-from app.gateway.observability.metrics import record_duplicate_write_intercept
+from app.gateway.observability.metrics import (
+    record_authorization_toggle,
+    record_auto_execute,
+    record_clarification,
+    record_confirmation_fallback,
+    record_duplicate_write_intercept,
+)
 from deerflow.config.extensions_config import ExtensionsConfig
 from deerflow.protocols.execution_protocol import (
     EXECUTION_MODE_ACTIVE,
@@ -45,9 +52,9 @@ from deerflow.protocols.execution_protocol import (
     build_pending_action_payload,
     coerce_execution_gate_state,
     default_execution_gate_state,
+    fingerprint_user_text,
     is_authorization_command,
     is_revoke_command,
-    should_answer_only,
 )
 from deerflow.skills import load_skills
 
@@ -62,6 +69,11 @@ _SESSION_BACKEND_ENV = "DEERFLOW_INTENT_SESSION_BACKEND"
 _SKILL_GOVERNANCE_FALLBACK_MODE_ENV = "DEERFLOW_INTENT_SKILL_GOVERNANCE_FALLBACK_MODE"
 _CREATE_SESSION_SKILL_WHITELIST_PATH_ENV = "DEERFLOW_CREATE_NOVEL_SKILL_WHITELIST_PATH"
 _CREATE_SESSION_SKILL_WHITELIST_DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data" / "novel_create_skill_whitelist.json"
+_INTENT_DECISION_ENGINE_ENABLED_ENV = "DEERFLOW_INTENT_DECISION_ENGINE_ENABLED"
+_INTENT_DECISION_EXEMPLARS_PATH_ENV = "DEERFLOW_INTENT_DECISION_EXEMPLARS_PATH"
+_INTENT_DECISION_EMBEDDING_MODEL_ENV = "DEERFLOW_INTENT_DECISION_EMBEDDING_MODEL"
+_INTENT_DECISION_EXEMPLARS_DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data" / "intent_decision_exemplars.json"
+_INTENT_DECISION_LOG_PATH = Path(__file__).resolve().parents[3] / ".deer-flow" / "intent_decisions.jsonl"
 _DATABASE_STORAGE_BACKENDS = {"database", "db", "sqlite"}
 _FILE_STORAGE_BACKENDS = {"file", "json"}
 _SESSION_CONTEXT_KEYS: tuple[str, ...] = (
@@ -222,7 +234,7 @@ _PROJECT_SWITCH_KEYWORDS = (
 
 _QUESTION_PREFIXES = ("怎么", "如何", "怎样", "为什么", "为何", "是什么", "可以", "能否", "是否", "what", "how", "why")
 
-_CONFIRM_KEYWORDS = {"确认", "确认创建", "确认执行", "开始创建", "创建", "提交", "yes", "y", "ok", "好的", "__confirm_action__"}
+_CONFIRM_KEYWORDS = {"确认", "确认创建", "确认执行", "开始创建", "创建", "提交", "yes", "y", "ok", "好的", "__confirm_action__", "__enter_execution_mode__"}
 _CANCEL_KEYWORDS = {"取消", "不用了", "算了", "no", "n", "停止", "__cancel_action__"}
 _EXIT_KEYWORDS = {"退出创建", "结束创建", "取消创建", "先不创建"}
 _MANAGE_EXIT_KEYWORDS = {"退出管理", "结束管理", "取消管理", "先不管理"}
@@ -393,6 +405,13 @@ class IntentRecognitionMiddleware:
             owner=self,
             pending_action_factory=_PendingAction,
         )
+        self._decision_engine_enabled = self._resolve_decision_engine_enabled()
+        decision_exemplars_path = self._resolve_decision_exemplars_path()
+        decision_embedding_model = str(os.getenv(_INTENT_DECISION_EMBEDDING_MODEL_ENV, "paraphrase-multilingual-MiniLM-L12-v2") or "paraphrase-multilingual-MiniLM-L12-v2").strip()
+        self._intent_decision_engine = IntentDecisionEngine(
+            exemplar_path=decision_exemplars_path,
+            embedding_model_name=decision_embedding_model,
+        )
         if self._storage_backend == "file":
             self._load_state_from_disk()
 
@@ -459,6 +478,7 @@ class IntentRecognitionMiddleware:
             result = await self._ask_next_field(
                 session=session,
                 ai_service=ai_service,
+                db_session=db_session,
                 opening=True,
             )
             result.is_novel_intent = True
@@ -534,6 +554,8 @@ class IntentRecognitionMiddleware:
         gate = coerce_execution_gate_state(getattr(session, "execution_gate", None))
         gate["pending_action"] = None
         gate["confirmation_required"] = False
+        gate["latest_decision"] = None
+        gate["ui_hints"] = None
         gate["updated_at"] = datetime.now().isoformat()
         if status:
             gate["status"] = status
@@ -543,6 +565,146 @@ class IntentRecognitionMiddleware:
             gate["status"] = EXECUTION_MODE_READONLY
         session.execution_gate = gate
         return gate
+
+    @staticmethod
+    def _is_truthy_env(value: str | None) -> bool:
+        if value is None:
+            return False
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+
+    def _resolve_decision_engine_enabled(self) -> bool:
+        raw = os.getenv(_INTENT_DECISION_ENGINE_ENABLED_ENV, "1")
+        return self._is_truthy_env(raw)
+
+    def _resolve_decision_exemplars_path(self) -> Path | None:
+        configured = str(os.getenv(_INTENT_DECISION_EXEMPLARS_PATH_ENV, "") or "").strip()
+        if configured:
+            return Path(configured).expanduser().resolve()
+        return _INTENT_DECISION_EXEMPLARS_DEFAULT_PATH
+
+    def _store_intent_decision(
+        self,
+        *,
+        session: _NovelCreationSession,
+        decision: dict[str, Any],
+        ui_hints: dict[str, Any],
+    ) -> None:
+        self._set_execution_gate(
+            session,
+            latest_decision=decision,
+            ui_hints=ui_hints,
+        )
+
+    def _record_intent_decision_log(
+        self,
+        *,
+        session: _NovelCreationSession,
+        user_message: str,
+        decision: dict[str, Any],
+        ui_hints: dict[str, Any],
+        execution_mode_before: bool,
+        executed: bool,
+        user_override: bool,
+    ) -> None:
+        if os.getenv("PYTEST_CURRENT_TEST"):
+            return
+        try:
+            payload = {
+                "ts": datetime.now().isoformat(),
+                "session_key_hash": fingerprint_user_text(session.session_key),
+                "utterance_hash": fingerprint_user_text(user_message),
+                "intent": str(decision.get("intent") or ""),
+                "candidates": decision.get("candidates") if isinstance(decision.get("candidates"), list) else [],
+                "execute_confidence": float(decision.get("execute_confidence") or 0.0),
+                "qa_confidence": float(decision.get("qa_confidence") or 0.0),
+                "ambiguity": float(decision.get("ambiguity") or 1.0),
+                "should_execute_now": bool(decision.get("should_execute_now")),
+                "execution_mode_before": bool(execution_mode_before),
+                "confirmation_shown": bool(ui_hints.get("show_confirmation_card")),
+                "executed": bool(executed),
+                "user_override": bool(user_override),
+            }
+            _INTENT_DECISION_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with _INTENT_DECISION_LOG_PATH.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception as exc:  # pragma: no cover - telemetry must not break core flow
+            logger.warning("intent decision log write failed: %s", exc)
+
+    def _evaluate_intent_decision(
+        self,
+        *,
+        session: _NovelCreationSession,
+        user_message: str,
+        slots_complete: bool,
+        pending_action_exists: bool,
+        executed: bool | None = None,
+        user_override: bool = False,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        gate = self._get_execution_gate(session)
+        execution_mode_before = bool(gate.get("execution_mode"))
+
+        if not self._decision_engine_enabled:
+            should_execute_now = execution_mode_before and slots_complete
+            decision = {
+                "intent": "execute" if should_execute_now else "qa",
+                "candidates": [
+                    {"intent": "execute", "score": 1.0 if should_execute_now else 0.0},
+                    {"intent": "qa", "score": 0.0 if should_execute_now else 1.0},
+                ],
+                "execute_confidence": 1.0 if should_execute_now else 0.0,
+                "qa_confidence": 0.0 if should_execute_now else 1.0,
+                "ambiguity": 0.0,
+                "slots_complete": bool(slots_complete),
+                "should_execute_now": bool(should_execute_now),
+                "reason_codes": ["decision_engine_disabled"],
+                "should_clarify": False,
+            }
+            ui_hints = {
+                "show_confirmation_card": bool((not execution_mode_before) and slots_complete),
+                "show_execution_toggle": True,
+                "quick_actions": ["__enter_execution_mode__", "__confirm_action__", "__cancel_action__"] if slots_complete else [],
+                "clarification_required": False,
+            }
+        else:
+            decision, ui_hints = self._intent_decision_engine.decide(
+                user_message=user_message,
+                session_mode=session.mode,
+                slots_complete=slots_complete,
+                execution_mode_active=execution_mode_before,
+                pending_action_exists=pending_action_exists,
+            )
+
+        self._store_intent_decision(session=session, decision=decision, ui_hints=ui_hints)
+        executed_flag = (
+            bool(executed)
+            if executed is not None
+            else (
+                execution_mode_before
+                and bool(slots_complete)
+                and bool(decision.get("should_execute_now"))
+            )
+        )
+        self._record_intent_decision_log(
+            session=session,
+            user_message=user_message,
+            decision=decision,
+            ui_hints=ui_hints,
+            execution_mode_before=execution_mode_before,
+            executed=executed_flag,
+            user_override=user_override,
+        )
+        return decision, ui_hints
+
+    @staticmethod
+    def _build_clarification_reply(session: _NovelCreationSession) -> str:
+        mode_label = "创建流程" if session.mode == "create" else "管理流程"
+        return (
+            f"我当前无法稳定判断你是想继续执行还是仅讨论（{mode_label}）。\n"
+            "请直接点下方按钮：\n"
+            "- 开启执行模式并执行（后续本线程自动执行）\n"
+            "- 取消（先不执行）\n"
+            "也可以补充更具体的操作目标。"
+        )
 
     async def _handle_active_creation_session(
         self,
@@ -556,7 +718,7 @@ class IntentRecognitionMiddleware:
         lowered = normalized.lower()
         gate = self._get_execution_gate(session)
 
-        if normalized in _EXIT_KEYWORDS or lowered in _EXIT_KEYWORDS or is_revoke_command(normalized):
+        if normalized in _EXIT_KEYWORDS or lowered in _EXIT_KEYWORDS:
             await self._remove_session(session.session_key)
             return IntentRecognitionResult(
                 handled=True,
@@ -574,6 +736,21 @@ class IntentRecognitionMiddleware:
                         ),
                     ),
                 },
+            )
+        if is_revoke_command(normalized):
+            self._set_execution_gate(
+                session,
+                status=EXECUTION_MODE_REVOKED,
+                execution_mode=False,
+                confirmation_required=bool(session.awaiting_confirm),
+            )
+            session.updated_at = datetime.now()
+            await self._save_session(session)
+            record_authorization_toggle(enabled=False)
+            return IntentRecognitionResult(
+                handled=True,
+                content="已退出执行模式。创建流程会继续保留，你可以继续补充信息或手动确认执行。",
+                session=self._session_brief(session, confirmation_required=bool(session.awaiting_confirm)),
             )
 
         if self._is_skill_assist_request(lowered):
@@ -605,7 +782,7 @@ class IntentRecognitionMiddleware:
             )
         session.updated_at = datetime.now()
         await self._save_session(session)
-        return await self._ask_next_field(session=session, ai_service=ai_service, opening=False)
+        return await self._ask_next_field(session=session, ai_service=ai_service, db_session=db_session, opening=False)
 
     async def _handle_creation_confirmation_step(
         self,
@@ -616,12 +793,29 @@ class IntentRecognitionMiddleware:
         db_session: Any | None,
         ai_service: Any | None,
     ) -> IntentRecognitionResult:
-        if lowered in _CANCEL_KEYWORDS or user_message in _CANCEL_KEYWORDS or is_revoke_command(user_message):
-            session.awaiting_confirm = False
+        gate = self._get_execution_gate(session)
+        if is_revoke_command(user_message):
             self._set_execution_gate(
                 session,
                 status=EXECUTION_MODE_REVOKED,
                 execution_mode=False,
+                confirmation_required=True,
+            )
+            session.updated_at = datetime.now()
+            await self._save_session(session)
+            record_authorization_toggle(enabled=False)
+            return IntentRecognitionResult(
+                handled=True,
+                content=self._build_confirmation_summary(session),
+                session=self._session_brief(session, confirmation_required=True),
+            )
+        if lowered in _CANCEL_KEYWORDS or user_message in _CANCEL_KEYWORDS:
+            session.awaiting_confirm = False
+            self._set_execution_gate(
+                session,
+                status=EXECUTION_MODE_ACTIVE if bool(gate.get("execution_mode")) else EXECUTION_MODE_READONLY,
+                execution_mode=bool(gate.get("execution_mode")),
+                pending_action=None,
                 confirmation_required=False,
             )
             session.updated_at = datetime.now()
@@ -639,7 +833,27 @@ class IntentRecognitionMiddleware:
                 execution_mode=True,
                 confirmation_required=False,
             )
+            record_authorization_toggle(enabled=True)
             return await self._finalize_creation(session=session, db_session=db_session)
+
+        decision, ui_hints = self._evaluate_intent_decision(
+            session=session,
+            user_message=user_message,
+            slots_complete=True,
+            pending_action_exists=True,
+        )
+        if bool(gate.get("execution_mode")) and bool(decision.get("should_execute_now")):
+            record_auto_execute(action="create_novel")
+            return await self._finalize_creation(session=session, db_session=db_session)
+        if bool(decision.get("should_clarify")):
+            record_clarification(action="create_novel")
+            return IntentRecognitionResult(
+                handled=True,
+                content=self._build_clarification_reply(session),
+                session=self._session_brief(session, confirmation_required=True),
+            )
+        if bool(ui_hints.get("show_confirmation_card")) and not bool(gate.get("execution_mode")):
+            record_confirmation_fallback(action="create_novel")
 
         self._update_session_fields_from_message(session, user_message)
         session.awaiting_confirm = True
@@ -684,31 +898,57 @@ class IntentRecognitionMiddleware:
         *,
         session: _NovelCreationSession,
         ai_service: Any | None,
+        db_session: Any | None,
         opening: bool,
     ) -> IntentRecognitionResult:
         missing = self._next_missing_field(session)
+        gate = self._get_execution_gate(session)
         if missing is None:
-            session.awaiting_confirm = True
             session.last_prompted_field = None
+            pending_action_payload = build_pending_action_payload(
+                action_type="create_novel",
+                tool_name="create_novel",
+                args={
+                    "title": str(session.fields.get("title") or ""),
+                    "genre": str(session.fields.get("genre") or _DEFAULT_GENRE),
+                    "theme": str(session.fields.get("theme") or ""),
+                    "audience": str(session.fields.get("audience") or ""),
+                    "target_words": int(session.fields.get("target_words") or 0),
+                },
+                source="api_ai_chat_intent",
+            )
+            if gate.get("execution_mode"):
+                session.awaiting_confirm = False
+                self._set_execution_gate(
+                    session,
+                    status=EXECUTION_MODE_ACTIVE,
+                    execution_mode=True,
+                    confirmation_required=False,
+                    pending_action=pending_action_payload,
+                )
+                session.updated_at = datetime.now()
+                await self._save_session(session)
+                self._evaluate_intent_decision(
+                    session=session,
+                    user_message="自动执行创建流程",
+                    slots_complete=True,
+                    pending_action_exists=True,
+                    executed=True,
+                    user_override=False,
+                )
+                record_auto_execute(action="create_novel")
+                return await self._finalize_creation(session=session, db_session=db_session)
+
+            session.awaiting_confirm = True
             self._set_execution_gate(
                 session,
                 status=EXECUTION_MODE_AWAITING_AUTHORIZATION,
                 confirmation_required=True,
-                pending_action=build_pending_action_payload(
-                    action_type="create_novel",
-                    tool_name="create_novel",
-                    args={
-                        "title": str(session.fields.get("title") or ""),
-                        "genre": str(session.fields.get("genre") or _DEFAULT_GENRE),
-                        "theme": str(session.fields.get("theme") or ""),
-                        "audience": str(session.fields.get("audience") or ""),
-                        "target_words": int(session.fields.get("target_words") or 0),
-                    },
-                    source="api_ai_chat_intent",
-                ),
+                pending_action=pending_action_payload,
             )
             session.updated_at = datetime.now()
             await self._save_session(session)
+            record_confirmation_fallback(action="create_novel")
             return IntentRecognitionResult(
                 handled=True,
                 content=self._build_confirmation_summary(session),
@@ -904,24 +1144,38 @@ class IntentRecognitionMiddleware:
             )
 
         if is_revoke_command(normalized):
-            session.awaiting_confirm = False
-            session.pending_action = None
-            self._set_execution_gate(
-                session,
-                status=EXECUTION_MODE_REVOKED,
-                execution_mode=False,
-                pending_action=None,
-                confirmation_required=False,
-            )
+            has_pending_confirmation = bool(session.awaiting_confirm and session.pending_action is not None)
+            if has_pending_confirmation:
+                self._set_execution_gate(
+                    session,
+                    status=EXECUTION_MODE_REVOKED,
+                    execution_mode=False,
+                    confirmation_required=True,
+                )
+            else:
+                session.awaiting_confirm = False
+                session.pending_action = None
+                self._set_execution_gate(
+                    session,
+                    status=EXECUTION_MODE_REVOKED,
+                    execution_mode=False,
+                    pending_action=None,
+                    confirmation_required=False,
+                )
             session.updated_at = datetime.now()
             await self._save_session(session)
+            record_authorization_toggle(enabled=False)
             return IntentRecognitionResult(
                 handled=True,
-                content="已退出执行模式并清空待执行动作。后续高风险写操作会先拦截并等待你授权。",
-                session=self._session_brief(session),
+                content=(
+                    f"已退出执行模式，待执行动作已保留。\n\n{self._build_manage_confirmation_summary(session.pending_action, session)}"
+                    if has_pending_confirmation and session.pending_action is not None
+                    else "已退出执行模式并清空待执行动作。后续高风险写操作会先拦截并等待你授权。"
+                ),
+                session=self._session_brief(session, confirmation_required=has_pending_confirmation),
             )
 
-        if normalized in {"进入执行模式", "确认执行"} and session.pending_action is None and not session.awaiting_confirm:
+        if is_authorization_command(normalized, include_legacy=False) and session.pending_action is None and not session.awaiting_confirm:
             self._set_execution_gate(
                 session,
                 status=EXECUTION_MODE_ACTIVE,
@@ -932,22 +1186,12 @@ class IntentRecognitionMiddleware:
             )
             session.updated_at = datetime.now()
             await self._save_session(session)
+            record_authorization_toggle(enabled=True)
             return IntentRecognitionResult(
                 handled=True,
                 content="已进入执行模式：当前线程后续高风险写操作将直接执行，直到你回复“退出执行模式”或“取消授权”。",
                 session=self._session_brief(session),
             )
-
-        if should_answer_only(normalized) and not is_authorization_command(normalized, include_legacy=True):
-            self._set_execution_gate(
-                session,
-                answer_only_turn=True,
-                replay_requested=False,
-                confirmation_required=bool(session.awaiting_confirm and session.pending_action is not None),
-            )
-            session.updated_at = datetime.now()
-            await self._save_session(session)
-            return IntentRecognitionResult(handled=False)
 
         if self._is_skill_assist_request(lowered):
             return await self._reply_manage_skill_guidance(session=session, ai_service=ai_service)
@@ -963,6 +1207,107 @@ class IntentRecognitionMiddleware:
 
         if self._is_entity_list_request(lowered):
             return await self._reply_entity_list(session=session, user_message=normalized, db_session=db_session)
+
+        if (
+            session.awaiting_confirm
+            and session.pending_action is not None
+            and (
+                is_authorization_command(normalized, include_legacy=True)
+                or normalized in _CONFIRM_KEYWORDS
+                or lowered in _CONFIRM_KEYWORDS
+                or normalized in _CANCEL_KEYWORDS
+                or lowered in _CANCEL_KEYWORDS
+                or is_revoke_command(normalized)
+            )
+        ):
+            return await self._handle_manage_confirmation_step(
+                session=session,
+                user_message=normalized,
+                lowered=lowered,
+                db_session=db_session,
+            )
+
+        slots_complete = bool(session.pending_action is not None and not session.pending_action.missing_fields)
+        pending_action_exists = session.pending_action is not None
+        decision, ui_hints = self._evaluate_intent_decision(
+            session=session,
+            user_message=normalized,
+            slots_complete=slots_complete,
+            pending_action_exists=pending_action_exists,
+        )
+
+        if (
+            bool(decision.get("should_clarify"))
+            and not pending_action_exists
+            and not self._looks_like_manage_action_request(normalized)
+        ):
+            self._set_execution_gate(
+                session,
+                answer_only_turn=True,
+                replay_requested=False,
+                confirmation_required=False,
+            )
+            session.updated_at = datetime.now()
+            await self._save_session(session)
+            record_clarification(action="manage_session")
+            return IntentRecognitionResult(
+                handled=True,
+                content=self._build_clarification_reply(session),
+                session=self._session_brief(session, confirmation_required=False),
+            )
+        if (
+            not pending_action_exists
+            and float(decision.get("qa_confidence") or 0.0) > float(decision.get("execute_confidence") or 0.0)
+            and not bool(decision.get("should_clarify"))
+            and not bool(gate.get("execution_mode"))
+            and not self._looks_like_manage_action_request(normalized)
+        ):
+            self._set_execution_gate(
+                session,
+                answer_only_turn=True,
+                replay_requested=False,
+                confirmation_required=False,
+            )
+            session.updated_at = datetime.now()
+            await self._save_session(session)
+            return IntentRecognitionResult(handled=False)
+
+        if session.awaiting_confirm and session.pending_action is not None:
+            if bool(gate.get("execution_mode")) and bool(decision.get("should_execute_now")) and slots_complete:
+                session.awaiting_confirm = False
+                self._set_execution_gate(
+                    session,
+                    status=EXECUTION_MODE_ACTIVE,
+                    execution_mode=True,
+                    confirmation_required=False,
+                )
+                session.updated_at = datetime.now()
+                await self._save_session(session)
+                record_auto_execute(action=session.pending_action.action)
+                return await self._execute_pending_action(session=session, db_session=db_session)
+
+            if bool(decision.get("should_clarify")):
+                record_clarification(action=session.pending_action.action)
+                return IntentRecognitionResult(
+                    handled=True,
+                    content=self._build_clarification_reply(session),
+                    session=self._session_brief(session, confirmation_required=True),
+                )
+
+            if bool(ui_hints.get("show_confirmation_card")) and not bool(gate.get("execution_mode")):
+                self._set_execution_gate(
+                    session,
+                    status=EXECUTION_MODE_AWAITING_AUTHORIZATION,
+                    confirmation_required=True,
+                )
+                session.updated_at = datetime.now()
+                await self._save_session(session)
+                record_confirmation_fallback(action=session.pending_action.action)
+                return IntentRecognitionResult(
+                    handled=True,
+                    content=self._build_manage_confirmation_summary(session.pending_action, session),
+                    session=self._session_brief(session, confirmation_required=True),
+                )
 
         if session.awaiting_confirm and session.pending_action is not None:
             return await self._handle_manage_confirmation_step(
@@ -1128,13 +1473,30 @@ class IntentRecognitionMiddleware:
                 session=self._session_brief(session),
             )
 
-        if lowered in _CANCEL_KEYWORDS or user_message in _CANCEL_KEYWORDS or is_revoke_command(user_message):
+        if is_revoke_command(user_message):
+            self._set_execution_gate(
+                session,
+                status=EXECUTION_MODE_REVOKED,
+                execution_mode=False,
+                confirmation_required=True,
+                replay_requested=False,
+            )
+            session.updated_at = datetime.now()
+            await self._save_session(session)
+            record_authorization_toggle(enabled=False)
+            return IntentRecognitionResult(
+                handled=True,
+                content=f"已退出执行模式，待执行动作已保留。\n\n{self._build_manage_confirmation_summary(action, session)}",
+                session=self._session_brief(session, confirmation_required=True),
+            )
+
+        if lowered in _CANCEL_KEYWORDS or user_message in _CANCEL_KEYWORDS:
             session.awaiting_confirm = False
             session.pending_action = None
             self._set_execution_gate(
                 session,
-                status=EXECUTION_MODE_REVOKED if is_revoke_command(user_message) else (EXECUTION_MODE_ACTIVE if gate.get("execution_mode") else EXECUTION_MODE_READONLY),
-                execution_mode=False if is_revoke_command(user_message) else bool(gate.get("execution_mode")),
+                status=EXECUTION_MODE_ACTIVE if gate.get("execution_mode") else EXECUTION_MODE_READONLY,
+                execution_mode=bool(gate.get("execution_mode")),
                 pending_action=None,
                 confirmation_required=False,
                 replay_requested=False,
@@ -1143,7 +1505,7 @@ class IntentRecognitionMiddleware:
             await self._save_session(session)
             return IntentRecognitionResult(
                 handled=True,
-                content=("已退出执行模式并取消本次执行。" if is_revoke_command(user_message) else "好的，已取消本次执行。你可以继续说下一步要管理的内容。"),
+                content="好的，已取消本次执行。你可以继续说下一步要管理的内容。",
                 session=self._session_brief(session),
             )
 
@@ -1155,6 +1517,7 @@ class IntentRecognitionMiddleware:
                 confirmation_required=False,
                 replay_requested=False,
             )
+            record_authorization_toggle(enabled=True)
             return await self._execute_pending_action(session=session, db_session=db_session)
 
         await self._manage_action_router.merge(
@@ -2114,6 +2477,16 @@ class IntentRecognitionMiddleware:
     def _is_entity_list_request(lowered: str) -> bool:
         list_keywords = ("列表", "列出", "查看", "有哪些")
         return any(keyword in lowered for keyword in list_keywords) and any(entity in lowered for entity in _MANAGE_ENTITY_KEYWORDS)
+
+    @staticmethod
+    def _looks_like_manage_action_request(text: str) -> bool:
+        lowered = text.lower()
+        if any(pattern.search(text) for pattern in _MANAGE_INTENT_PATTERNS):
+            return True
+        action_hit = any(keyword in text for keyword in _MANAGE_ACTION_KEYWORDS) or any(keyword in lowered for keyword in _MANAGE_ACTION_KEYWORDS)
+        entity_hit = any(keyword in text for keyword in _MANAGE_ENTITY_KEYWORDS) or any(keyword in lowered for keyword in _MANAGE_ENTITY_KEYWORDS)
+        chapter_hint = bool(_CHAPTER_NO_PATTERN.search(text))
+        return action_hit and (entity_hit or chapter_hint)
 
     @staticmethod
     def _extract_name_after_keyword(text: str, *, keywords: tuple[str, ...], max_len: int) -> str | None:
@@ -3160,6 +3533,8 @@ class IntentRecognitionMiddleware:
         missing_slots_override: list[str] | None = None,
         confirmation_required: bool | None = None,
         action_snapshot: _PendingAction | None = None,
+        decision_override: dict[str, Any] | None = None,
+        ui_hints_override: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         action = action_snapshot if action_snapshot is not None else session.pending_action
         gate = self._get_execution_gate(session)
@@ -3190,6 +3565,15 @@ class IntentRecognitionMiddleware:
             enabled=bool(gate.get("execution_mode")),
             updated_at=str(gate.get("updated_at") or ""),
         )
+        decision_payload = decision_override if isinstance(decision_override, dict) else (gate.get("latest_decision") if isinstance(gate.get("latest_decision"), dict) else None)
+        ui_hints_payload = ui_hints_override if isinstance(ui_hints_override, dict) else (gate.get("ui_hints") if isinstance(gate.get("ui_hints"), dict) else None)
+        if ui_hints_payload is None:
+            ui_hints_payload = {
+                "show_confirmation_card": bool(requires_confirmation),
+                "show_execution_toggle": True,
+                "quick_actions": ["__enter_execution_mode__", "__confirm_action__", "__cancel_action__"] if requires_confirmation else [],
+                "clarification_required": False,
+            }
 
         try:
             return build_action_protocol(
@@ -3200,6 +3584,8 @@ class IntentRecognitionMiddleware:
                 execution_mode=execution_mode_payload,
                 pending_action=pending_action_payload,
                 execute_result=execute_result,
+                decision=decision_payload,
+                ui_hints=ui_hints_payload,
             )
         except Exception as exc:  # pragma: no cover - defensive fallback
             logger.warning("failed to build action protocol: %s", exc)
@@ -3211,6 +3597,8 @@ class IntentRecognitionMiddleware:
                 "execution_mode": execution_mode_payload,
                 "pending_action": pending_action_payload,
                 "execute_result": (execute_result.to_dict() if isinstance(execute_result, ExecuteResult) else execute_result),
+                "decision": decision_payload,
+                "ui_hints": ui_hints_payload,
             }
 
     def _session_brief(
@@ -3236,6 +3624,8 @@ class IntentRecognitionMiddleware:
                 "execution_mode": bool(gate.get("execution_mode")),
                 "pending_action": gate.get("pending_action"),
                 "confirmation_required": bool(gate.get("confirmation_required")),
+                "latest_decision": gate.get("latest_decision"),
+                "ui_hints": gate.get("ui_hints"),
                 "updated_at": gate.get("updated_at"),
             },
         }

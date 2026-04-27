@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import {
   buildChatRequestContext,
+  extractStructuredResponse,
   fetchWithRetry,
   mergeSystemPromptIntoMessages,
   normalizeMaxRetries,
@@ -57,6 +58,58 @@ test("resolveNonStreamContent prefers top-level content and falls back to messag
       message: { content: "message-level" },
     })
   ).toBe("message-level");
+});
+
+test("extractStructuredResponse keeps top-level action protocol and ui hints", () => {
+  const structured = extractStructuredResponse({
+    content: "ok",
+    action_protocol: {
+      action_type: "create_novel",
+      slot_schema: {},
+      missing_slots: [],
+      confirmation_required: true,
+      execution_mode: { status: "readonly", enabled: false },
+      pending_action: null,
+      execute_result: null,
+      decision: {
+        intent: "execute",
+        execute_confidence: 0.88,
+        qa_confidence: 0.12,
+        ambiguity: 0.24,
+        slots_complete: true,
+        should_execute_now: false,
+      },
+      ui_hints: {
+        show_confirmation_card: true,
+        show_execution_toggle: true,
+        quick_actions: ["__enter_execution_mode__"],
+      },
+    },
+  });
+
+  expect(structured.action_protocol?.decision?.intent).toBe("execute");
+  expect(structured.action_protocol?.ui_hints?.show_confirmation_card).toBe(true);
+});
+
+test("extractStructuredResponse attaches top-level action protocol to session fallback", () => {
+  const structured = extractStructuredResponse({
+    content: "ok",
+    session: {
+      mode: "manage",
+      status: "collecting",
+    },
+    action_protocol: {
+      action_type: "manage_session",
+      slot_schema: {},
+      missing_slots: [],
+      confirmation_required: false,
+      execution_mode: null,
+      pending_action: null,
+      execute_result: null,
+    },
+  });
+
+  expect(structured.session?.action_protocol?.action_type).toBe("manage_session");
 });
 
 afterEach(() => {

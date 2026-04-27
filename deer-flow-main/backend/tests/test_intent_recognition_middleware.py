@@ -719,6 +719,56 @@ def test_execute_pending_action_rolls_back_session_on_dispatch_error(monkeypatch
     assert db_session.rollback_calls == 1
 
 
+def test_creation_confirmation_auto_executes_after_execution_mode_enabled(monkeypatch):
+    middleware = IntentRecognitionMiddleware()
+    session = _NovelCreationSession(
+        session_key="create-auto-exec-enabled",
+        user_id="user-create-auto-exec",
+        mode="create",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        fields=middleware._initialize_fields(
+            {
+                "title": "星海回声",
+                "genre": "科幻",
+                "theme": "文明冲突",
+                "audience": "青少年",
+                "target_words": 180000,
+            }
+        ),
+        awaiting_confirm=True,
+        idempotency_key="idem-create-auto-exec",
+    )
+    middleware._set_execution_gate(
+        session,
+        status="execution_mode_active",
+        execution_mode=True,
+        confirmation_required=False,
+    )
+
+    async def _fake_finalize_creation(*, session: _NovelCreationSession, db_session: object | None):
+        return IntentRecognitionResult(
+            handled=True,
+            content="自动执行完成",
+            session=middleware._session_brief(session),
+        )
+
+    monkeypatch.setattr(middleware, "_finalize_creation", _fake_finalize_creation)
+
+    result = asyncio.run(
+        middleware._handle_creation_confirmation_step(
+            session=session,
+            user_message="可以，不用讨论了，直接帮我创建。",
+            lowered="可以，不用讨论了，直接帮我创建。",
+            db_session=object(),
+            ai_service=None,
+        )
+    )
+
+    assert result.handled is True
+    assert result.content == "自动执行完成"
+
+
 def test_manage_session_question_priority_returns_not_handled():
     middleware = IntentRecognitionMiddleware()
     session = _NovelCreationSession(
@@ -744,6 +794,244 @@ def test_manage_session_question_priority_returns_not_handled():
     )
 
     assert result.handled is False
+
+
+def test_manage_session_structured_enter_execution_mode_signal():
+    middleware = IntentRecognitionMiddleware()
+    session = _NovelCreationSession(
+        session_key="manage-structured-enter-mode",
+        user_id="user-structured-enter",
+        mode="manage",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        fields=middleware._initialize_fields({}),
+        active_project_id="proj-structured-enter",
+        active_project_title="结构化授权项目",
+    )
+
+    result = asyncio.run(
+        middleware._handle_manage_session(
+            session=session,
+            user_message="__enter_execution_mode__",
+            db_session=object(),
+            ai_service=None,
+            opening=False,
+        )
+    )
+
+    assert result.handled is True
+    assert session.execution_gate["execution_mode"] is True
+    assert session.execution_gate["status"] == "execution_mode_active"
+
+
+def test_manage_session_structured_exit_execution_mode_signal():
+    middleware = IntentRecognitionMiddleware()
+    session = _NovelCreationSession(
+        session_key="manage-structured-exit-mode",
+        user_id="user-structured-exit",
+        mode="manage",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        fields=middleware._initialize_fields({}),
+        active_project_id="proj-structured-exit",
+        active_project_title="结构化撤销项目",
+    )
+    middleware._set_execution_gate(
+        session,
+        status="execution_mode_active",
+        execution_mode=True,
+        pending_action=None,
+        confirmation_required=False,
+    )
+
+    result = asyncio.run(
+        middleware._handle_manage_session(
+            session=session,
+            user_message="__exit_execution_mode__",
+            db_session=object(),
+            ai_service=None,
+            opening=False,
+        )
+    )
+
+    assert result.handled is True
+    assert session.execution_gate["execution_mode"] is False
+    assert session.execution_gate["status"] == "revoked"
+
+
+def test_manage_session_exit_execution_mode_keeps_pending_confirmation():
+    middleware = IntentRecognitionMiddleware()
+    session = _NovelCreationSession(
+        session_key="manage-structured-exit-keep-pending",
+        user_id="user-structured-exit-keep-pending",
+        mode="manage",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        fields=middleware._initialize_fields({}),
+        awaiting_confirm=True,
+        pending_action=_PendingAction(
+            action="update_chapter",
+            entity="chapter",
+            operation="update",
+            project_id="proj-structured-exit-keep-pending",
+            target_id="chapter-keep",
+            payload={"content": "待确认"},
+        ),
+        active_project_id="proj-structured-exit-keep-pending",
+        active_project_title="结构化撤销保留动作",
+    )
+    middleware._set_execution_gate(
+        session,
+        status="execution_mode_active",
+        execution_mode=True,
+        confirmation_required=True,
+    )
+
+    result = asyncio.run(
+        middleware._handle_manage_session(
+            session=session,
+            user_message="__exit_execution_mode__",
+            db_session=object(),
+            ai_service=None,
+            opening=False,
+        )
+    )
+
+    assert result.handled is True
+    assert session.awaiting_confirm is True
+    assert session.pending_action is not None
+    assert session.execution_gate["execution_mode"] is False
+    assert session.execution_gate["status"] == "revoked"
+
+
+def test_manage_confirmation_exit_execution_mode_keeps_pending_action():
+    middleware = IntentRecognitionMiddleware()
+    action = _PendingAction(
+        action="update_chapter",
+        entity="chapter",
+        operation="update",
+        project_id="proj-exit-keep-pending",
+        target_id="chapter-9",
+        payload={"content": "待执行内容"},
+    )
+    session = _NovelCreationSession(
+        session_key="manage-exit-keep-pending",
+        user_id="user-exit-keep-pending",
+        mode="manage",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        fields=middleware._initialize_fields({}),
+        awaiting_confirm=True,
+        pending_action=action,
+        active_project_id="proj-exit-keep-pending",
+        active_project_title="退出授权保留动作",
+    )
+    middleware._set_execution_gate(
+        session,
+        status="execution_mode_active",
+        execution_mode=True,
+        confirmation_required=True,
+    )
+
+    result = asyncio.run(
+        middleware._handle_manage_confirmation_step(
+            session=session,
+            user_message="__exit_execution_mode__",
+            lowered="__exit_execution_mode__",
+            db_session=object(),
+        )
+    )
+
+    assert result.handled is True
+    assert session.awaiting_confirm is True
+    assert session.pending_action is not None
+    assert session.execution_gate["execution_mode"] is False
+    assert session.execution_gate["status"] == "revoked"
+
+
+def test_create_confirmation_cancel_keeps_execution_mode_state(monkeypatch):
+    middleware = IntentRecognitionMiddleware()
+    session = _NovelCreationSession(
+        session_key="create-cancel-keep-mode",
+        user_id="user-create-cancel",
+        mode="create",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        fields=middleware._initialize_fields(
+            {
+                "title": "星海回声",
+                "genre": "科幻",
+                "theme": "文明冲突",
+                "audience": "青少年",
+                "target_words": 180000,
+            }
+        ),
+        awaiting_confirm=True,
+    )
+    middleware._set_execution_gate(
+        session,
+        status="execution_mode_active",
+        execution_mode=True,
+        confirmation_required=True,
+    )
+
+    result = asyncio.run(
+        middleware._handle_creation_confirmation_step(
+            session=session,
+            user_message="__cancel_action__",
+            lowered="__cancel_action__",
+            db_session=object(),
+            ai_service=None,
+        )
+    )
+
+    assert result.handled is True
+    assert session.awaiting_confirm is False
+    assert session.execution_gate["execution_mode"] is True
+    assert session.execution_gate["status"] == "execution_mode_active"
+
+
+def test_manage_session_confirmation_flow_accepts_polite_direct_execute_phrase():
+    middleware = IntentRecognitionMiddleware()
+    session = _NovelCreationSession(
+        session_key="manage-direct-exec-polite",
+        user_id="user-direct-exec",
+        mode="manage",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        fields=middleware._initialize_fields({}),
+        awaiting_confirm=True,
+        active_project_id="proj-direct-exec",
+        active_project_title="待确认项目",
+        pending_action=_PendingAction(
+            action="update_chapter",
+            entity="chapter",
+            operation="update",
+            project_id="proj-direct-exec",
+            target_id="chapter-1",
+            target_label="第一章",
+            payload={"content": "新的章节内容"},
+        ),
+        idempotency_key="idem-direct-exec-polite",
+    )
+
+    result = asyncio.run(
+        middleware._handle_manage_session(
+            session=session,
+            user_message="可以，不用讨论了，直接帮我创建。",
+            db_session=object(),
+            ai_service=None,
+            opening=False,
+        )
+    )
+
+    assert result.handled is True
+    assert result.session is not None
+    protocol = result.session["action_protocol"]
+    assert protocol["confirmation_required"] is True
+    assert protocol["action_type"] == "update_chapter"
+    assert isinstance(protocol.get("decision"), dict)
+    assert isinstance(protocol.get("ui_hints"), dict)
 
 
 def test_manage_confirmation_enter_execution_mode_executes_pending_action(monkeypatch):

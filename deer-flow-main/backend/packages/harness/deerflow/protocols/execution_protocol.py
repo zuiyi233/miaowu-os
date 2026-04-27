@@ -51,6 +51,7 @@ PRIMARY_AUTHORIZATION_COMMANDS: frozenset[str] = frozenset(
     {
         "确认执行",
         "进入执行模式",
+        "__enter_execution_mode__",
         "__confirm_action__",
     }
 )
@@ -71,7 +72,7 @@ PRIMARY_REVOKE_COMMANDS: frozenset[str] = frozenset(
     {
         "退出执行模式",
         "取消授权",
-        "__cancel_action__",
+        "__exit_execution_mode__",
     }
 )
 
@@ -90,6 +91,10 @@ _EXPLICIT_EXECUTION_PHRASES: tuple[str, ...] = (
     "直接执行",
     "马上执行",
     "开始执行",
+    "直接帮我",
+    "帮我创建",
+    "直接创建",
+    "不用讨论",
     "执行刚才",
     "执行这个",
     "立即落库",
@@ -318,6 +323,8 @@ def default_execution_gate_state() -> dict[str, Any]:
         "execution_mode": False,
         "pending_action": None,
         "confirmation_required": False,
+        "latest_decision": None,
+        "ui_hints": None,
         "updated_at": _now_iso(),
         # Runtime-only hints
         "replay_requested": False,
@@ -343,12 +350,20 @@ def coerce_execution_gate_state(raw: Any) -> dict[str, Any]:
         pending_action = raw.get("pending_action")
         if pending_action is not None and not isinstance(pending_action, Mapping):
             pending_action = None
+        latest_decision = raw.get("latest_decision")
+        if latest_decision is not None and not isinstance(latest_decision, Mapping):
+            latest_decision = None
+        ui_hints = raw.get("ui_hints")
+        if ui_hints is not None and not isinstance(ui_hints, Mapping):
+            ui_hints = None
 
         return {
             "status": status,
             "execution_mode": bool(raw.get("execution_mode", False)),
             "pending_action": dict(pending_action) if isinstance(pending_action, Mapping) else None,
             "confirmation_required": bool(raw.get("confirmation_required", False)),
+            "latest_decision": dict(latest_decision) if isinstance(latest_decision, Mapping) else None,
+            "ui_hints": dict(ui_hints) if isinstance(ui_hints, Mapping) else None,
             "updated_at": normalize_user_text(raw.get("updated_at")) or _now_iso(),
             "replay_requested": bool(raw.get("replay_requested", False)),
             "answer_only_turn": bool(raw.get("answer_only_turn", False)),

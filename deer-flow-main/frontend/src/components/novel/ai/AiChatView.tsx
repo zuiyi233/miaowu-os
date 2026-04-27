@@ -6,8 +6,10 @@ import { useCallback, useState } from 'react';
 import { ConfirmationCard } from '@/components/novel/ai/ConfirmationCard';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import type {
+  ActionProtocol,
   AiStructuredResponse,
   DomainToolCall,
   SessionBrief,
@@ -19,11 +21,14 @@ import { NOVEL_AI_MODULE_IDS, novelAiService } from '@/core/novel/ai-service';
 
 const STRUCTURED_CONFIRM_SIGNAL = '__confirm_action__';
 const STRUCTURED_CANCEL_SIGNAL = '__cancel_action__';
-const STRUCTURED_EXECUTION_MODE_SIGNAL = '进入执行模式';
+const STRUCTURED_ENTER_EXECUTION_MODE_SIGNAL = '__enter_execution_mode__';
+const STRUCTURED_EXIT_EXECUTION_MODE_SIGNAL = '__exit_execution_mode__';
 
 const SIGNAL_DISPLAY_MAP: Record<string, string> = {
   [STRUCTURED_CONFIRM_SIGNAL]: '✅ 确认执行',
   [STRUCTURED_CANCEL_SIGNAL]: '❌ 取消操作',
+  [STRUCTURED_ENTER_EXECUTION_MODE_SIGNAL]: '🚀 开启执行模式',
+  [STRUCTURED_EXIT_EXECUTION_MODE_SIGNAL]: '⛔ 退出执行模式',
 };
 
 interface Message {
@@ -149,6 +154,7 @@ function mergeStructuredResponse(
     ...next,
     content: next.content || previous.content,
     session: next.session ?? previous.session,
+    action_protocol: next.action_protocol ?? previous.action_protocol,
     context: {
       ...(previous.context ?? {}),
       ...(next.context ?? {}),
@@ -166,6 +172,35 @@ function mergeStructuredResponse(
   }
 
   return merged;
+}
+
+export function resolveExecutionModeEnabled(session: SessionBrief | null): boolean {
+  if (!session) return false;
+  if (session.execution_gate?.execution_mode === true) return true;
+  const actionProtocol = session.action_protocol;
+  if (actionProtocol && actionProtocol.execution_mode && typeof actionProtocol.execution_mode === 'object') {
+    const enabled = (actionProtocol.execution_mode as Record<string, unknown>).enabled;
+    return enabled === true;
+  }
+  return false;
+}
+
+export function shouldShowConfirmationCard(
+  actionProtocol: ActionProtocol | undefined,
+  options: {
+    role: 'user' | 'assistant';
+    confirmationDismissed: boolean;
+  },
+): boolean {
+  const { role, confirmationDismissed } = options;
+  if (role !== 'assistant' || confirmationDismissed || !actionProtocol) {
+    return false;
+  }
+  const uiHints = actionProtocol.ui_hints;
+  if (typeof uiHints?.show_confirmation_card === 'boolean') {
+    return uiHints.show_confirmation_card;
+  }
+  return actionProtocol.confirmation_required === true;
 }
 
 export function AiChatView({ novelId }: { novelId: string }) {
@@ -386,8 +421,17 @@ export function AiChatView({ novelId }: { novelId: string }) {
           : msg
       )
     );
-    sendSignal(STRUCTURED_EXECUTION_MODE_SIGNAL);
+    sendSignal(STRUCTURED_ENTER_EXECUTION_MODE_SIGNAL);
   }, [sendSignal]);
+
+  const handleExecutionModeToggle = useCallback(
+    (checked: boolean) => {
+      sendSignal(checked ? STRUCTURED_ENTER_EXECUTION_MODE_SIGNAL : STRUCTURED_EXIT_EXECUTION_MODE_SIGNAL);
+    },
+    [sendSignal]
+  );
+
+  const executionModeEnabled = resolveExecutionModeEnabled(activeSession);
 
   const sessionModeLabel = activeSession
     ? SESSION_MODE_LABELS[activeSession.mode] || ''
@@ -403,6 +447,20 @@ export function AiChatView({ novelId }: { novelId: string }) {
           {t.novel.selectedText}: {selectedText.slice(0, 100)}...
         </div>
       )}
+      <div className="border-b px-3 py-2 text-xs flex items-center justify-between bg-muted/30">
+        <div className="text-muted-foreground">执行模式（当前线程）</div>
+        <div className="flex items-center gap-2">
+          <span className={executionModeEnabled ? 'text-emerald-600 font-medium' : 'text-muted-foreground'}>
+            {executionModeEnabled ? '已开启' : '未开启'}
+          </span>
+          <Switch
+            checked={executionModeEnabled}
+            disabled={isSending}
+            onCheckedChange={handleExecutionModeToggle}
+            aria-label="执行模式开关"
+          />
+        </div>
+      </div>
       {activeSession && activeSession.mode !== 'normal' && (
         <div className="border-b bg-primary/5 px-3 py-1.5 text-xs text-primary flex items-center gap-2">
           <span className="font-medium">{sessionModeLabel}</span>
@@ -435,12 +493,17 @@ export function AiChatView({ novelId }: { novelId: string }) {
                   const downloadPath = extractDownloadPath(msg.structured);
                   const downloadUrl = downloadPath ? resolveDownloadUrl(downloadPath) : null;
                   const toolCalls = resolveStructuredToolCalls(msg.structured);
-                  const actionProtocol = msg.structured?.session?.action_protocol;
+                  const actionProtocol =
+                    msg.structured?.session?.action_protocol ?? msg.structured?.action_protocol;
                   const executionGate = msg.structured?.session?.execution_gate;
-                  const showConfirmationCard =
-                    msg.role === 'assistant' &&
-                    !msg.confirmationDismissed &&
-                    actionProtocol?.confirmation_required === true;
+                  const uiHints = actionProtocol?.ui_hints;
+                  const showConfirmationCard = shouldShowConfirmationCard(actionProtocol, {
+                    role: msg.role,
+                    confirmationDismissed: msg.confirmationDismissed === true,
+                  });
+                  const quickActions = Array.isArray(uiHints?.quick_actions)
+                    ? uiHints?.quick_actions.filter((item): item is string => typeof item === 'string')
+                    : [];
                   const displayContent =
                     (SIGNAL_DISPLAY_MAP[msg.content.trim()] || msg.content.trim()) ||
                     (msg.role === 'assistant' && toolCalls.length > 0
@@ -467,6 +530,21 @@ export function AiChatView({ novelId }: { novelId: string }) {
                             onCancel={handleCancelAction}
                             onEnterExecutionMode={handleEnterExecutionMode}
                           />
+                        </div>
+                      ) : null}
+                      {msg.role === 'assistant' && quickActions.length > 0 ? (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {quickActions.map((quickAction) => (
+                            <Button
+                              key={`${msg.id}-qa-${quickAction}`}
+                              size="sm"
+                              variant="outline"
+                              disabled={isSending}
+                              onClick={() => sendSignal(quickAction)}
+                            >
+                              {SIGNAL_DISPLAY_MAP[quickAction] || quickAction}
+                            </Button>
+                          ))}
                         </div>
                       ) : null}
                       {msg.role === 'assistant' && toolCalls.length > 0 ? (

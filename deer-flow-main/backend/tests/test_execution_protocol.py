@@ -15,13 +15,17 @@ from deerflow.protocols.execution_protocol import (
 def test_question_priority_blocks_question_even_with_action_words():
     assert should_answer_only("如何执行 build_world 才更稳妥？") is True
     assert should_answer_only("请执行 build_world") is False
+    assert should_answer_only("可以，不用讨论了，直接帮我创建。") is False
 
 
 def test_authorization_and_revoke_commands_cover_primary_phrases():
     assert is_authorization_command("确认执行", include_legacy=False) is True
     assert is_authorization_command("进入执行模式", include_legacy=False) is True
+    assert is_authorization_command("__enter_execution_mode__", include_legacy=False) is True
     assert is_revoke_command("退出执行模式", include_legacy=False) is True
     assert is_revoke_command("取消授权", include_legacy=False) is True
+    assert is_revoke_command("__exit_execution_mode__", include_legacy=False) is True
+    assert is_revoke_command("__cancel_action__", include_legacy=False) is False
 
 
 def test_manage_foreshadow_read_only_actions_not_high_risk():

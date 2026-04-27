@@ -2,7 +2,7 @@
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from hashlib import sha256
 from typing import override
 
@@ -55,6 +55,39 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
         """
         return any("\u4e00" <= char <= "\u9fff" for char in text)
 
+    def _normalize_options(self, options: object) -> list[str]:
+        """Normalize clarification options into a non-empty string list."""
+        normalized_options: object = options
+        if isinstance(normalized_options, str):
+            try:
+                normalized_options = json.loads(normalized_options)
+            except (json.JSONDecodeError, TypeError):
+                normalized_options = [normalized_options]
+
+        if normalized_options is None:
+            return []
+        if not isinstance(normalized_options, Sequence) or isinstance(
+            normalized_options, (str, bytes)
+        ):
+            normalized_options = [normalized_options]
+
+        results: list[str] = []
+        for option in normalized_options:
+            text = str(option).strip()
+            if text:
+                results.append(text)
+        return results
+
+    def _build_default_confirmation_actions(self, clarification_type: str) -> list[dict[str, str]]:
+        """Provide quick actions for risk-confirmation turns when model omitted options."""
+        if clarification_type != "risk_confirmation":
+            return []
+        return [
+            {"label": "开启执行模式并执行", "value": "__enter_execution_mode__"},
+            {"label": "仅执行本次", "value": "__confirm_action__"},
+            {"label": "取消", "value": "取消"},
+        ]
+
     def _format_clarification_message(self, args: dict) -> str:
         """Format the clarification arguments into a user-friendly message.
 
@@ -67,21 +100,7 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
         question = args.get("question", "")
         clarification_type = args.get("clarification_type", "missing_info")
         context = args.get("context")
-        options = args.get("options", [])
-
-        # Some models (e.g. Qwen3-Max) serialize array parameters as JSON strings
-        # instead of native arrays. Deserialize and normalize so `options`
-        # is always a list for the rendering logic below.
-        if isinstance(options, str):
-            try:
-                options = json.loads(options)
-            except (json.JSONDecodeError, TypeError):
-                options = [options]
-
-        if options is None:
-            options = []
-        elif not isinstance(options, list):
-            options = [options]
+        options = self._normalize_options(args.get("options", []))
 
         # Type-specific icons
         type_icons = {
@@ -107,7 +126,7 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
             message_parts.append(f"{icon} {question}")
 
         # Add options in a cleaner format
-        if options and len(options) > 0:
+        if options:
             message_parts.append("")  # blank line for spacing
             for i, option in enumerate(options, 1):
                 message_parts.append(f"  {i}. {option}")
@@ -126,6 +145,12 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
         # Extract clarification arguments
         args = request.tool_call.get("args", {})
         question = args.get("question", "")
+        clarification_type = str(args.get("clarification_type", "missing_info"))
+        context = args.get("context")
+        options = self._normalize_options(args.get("options", []))
+        quick_actions: list[dict[str, str]] = [
+            {"label": option, "value": option} for option in options
+        ] or self._build_default_confirmation_actions(clarification_type)
 
         logger.info("Intercepted clarification request")
         logger.debug("Clarification question: %s", question)
@@ -143,6 +168,15 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
             content=formatted_message,
             tool_call_id=tool_call_id,
             name="ask_clarification",
+            additional_kwargs={
+                "clarification": {
+                    "question": str(question).strip(),
+                    "clarification_type": clarification_type,
+                    "context": str(context).strip() if isinstance(context, str) else "",
+                    "options": options,
+                    "quick_actions": quick_actions,
+                }
+            },
         )
 
         # Return a Command that:

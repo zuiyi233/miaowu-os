@@ -248,11 +248,16 @@ FastAPI application on port 8001 with health check at `GET /health`.
 - High-risk write actions now follow a thread-scoped execution authorization state machine: `readonly` -> `awaiting_authorization` -> `execution_mode_active` -> `revoked`.
 - Authorization commands: `确认执行` (execute pending + keep mode), `进入执行模式` (persistent allow in current thread). Revocation commands: `退出执行模式`, `取消授权`.
 - Question-priority is enforced before authorization: question-like turns default to answer-only and do not execute high-risk writes unless explicit execution intent is given.
+- Explicit execution intent also recognizes polite-directive phrases (for example `不用讨论`, `直接帮我`, `帮我创建`) to avoid false answer-only fallback during confirmation workflows.
+- Intent decisioning is handled by `IntentDecisionEngine` (hybrid rule + semantic + slot completeness), with fixed thresholds for auto-execute, confirmation fallback, and ambiguity clarification.
+- Structured control signals are supported as primary commands: `__enter_execution_mode__`, `__exit_execution_mode__`, `__confirm_action__`, `__cancel_action__` (legacy textual commands remain compatible).
 - On manage-action dispatch failures, `ManageActionRouter` performs best-effort rollback when the request `db_session` still has an active transaction.
 - Intent-session skill loading follows enabled states in `extensions_config.json` (ranked by novel relevance), and `技能推荐` can force a refresh.
 - Intent skill loading can optionally run three-layer governance (`intent_skill_governance`): system defaults -> workspace enabled -> session candidates, with degraded fallback mode controlled by `DEERFLOW_INTENT_SKILL_GOVERNANCE_FALLBACK_MODE` (`workspace_only|system_only|intersection`).
-- Intent session payloads expose structured `action_protocol` contract (`action_type`, `slot_schema`, `missing_slots`, `confirmation_required`, `execution_mode`, `pending_action`, `execute_result`) while preserving legacy aliases for compatibility.
+- Intent session payloads expose structured `action_protocol` contract (`action_type`, `slot_schema`, `missing_slots`, `confirmation_required`, `execution_mode`, `pending_action`, `execute_result`, `decision`, `ui_hints`) while preserving legacy aliases for compatibility.
 - Intent workflow responses include `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches these session replies.
+- Decision telemetry is appended to `backend/.deer-flow/intent_decisions.jsonl`; offline evaluation helper lives at `backend/scripts/evaluate_intent_decisions.py`.
+- `ClarificationMiddleware` continues to interrupt on `ask_clarification` tool calls, and now writes structured `additional_kwargs.clarification` metadata (including `quick_actions`) into ToolMessages for frontend click-to-reply confirmation UX.
 - Gateway request logs now carry unified trace fields via middleware/context filters: `request_id/thread_id/project_id/session_key/idempotency_key`.
 - Gateway app logging initializes through `app.gateway.novel_migrated.core.logger.setup_logging` and supports optional rotating-file output with:
   - `DEERFLOW_GATEWAY_LOG_TO_FILE`

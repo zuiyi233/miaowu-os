@@ -133,15 +133,37 @@ export function ConfirmationCard({
       )}
 
       <div className="flex items-center gap-2 flex-wrap">
-        <Button
-          size="sm"
-          className="bg-green-600 hover:bg-green-700 text-white"
-          disabled={disabled}
-          onClick={onConfirm}
-        >
-          <Check className="h-3.5 w-3.5 mr-1" />
-          确认执行
-        </Button>
+        {!isExecutionModeActive && onEnterExecutionMode ? (
+          <Button
+            size="sm"
+            className="bg-green-600 hover:bg-green-700 text-white"
+            disabled={disabled}
+            onClick={onEnterExecutionMode}
+          >
+            <Check className="h-3.5 w-3.5 mr-1" />
+            开启执行模式并执行
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            className="bg-green-600 hover:bg-green-700 text-white"
+            disabled={disabled}
+            onClick={onConfirm}
+          >
+            <Check className="h-3.5 w-3.5 mr-1" />
+            确认执行
+          </Button>
+        )}
+        {!isExecutionModeActive && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={disabled}
+            onClick={onConfirm}
+          >
+            仅执行本次
+          </Button>
+        )}
         <Button
           size="sm"
           variant="destructive"
@@ -151,17 +173,6 @@ export function ConfirmationCard({
           <X className="h-3.5 w-3.5 mr-1" />
           取消
         </Button>
-        {!isExecutionModeActive && onEnterExecutionMode && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="border-amber-400 text-amber-700 hover:bg-amber-100 dark:border-amber-600 dark:text-amber-400 dark:hover:bg-amber-900/40"
-            disabled={disabled}
-            onClick={onEnterExecutionMode}
-          >
-            进入执行模式
-          </Button>
-        )}
         {isExecutionModeActive && (
           <Badge variant="secondary" className="text-xs">
             执行模式已开启

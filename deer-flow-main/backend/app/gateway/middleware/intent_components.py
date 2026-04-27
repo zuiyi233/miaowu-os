@@ -12,14 +12,318 @@ existing external API behavior.
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from app.gateway.middleware.domain_protocol import ActionUiHints, IntentCandidate, IntentDecisionPayload
+from deerflow.protocols.execution_protocol import (
+    has_explicit_execution_intent,
+    is_authorization_command,
+    is_question_like,
+    is_revoke_command,
+    should_answer_only,
+)
+
+try:  # pragma: no cover - optional runtime dependency
+    from sentence_transformers import SentenceTransformer  # type: ignore
+except Exception:  # pragma: no cover
+    SentenceTransformer = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
+
+_DEFAULT_DECISION_EXEMPLARS: dict[str, list[str]] = {
+    "create": [
+        "帮我创建一本小说",
+        "现在直接创建项目",
+        "不用讨论了，直接创建",
+        "请创建一部科幻小说",
+    ],
+    "manage": [
+        "修改第3章内容",
+        "删除第2章",
+        "新增角色林彻",
+        "更新世界观设定",
+    ],
+    "qa": [
+        "怎么创建小说",
+        "如何写大纲",
+        "为什么这个角色冲突",
+        "这是什么意思",
+    ],
+    "authorize": [
+        "进入执行模式",
+        "确认执行",
+        "开启自动执行",
+        "__enter_execution_mode__",
+    ],
+    "revoke": [
+        "退出执行模式",
+        "取消授权",
+        "先别执行",
+        "__exit_execution_mode__",
+    ],
+}
+
+
+@dataclass
+class DecisionThresholds:
+    auto_execute_min: float = 0.62
+    execute_advantage_min: float = 0.12
+    confirmation_min: float = 0.55
+    clarify_min: float = 0.45
+    ambiguity_clarify_min: float = 0.55
+
+
+class IntentDecisionEngine:
+    """Hybrid intent decision engine (rules + semantic similarity + slot completeness)."""
+
+    def __init__(
+        self,
+        *,
+        exemplar_path: Path | None = None,
+        embedding_model_name: str = "paraphrase-multilingual-MiniLM-L12-v2",
+        thresholds: DecisionThresholds | None = None,
+    ) -> None:
+        self._exemplar_path = exemplar_path
+        self._embedding_model_name = embedding_model_name
+        self._thresholds = thresholds or DecisionThresholds()
+        self._exemplars = self._load_exemplars()
+        self._embedding_model: Any | None = None
+        self._embedding_failed = False
+        self._embedding_cache: dict[str, list[float]] = {}
+
+    def _load_exemplars(self) -> dict[str, list[str]]:
+        if self._exemplar_path is not None and self._exemplar_path.exists():
+            try:
+                raw = json.loads(self._exemplar_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    normalized: dict[str, list[str]] = {}
+                    for key, value in raw.items():
+                        if not isinstance(value, list):
+                            continue
+                        normalized_items = [str(item).strip() for item in value if str(item).strip()]
+                        if normalized_items:
+                            normalized[str(key)] = normalized_items
+                    if normalized:
+                        return normalized
+            except Exception as exc:  # pragma: no cover - defensive fallback
+                logger.warning("intent decision exemplar load failed: %s", exc)
+        return dict(_DEFAULT_DECISION_EXEMPLARS)
+
+    @staticmethod
+    def _tokenize(text: str) -> set[str]:
+        if not text:
+            return set()
+        parts = re.findall(r"[\u4e00-\u9fff]|[a-z0-9_]+", text.lower())
+        return {item for item in parts if item}
+
+    @classmethod
+    def _lexical_similarity(cls, source: str, target: str) -> float:
+        source_tokens = cls._tokenize(source)
+        target_tokens = cls._tokenize(target)
+        if not source_tokens or not target_tokens:
+            return 0.0
+        overlap = source_tokens.intersection(target_tokens)
+        if not overlap:
+            return 0.0
+        union = source_tokens.union(target_tokens)
+        return float(len(overlap) / len(union))
+
+    @staticmethod
+    def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
+        if not vec_a or not vec_b or len(vec_a) != len(vec_b):
+            return 0.0
+        dot = sum(a * b for a, b in zip(vec_a, vec_b, strict=False))
+        norm_a = math.sqrt(sum(a * a for a in vec_a))
+        norm_b = math.sqrt(sum(b * b for b in vec_b))
+        if norm_a == 0.0 or norm_b == 0.0:
+            return 0.0
+        return float(dot / (norm_a * norm_b))
+
+    def _get_embedding_model(self) -> Any | None:
+        if SentenceTransformer is None or self._embedding_failed:
+            return None
+        if self._embedding_model is not None:
+            return self._embedding_model
+        try:
+            self._embedding_model = SentenceTransformer(
+                self._embedding_model_name,
+                local_files_only=True,
+            )
+        except Exception as exc:  # pragma: no cover - runtime dependency issues
+            self._embedding_failed = True
+            logger.warning("intent decision embedding unavailable, fallback to lexical: %s", exc)
+            return None
+        return self._embedding_model
+
+    def _get_embedding(self, text: str) -> list[float] | None:
+        cached = self._embedding_cache.get(text)
+        if cached is not None:
+            return cached
+        model = self._get_embedding_model()
+        if model is None:
+            return None
+        try:
+            vector = model.encode([text])[0]
+            normalized = [float(v) for v in vector]
+            self._embedding_cache[text] = normalized
+            return normalized
+        except Exception:  # pragma: no cover - runtime fallback
+            self._embedding_failed = True
+            return None
+
+    def _semantic_score(self, text: str, categories: list[str], *, reason_codes: list[str]) -> float:
+        candidates: list[str] = []
+        for category in categories:
+            candidates.extend(self._exemplars.get(category, []))
+        if not candidates:
+            return 0.0
+
+        lexical_scores = [self._lexical_similarity(text, candidate) for candidate in candidates]
+        lexical_best = max(lexical_scores) if lexical_scores else 0.0
+
+        query_embedding = self._get_embedding(text)
+        if query_embedding is None:
+            reason_codes.append("semantic_fallback_lexical")
+            return lexical_best
+
+        embedding_best = 0.0
+        for candidate in candidates:
+            candidate_embedding = self._get_embedding(candidate)
+            if candidate_embedding is None:
+                continue
+            embedding_best = max(embedding_best, self._cosine_similarity(query_embedding, candidate_embedding))
+        if embedding_best == 0.0:
+            reason_codes.append("semantic_embedding_zero")
+            return lexical_best
+
+        return max(lexical_best, embedding_best)
+
+    @staticmethod
+    def _clip01(value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+    def decide(
+        self,
+        *,
+        user_message: str,
+        session_mode: str,
+        slots_complete: bool,
+        execution_mode_active: bool,
+        pending_action_exists: bool,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        normalized = (user_message or "").strip()
+        lowered = normalized.lower()
+        reason_codes: list[str] = []
+        slot_score = 1.0 if slots_complete else 0.0
+
+        rule_execute = 0.0
+        if has_explicit_execution_intent(normalized):
+            rule_execute = 1.0
+            reason_codes.append("rule_execute_explicit_intent")
+        elif pending_action_exists and slots_complete:
+            rule_execute = 0.72
+            reason_codes.append("rule_execute_pending_complete")
+        elif session_mode in {"create", "manage"} and any(keyword in lowered for keyword in ("创建", "新增", "更新", "修改", "删除", "导入", "生成", "执行")):
+            rule_execute = 0.62
+            reason_codes.append("rule_execute_action_keyword")
+
+        rule_qa = 0.0
+        if should_answer_only(normalized):
+            rule_qa = 1.0
+            reason_codes.append("rule_qa_question_priority")
+        elif is_question_like(normalized):
+            rule_qa = 0.25
+            reason_codes.append("rule_qa_question_like")
+
+        semantic_execute = self._semantic_score(
+            normalized,
+            ["create", "manage", "authorize"],
+            reason_codes=reason_codes,
+        )
+        semantic_qa = self._semantic_score(
+            normalized,
+            ["qa"],
+            reason_codes=reason_codes,
+        )
+        semantic_authorize = self._semantic_score(
+            normalized,
+            ["authorize"],
+            reason_codes=reason_codes,
+        )
+        semantic_revoke = self._semantic_score(
+            normalized,
+            ["revoke"],
+            reason_codes=reason_codes,
+        )
+
+        execute_confidence = self._clip01(0.50 * rule_execute + 0.35 * semantic_execute + 0.15 * slot_score)
+        qa_confidence = self._clip01(0.60 * rule_qa + 0.40 * semantic_qa)
+        ambiguity = self._clip01(1.0 - abs(execute_confidence - qa_confidence))
+
+        authorize_score = 1.0 if is_authorization_command(normalized, include_legacy=True) else self._clip01(0.75 * semantic_authorize + 0.25 * rule_execute)
+        revoke_score = 1.0 if is_revoke_command(normalized, include_legacy=True) else self._clip01(0.75 * semantic_revoke + 0.25 * rule_qa)
+
+        candidates = [
+            IntentCandidate(intent="execute", score=execute_confidence),
+            IntentCandidate(intent="qa", score=qa_confidence),
+            IntentCandidate(intent="authorize", score=authorize_score),
+            IntentCandidate(intent="revoke", score=revoke_score),
+        ]
+        sorted_candidates = sorted(candidates, key=lambda item: item.score, reverse=True)
+        top_intent = sorted_candidates[0].intent if sorted_candidates else "unknown"
+
+        should_clarify = max(execute_confidence, qa_confidence) < self._thresholds.clarify_min or ambiguity >= self._thresholds.ambiguity_clarify_min
+        should_execute_now = (
+            execution_mode_active
+            and slots_complete
+            and execute_confidence >= self._thresholds.auto_execute_min
+            and (execute_confidence - qa_confidence) >= self._thresholds.execute_advantage_min
+        )
+        show_confirmation_card = (
+            not execution_mode_active
+            and slots_complete
+            and execute_confidence >= self._thresholds.confirmation_min
+        )
+
+        if should_execute_now:
+            reason_codes.append("threshold_auto_execute")
+        elif show_confirmation_card:
+            reason_codes.append("threshold_confirmation_fallback")
+        if should_clarify:
+            reason_codes.append("threshold_clarification")
+
+        decision = IntentDecisionPayload(
+            intent=top_intent,
+            candidates=sorted_candidates,
+            execute_confidence=execute_confidence,
+            qa_confidence=qa_confidence,
+            ambiguity=ambiguity,
+            slots_complete=slots_complete,
+            should_execute_now=should_execute_now,
+            reason_codes=reason_codes,
+            should_clarify=should_clarify,
+        ).to_dict()
+        ui_hints = ActionUiHints(
+            show_confirmation_card=show_confirmation_card,
+            show_execution_toggle=True,
+            quick_actions=[
+                "__enter_execution_mode__",
+                "__confirm_action__",
+                "__cancel_action__",
+            ]
+            if show_confirmation_card
+            else [],
+            clarification_required=should_clarify,
+        ).to_dict()
+        return decision, ui_hints
 
 
 class IntentDetector:

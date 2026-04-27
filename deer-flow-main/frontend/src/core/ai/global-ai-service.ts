@@ -25,6 +25,30 @@ export interface DomainToolCall {
   id: string;
 }
 
+export interface IntentCandidate {
+  intent: string;
+  score: number;
+}
+
+export interface IntentDecisionPayload {
+  intent: string;
+  candidates?: IntentCandidate[];
+  execute_confidence: number;
+  qa_confidence: number;
+  ambiguity: number;
+  slots_complete: boolean;
+  should_execute_now: boolean;
+  reason_codes?: string[];
+  should_clarify?: boolean;
+}
+
+export interface ActionUiHints {
+  show_confirmation_card?: boolean;
+  show_execution_toggle?: boolean;
+  quick_actions?: string[];
+  clarification_required?: boolean;
+}
+
 export interface ActionProtocol {
   action_type: string;
   slot_schema: Record<string, unknown>;
@@ -33,6 +57,8 @@ export interface ActionProtocol {
   execution_mode: Record<string, unknown> | null;
   pending_action: Record<string, unknown> | null;
   execute_result: Record<string, unknown> | null;
+  decision?: IntentDecisionPayload;
+  ui_hints?: ActionUiHints;
   action?: string;
   requires_confirmation?: boolean;
 }
@@ -70,6 +96,7 @@ export interface AiStructuredResponse {
   tool_calls?: DomainToolCall[];
   novel?: Record<string, unknown>;
   session?: SessionBrief;
+  action_protocol?: ActionProtocol;
   context?: Record<string, unknown>;
 }
 
@@ -765,7 +792,7 @@ function extractStructuredToolCalls(data: Record<string, unknown>): DomainToolCa
   return deduped;
 }
 
-function _extractStructuredResponse(data: Record<string, unknown>): AiStructuredResponse {
+export function extractStructuredResponse(data: Record<string, unknown>): AiStructuredResponse {
   const messageObj =
     data.message && typeof data.message === "object"
       ? (data.message as Record<string, unknown>)
@@ -798,6 +825,10 @@ function _extractStructuredResponse(data: Record<string, unknown>): AiStructured
       session.execution_gate = data.execution_gate as ExecutionGate;
     }
     result.session = session;
+  }
+
+  if (data.action_protocol && typeof data.action_protocol === "object") {
+    result.action_protocol = data.action_protocol as ActionProtocol;
   }
 
   if (data.context && typeof data.context === "object") {
@@ -1024,7 +1055,7 @@ export class GlobalAiService {
       if (!stream) {
         const data = await response.json() as Record<string, unknown>;
         const content = resolveNonStreamContent(data);
-        const structured = _extractStructuredResponse(data);
+        const structured = extractStructuredResponse(data);
         if (structured && (structured.tool_calls || structured.session || structured.novel)) {
           callbacks?.onStructured?.(structured);
         }
@@ -1104,7 +1135,7 @@ export class GlobalAiService {
           throw buildSseError(parsed);
         }
 
-        const structuredCandidate = _extractStructuredResponse(parsed);
+        const structuredCandidate = extractStructuredResponse(parsed);
         if (
           (structuredCandidate.tool_calls &&
             structuredCandidate.tool_calls.length > 0) ||

@@ -171,13 +171,18 @@ FastAPI application providing REST endpoints for frontend integration:
 - Set `DEERFLOW_INTENT_SESSION_BACKEND=file` to force legacy JSON-file storage (`DEERFLOW_INTENT_SESSION_STORE_PATH`).
 - High-risk write actions now follow a thread-scoped execution authorization protocol: default `readonly` -> `awaiting_authorization` -> `execution_mode_active` -> `revoked`. Commands `确认执行` / `进入执行模式` grant authorization; `退出执行模式` / `取消授权` revoke it.
 - Question-priority is enforced ahead of authorization: question-like turns default to answer-only and do not execute high-risk writes unless the user gives explicit execution intent.
+- Explicit execution intent matching includes polite-directive phrases (for example: `不用讨论`, `直接帮我`, `帮我创建`), avoiding false question-priority fallback when users are clearly requesting execution.
+- Intent routing now uses a hybrid decision engine (`IntentDecisionEngine`) with fixed scoring/thresholds: `execute_confidence = 0.50*rule + 0.35*semantic + 0.15*slots`, `qa_confidence = 0.60*rule + 0.40*semantic`, plus ambiguity-band fallback (`should_clarify`) and readonly confirmation fallback.
+- Structured control signals are first-class: `__enter_execution_mode__`, `__exit_execution_mode__`, `__confirm_action__`, `__cancel_action__` (legacy text commands are still accepted for compatibility).
 - If a manage-action dispatch fails and the request `db_session` still has an active transaction, `ManageActionRouter` now performs best-effort rollback before returning the failure response (transactional consistency guard).
 - During intent sessions, skill context is loaded strictly from enabled entries in `extensions_config.json` (prioritized by novel relevance), and users can send `技能推荐` to force-refresh suggestions.
 - Intent skill loading now supports a three-layer governance policy (system defaults -> workspace enabled -> session candidates), guarded by feature flag `intent_skill_governance` with degraded fallback controlled by `DEERFLOW_INTENT_SKILL_GOVERNANCE_FALLBACK_MODE` (`workspace_only|system_only|intersection`).
-- Intent workflow session payloads include structured `action_protocol` fields (`action_type`, `slot_schema`, `missing_slots`, `confirmation_required`, `execution_mode`, `pending_action`, `execute_result`) and keep legacy aliases for backward compatibility.
+- Intent workflow session payloads include structured `action_protocol` fields (`action_type`, `slot_schema`, `missing_slots`, `confirmation_required`, `execution_mode`, `pending_action`, `execute_result`, `decision`, `ui_hints`) and keep legacy aliases for backward compatibility.
 - Guided/side-effect intent responses set `X-Prompt-Cache: bypass` and `Cache-Control: no-store` so PromptCacheMiddleware never caches these intent-session workflow responses.
 - Request trace context is normalized across gateway logs via `request_id/thread_id/project_id/session_key/idempotency_key`.
 - Lifecycle traces additionally include `lifecycle_state/lifecycle_transition/lifecycle_mode/lifecycle_replay/lifecycle_token` to support replay and rollback diagnostics.
+- Intent decision telemetry is append-only at `backend/.deer-flow/intent_decisions.jsonl`, and offline sampling/metric calculation is available via `backend/scripts/evaluate_intent_decisions.py`.
+- Clarification middleware now keeps `ask_clarification` tool messages interrupt-based but also attaches structured `additional_kwargs.clarification` metadata (`question/type/context/options/quick_actions`) so frontend can render click-to-reply confirmation actions instead of requiring manual typing.
 - Gateway logging now uses unified logger setup and supports optional rotating-file output via:
   - `DEERFLOW_GATEWAY_LOG_TO_FILE=1`
   - `DEERFLOW_GATEWAY_LOG_FILE_PATH=<path>`

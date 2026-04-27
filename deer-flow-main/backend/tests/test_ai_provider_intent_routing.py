@@ -76,6 +76,24 @@ def test_chat_returns_intent_result_and_bypass_headers(monkeypatch):
                     },
                     "pending_action": None,
                     "execute_result": None,
+                    "decision": {
+                        "intent": "execute",
+                        "candidates": [
+                            {"intent": "execute", "score": 0.81},
+                            {"intent": "qa", "score": 0.19},
+                        ],
+                        "execute_confidence": 0.81,
+                        "qa_confidence": 0.19,
+                        "ambiguity": 0.38,
+                        "slots_complete": False,
+                        "should_execute_now": False,
+                        "reason_codes": ["threshold_confirmation_fallback"],
+                    },
+                    "ui_hints": {
+                        "show_confirmation_card": True,
+                        "show_execution_toggle": True,
+                        "quick_actions": ["__enter_execution_mode__", "__confirm_action__", "__cancel_action__"],
+                    },
                 },
             },
         )
@@ -98,6 +116,8 @@ def test_chat_returns_intent_result_and_bypass_headers(monkeypatch):
     assert data["session"]["action_protocol"]["action_type"] == "create_novel"
     assert data["action_protocol"]["missing_slots"] == ["genre"]
     assert data["action_protocol"]["execution_mode"]["status"] == "readonly"
+    assert data["action_protocol"]["decision"]["intent"] == "execute"
+    assert data["action_protocol"]["ui_hints"]["show_confirmation_card"] is True
     assert response.headers.get("x-prompt-cache") == "bypass"
     assert response.headers.get("cache-control") == "no-store"
 

@@ -11,6 +11,10 @@ from app.gateway.observability.context import (
 )
 from app.gateway.observability.metrics import (
     get_gateway_metrics_snapshot,
+    record_authorization_toggle,
+    record_auto_execute,
+    record_clarification,
+    record_confirmation_fallback,
     record_duplicate_write_intercept,
     record_gateway_request,
     reset_gateway_metrics,
@@ -22,6 +26,10 @@ __all__ = [
     "extract_trace_fields_from_headers",
     "get_gateway_metrics_snapshot",
     "install_trace_log_filter",
+    "record_authorization_toggle",
+    "record_auto_execute",
+    "record_clarification",
+    "record_confirmation_fallback",
     "record_duplicate_write_intercept",
     "record_gateway_request",
     "reset_gateway_metrics",

@@ -77,6 +77,60 @@ class ExecuteStatus(str, Enum):
 
 
 @dataclass
+class IntentCandidate:
+    intent: str
+    score: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "intent": self.intent,
+            "score": round(float(self.score), 6),
+        }
+
+
+@dataclass
+class IntentDecisionPayload:
+    intent: str
+    candidates: list[IntentCandidate] = field(default_factory=list)
+    execute_confidence: float = 0.0
+    qa_confidence: float = 0.0
+    ambiguity: float = 1.0
+    slots_complete: bool = False
+    should_execute_now: bool = False
+    reason_codes: list[str] = field(default_factory=list)
+    should_clarify: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "intent": self.intent,
+            "candidates": [candidate.to_dict() for candidate in self.candidates],
+            "execute_confidence": round(float(self.execute_confidence), 6),
+            "qa_confidence": round(float(self.qa_confidence), 6),
+            "ambiguity": round(float(self.ambiguity), 6),
+            "slots_complete": bool(self.slots_complete),
+            "should_execute_now": bool(self.should_execute_now),
+            "reason_codes": [str(item) for item in self.reason_codes],
+            "should_clarify": bool(self.should_clarify),
+        }
+
+
+@dataclass
+class ActionUiHints:
+    show_confirmation_card: bool = False
+    show_execution_toggle: bool = True
+    quick_actions: list[str] = field(default_factory=list)
+    clarification_required: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "show_confirmation_card": bool(self.show_confirmation_card),
+            "show_execution_toggle": bool(self.show_execution_toggle),
+            "quick_actions": [str(item) for item in self.quick_actions],
+            "clarification_required": bool(self.clarification_required),
+        }
+
+
+@dataclass
 class DomainAction:
     action: str
     entity: Entity
@@ -153,6 +207,8 @@ class NovelActionProtocol:
     execution_mode: dict[str, Any] | None = None
     pending_action: dict[str, Any] | None = None
     execute_result: ExecuteResult | dict[str, Any] | None = None
+    decision: IntentDecisionPayload | dict[str, Any] | None = None
+    ui_hints: ActionUiHints | dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -163,6 +219,8 @@ class NovelActionProtocol:
             "execution_mode": self.execution_mode,
             "pending_action": self.pending_action,
             "execute_result": (self.execute_result.to_dict() if isinstance(self.execute_result, ExecuteResult) else self.execute_result),
+            "decision": (self.decision.to_dict() if isinstance(self.decision, IntentDecisionPayload) else self.decision),
+            "ui_hints": (self.ui_hints.to_dict() if isinstance(self.ui_hints, ActionUiHints) else self.ui_hints),
         }
         # Keep legacy aliases for backward compatibility.
         payload["action"] = payload["action_type"]
@@ -179,6 +237,8 @@ def build_action_protocol(
     execution_mode: dict[str, Any] | None = None,
     pending_action: dict[str, Any] | None = None,
     execute_result: ExecuteResult | dict[str, Any] | None = None,
+    decision: IntentDecisionPayload | dict[str, Any] | None = None,
+    ui_hints: ActionUiHints | dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     protocol = NovelActionProtocol(
         action_type=action_type,
@@ -188,6 +248,8 @@ def build_action_protocol(
         execution_mode=execution_mode,
         pending_action=pending_action,
         execute_result=execute_result,
+        decision=decision,
+        ui_hints=ui_hints,
     )
     return protocol.to_dict()
 

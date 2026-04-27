@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import type { Message } from "@langchain/langgraph-sdk";
+import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 
 import { type PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Phase2StatusBar } from "@/components/novel/Phase2StatusBar";
+import { Button } from "@/components/ui/button";
 import { ArtifactTrigger } from "@/components/workspace/artifacts";
 import {
   ChatBox,
@@ -31,6 +33,119 @@ import { useThreadStream } from "@/core/threads/hooks";
 import { textOfMessage } from "@/core/threads/utils";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
+
+type ClarificationAction = {
+  label: string;
+  value: string;
+  variant?: ComponentProps<typeof Button>["variant"];
+};
+
+type PendingClarification = {
+  question: string;
+  actions: ClarificationAction[];
+};
+
+function mapQuickActionToUserText(value: string): string {
+  const normalized = value.trim();
+  switch (normalized) {
+    case "__enter_execution_mode__":
+    case "enter_execution_mode":
+      return "进入执行模式";
+    case "__confirm_action__":
+    case "confirm_action":
+      return "确认执行";
+    case "__cancel_action__":
+    case "cancel_action":
+      return "取消";
+    default:
+      return normalized;
+  }
+}
+
+function extractPendingClarification(messages: Message[]): PendingClarification | null {
+  let clarificationIndex = -1;
+  let clarificationMessage: Message | null = null;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const candidate = messages[i];
+    if (candidate?.type === "tool" && candidate?.name === "ask_clarification") {
+      clarificationIndex = i;
+      clarificationMessage = candidate;
+      break;
+    }
+  }
+  if (!clarificationMessage || clarificationIndex < 0) {
+    return null;
+  }
+
+  const hasUserResponded = messages
+    .slice(clarificationIndex + 1)
+    .some((message) => message.type === "human" && textOfMessage(message).trim().length > 0);
+  if (hasUserResponded) {
+    return null;
+  }
+
+  const additionalKwargs =
+    clarificationMessage.additional_kwargs &&
+    typeof clarificationMessage.additional_kwargs === "object" &&
+    !Array.isArray(clarificationMessage.additional_kwargs)
+      ? (clarificationMessage.additional_kwargs as Record<string, unknown>)
+      : null;
+
+  const clarificationPayload =
+    additionalKwargs?.clarification &&
+    typeof additionalKwargs.clarification === "object" &&
+    !Array.isArray(additionalKwargs.clarification)
+      ? (additionalKwargs.clarification as Record<string, unknown>)
+      : null;
+
+  const question = typeof clarificationPayload?.question === "string"
+    ? clarificationPayload.question.trim()
+    : textOfMessage(clarificationMessage).trim();
+
+  const quickActionsRaw = Array.isArray(clarificationPayload?.quick_actions)
+    ? clarificationPayload.quick_actions
+    : [];
+  const parsedActions = quickActionsRaw
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return null;
+      }
+      const record = item as Record<string, unknown>;
+      const label = typeof record.label === "string" ? record.label.trim() : "";
+      const value = typeof record.value === "string" ? record.value.trim() : "";
+      if (!label || !value) {
+        return null;
+      }
+      return {
+        label,
+        value,
+        variant:
+          label.includes("取消") || value.includes("cancel") || value.includes("取消")
+            ? "outline"
+            : "default",
+      } satisfies ClarificationAction;
+    })
+    .filter((item): item is ClarificationAction => item !== null);
+
+  const fallbackActions =
+    parsedActions.length > 0
+      ? parsedActions
+      : question && (question.includes("确认") || question.includes("执行"))
+        ? [
+            { label: "开启执行模式并执行", value: "__enter_execution_mode__", variant: "default" as const },
+            { label: "仅执行本次", value: "__confirm_action__", variant: "outline" as const },
+            { label: "取消", value: "取消", variant: "outline" as const },
+          ]
+        : [];
+
+  if (!question || fallbackActions.length === 0) {
+    return null;
+  }
+  return {
+    question,
+    actions: fallbackActions,
+  };
+}
 
 export default function ChatPage() {
   const { t } = useI18n();
@@ -102,6 +217,26 @@ export default function ChatPage() {
     },
     [sendMessage, threadId],
   );
+  const handleQuickReply = useCallback(
+    (text: string) => {
+      const normalized = text.trim();
+      if (!normalized) {
+        return;
+      }
+      void sendMessage(
+        threadId,
+        {
+          text: normalized,
+          files: [],
+        },
+        {
+          moduleId: "chat-main",
+          module_id: "chat-main",
+        },
+      );
+    },
+    [sendMessage, threadId],
+  );
   const handleStop = useCallback(async () => {
     await thread.stop();
   }, [thread]);
@@ -123,6 +258,10 @@ export default function ChatPage() {
     }
     return `/workspace/novel/${encodeURIComponent(phase2Snapshot.novelId)}/quality`;
   }, [phase2Snapshot?.novelId, phase2Snapshot?.reportUrl]);
+  const pendingClarification = useMemo(
+    () => extractPendingClarification(thread.messages),
+    [thread.messages],
+  );
 
   return (
     <ThreadContext.Provider value={{ thread, isMock }}>
@@ -193,6 +332,27 @@ export default function ChatPage() {
                     />
                   </div>
                 </div>
+                {mounted && pendingClarification ? (
+                  <div className="bg-background/80 border-border/60 mb-2 -translate-y-4 rounded-xl border px-3 py-2 shadow-sm backdrop-blur">
+                    <p className="text-muted-foreground text-[11px] font-medium tracking-wide">
+                      待确认操作
+                    </p>
+                    <p className="mt-1 text-sm">{pendingClarification.question}</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {pendingClarification.actions.map((action) => (
+                        <Button
+                          key={`quick-action-${action.label}-${action.value}`}
+                          size="sm"
+                          variant={action.variant ?? "outline"}
+                          disabled={thread.isLoading || isUploading}
+                          onClick={() => handleQuickReply(mapQuickActionToUserText(action.value))}
+                        >
+                          {action.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 {mounted ? (
                   <InputBox
                     className={cn("bg-background/5 w-full -translate-y-4")}
