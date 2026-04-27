@@ -51,6 +51,7 @@ PRIMARY_AUTHORIZATION_COMMANDS: frozenset[str] = frozenset(
     {
         "确认执行",
         "进入执行模式",
+        "__confirm_action__",
     }
 )
 
@@ -70,6 +71,7 @@ PRIMARY_REVOKE_COMMANDS: frozenset[str] = frozenset(
     {
         "退出执行模式",
         "取消授权",
+        "__cancel_action__",
     }
 )
 

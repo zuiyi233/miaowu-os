@@ -1,8 +1,9 @@
 'use client';
 
 import { Download, Send, Wrench } from 'lucide-react';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 
+import { ConfirmationCard } from '@/components/novel/ai/ConfirmationCard';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
@@ -16,12 +17,22 @@ import { useI18n } from '@/core/i18n/hooks';
 import { useAiPanelStore } from '@/core/novel';
 import { NOVEL_AI_MODULE_IDS, novelAiService } from '@/core/novel/ai-service';
 
+const STRUCTURED_CONFIRM_SIGNAL = '__confirm_action__';
+const STRUCTURED_CANCEL_SIGNAL = '__cancel_action__';
+const STRUCTURED_EXECUTION_MODE_SIGNAL = '进入执行模式';
+
+const SIGNAL_DISPLAY_MAP: Record<string, string> = {
+  [STRUCTURED_CONFIRM_SIGNAL]: '✅ 确认执行',
+  [STRUCTURED_CANCEL_SIGNAL]: '❌ 取消操作',
+};
+
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
   structured?: AiStructuredResponse;
+  confirmationDismissed?: boolean;
 }
 
 const SESSION_MODE_LABELS: Record<string, string> = {
@@ -166,6 +177,95 @@ export function AiChatView({ novelId }: { novelId: string }) {
   const aiStream = useAiPanelStore((s) => s.aiStream);
   const selectedText = useAiPanelStore((s) => s.selectedText);
 
+  const sendSignal = useCallback(
+    async (signalText: string) => {
+      const userMessage: Message = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: signalText,
+        timestamp: new Date(),
+      };
+
+      setMessages((prev) => [...prev, userMessage]);
+
+      const assistantMessageId = crypto.randomUUID();
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: assistantMessageId,
+          role: 'assistant',
+          content: '',
+          timestamp: new Date(),
+        },
+      ]);
+      setIsSending(true);
+
+      try {
+        await novelAiService.chat(
+          {
+            messages: [
+              {
+                role: 'system',
+                content: `你是小说创作助手。当前小说ID：${novelId}。请给出简洁、可执行建议。`,
+              },
+              {
+                role: 'user',
+                content: selectedText
+                  ? `选中文本：${selectedText}\n\n用户问题：${signalText}`
+                  : signalText,
+              },
+            ],
+            moduleId: NOVEL_AI_MODULE_IDS.chat,
+            context: {
+              moduleId: NOVEL_AI_MODULE_IDS.chat,
+              module_id: NOVEL_AI_MODULE_IDS.chat,
+            },
+            novelId,
+            stream: true,
+          },
+          {
+            onChunk: (chunk) => {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantMessageId
+                    ? { ...msg, content: `${msg.content}${chunk}` }
+                    : msg
+                )
+              );
+            },
+            onStructured: (data) => {
+              if (data.session) {
+                setActiveSession(data.session);
+              }
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantMessageId
+                    ? {
+                        ...msg,
+                        structured: mergeStructuredResponse(msg.structured, data),
+                      }
+                    : msg
+                )
+              );
+            },
+            onError: () => {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantMessageId
+                    ? { ...msg, content: 'AI 请求失败，请稍后重试。' }
+                    : msg
+                )
+              );
+            },
+          }
+        );
+      } finally {
+        setIsSending(false);
+      }
+    },
+    [novelId, selectedText]
+  );
+
   const handleSend = async () => {
     if (!input.trim()) return;
 
@@ -256,6 +356,39 @@ export function AiChatView({ novelId }: { novelId: string }) {
     }
   };
 
+  const handleConfirmAction = useCallback(() => {
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.structured?.session?.action_protocol?.confirmation_required
+          ? { ...msg, confirmationDismissed: true }
+          : msg
+      )
+    );
+    sendSignal(STRUCTURED_CONFIRM_SIGNAL);
+  }, [sendSignal]);
+
+  const handleCancelAction = useCallback(() => {
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.structured?.session?.action_protocol?.confirmation_required
+          ? { ...msg, confirmationDismissed: true }
+          : msg
+      )
+    );
+    sendSignal(STRUCTURED_CANCEL_SIGNAL);
+  }, [sendSignal]);
+
+  const handleEnterExecutionMode = useCallback(() => {
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.structured?.session?.action_protocol?.confirmation_required
+          ? { ...msg, confirmationDismissed: true }
+          : msg
+      )
+    );
+    sendSignal(STRUCTURED_EXECUTION_MODE_SIGNAL);
+  }, [sendSignal]);
+
   const sessionModeLabel = activeSession
     ? SESSION_MODE_LABELS[activeSession.mode] || ''
     : '';
@@ -302,8 +435,14 @@ export function AiChatView({ novelId }: { novelId: string }) {
                   const downloadPath = extractDownloadPath(msg.structured);
                   const downloadUrl = downloadPath ? resolveDownloadUrl(downloadPath) : null;
                   const toolCalls = resolveStructuredToolCalls(msg.structured);
+                  const actionProtocol = msg.structured?.session?.action_protocol;
+                  const executionGate = msg.structured?.session?.execution_gate;
+                  const showConfirmationCard =
+                    msg.role === 'assistant' &&
+                    !msg.confirmationDismissed &&
+                    actionProtocol?.confirmation_required === true;
                   const displayContent =
-                    msg.content.trim() ||
+                    (SIGNAL_DISPLAY_MAP[msg.content.trim()] || msg.content.trim()) ||
                     (msg.role === 'assistant' && toolCalls.length > 0
                       ? '已触发工具调用，正在处理中…'
                       : '');
@@ -318,6 +457,18 @@ export function AiChatView({ novelId }: { novelId: string }) {
                       >
                         {displayContent}
                       </div>
+                      {showConfirmationCard && actionProtocol ? (
+                        <div className="mt-2 max-w-[80%]">
+                          <ConfirmationCard
+                            actionProtocol={actionProtocol}
+                            executionGate={executionGate}
+                            disabled={isSending}
+                            onConfirm={handleConfirmAction}
+                            onCancel={handleCancelAction}
+                            onEnterExecutionMode={handleEnterExecutionMode}
+                          />
+                        </div>
+                      ) : null}
                       {msg.role === 'assistant' && toolCalls.length > 0 ? (
                         <div className="mt-2 space-y-1 rounded-md border border-border/60 bg-background/60 p-2 text-xs text-muted-foreground">
                           {toolCalls.map((toolCall, index) => {

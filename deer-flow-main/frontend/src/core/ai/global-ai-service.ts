@@ -25,6 +25,26 @@ export interface DomainToolCall {
   id: string;
 }
 
+export interface ActionProtocol {
+  action_type: string;
+  slot_schema: Record<string, unknown>;
+  missing_slots: string[];
+  confirmation_required: boolean;
+  execution_mode: Record<string, unknown> | null;
+  pending_action: Record<string, unknown> | null;
+  execute_result: Record<string, unknown> | null;
+  action?: string;
+  requires_confirmation?: boolean;
+}
+
+export interface ExecutionGate {
+  status: string;
+  execution_mode: boolean;
+  pending_action: Record<string, unknown> | null;
+  confirmation_required: boolean;
+  updated_at?: string;
+}
+
 export interface SessionBrief {
   mode: "normal" | "create" | "manage";
   status: string;
@@ -41,6 +61,8 @@ export interface SessionBrief {
     missing_fields: string[];
   } | null;
   idempotency_key?: string;
+  execution_gate?: ExecutionGate;
+  action_protocol?: ActionProtocol;
 }
 
 export interface AiStructuredResponse {
@@ -768,7 +790,14 @@ function _extractStructuredResponse(data: Record<string, unknown>): AiStructured
   }
 
   if (data.session && typeof data.session === "object") {
-    result.session = data.session as SessionBrief;
+    const session = data.session as SessionBrief;
+    if (!session.action_protocol && data.action_protocol && typeof data.action_protocol === "object") {
+      session.action_protocol = data.action_protocol as ActionProtocol;
+    }
+    if (!session.execution_gate && data.execution_gate && typeof data.execution_gate === "object") {
+      session.execution_gate = data.execution_gate as ExecutionGate;
+    }
+    result.session = session;
   }
 
   if (data.context && typeof data.context === "object") {

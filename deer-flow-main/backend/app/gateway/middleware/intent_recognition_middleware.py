@@ -222,8 +222,8 @@ _PROJECT_SWITCH_KEYWORDS = (
 
 _QUESTION_PREFIXES = ("怎么", "如何", "怎样", "为什么", "为何", "是什么", "可以", "能否", "是否", "what", "how", "why")
 
-_CONFIRM_KEYWORDS = {"确认", "确认创建", "确认执行", "开始创建", "创建", "提交", "yes", "y", "ok", "好的"}
-_CANCEL_KEYWORDS = {"取消", "不用了", "算了", "no", "n", "停止"}
+_CONFIRM_KEYWORDS = {"确认", "确认创建", "确认执行", "开始创建", "创建", "提交", "yes", "y", "ok", "好的", "__confirm_action__"}
+_CANCEL_KEYWORDS = {"取消", "不用了", "算了", "no", "n", "停止", "__cancel_action__"}
 _EXIT_KEYWORDS = {"退出创建", "结束创建", "取消创建", "先不创建"}
 _MANAGE_EXIT_KEYWORDS = {"退出管理", "结束管理", "取消管理", "先不管理"}
 _SKILL_REQUEST_KEYWORDS = ("技能推荐", "技能建议", "调用技能", "用技能", "skill")
