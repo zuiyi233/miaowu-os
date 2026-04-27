@@ -26,6 +26,7 @@ class ExecutionGateState(TypedDict):
     updated_at: NotRequired[str | None]
     replay_requested: NotRequired[bool]
     answer_only_turn: NotRequired[bool]
+    planning_only_turn: NotRequired[bool]
     last_user_fingerprint: NotRequired[str | None]
 
 

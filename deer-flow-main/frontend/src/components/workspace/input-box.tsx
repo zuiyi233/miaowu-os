@@ -79,11 +79,42 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 
+import { shouldShowFollowups } from "./input-box-logic";
 import { useThread } from "./messages/context";
 import { ModeHoverGuide } from "./mode-hover-guide";
 import { Tooltip } from "./tooltip";
 
 type InputMode = "flash" | "thinking" | "pro" | "ultra";
+
+type PendingClarificationAction = {
+  label: string;
+  value: string;
+  variant?: ComponentProps<typeof Button>["variant"];
+};
+
+type PendingClarificationPanel = {
+  title?: string;
+  question: string;
+  actions: PendingClarificationAction[];
+};
+
+function buildClarificationSummary(question: string): string {
+  const normalized = question.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const firstSentence =
+    normalized
+      .split(/[。！？!?]/)
+      .map((segment) => segment.trim())
+      .find((segment) => segment.length > 0) ?? normalized;
+
+  if (firstSentence.length <= 38) {
+    return firstSentence;
+  }
+  return `${firstSentence.slice(0, 38)}…`;
+}
 
 function getResolvedMode(
   mode: InputMode | undefined,
@@ -110,6 +141,8 @@ export function InputBox({
   initialValue,
   onContextChange,
   onFollowupsVisibilityChange,
+  pendingClarification,
+  onPendingClarificationAction,
   onSubmit,
   onStop,
   ...props
@@ -138,6 +171,8 @@ export function InputBox({
     },
   ) => void;
   onFollowupsVisibilityChange?: (visible: boolean) => void;
+  pendingClarification?: PendingClarificationPanel | null;
+  onPendingClarificationAction?: (value: string) => void;
   onSubmit?: (message: PromptInputMessage) => void;
   onStop?: () => void;
 }) {
@@ -291,9 +326,17 @@ export function InputBox({
     form?.requestSubmit();
   }, []);
 
+  const hasPendingClarification =
+    !!pendingClarification &&
+    pendingClarification.actions.length > 0 &&
+    pendingClarification.question.trim().length > 0;
+
   const handleFollowupClick = useCallback(
     (suggestion: string) => {
       if (status === "streaming") {
+        return;
+      }
+      if (hasPendingClarification) {
         return;
       }
       const current = (textInput.value ?? "").trim();
@@ -306,7 +349,7 @@ export function InputBox({
       setFollowupsHidden(true);
       setTimeout(() => requestFormSubmit(), 0);
     },
-    [requestFormSubmit, status, textInput],
+    [hasPendingClarification, requestFormSubmit, status, textInput],
   );
 
   const confirmReplaceAndSend = useCallback(() => {
@@ -337,11 +380,26 @@ export function InputBox({
     setTimeout(() => requestFormSubmit(), 0);
   }, [pendingSuggestion, requestFormSubmit, textInput]);
 
-  const showFollowups =
-    !disabled &&
-    !isNewThread &&
-    !followupsHidden &&
-    (followupsLoading || followups.length > 0);
+  const showFollowups = shouldShowFollowups({
+    disabled,
+    isNewThread,
+    hasPendingClarification,
+    followupsHidden,
+    followupsLoading,
+    followupsCount: followups.length,
+  });
+  const clarificationQuestion = pendingClarification?.question.trim() ?? "";
+  const clarificationSummary = useMemo(
+    () => buildClarificationSummary(clarificationQuestion),
+    [clarificationQuestion],
+  );
+  const clarificationActions = pendingClarification?.actions ?? [];
+  const clarificationActionGridClass =
+    clarificationActions.length >= 3
+      ? "sm:grid-cols-3"
+      : clarificationActions.length === 2
+        ? "sm:grid-cols-2"
+        : "sm:grid-cols-1";
 
   const followupsVisibilityChangeRef = useRef(onFollowupsVisibilityChange);
 
@@ -358,6 +416,17 @@ export function InputBox({
   }, []);
 
   useEffect(() => {
+    if (!hasPendingClarification) {
+      return;
+    }
+    setFollowups([]);
+    setFollowupsLoading(false);
+    setFollowupsHidden(true);
+    setConfirmOpen(false);
+    setPendingSuggestion(null);
+  }, [hasPendingClarification]);
+
+  useEffect(() => {
     const streaming = status === "streaming";
     const wasStreaming = wasStreamingRef.current;
     wasStreamingRef.current = streaming;
@@ -367,6 +436,10 @@ export function InputBox({
 
     if (disabled || isMock) {
       console.debug("[followup] skipped: disabled=%s isMock=%s", disabled, isMock);
+      return;
+    }
+    if (hasPendingClarification) {
+      console.debug("[followup] skipped: pending clarification exists");
       return;
     }
 
@@ -445,7 +518,15 @@ export function InputBox({
       });
 
     return () => controller.abort();
-  }, [context.model_name, disabled, isMock, status, thread.messages, threadId]);
+  }, [
+    context.model_name,
+    disabled,
+    hasPendingClarification,
+    isMock,
+    status,
+    thread.messages,
+    threadId,
+  ]);
 
   return (
     <div ref={promptRootRef} className="relative flex flex-col gap-4">
@@ -480,17 +561,75 @@ export function InputBox({
           </div>
         </div>
       )}
-      <PromptInput
+      <div
         className={cn(
-          "bg-background/85 rounded-2xl backdrop-blur-sm transition-all duration-300 ease-out *:data-[slot='input-group']:rounded-2xl",
-          className,
+          hasPendingClarification &&
+            "bg-background/85 border-input/50 relative rounded-2xl border shadow-xs backdrop-blur-sm",
         )}
-        disabled={disabled}
-        globalDrop
-        multiple
-        onSubmit={handleSubmit}
-        {...props}
       >
+        {hasPendingClarification ? (
+          <div className="border-input/45 bg-background/65 relative z-10 border-b px-3 py-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="text-muted-foreground bg-muted/45 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium tracking-wide">
+                {pendingClarification?.title?.trim() ?? "待确认操作"}
+              </span>
+              <Tooltip
+                content={
+                  <div className="max-w-[min(72vw,46rem)] text-xs leading-relaxed whitespace-normal">
+                    {clarificationQuestion}
+                  </div>
+                }
+              >
+                <div className="text-foreground/88 hover:text-foreground min-w-0 flex-1 cursor-help truncate text-xs sm:text-sm">
+                  {clarificationSummary}
+                </div>
+              </Tooltip>
+            </div>
+            <div
+              className={cn(
+                "mt-2 grid grid-cols-1 gap-1.5",
+                clarificationActionGridClass,
+              )}
+            >
+              {clarificationActions.map((action, index) => {
+                const actionVariant = action.variant ?? "outline";
+                return (
+                  <Button
+                    key={`pending-clarification-${action.label}-${action.value}`}
+                    size="sm"
+                    variant="outline"
+                    className={cn(
+                      "h-8 w-full justify-center rounded-full border-border/55 bg-background/45 px-4 text-xs font-medium shadow-none",
+                      "hover:bg-accent/60 hover:text-accent-foreground",
+                      actionVariant === "default" && index === 0 &&
+                        "border-primary/35 bg-primary/12 text-primary hover:bg-primary/18 hover:text-primary",
+                      actionVariant === "destructive" &&
+                        "border-destructive/35 bg-destructive/10 text-destructive hover:bg-destructive/15 hover:text-destructive",
+                    )}
+                    disabled={(disabled ?? false) || status === "streaming"}
+                    type="button"
+                    onClick={() => onPendingClarificationAction?.(action.value)}
+                  >
+                    {action.label}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+        <PromptInput
+          className={cn(
+            hasPendingClarification
+              ? "bg-transparent rounded-none border-0 p-0 shadow-none backdrop-blur-0 transition-all duration-300 ease-out *:data-[slot='input-group']:rounded-none *:data-[slot='input-group']:border-0 *:data-[slot='input-group']:bg-transparent *:data-[slot='input-group']:shadow-none"
+              : "bg-background/85 rounded-2xl backdrop-blur-sm transition-all duration-300 ease-out *:data-[slot='input-group']:rounded-2xl",
+            className,
+          )}
+          disabled={disabled}
+          globalDrop
+          multiple
+          onSubmit={handleSubmit}
+          {...props}
+        >
         {extraHeader && (
           <div className="absolute top-0 right-0 left-0 z-10">
             <div className="absolute right-0 bottom-0 left-0 flex items-center justify-center">
@@ -857,10 +996,11 @@ export function InputBox({
             />
           </PromptInputTools>
         </PromptInputFooter>
-        {!isNewThread && (
-          <div className="bg-background absolute right-0 -bottom-[17px] left-0 z-0 h-4"></div>
-        )}
-      </PromptInput>
+          {!isNewThread && (
+            <div className="bg-background absolute right-0 -bottom-[17px] left-0 z-0 h-4"></div>
+          )}
+        </PromptInput>
+      </div>
 
       {isNewThread && searchParams.get("mode") !== "skill" && (
         <div className="flex items-center justify-center pt-2">
@@ -868,7 +1008,10 @@ export function InputBox({
         </div>
       )}
 
-      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+      <Dialog
+        open={confirmOpen && !hasPendingClarification}
+        onOpenChange={setConfirmOpen}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t.inputBox.followupConfirmTitle}</DialogTitle>

@@ -160,3 +160,58 @@ def test_revoke_command_disables_execution_mode_and_blocks_again():
     assert isinstance(result, Command)
     assert result.goto == END
     assert result.update["execution_gate"]["status"] == "awaiting_authorization"
+
+
+def test_planning_request_strips_write_like_tool_calls():
+    mw = ExecutionGateMiddleware()
+    runtime = MagicMock()
+
+    state = {
+        "messages": [
+            HumanMessage(content="我想写一本小说，书名是没钱修什么仙，请先帮我构思。"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "write_file", "args": {"path": "../outputs/chapter_1.md", "content": "..."}, "id": "call_write"},
+                    {"name": "present_files", "args": {"paths": ["../outputs/chapter_1.md"]}, "id": "call_present"},
+                ],
+            ),
+        ],
+    }
+
+    before_patch = mw.before_model(state, runtime)
+    assert before_patch is not None
+    state.update(before_patch)
+    assert state["execution_gate"]["planning_only_turn"] is True
+
+    after_patch = mw.after_model(state, runtime)
+    assert after_patch is not None
+    updated_ai = after_patch["messages"][0]
+    assert updated_ai.tool_calls == []
+    assert "构思" in str(updated_ai.content)
+    assert after_patch["execution_gate"]["planning_only_turn"] is False
+
+
+def test_planning_request_blocks_write_tool_at_wrap_stage():
+    mw = ExecutionGateMiddleware()
+    req = _make_tool_call_request(
+        name="write_file",
+        args={"path": "../outputs/chapter_1.md", "content": "test"},
+        state={
+            "execution_gate": {
+                "status": "readonly",
+                "execution_mode": False,
+                "planning_only_turn": True,
+            }
+        },
+    )
+
+    async def _handler(_):
+        raise AssertionError("planning-only turn should block write tool")
+
+    result = asyncio.run(mw.awrap_tool_call(req, _handler))
+    assert isinstance(result, Command)
+    assert result.goto == END
+    assert result.update["execution_gate"]["confirmation_required"] is False
+    assert result.update["execution_gate"]["pending_action"] is None
+    assert "构思" in str(result.update["messages"][0].content)

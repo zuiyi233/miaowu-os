@@ -105,6 +105,48 @@ _EXPLICIT_EXECUTION_PHRASES: tuple[str, ...] = (
     "apply now",
 )
 
+_PLANNING_ONLY_KEYWORDS: tuple[str, ...] = (
+    "构思",
+    "构想",
+    "脑暴",
+    "头脑风暴",
+    "大纲",
+    "设定",
+    "点子",
+    "想法",
+    "先想",
+    "策划",
+    "brainstorm",
+    "outline",
+    "ideation",
+)
+
+_PLANNING_EXECUTION_OVERRIDE_PHRASES: tuple[str, ...] = (
+    "开始写",
+    "开始生成",
+    "直接写",
+    "写第一章",
+    "写第",
+    "写章节",
+    "生成章节",
+    "继续写",
+    "继续生成",
+    "开始创建",
+    "创建项目",
+    "立即创建",
+    "落库",
+)
+
+_PLANNING_NEGATIVE_EXECUTION_PREFIXES: tuple[str, ...] = (
+    "不要",
+    "先别",
+    "别",
+    "不用",
+    "不必",
+    "无需",
+    "先不",
+)
+
 _HIGH_RISK_ACTIONS: frozenset[str] = frozenset(
     {
         "create_novel",
@@ -181,6 +223,36 @@ def should_answer_only(text: Any) -> bool:
     intent (e.g., "请执行" or authorization command).
     """
     return is_question_like(text) and not has_explicit_execution_intent(text)
+
+
+def should_plan_only(text: Any) -> bool:
+    """Planning-priority rule for novel ideation turns.
+
+    Turns such as "请帮我构思" should stay in ideation mode and avoid direct
+    write/creation actions unless the user also gives explicit execution cues
+    (e.g. "开始写第一章", "直接帮我创建", "进入执行模式").
+    """
+
+    normalized = normalize_user_text(text)
+    if not normalized:
+        return False
+
+    lowered = normalized.lower()
+    has_planning_keyword = any(keyword in lowered for keyword in _PLANNING_ONLY_KEYWORDS)
+    if not has_planning_keyword:
+        return False
+
+    if has_explicit_execution_intent(normalized):
+        return False
+
+    for phrase in _PLANNING_EXECUTION_OVERRIDE_PHRASES:
+        if phrase not in lowered:
+            continue
+        if any(f"{neg}{phrase}" in lowered for neg in _PLANNING_NEGATIVE_EXECUTION_PREFIXES):
+            continue
+        return False
+
+    return True
 
 
 def is_authorization_command(text: Any, *, include_legacy: bool = True) -> bool:
@@ -329,6 +401,7 @@ def default_execution_gate_state() -> dict[str, Any]:
         # Runtime-only hints
         "replay_requested": False,
         "answer_only_turn": False,
+        "planning_only_turn": False,
         "last_user_fingerprint": None,
     }
 
@@ -367,6 +440,7 @@ def coerce_execution_gate_state(raw: Any) -> dict[str, Any]:
             "updated_at": normalize_user_text(raw.get("updated_at")) or _now_iso(),
             "replay_requested": bool(raw.get("replay_requested", False)),
             "answer_only_turn": bool(raw.get("answer_only_turn", False)),
+            "planning_only_turn": bool(raw.get("planning_only_turn", False)),
             "last_user_fingerprint": normalize_user_text(raw.get("last_user_fingerprint")) or None,
         }
     return default_execution_gate_state()

@@ -1,11 +1,10 @@
 "use client";
 
 import type { Message } from "@langchain/langgraph-sdk";
-import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { type PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Phase2StatusBar } from "@/components/novel/Phase2StatusBar";
-import { Button } from "@/components/ui/button";
 import { ArtifactTrigger } from "@/components/workspace/artifacts";
 import {
   ChatBox,
@@ -37,7 +36,7 @@ import { cn } from "@/lib/utils";
 type ClarificationAction = {
   label: string;
   value: string;
-  variant?: ComponentProps<typeof Button>["variant"];
+  variant?: "default" | "outline" | "destructive" | "secondary" | "ghost" | "link";
 };
 
 type PendingClarification = {
@@ -62,6 +61,13 @@ function mapQuickActionToUserText(value: string): string {
   }
 }
 
+function isOptimisticHumanMessage(message: Message): boolean {
+  if (message.type !== "human") {
+    return false;
+  }
+  return typeof message.id === "string" && message.id.startsWith("opt-human-");
+}
+
 function extractPendingClarification(messages: Message[]): PendingClarification | null {
   let clarificationIndex = -1;
   let clarificationMessage: Message | null = null;
@@ -79,7 +85,12 @@ function extractPendingClarification(messages: Message[]): PendingClarification 
 
   const hasUserResponded = messages
     .slice(clarificationIndex + 1)
-    .some((message) => message.type === "human" && textOfMessage(message).trim().length > 0);
+    .some(
+      (message) =>
+        message.type === "human" &&
+        !isOptimisticHumanMessage(message) &&
+        textOfMessage(message).trim().length > 0,
+    );
   if (hasUserResponded) {
     return null;
   }
@@ -332,27 +343,6 @@ export default function ChatPage() {
                     />
                   </div>
                 </div>
-                {mounted && pendingClarification ? (
-                  <div className="bg-background/80 border-border/60 mb-2 -translate-y-4 rounded-xl border px-3 py-2 shadow-sm backdrop-blur">
-                    <p className="text-muted-foreground text-[11px] font-medium tracking-wide">
-                      待确认操作
-                    </p>
-                    <p className="mt-1 text-sm">{pendingClarification.question}</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {pendingClarification.actions.map((action) => (
-                        <Button
-                          key={`quick-action-${action.label}-${action.value}`}
-                          size="sm"
-                          variant={action.variant ?? "outline"}
-                          disabled={thread.isLoading || isUploading}
-                          onClick={() => handleQuickReply(mapQuickActionToUserText(action.value))}
-                        >
-                          {action.label}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
                 {mounted ? (
                   <InputBox
                     className={cn("bg-background/5 w-full -translate-y-4")}
@@ -378,6 +368,10 @@ export default function ChatPage() {
                       setSettings("context", context)
                     }
                     onFollowupsVisibilityChange={setShowFollowups}
+                    pendingClarification={pendingClarification}
+                    onPendingClarificationAction={(value) =>
+                      handleQuickReply(mapQuickActionToUserText(value))
+                    }
                     onSubmit={handleSubmit}
                     onStop={handleStop}
                   />

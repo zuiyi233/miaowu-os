@@ -9,6 +9,7 @@ from deerflow.protocols.execution_protocol import (
     is_high_risk_tool_call,
     is_revoke_command,
     should_answer_only,
+    should_plan_only,
 )
 
 
@@ -16,6 +17,13 @@ def test_question_priority_blocks_question_even_with_action_words():
     assert should_answer_only("如何执行 build_world 才更稳妥？") is True
     assert should_answer_only("请执行 build_world") is False
     assert should_answer_only("可以，不用讨论了，直接帮我创建。") is False
+
+
+def test_plan_only_detection_requires_no_explicit_execution():
+    assert should_plan_only("我想写一本小说，先帮我构思大纲。") is True
+    assert should_plan_only("先脑暴设定，不要开始写正文。") is True
+    assert should_plan_only("帮我构思后直接创建并开始写第一章。") is False
+    assert should_plan_only("进入执行模式，开始写第一章。") is False
 
 
 def test_authorization_and_revoke_commands_cover_primary_phrases():
@@ -41,3 +49,4 @@ def test_default_execution_gate_state_roundtrip():
     assert normalized["status"] == EXECUTION_MODE_READONLY
     assert normalized["execution_mode"] is False
     assert normalized["pending_action"] is None
+    assert normalized["planning_only_turn"] is False

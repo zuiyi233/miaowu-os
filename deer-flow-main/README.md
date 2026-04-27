@@ -642,6 +642,8 @@ Each task gets its own execution environment with a full filesystem view — ski
 
 With `AioSandboxProvider`, shell execution runs inside isolated containers. With `LocalSandboxProvider`, file tools still map to per-thread directories on the host, but host `bash` is disabled by default because it is not a secure isolation boundary. Re-enable host bash only for fully trusted local workflows.
 
+In the Miaowu novel workflow extension, ideation-only turns (for example requests containing `构思/脑暴/大纲`) are guarded as planning mode: write/create tool calls are suppressed unless the user gives explicit execution intent (for example `开始写第一章` or `进入执行模式`).
+
 This is the difference between a chatbot with tool access and an agent with an actual execution environment.
 
 ```
