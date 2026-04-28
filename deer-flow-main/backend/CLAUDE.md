@@ -165,7 +165,7 @@ Lead-agent middlewares are assembled in strict append order across `packages/har
 3. **SandboxMiddleware** - Acquires sandbox, stores `sandbox_id` in state
 4. **DanglingToolCallMiddleware** - Injects placeholder ToolMessages for AIMessage tool_calls that lack responses (e.g., due to user interruption), including raw provider tool-call payloads preserved only in `additional_kwargs["tool_calls"]`
 5. **LLMErrorHandlingMiddleware** - Normalizes provider/model invocation failures into recoverable assistant-facing errors before later middleware/tool stages run
-6. **ExecutionGateMiddleware** - Thread-level high-risk write gate for novel actions: question-priority answer-only turns, ideation-priority planning turns (e.g. `构思/脑暴` blocks write/create tools), explicit authorization (`确认执行` / `进入执行模式`), revocation (`退出执行模式` / `取消授权`), and blocked-action replay
+6. **ExecutionGateMiddleware** - Thread-level high-risk write gate for novel actions: question-priority answer-only turns, ideation-priority planning turns (e.g. `构思/脑暴` blocks write/create tools), explicit authorization (`确认执行` / `进入执行模式`), revocation (`退出执行模式` / `取消授权`), blocked-action replay, and fallback clarification appended even when a blocked tool call came from a non-empty AI reply (to avoid “reply stops after saying it will create” UX breaks)
 7. **GuardrailMiddleware** - Pre-tool-call authorization via pluggable `GuardrailProvider` protocol (optional, if `guardrails.enabled` in config). Evaluates each tool call and returns error ToolMessage on deny. Three provider options: built-in `AllowlistProvider` (zero deps), OAP policy providers (e.g. `aport-agent-guardrails`), or custom providers. See [docs/GUARDRAILS.md](docs/GUARDRAILS.md) for setup, usage, and how to implement a provider.
 8. **SandboxAuditMiddleware** - Audits sandboxed shell/file operations for security logging before tool execution continues
 9. **ToolErrorHandlingMiddleware** - Converts tool exceptions into error `ToolMessage`s so the run can continue instead of aborting
@@ -227,6 +227,10 @@ FastAPI application on port 8001 with health check at `GET /health`.
 | **Artifacts** (`/api/threads/{id}/artifacts`) | `GET /{path}` - serve artifacts; active content types (`text/html`, `application/xhtml+xml`, `image/svg+xml`) are always forced as download attachments to reduce XSS risk; `?download=true` still forces download for other file types |
 | **Suggestions** (`/api/threads/{id}/suggestions`) | `POST /` - generate follow-up questions; rich list/block model content is normalized before JSON parsing |
 | **AI Provider** (`/api/ai`) | `POST /chat` - global chat; `POST /test-connection` - connectivity check; `GET /providers` - provider metadata |
+
+`/api/threads/*/runs*` runtime model behavior:
+- Thread run context (`context.model_name`) is still the selector, but Gateway now resolves per-user runtime provider overrides from `Settings` (`/api/user/ai-settings`) and injects runtime `model/base_url/api_key` before model creation.
+- This keeps workspace chat runtime aligned with frontend-saved provider settings, even when `config.yaml` model aliases lag behind upstream model lists.
 
 `novel_migrated` file-truth additions (workspace-first mode):
 - `POST /api/novels/{project_id}/workspace/init` initializes the canonical workspace tree plus `manifest.json`.

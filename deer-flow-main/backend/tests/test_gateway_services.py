@@ -386,3 +386,38 @@ def test_build_run_config_no_request_config():
     assert config["configurable"]["thread_id"] == "thread-abc"
     assert config["configurable"]["include_novel"] is True
     assert "context" not in config
+
+
+def test_apply_runtime_provider_overrides_injects_expected_fields():
+    from app.gateway.services import _apply_runtime_provider_overrides
+
+    configurable: dict[str, object] = {}
+    changed = _apply_runtime_provider_overrides(
+        configurable,
+        runtime_model="Deepseek-v3.2",
+        runtime_provider="openai",
+        runtime_base_url="http://172.22.22.31:39999/v1",
+        runtime_api_key="sk-runtime",
+    )
+
+    assert changed is True
+    assert configurable["runtime_model"] == "Deepseek-v3.2"
+    assert configurable["runtime_provider"] == "openai"
+    assert configurable["runtime_base_url"] == "http://172.22.22.31:39999/v1"
+    assert configurable["runtime_api_key"] == "sk-runtime"
+
+
+def test_apply_runtime_provider_overrides_noop_when_values_empty():
+    from app.gateway.services import _apply_runtime_provider_overrides
+
+    configurable: dict[str, object] = {"thread_id": "t-1"}
+    changed = _apply_runtime_provider_overrides(
+        configurable,
+        runtime_model=None,
+        runtime_provider=None,
+        runtime_base_url=None,
+        runtime_api_key=None,
+    )
+
+    assert changed is False
+    assert configurable == {"thread_id": "t-1"}

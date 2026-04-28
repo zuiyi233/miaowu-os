@@ -232,6 +232,7 @@ make docker-start   # Start services (auto-detects sandbox mode from config.yaml
 Docker builds use the upstream `uv` registry by default. If you need faster mirrors in restricted networks, export `UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple` and `NPM_REGISTRY=https://registry.npmmirror.com` before running `make docker-init` or `make docker-start`.
 
 Backend processes automatically pick up `config.yaml` changes on the next config access, so model metadata updates do not require a manual restart during development.
+For Gateway thread runs (`/api/threads/*/runs*`), the runtime also resolves per-user overrides from `/api/user/ai-settings` (model/base URL/API key) before model invocation. This means frontend-saved provider settings can take effect without manually rewriting `config.yaml`/`.env` for each model switch.
 
 > [!TIP]
 > On Linux, if Docker-based commands fail with `permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock`, add your user to the `docker` group and re-login before retrying. See [CONTRIBUTING.md](CONTRIBUTING.md#linux-docker-daemon-permission-denied) for the full fix.
@@ -642,7 +643,7 @@ Each task gets its own execution environment with a full filesystem view — ski
 
 With `AioSandboxProvider`, shell execution runs inside isolated containers. With `LocalSandboxProvider`, file tools still map to per-thread directories on the host, but host `bash` is disabled by default because it is not a secure isolation boundary. Re-enable host bash only for fully trusted local workflows.
 
-In the Miaowu novel workflow extension, ideation-only turns (for example requests containing `构思/脑暴/大纲`) are guarded as planning mode: write/create tool calls are suppressed unless the user gives explicit execution intent (for example `开始写第一章` or `进入执行模式`).
+In the Miaowu novel workflow extension, ideation-only turns (for example requests containing `构思/脑暴/大纲`) are guarded as planning mode: write/create tool calls are suppressed unless the user gives explicit execution intent (for example `开始写第一章` or `进入执行模式`). If a blocked call was embedded in a non-empty AI reply, DeerFlow now appends an explicit planning clarification so the conversation does not appear to stop abruptly.
 
 This is the difference between a chatbot with tool access and an agent with an actual execution environment.
 

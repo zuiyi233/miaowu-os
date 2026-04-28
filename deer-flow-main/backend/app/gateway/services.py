@@ -17,8 +17,13 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 from langchain_core.messages import HumanMessage
+from sqlalchemy import select
 
 from app.gateway.deps import get_checkpointer, get_run_manager, get_store, get_stream_bridge
+from app.gateway.novel_migrated.core.crypto import safe_decrypt
+from app.gateway.novel_migrated.core.database import AsyncSessionLocal
+from app.gateway.novel_migrated.core.user_context import get_request_user_id
+from app.gateway.novel_migrated.models.settings import Settings
 from deerflow.runtime import (
     END_SENTINEL,
     HEARTBEAT_SENTINEL,
@@ -96,6 +101,89 @@ def normalize_input(raw_input: dict[str, Any] | None) -> dict[str, Any]:
 
 
 _DEFAULT_ASSISTANT_ID = "lead_agent"
+
+
+def _as_non_empty_str(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _apply_runtime_provider_overrides(
+    configurable: dict[str, Any],
+    *,
+    runtime_model: str | None,
+    runtime_provider: str | None,
+    runtime_base_url: str | None,
+    runtime_api_key: str | None,
+) -> bool:
+    """Inject runtime provider/model overrides into run configurable.
+
+    Returns True when at least one override field is written.
+    """
+    changed = False
+    if runtime_model:
+        configurable["runtime_model"] = runtime_model
+        changed = True
+    if runtime_provider:
+        configurable["runtime_provider"] = runtime_provider
+        changed = True
+    if runtime_base_url:
+        configurable["runtime_base_url"] = runtime_base_url
+        changed = True
+    if runtime_api_key:
+        configurable["runtime_api_key"] = runtime_api_key
+        changed = True
+    return changed
+
+
+async def _resolve_runtime_provider_overrides_for_thread(
+    request: Request,
+    *,
+    requested_model_name: str | None,
+) -> dict[str, str] | None:
+    """Resolve per-user provider credentials for LangGraph runtime calls.
+
+    Source of truth is `Settings` / `ai_provider_settings` persistence layer.
+    We intentionally do NOT read `.env`/`config.yaml` here so frontend-saved
+    user settings can take effect immediately for thread runs.
+    """
+    runtime_model = _as_non_empty_str(requested_model_name)
+    if runtime_model is None:
+        return None
+
+    user_id = get_request_user_id(request)
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(Settings).where(Settings.user_id == user_id))
+            settings = result.scalar_one_or_none()
+    except Exception:
+        logger.warning(
+            "Failed to load user settings for runtime provider overrides: user=%s",
+            user_id,
+            exc_info=True,
+        )
+        return None
+
+    if settings is None:
+        return None
+
+    runtime_provider = _as_non_empty_str(settings.api_provider)
+    runtime_base_url = _as_non_empty_str(settings.api_base_url)
+    runtime_api_key = _as_non_empty_str(safe_decrypt(settings.api_key))
+
+    if not any((runtime_provider, runtime_base_url, runtime_api_key)):
+        return None
+
+    resolved: dict[str, str] = {"runtime_model": runtime_model}
+    if runtime_provider:
+        resolved["runtime_provider"] = runtime_provider
+    if runtime_base_url:
+        resolved["runtime_base_url"] = runtime_base_url
+    if runtime_api_key:
+        resolved["runtime_api_key"] = runtime_api_key
+    return resolved
 
 
 def resolve_agent_factory(assistant_id: str | None):
@@ -320,11 +408,27 @@ async def start_run(
             "agent_name",
             "is_bootstrap",
             "media_draft_retention",
+            "provider_id",
         }
         configurable = config.setdefault("configurable", {})
         for key in _CONTEXT_CONFIGURABLE_KEYS:
             if key in context:
                 configurable[key] = context[key]
+
+    configurable = config.setdefault("configurable", {})
+    requested_model_name = _as_non_empty_str(configurable.get("model_name") or configurable.get("model"))
+    runtime_overrides = await _resolve_runtime_provider_overrides_for_thread(
+        request,
+        requested_model_name=requested_model_name,
+    )
+    if runtime_overrides:
+        _apply_runtime_provider_overrides(
+            configurable,
+            runtime_model=runtime_overrides.get("runtime_model"),
+            runtime_provider=runtime_overrides.get("runtime_provider"),
+            runtime_base_url=runtime_overrides.get("runtime_base_url"),
+            runtime_api_key=runtime_overrides.get("runtime_api_key"),
+        )
 
     stream_modes = normalize_stream_modes(body.stream_mode)
 

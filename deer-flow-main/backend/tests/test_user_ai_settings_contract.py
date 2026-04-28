@@ -593,8 +593,14 @@ def test_fetch_provider_models_rejects_non_http_scheme() -> None:
     assert "http/https" in resp.json()["detail"]
 
 
-def test_fetch_provider_models_rejects_localhost_target() -> None:
+def test_fetch_provider_models_allows_localhost_target(monkeypatch) -> None:
     app = _build_user_settings_app(_FakeDB())
+
+    async def _fake_fetch(url: str, api_key: str) -> list[str]:
+        assert url == "http://localhost:8000/v1/models"
+        return ["local-model"]
+
+    monkeypatch.setattr(user_settings, "_fetch_models_from_upstream", _fake_fetch)
 
     with TestClient(app) as client:
         resp = client.post(
@@ -602,12 +608,18 @@ def test_fetch_provider_models_rejects_localhost_target() -> None:
             json={"provider_type": "openai", "base_url": "http://localhost:8000"},
         )
 
-    assert resp.status_code == 400
-    assert "受限目标" in resp.json()["detail"] or "受限网络地址" in resp.json()["detail"]
+    assert resp.status_code == 200
+    assert resp.json()["models"] == ["local-model"]
 
 
-def test_fetch_provider_models_rejects_private_ip_target() -> None:
+def test_fetch_provider_models_allows_private_ip_target(monkeypatch) -> None:
     app = _build_user_settings_app(_FakeDB())
+
+    async def _fake_fetch(url: str, api_key: str) -> list[str]:
+        assert url == "http://10.1.2.3:8000/v1/models"
+        return ["private-model"]
+
+    monkeypatch.setattr(user_settings, "_fetch_models_from_upstream", _fake_fetch)
 
     with TestClient(app) as client:
         resp = client.post(
@@ -615,8 +627,8 @@ def test_fetch_provider_models_rejects_private_ip_target() -> None:
             json={"provider_type": "openai", "base_url": "http://10.1.2.3:8000"},
         )
 
-    assert resp.status_code == 400
-    assert "受限网络地址" in resp.json()["detail"]
+    assert resp.status_code == 200
+    assert resp.json()["models"] == ["private-model"]
 
 
 def test_fetch_provider_models_allows_public_https_and_parses_models(monkeypatch) -> None:

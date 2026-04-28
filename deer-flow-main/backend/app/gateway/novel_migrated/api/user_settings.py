@@ -8,9 +8,7 @@ Single source of truth:
 
 from __future__ import annotations
 
-import ipaddress
 import logging
-import socket
 from typing import Any
 from urllib.parse import urlparse
 
@@ -143,52 +141,6 @@ def _build_models_url(base_url: str, provider_type: str) -> str | None:
     return f"{cleaned}/models"
 
 
-_BLOCKED_HOSTNAMES = {
-    "localhost",
-    "localhost.localdomain",
-    "metadata.google.internal",
-}
-_BLOCKED_HOST_SUFFIXES = (
-    ".localhost",
-    ".local",
-    ".localdomain",
-)
-_BLOCKED_IPS = {
-    "169.254.169.254",  # AWS/Azure metadata
-    "100.100.100.200",  # Alibaba metadata
-}
-
-
-def _is_blocked_ip(ip_text: str) -> bool:
-    ip_raw = (ip_text or "").strip()
-    if not ip_raw:
-        return True
-
-    normalized = ip_raw
-    if normalized.startswith("[") and normalized.endswith("]"):
-        normalized = normalized[1:-1]
-    if "%" in normalized:
-        normalized = normalized.split("%", 1)[0]
-    if normalized in _BLOCKED_IPS:
-        return True
-
-    try:
-        ip_obj = ipaddress.ip_address(normalized)
-    except ValueError:
-        return False
-
-    return any(
-        (
-            ip_obj.is_private,
-            ip_obj.is_loopback,
-            ip_obj.is_link_local,
-            ip_obj.is_multicast,
-            ip_obj.is_unspecified,
-            ip_obj.is_reserved,
-        )
-    )
-
-
 def _validate_and_normalize_public_base_url(raw_base_url: str) -> str:
     base_url = (raw_base_url or "").strip()
     if not base_url:
@@ -202,27 +154,6 @@ def _validate_and_normalize_public_base_url(raw_base_url: str) -> str:
     hostname = (parsed.hostname or "").strip().lower().rstrip(".")
     if not hostname:
         raise HTTPException(status_code=400, detail="接口地址缺少主机名")
-
-    if hostname in _BLOCKED_HOSTNAMES or any(hostname.endswith(suffix) for suffix in _BLOCKED_HOST_SUFFIXES):
-        raise HTTPException(status_code=400, detail="接口地址指向受限目标，不允许访问")
-
-    if _is_blocked_ip(hostname):
-        raise HTTPException(status_code=400, detail="接口地址指向受限网络地址，不允许访问")
-
-    try:
-        resolved = socket.getaddrinfo(hostname, parsed.port or (443 if scheme == "https" else 80), type=socket.SOCK_STREAM)
-    except socket.gaierror:
-        resolved = []
-    except Exception:
-        resolved = []
-
-    for item in resolved:
-        sockaddr = item[4] if len(item) > 4 else None
-        ip_candidate = ""
-        if isinstance(sockaddr, tuple) and sockaddr:
-            ip_candidate = str(sockaddr[0] or "").strip()
-        if ip_candidate and _is_blocked_ip(ip_candidate):
-            raise HTTPException(status_code=400, detail="接口地址解析到受限网络地址，不允许访问")
 
     return base_url
 

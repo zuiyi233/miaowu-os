@@ -498,6 +498,18 @@ def test_classify_error_401_is_not_retriable() -> None:
     assert reason == "auth"
 
 
+def test_classify_error_model_not_found_is_not_retriable() -> None:
+    middleware = _build_middleware()
+    exc = FakeError(
+        "No available channel for model Deepseek-v3.2",
+        status_code=503,
+        code="model_not_found",
+    )
+    retriable, reason = middleware._classify_error(exc)
+    assert retriable is False
+    assert reason == "model_unavailable"
+
+
 def test_sync_403_does_not_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     middleware = _build_middleware(retry_max_attempts=3, retry_base_delay_ms=10, retry_cap_delay_ms=10)
     attempts = 0
@@ -515,6 +527,29 @@ def test_sync_403_does_not_retry(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert isinstance(result, AIMessage)
     assert "authentication or access is invalid" in result.content
+    assert attempts == 1
+    assert len(waits) == 0
+
+
+def test_sync_model_not_found_does_not_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    middleware = _build_middleware(retry_max_attempts=3, retry_base_delay_ms=10, retry_cap_delay_ms=10)
+    attempts = 0
+    waits: list[float] = []
+    monkeypatch.setattr("time.sleep", lambda d: waits.append(d))
+
+    def handler(_request) -> AIMessage:
+        nonlocal attempts
+        attempts += 1
+        raise FakeError(
+            "No available channel for model Deepseek-v3.2",
+            status_code=503,
+            code="model_not_found",
+        )
+
+    result = middleware.wrap_model_call(SimpleNamespace(), handler)
+
+    assert isinstance(result, AIMessage)
+    assert "selected model is unavailable or not enabled" in result.content
     assert attempts == 1
     assert len(waits) == 0
 

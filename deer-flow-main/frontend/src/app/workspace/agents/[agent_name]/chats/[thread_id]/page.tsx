@@ -27,6 +27,7 @@ import { useModels } from "@/core/models/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useThreadSettings } from "@/core/settings";
 import { useThreadStream } from "@/core/threads/hooks";
+import { isAbortLikeError } from "@/core/threads/submit-retry";
 import { textOfMessage } from "@/core/threads/utils";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
@@ -105,19 +106,37 @@ export default function AgentChatPage() {
     threadId,
   ]);
 
+  const reportSendMessageRejection = useCallback((error: unknown) => {
+    if (isAbortLikeError(error)) {
+      console.debug("[agent-chat] message submission aborted by user");
+      return;
+    }
+    console.warn("[agent-chat] message submission failed:", error);
+  }, []);
+
   const handleSubmit = useCallback(
     (message: PromptInputMessage) => {
-      void sendMessage(threadId, message, {
-        agent_name,
-        moduleId: "agent-chat",
-        module_id: "agent-chat",
-      });
+      void sendMessage(
+        threadId,
+        message,
+        {
+          agent_name,
+          moduleId: "agent-chat",
+          module_id: "agent-chat",
+        },
+      ).catch(reportSendMessageRejection);
     },
-    [sendMessage, threadId, agent_name],
+    [agent_name, reportSendMessageRejection, sendMessage, threadId],
   );
 
-  const handleStop = useCallback(async () => {
-    await thread.stop();
+  const handleStop = useCallback(() => {
+    void thread.stop().catch((error: unknown) => {
+      if (isAbortLikeError(error)) {
+        console.debug("[agent-chat] stop request aborted");
+        return;
+      }
+      console.warn("[agent-chat] stop request failed:", error);
+    });
   }, [thread]);
 
   const messageListPaddingBottom = showFollowups

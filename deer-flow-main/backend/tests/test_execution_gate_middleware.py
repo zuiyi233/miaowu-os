@@ -192,6 +192,71 @@ def test_planning_request_strips_write_like_tool_calls():
     assert after_patch["execution_gate"]["planning_only_turn"] is False
 
 
+def test_planning_request_appends_fallback_when_blocked_tool_removed_from_non_empty_reply():
+    mw = ExecutionGateMiddleware()
+    runtime = MagicMock()
+
+    state = {
+        "messages": [
+            HumanMessage(content="我想写一本小说，书名是没钱修什么仙，帮我构思一下"),
+            AIMessage(
+                content=(
+                    "我来帮您构思《没钱修什么仙》这部小说！从您的书名可以看出，这是一个反传统的修仙题材，很有创意。"
+                    "让我先为您创建一个小说项目，然后我们一起构建这个世界。"
+                ),
+                tool_calls=[
+                    {"name": "create_novel", "args": {"title": "没钱修什么仙", "genre": "仙侠"}, "id": "call_create"},
+                ],
+            ),
+        ],
+    }
+
+    before_patch = mw.before_model(state, runtime)
+    assert before_patch is not None
+    state.update(before_patch)
+    assert state["execution_gate"]["planning_only_turn"] is True
+
+    after_patch = mw.after_model(state, runtime)
+    assert after_patch is not None
+    updated_ai = after_patch["messages"][0]
+    assert updated_ai.tool_calls == []
+    content_text = str(updated_ai.content)
+    assert "反传统的修仙题材" in content_text
+    assert "不会直接创建项目或生成章节" in content_text
+    assert after_patch["execution_gate"]["planning_only_turn"] is False
+
+
+def test_answer_only_turn_appends_fallback_when_blocked_tool_removed_from_non_empty_reply():
+    mw = ExecutionGateMiddleware()
+    runtime = MagicMock()
+
+    state = {
+        "messages": [
+            HumanMessage(content="如何开始写一本修仙小说？"),
+            AIMessage(
+                content="好的，我先帮你创建一个小说项目。",
+                tool_calls=[
+                    {"name": "create_novel", "args": {"title": "测试小说", "genre": "仙侠"}, "id": "call_create"},
+                ],
+            ),
+        ],
+    }
+
+    before_patch = mw.before_model(state, runtime)
+    assert before_patch is not None
+    state.update(before_patch)
+    assert state["execution_gate"]["answer_only_turn"] is True
+
+    after_patch = mw.after_model(state, runtime)
+    assert after_patch is not None
+    updated_ai = after_patch["messages"][0]
+    assert updated_ai.tool_calls == []
+    content_text = str(updated_ai.content)
+    assert "先帮你创建一个小说项目" in content_text
+    assert "这是问答请求" in content_text
+    assert after_patch["execution_gate"]["answer_only_turn"] is False
+
+
 def test_planning_request_blocks_write_tool_at_wrap_stage():
     mw = ExecutionGateMiddleware()
     req = _make_tool_call_request(

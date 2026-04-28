@@ -35,6 +35,13 @@ def _get_runtime_config(config: RunnableConfig) -> dict:
     return cfg
 
 
+def _as_non_empty_str(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
 def _resolve_model_name(requested_model_name: str | None = None) -> str:
     """Resolve a runtime model name safely, falling back to default if invalid. Returns None if no models are configured."""
     app_config = get_app_config()
@@ -44,6 +51,18 @@ def _resolve_model_name(requested_model_name: str | None = None) -> str:
 
     if requested_model_name and app_config.get_model_config(requested_model_name):
         return requested_model_name
+
+    normalized_requested = _as_non_empty_str(requested_model_name)
+    if normalized_requested:
+        lowered_requested = normalized_requested.lower()
+        for model in app_config.models:
+            if _as_non_empty_str(model.name) and model.name.lower() == lowered_requested:
+                logger.info(
+                    "Model '%s' matched config model '%s' by case-insensitive lookup.",
+                    requested_model_name,
+                    model.name,
+                )
+                return model.name
 
     if requested_model_name and requested_model_name != default_model_name:
         logger.warning(f"Model '{requested_model_name}' not found in config; fallback to default model '{default_model_name}'.")
@@ -314,6 +333,10 @@ def make_lead_agent(config: RunnableConfig):
     thinking_enabled = cfg.get("thinking_enabled", True)
     reasoning_effort = cfg.get("reasoning_effort", None)
     requested_model_name: str | None = cfg.get("model_name") or cfg.get("model")
+    runtime_model_name = _as_non_empty_str(cfg.get("runtime_model"))
+    runtime_provider = _as_non_empty_str(cfg.get("runtime_provider"))
+    runtime_base_url = _as_non_empty_str(cfg.get("runtime_base_url"))
+    runtime_api_key = _as_non_empty_str(cfg.get("runtime_api_key"))
     is_plan_mode = cfg.get("is_plan_mode", False)
     subagent_enabled = cfg.get("subagent_enabled", False)
     max_concurrent_subagents = cfg.get("max_concurrent_subagents", 3)
@@ -337,12 +360,29 @@ def make_lead_agent(config: RunnableConfig):
         logger.warning(f"Thinking mode is enabled but model '{model_name}' does not support it; fallback to non-thinking mode.")
         thinking_enabled = False
 
+    model_runtime_overrides: dict[str, object] = {}
+    is_openai_compatible = "openai" in model_config.use.lower()
+    if is_openai_compatible:
+        if runtime_model_name:
+            model_runtime_overrides["model"] = runtime_model_name
+        if runtime_base_url:
+            model_runtime_overrides["base_url"] = runtime_base_url
+        if runtime_api_key:
+            model_runtime_overrides["api_key"] = runtime_api_key
+    elif any((runtime_model_name, runtime_base_url, runtime_api_key)):
+        logger.info(
+            "Skip runtime provider overrides for non-openai model class '%s'.",
+            model_config.use,
+        )
+
     logger.info(
-        "Create Agent(%s) -> thinking_enabled: %s, reasoning_effort: %s, model_name: %s, is_plan_mode: %s, subagent_enabled: %s, max_concurrent_subagents: %s",
+        "Create Agent(%s) -> thinking_enabled: %s, reasoning_effort: %s, model_name: %s, runtime_model: %s, runtime_provider: %s, is_plan_mode: %s, subagent_enabled: %s, max_concurrent_subagents: %s",
         agent_name or "default",
         thinking_enabled,
         reasoning_effort,
         model_name,
+        runtime_model_name,
+        runtime_provider,
         is_plan_mode,
         subagent_enabled,
         max_concurrent_subagents,
@@ -356,6 +396,8 @@ def make_lead_agent(config: RunnableConfig):
         {
             "agent_name": agent_name or "default",
             "model_name": model_name or "default",
+            "runtime_model_name": runtime_model_name,
+            "runtime_provider": runtime_provider,
             "thinking_enabled": thinking_enabled,
             "reasoning_effort": reasoning_effort,
             "is_plan_mode": is_plan_mode,
@@ -368,7 +410,7 @@ def make_lead_agent(config: RunnableConfig):
     if is_bootstrap:
         # Special bootstrap agent with minimal prompt for initial custom agent creation flow
         return create_agent(
-            model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled),
+            model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, **model_runtime_overrides),
             tools=get_available_tools(model_name=model_name, subagent_enabled=subagent_enabled, include_novel=include_novel) + [setup_agent],
             middleware=_build_middlewares(config, model_name=model_name),
             system_prompt=apply_prompt_template(subagent_enabled=subagent_enabled, max_concurrent_subagents=max_concurrent_subagents, available_skills=set(["bootstrap"])),
@@ -377,7 +419,12 @@ def make_lead_agent(config: RunnableConfig):
 
     # Default lead agent (unchanged behavior)
     return create_agent(
-        model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, reasoning_effort=reasoning_effort),
+        model=create_chat_model(
+            name=model_name,
+            thinking_enabled=thinking_enabled,
+            reasoning_effort=reasoning_effort,
+            **model_runtime_overrides,
+        ),
         tools=get_available_tools(model_name=model_name, groups=agent_config.tool_groups if agent_config else None, subagent_enabled=subagent_enabled, include_novel=include_novel),
         middleware=_build_middlewares(config, model_name=model_name, agent_name=agent_name),
         system_prompt=apply_prompt_template(

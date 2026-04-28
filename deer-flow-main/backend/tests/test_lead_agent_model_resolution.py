@@ -65,6 +65,21 @@ def test_resolve_model_name_uses_default_when_none(monkeypatch):
     assert resolved == "default-model"
 
 
+def test_resolve_model_name_case_insensitive_match(monkeypatch):
+    app_config = _make_app_config(
+        [
+            _make_model("deepseek-v3.2", supports_thinking=True),
+            _make_model("other-model", supports_thinking=False),
+        ]
+    )
+
+    monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: app_config)
+
+    resolved = lead_agent_module._resolve_model_name("DeepSeek-V3.2")
+
+    assert resolved == "deepseek-v3.2"
+
+
 def test_resolve_model_name_raises_when_no_models_configured(monkeypatch):
     app_config = _make_app_config([])
 
@@ -88,10 +103,11 @@ def test_make_lead_agent_disables_thinking_when_model_does_not_support_it(monkey
 
     captured: dict[str, object] = {}
 
-    def _fake_create_chat_model(*, name, thinking_enabled, reasoning_effort=None):
+    def _fake_create_chat_model(*, name, thinking_enabled, reasoning_effort=None, **kwargs):
         captured["name"] = name
         captured["thinking_enabled"] = thinking_enabled
         captured["reasoning_effort"] = reasoning_effort
+        captured["extra_kwargs"] = kwargs
         return object()
 
     monkeypatch.setattr(lead_agent_module, "create_chat_model", _fake_create_chat_model)
@@ -110,6 +126,7 @@ def test_make_lead_agent_disables_thinking_when_model_does_not_support_it(monkey
 
     assert captured["name"] == "safe-model"
     assert captured["thinking_enabled"] is False
+    assert captured["extra_kwargs"] == {}
     assert result["model"] is not None
 
 
@@ -130,10 +147,11 @@ def test_make_lead_agent_reads_runtime_options_from_context(monkeypatch):
 
     captured: dict[str, object] = {}
 
-    def _fake_create_chat_model(*, name, thinking_enabled, reasoning_effort=None):
+    def _fake_create_chat_model(*, name, thinking_enabled, reasoning_effort=None, **kwargs):
         captured["name"] = name
         captured["thinking_enabled"] = thinking_enabled
         captured["reasoning_effort"] = reasoning_effort
+        captured["extra_kwargs"] = kwargs
         return object()
 
     monkeypatch.setattr(lead_agent_module, "create_chat_model", _fake_create_chat_model)
@@ -156,6 +174,7 @@ def test_make_lead_agent_reads_runtime_options_from_context(monkeypatch):
         "name": "context-model",
         "thinking_enabled": False,
         "reasoning_effort": "high",
+        "extra_kwargs": {},
     }
     get_available_tools.assert_called_once()
     call_kwargs = get_available_tools.call_args.kwargs
@@ -164,6 +183,52 @@ def test_make_lead_agent_reads_runtime_options_from_context(monkeypatch):
     assert call_kwargs["subagent_enabled"] is True
     assert call_kwargs["include_novel"] is True
     assert result["model"] is not None
+
+
+def test_make_lead_agent_forwards_runtime_provider_overrides(monkeypatch):
+    app_config = _make_app_config([_make_model("safe-model", supports_thinking=True)])
+
+    import deerflow.tools as tools_module
+
+    monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: app_config)
+    monkeypatch.setattr(tools_module, "get_available_tools", lambda **kwargs: [])
+    monkeypatch.setattr(lead_agent_module, "_build_middlewares", lambda config, model_name, agent_name=None: [])
+
+    captured: dict[str, object] = {}
+
+    def _fake_create_chat_model(*, name, thinking_enabled, reasoning_effort=None, **kwargs):
+        captured["name"] = name
+        captured["thinking_enabled"] = thinking_enabled
+        captured["reasoning_effort"] = reasoning_effort
+        captured["extra_kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(lead_agent_module, "create_chat_model", _fake_create_chat_model)
+    monkeypatch.setattr(lead_agent_module, "create_agent", lambda **kwargs: kwargs)
+
+    lead_agent_module.make_lead_agent(
+        {
+            "configurable": {
+                "model_name": "safe-model",
+                "runtime_model": "Deepseek-v3.2",
+                "runtime_provider": "openai",
+                "runtime_base_url": "http://172.22.22.31:39999/v1",
+                "runtime_api_key": "sk-runtime",
+                "thinking_enabled": False,
+                "is_plan_mode": False,
+                "subagent_enabled": False,
+            }
+        }
+    )
+
+    assert captured["name"] == "safe-model"
+    assert captured["thinking_enabled"] is False
+    assert captured["reasoning_effort"] is None
+    assert captured["extra_kwargs"] == {
+        "model": "Deepseek-v3.2",
+        "base_url": "http://172.22.22.31:39999/v1",
+        "api_key": "sk-runtime",
+    }
 
 
 def test_make_lead_agent_rejects_invalid_bootstrap_agent_name(monkeypatch):

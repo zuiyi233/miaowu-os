@@ -82,6 +82,15 @@ _AUTH_PATTERNS = (
     "无权",
     "未授权",
 )
+_MODEL_UNAVAILABLE_PATTERNS = (
+    "model_not_found",
+    "model not found",
+    "no available channel for model",
+    "no available model",
+    "模型不可用",
+    "模型未开通",
+    "模型不存在",
+)
 
 
 class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
@@ -183,6 +192,12 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         if _matches_any(lowered, _AUTH_PATTERNS) and not _matches_any(lowered, ("timeout", "timed out")):
             return False, "auth"
 
+        if (
+            _matches_any(lowered, _MODEL_UNAVAILABLE_PATTERNS)
+            or _matches_any(str(error_code).lower(), _MODEL_UNAVAILABLE_PATTERNS)
+        ):
+            return False, "model_unavailable"
+
         exc_name = exc.__class__.__name__
         if exc_name in {
             "APITimeoutError",
@@ -222,6 +237,8 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
             return "The configured LLM provider rejected the request because the account is out of quota, billing is unavailable, or usage is restricted. Please fix the provider account and try again."
         if reason == "auth":
             return "The configured LLM provider rejected the request because authentication or access is invalid. Please check the provider credentials and try again."
+        if reason == "model_unavailable":
+            return "The selected model is unavailable or not enabled on the configured provider channel. Please choose another model or enable this model in your provider gateway."
         if reason in {"busy", "transient"}:
             return "The configured LLM provider is temporarily unavailable after multiple retries. Please wait a moment and continue the conversation."
         return f"LLM request failed: {detail}"

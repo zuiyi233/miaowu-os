@@ -17,6 +17,12 @@ import { useUpdateSubtask } from "../tasks/context";
 import type { UploadedFileInfo } from "../uploads";
 import { promptInputFilePartToFile, uploadFiles } from "../uploads";
 
+import {
+  getThreadStreamErrorMessage,
+  getThreadSubmitHint,
+  isAbortLikeError,
+  shouldRetrySubmitError,
+} from "./submit-retry";
 import type { AgentThread, AgentThreadState } from "./types";
 import { withOptimisticMessages } from "./utils";
 
@@ -113,165 +119,8 @@ function getRunMetadataStorage(): {
   };
 }
 
-function getStreamErrorMessage(error: unknown): string {
-  if (typeof error === "string" && error.trim()) {
-    return error;
-  }
-  if (error instanceof Error && error.message.trim()) {
-    return error.message;
-  }
-  if (typeof error === "object" && error !== null) {
-    const message = Reflect.get(error, "message");
-    if (typeof message === "string" && message.trim()) {
-      return message;
-    }
-    const nestedError = Reflect.get(error, "error");
-    if (nestedError instanceof Error && nestedError.message.trim()) {
-      return nestedError.message;
-    }
-    if (typeof nestedError === "string" && nestedError.trim()) {
-      return nestedError;
-    }
-  }
-  return "Request failed.";
-}
-
-const STREAM_SUBMIT_MAX_ATTEMPTS = 10;
+const STREAM_SUBMIT_MAX_ATTEMPTS = 3;
 const STREAM_SUBMIT_RETRY_BASE_DELAY_MS = 3000;
-
-function parseErrorStatusCode(error: unknown): number | null {
-  const parseStatus = (value: unknown): number | null => {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
-    }
-    if (typeof value === "string") {
-      const parsed = Number.parseInt(value.trim(), 10);
-      if (Number.isFinite(parsed)) {
-        return parsed;
-      }
-    }
-    return null;
-  };
-
-  if (!error || typeof error !== "object") {
-    return null;
-  }
-
-  const statusCandidates = [
-    Reflect.get(error, "status"),
-    Reflect.get(error, "statusCode"),
-    Reflect.get(Reflect.get(error, "response"), "status"),
-    Reflect.get(Reflect.get(error, "cause"), "status"),
-  ];
-  for (const candidate of statusCandidates) {
-    const parsed = parseStatus(candidate);
-    if (parsed !== null) {
-      return parsed;
-    }
-  }
-
-  const nested = Reflect.get(error, "error");
-  if (nested && typeof nested === "object") {
-    const nestedCandidates = [
-      Reflect.get(nested, "status"),
-      Reflect.get(nested, "statusCode"),
-      Reflect.get(Reflect.get(nested, "response"), "status"),
-      Reflect.get(Reflect.get(nested, "cause"), "status"),
-    ];
-    for (const candidate of nestedCandidates) {
-      const parsed = parseStatus(candidate);
-      if (parsed !== null) {
-        return parsed;
-      }
-    }
-  }
-
-  return null;
-}
-
-function isRetryableSubmitError(error: unknown): boolean {
-  if (error instanceof DOMException && error.name === "AbortError") {
-    return false;
-  }
-  if (error instanceof Error && error.name === "AbortError") {
-    return false;
-  }
-
-  const statusCode = parseErrorStatusCode(error);
-  if (statusCode !== null) {
-    if (statusCode === 408 || statusCode === 409 || statusCode === 425) {
-      return true;
-    }
-    if (statusCode === 429) {
-      return true;
-    }
-    if (statusCode >= 500) {
-      return true;
-    }
-    return false;
-  }
-
-  const errorObject = error && typeof error === "object" ? error : null;
-  const nestedErrorObject =
-    errorObject && typeof Reflect.get(errorObject, "error") === "object"
-      ? (Reflect.get(errorObject, "error") as object)
-      : null;
-  const causeErrorObject =
-    errorObject && typeof Reflect.get(errorObject, "cause") === "object"
-      ? (Reflect.get(errorObject, "cause") as object)
-      : null;
-  const codeCandidates = [
-    errorObject ? Reflect.get(errorObject, "code") : undefined,
-    nestedErrorObject ? Reflect.get(nestedErrorObject, "code") : undefined,
-    causeErrorObject ? Reflect.get(causeErrorObject, "code") : undefined,
-  ];
-  const retryableCodes = new Set([
-    "ECONNRESET",
-    "ECONNABORTED",
-    "ETIMEDOUT",
-    "EAI_AGAIN",
-    "ENETUNREACH",
-    "ERR_NETWORK",
-    "ERR_CONNECTION_RESET",
-    "ERR_CONNECTION_ABORTED",
-    "ERR_CONNECTION_CLOSED",
-    "ERR_INTERNET_DISCONNECTED",
-  ]);
-  for (const candidate of codeCandidates) {
-    if (typeof candidate === "string" && retryableCodes.has(candidate)) {
-      return true;
-    }
-  }
-
-  const message = getStreamErrorMessage(error).toLowerCase();
-  const retryablePatterns = [
-    "network",
-    "network error",
-    "disconnected",
-    "disconnect",
-    "failed to fetch",
-    "fetch failed",
-    "timeout",
-    "timed out",
-    "temporarily unavailable",
-    "connection reset",
-    "connection closed",
-    "connection aborted",
-    "gateway timeout",
-    "stream timed out",
-    "socket closed",
-    "econnreset",
-    "econnaborted",
-    "etimedout",
-    "socket hang up",
-    "断联",
-    "断开",
-    "网络波动",
-    "连接中断",
-    "连接超时",
-  ];
-  return retryablePatterns.some((pattern) => message.includes(pattern));
-}
 
 function waitMs(ms: number): Promise<void> {
   if (ms <= 0) {
@@ -527,7 +376,11 @@ export function useThreadStream({
     onError(error) {
       setOptimisticMessages([]);
       createNovelProgressRef.current.clear();
-      toast.error(getStreamErrorMessage(error));
+      if (isAbortLikeError(error)) {
+        console.debug("[threads] request aborted by user");
+        return;
+      }
+      toast.error(getThreadSubmitHint(error) ?? getThreadStreamErrorMessage(error));
     },
   });
 
@@ -772,7 +625,7 @@ export function useThreadStream({
             break;
           } catch (error) {
             const canRetry =
-              isRetryableSubmitError(error) &&
+              shouldRetrySubmitError(error) &&
               attempt < STREAM_SUBMIT_MAX_ATTEMPTS;
             if (!canRetry) {
               throw error;
@@ -790,6 +643,10 @@ export function useThreadStream({
       } catch (error) {
         setOptimisticMessages([]);
         setIsUploading(false);
+        if (isAbortLikeError(error)) {
+          console.debug("[threads] submit aborted before completion");
+          return;
+        }
         throw error;
       } finally {
         sendInFlightRef.current = false;

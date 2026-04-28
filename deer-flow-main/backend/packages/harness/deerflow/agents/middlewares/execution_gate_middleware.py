@@ -163,6 +163,17 @@ class ExecutionGateMiddleware(AgentMiddleware[ThreadState]):
     def _build_fallback_planning_text(self) -> str:
         return "你当前是在做构思/策划，我先给出大纲与创意方案，不会直接创建项目或生成章节。若要开始正文，请明确说“开始写第一章”或“进入执行模式”。"
 
+    @staticmethod
+    def _merge_fallback_content(existing_content: Any, fallback_text: str) -> str:
+        """Keep useful AI text while appending gate clarification when needed."""
+        normalized_existing = _extract_text_content(existing_content)
+        normalized_fallback = (fallback_text or "").strip()
+        if not normalized_existing:
+            return normalized_fallback
+        if not normalized_fallback or normalized_fallback in normalized_existing:
+            return normalized_existing
+        return f"{normalized_existing}\n\n{normalized_fallback}"
+
     def _is_planning_blocked_tool_call(self, tool_name: Any, args: Mapping[str, Any] | None = None) -> bool:
         normalized = str(tool_name or "").strip()
         if not normalized:
@@ -322,8 +333,11 @@ class ExecutionGateMiddleware(AgentMiddleware[ThreadState]):
 
         safe_calls = [tc for tc in tool_calls if not is_high_risk_tool_call(tc.get("name"), tc.get("args"))]
         next_content = last_ai.content
-        if not safe_calls and not _extract_text_content(next_content):
-            next_content = self._build_fallback_answer_only_text()
+        if not safe_calls:
+            next_content = self._merge_fallback_content(
+                next_content,
+                self._build_fallback_answer_only_text(),
+            )
 
         updated_ai = last_ai.model_copy(update={"tool_calls": safe_calls, "content": next_content})
         next_gate = update_execution_gate_state(
@@ -365,8 +379,11 @@ class ExecutionGateMiddleware(AgentMiddleware[ThreadState]):
 
         safe_calls = [tc for tc in tool_calls if not self._is_planning_blocked_tool_call(tc.get("name"), tc.get("args"))]
         next_content = last_ai.content
-        if not safe_calls and not _extract_text_content(next_content):
-            next_content = self._build_fallback_planning_text()
+        if not safe_calls:
+            next_content = self._merge_fallback_content(
+                next_content,
+                self._build_fallback_planning_text(),
+            )
 
         updated_ai = last_ai.model_copy(update={"tool_calls": safe_calls, "content": next_content})
         next_gate = update_execution_gate_state(

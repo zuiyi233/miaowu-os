@@ -29,6 +29,7 @@ import { useNotification } from "@/core/notification/hooks";
 import { buildPhase2SnapshotFromThread } from "@/core/novel/phase2-status";
 import { useThreadSettings } from "@/core/settings";
 import { useThreadStream } from "@/core/threads/hooks";
+import { isAbortLikeError } from "@/core/threads/submit-retry";
 import { textOfMessage } from "@/core/threads/utils";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
@@ -219,14 +220,26 @@ export default function ChatPage() {
     history.replaceState(null, "", `/workspace/chats/${threadId}`);
   }, [isNewThread, setIsNewThread, thread.messages.length, threadId]);
 
+  const reportSendMessageRejection = useCallback((error: unknown) => {
+    if (isAbortLikeError(error)) {
+      console.debug("[chat] message submission aborted by user");
+      return;
+    }
+    console.warn("[chat] message submission failed:", error);
+  }, []);
+
   const handleSubmit = useCallback(
     (message: PromptInputMessage) => {
-      void sendMessage(threadId, message, {
-        moduleId: "chat-main",
-        module_id: "chat-main",
-      });
+      void sendMessage(
+        threadId,
+        message,
+        {
+          moduleId: "chat-main",
+          module_id: "chat-main",
+        },
+      ).catch(reportSendMessageRejection);
     },
-    [sendMessage, threadId],
+    [reportSendMessageRejection, sendMessage, threadId],
   );
   const handleQuickReply = useCallback(
     (text: string) => {
@@ -244,12 +257,18 @@ export default function ChatPage() {
           moduleId: "chat-main",
           module_id: "chat-main",
         },
-      );
+      ).catch(reportSendMessageRejection);
     },
-    [sendMessage, threadId],
+    [reportSendMessageRejection, sendMessage, threadId],
   );
-  const handleStop = useCallback(async () => {
-    await thread.stop();
+  const handleStop = useCallback(() => {
+    void thread.stop().catch((error: unknown) => {
+      if (isAbortLikeError(error)) {
+        console.debug("[chat] stop request aborted");
+        return;
+      }
+      console.warn("[chat] stop request failed:", error);
+    });
   }, [thread]);
 
   const messageListPaddingBottom = showFollowups

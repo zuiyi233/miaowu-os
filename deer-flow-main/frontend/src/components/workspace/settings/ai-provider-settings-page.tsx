@@ -522,6 +522,14 @@ export function AiProviderSettingsPage() {
   }, [hydrated, draft.featureRoutingSettings, draft.providers, routingDirty]);
 
   const providers = draft.providers;
+  const normalizedDefaultProviderId =
+    typeof draft.defaultProviderId === "string"
+      ? draft.defaultProviderId.trim()
+      : "";
+  const hasActiveProvider =
+    providers.some((provider) => provider.isActive) ||
+    (normalizedDefaultProviderId.length > 0 &&
+      providers.some((provider) => provider.id === normalizedDefaultProviderId));
   const defaultTarget = routingDraft?.defaultTarget ?? null;
 
   const mutateRouting = useCallback(
@@ -824,6 +832,37 @@ export function AiProviderSettingsPage() {
             添加服务商
           </Button>
         </div>
+
+        <Alert className="mb-3">
+          <CircleHelp className="h-4 w-4" />
+          <AlertTitle>配置存储说明</AlertTitle>
+          <AlertDescription>
+            本页面保存的是用户级 AI 设置（后端数据库中的用户配置），不会直接改写
+            <code className="mx-1">config.yaml</code>
+            或
+            <code className="mx-1">.env</code> 文件。
+          </AlertDescription>
+        </Alert>
+
+        {editingId && (
+          <Alert className="mb-3 border-amber-200 bg-amber-50/80 dark:border-amber-900/50 dark:bg-amber-950/20">
+            <AlertTriangle className="h-4 w-4 text-amber-600" />
+            <AlertTitle>你有未保存的服务商编辑</AlertTitle>
+            <AlertDescription>
+              当前输入仅在本地草稿中，需点击对应卡片内的「保存」后才会写入后端并用于运行时请求。
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {providers.length > 0 && !hasActiveProvider && (
+          <Alert className="mb-3 border-destructive/40">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>未选择默认服务商</AlertTitle>
+            <AlertDescription>
+              请先点击任一服务商的「设为默认」并保存，否则运行时可能无法解析可用配置。
+            </AlertDescription>
+          </Alert>
+        )}
 
         {providers.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 text-muted-foreground rounded-lg border border-dashed">
