@@ -1,6 +1,7 @@
 """章节管理API - CRUD、单章/批量生成、重写、局部重写"""
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -18,6 +19,10 @@ from app.gateway.novel_migrated.models.regeneration_task import RegenerationTask
 from app.gateway.novel_migrated.services.ai_service import AIService
 from app.gateway.novel_migrated.services.optimistic_lock import optimistic_update
 from app.gateway.novel_migrated.services.recovery_service import recovery_service
+from app.gateway.novel_migrated.services.workspace_document_service import (
+    WorkspaceSecurityError,
+    workspace_document_service,
+)
 from app.gateway.observability.context import update_trace_context
 
 logger = get_logger(__name__)
@@ -136,6 +141,81 @@ def _bind_idempotency_context(request: Request | None, request_model: _WriteRequ
     return idempotency_key
 
 
+def _compose_chapter_markdown(title: str, content: str) -> str:
+    normalized_title = (title or "未命名章节").strip() or "未命名章节"
+    normalized_content = (content or "").rstrip()
+    if normalized_content:
+        return f"# {normalized_title}\n\n{normalized_content}\n"
+    return f"# {normalized_title}\n"
+
+
+def _extract_title_and_body_from_markdown(markdown: str, fallback_title: str) -> tuple[str, str]:
+    text = (markdown or "").replace("\r\n", "\n")
+    lines = text.split("\n")
+    heading_index = next((idx for idx, line in enumerate(lines) if line.strip()), None)
+    if heading_index is None:
+        return fallback_title, ""
+
+    first = lines[heading_index].strip()
+    if first.startswith("#"):
+        parsed_title = first.lstrip("#").strip() or fallback_title
+        body = "\n".join(lines[heading_index + 1 :]).lstrip("\n")
+        return parsed_title, body
+    return fallback_title, text
+
+
+async def _sync_chapter_document(
+    *,
+    chapter: Chapter,
+    user_id: str,
+    db: AsyncSession,
+) -> dict[str, str]:
+    markdown = _compose_chapter_markdown(chapter.title or "", chapter.content or "")
+    record = await workspace_document_service.write_document(
+        user_id=user_id,
+        project_id=chapter.project_id,
+        entity_type="chapter",
+        entity_id=chapter.id,
+        content=markdown,
+        title=chapter.title or f"第{chapter.chapter_number}章",
+        tags=["chapter"],
+    )
+    await workspace_document_service.sync_record_to_db(
+        db=db,
+        user_id=user_id,
+        project_id=chapter.project_id,
+        record=record,
+    )
+    return {
+        "doc_path": record.path,
+        "content_hash": record.content_hash,
+        "doc_updated_at": record.mtime,
+    }
+
+
+async def _snapshot_chapter_history_before_mutation(
+    *,
+    chapter: Chapter,
+    user_id: str,
+) -> str | None:
+    if not (chapter.title or chapter.content):
+        return None
+    snapshot_content = _compose_chapter_markdown(chapter.title or "", chapter.content or "")
+    return await workspace_document_service.snapshot_chapter_history(
+        user_id=user_id,
+        project_id=chapter.project_id,
+        chapter_id=chapter.id,
+        content=snapshot_content,
+    )
+
+
+async def _safe_db_call(db: AsyncSession, method_name: str, *args) -> Any:
+    method = getattr(db, method_name, None)
+    if method is None:
+        return None
+    return await method(*args)
+
+
 @router.get("/project/{project_id}")
 async def list_chapters(
     project_id: str,
@@ -184,7 +264,20 @@ async def get_chapter(
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
     await verify_project_access(chapter.project_id, user_id, db)
-    return _serialize_chapter(chapter)
+    try:
+        file_payload = await workspace_document_service.read_document(
+            user_id=user_id,
+            project_id=chapter.project_id,
+            entity_type="chapter",
+            entity_id=chapter.id,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"章节文件不存在: {exc}") from exc
+    except WorkspaceSecurityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _serialize_chapter(chapter, file_payload=file_payload)
 
 
 @router.post("/project/{project_id}")
@@ -215,9 +308,26 @@ async def create_chapter(
         status="draft" if req.content else "planned",
     )
     db.add(chapter)
-    await db.commit()
-    await db.refresh(chapter)
-    return _serialize_chapter(chapter)
+    try:
+        supports_flush = hasattr(db, "flush")
+        if supports_flush:
+            await _safe_db_call(db, "flush")
+            await _sync_chapter_document(chapter=chapter, user_id=user_id, db=db)
+        await db.commit()
+        await _safe_db_call(db, "refresh", chapter)
+    except WorkspaceSecurityError as exc:
+        await _safe_db_call(db, "rollback")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        await _safe_db_call(db, "rollback")
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        await _safe_db_call(db, "rollback")
+        logger.exception("create_chapter file-truth sync failed: project_id=%s chapter_id=%s", project_id, chapter.id)
+        raise HTTPException(status_code=500, detail="章节落盘失败")
+    if not hasattr(db, "flush"):
+        return _serialize_chapter(chapter)
+    return await get_chapter(chapter.id, user_id=user_id, db=db)
 
 
 @router.put("/{chapter_id}")
@@ -250,15 +360,31 @@ async def update_chapter(
 
     if updates:
         try:
+            should_snapshot = req.content is not None or req.title is not None
+            if should_snapshot:
+                await _snapshot_chapter_history_before_mutation(chapter=chapter, user_id=user_id)
             await optimistic_update(Chapter, chapter_id, updates, db=db)
+            result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
+            chapter = result.scalar_one_or_none()
+            if chapter is None:
+                raise HTTPException(status_code=404, detail="Chapter not found")
+            await _sync_chapter_document(chapter=chapter, user_id=user_id, db=db)
             await db.commit()
         except ValueError as exc:
-            await db.rollback()
+            await _safe_db_call(db, "rollback")
             raise HTTPException(status_code=409, detail=str(exc))
+        except WorkspaceSecurityError as exc:
+            await _safe_db_call(db, "rollback")
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except HTTPException:
+            await _safe_db_call(db, "rollback")
+            raise
+        except Exception:
+            await _safe_db_call(db, "rollback")
+            logger.exception("update_chapter file-truth sync failed: chapter_id=%s", chapter_id)
+            raise HTTPException(status_code=500, detail="章节落盘失败")
 
-    result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
-    chapter = result.scalar_one_or_none()
-    return _serialize_chapter(chapter)
+    return await get_chapter(chapter_id, user_id=user_id, db=db)
 
 
 @router.delete("/{chapter_id}")
@@ -537,11 +663,24 @@ async def partial_regenerate(
         chunks.append(chunk)
     accumulated = "".join(chunks)
 
-    new_content = chapter.content.replace(req.selected_text, accumulated, 1) if chapter.content else accumulated
-    chapter.content = new_content
-    chapter.word_count = len(new_content)
-    await db.commit()
-    await db.refresh(chapter)
+    try:
+        await _snapshot_chapter_history_before_mutation(chapter=chapter, user_id=user_id)
+        new_content = chapter.content.replace(req.selected_text, accumulated, 1) if chapter.content else accumulated
+        chapter.content = new_content
+        chapter.word_count = len(new_content)
+        await _sync_chapter_document(chapter=chapter, user_id=user_id, db=db)
+        await db.commit()
+        await db.refresh(chapter)
+    except WorkspaceSecurityError as exc:
+        await _safe_db_call(db, "rollback")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        await _safe_db_call(db, "rollback")
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        await _safe_db_call(db, "rollback")
+        logger.exception("partial_regenerate file-truth sync failed: chapter_id=%s", chapter.id)
+        raise HTTPException(status_code=500, detail="章节落盘失败")
     return {"chapter_id": chapter.id, "regenerated_text": accumulated, "word_count": len(accumulated)}
 
 
@@ -568,7 +707,7 @@ async def update_chapter_status(
         await optimistic_update(Chapter, chapter_id, {"status": status}, db=db)
         await db.commit()
     except ValueError as exc:
-        await db.rollback()
+        await _safe_db_call(db, "rollback")
         raise HTTPException(status_code=409, detail=str(exc))
 
     await db.refresh(chapter)
@@ -601,19 +740,40 @@ async def reorder_chapters(
     return {"message": "Chapters reordered"}
 
 
-def _serialize_chapter(chapter: Chapter) -> dict:
+def _serialize_chapter(chapter: Chapter, *, file_payload: dict[str, Any] | None = None) -> dict:
+    title = chapter.title
+    content = chapter.content
+    doc_path = f"chapters/chapter_{chapter.id}.md"
+    doc_updated_at = chapter.updated_at.isoformat() if chapter.updated_at else None
+    raw_content = content or ""
+    content_hash = hashlib.sha256(raw_content.encode("utf-8")).hexdigest() if raw_content else ""
+
+    if file_payload:
+        markdown = str(file_payload.get("content", ""))
+        parsed_title, parsed_body = _extract_title_and_body_from_markdown(markdown, chapter.title or "未命名章节")
+        title = parsed_title
+        content = parsed_body
+        raw_content = markdown
+        doc_path = str(file_payload.get("doc_path") or doc_path)
+        content_hash = str(file_payload.get("content_hash") or "")
+        doc_updated_at = str(file_payload.get("doc_updated_at") or doc_updated_at)
+
     return {
         "id": chapter.id,
         "project_id": chapter.project_id,
         "chapter_number": chapter.chapter_number,
-        "title": chapter.title,
-        "content": chapter.content,
+        "title": title,
+        "content": content,
         "summary": chapter.summary,
         "word_count": chapter.word_count,
         "status": chapter.status,
         "outline_id": chapter.outline_id,
         "sub_index": chapter.sub_index,
         "expansion_plan": chapter.expansion_plan,
+        "doc_path": doc_path,
+        "content_source": "file",
+        "content_hash": content_hash,
+        "doc_updated_at": doc_updated_at,
         "created_at": chapter.created_at.isoformat() if chapter.created_at else None,
         "updated_at": chapter.updated_at.isoformat() if chapter.updated_at else None,
     }

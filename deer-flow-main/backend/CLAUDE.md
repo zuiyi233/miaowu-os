@@ -228,6 +228,13 @@ FastAPI application on port 8001 with health check at `GET /health`.
 | **Suggestions** (`/api/threads/{id}/suggestions`) | `POST /` - generate follow-up questions; rich list/block model content is normalized before JSON parsing |
 | **AI Provider** (`/api/ai`) | `POST /chat` - global chat; `POST /test-connection` - connectivity check; `GET /providers` - provider metadata |
 
+`novel_migrated` file-truth additions (workspace-first mode):
+- `POST /api/novels/{project_id}/workspace/init` initializes the canonical workspace tree plus `manifest.json`.
+- `POST /api/novels/{project_id}/workspace/rescan` rebuilds manifest from files and marks missing index rows as `stale`.
+- `GET /api/novels/{project_id}/documents/{entity_type}/{entity_id}` and `PUT ...` provide direct file read/write.
+- Chapter mutations now snapshot history at `history/chapters/{chapter_id}/v{n}.md` before content rewrites.
+- Development reset helper: `uv run python backend/scripts/reset_novel_file_truth_db.py` drops legacy content tables and reinitializes minimal schema mode (`NOVEL_FILE_TRUTH_SCHEMA_MODE=minimal_file_truth`).
+
 `/api/ai/*` security behavior:
 - Client-side plaintext `api_key` fields are deprecated and ignored by backend handlers.
 - If `DEERFLOW_AI_PROVIDER_API_TOKEN` is set, callers must provide `Authorization: Bearer <token>`.

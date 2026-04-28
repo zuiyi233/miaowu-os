@@ -7,16 +7,19 @@ import json
 import math
 import os
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.core.crypto import safe_decrypt
 from app.gateway.novel_migrated.core.database import AsyncSessionLocal
 from app.gateway.novel_migrated.core.logger import get_logger
+from app.gateway.novel_migrated.models.document_index import DocumentIndex
 from app.gateway.novel_migrated.models.settings import Settings
+from app.gateway.novel_migrated.services.workspace_document_service import workspace_document_service
 
 try:
     import chromadb  # type: ignore
@@ -33,6 +36,35 @@ logger = get_logger(__name__)
 # 配置常量
 _FALLBACK_STORE_MAX_CAPACITY = int(os.getenv("NOVEL_MIGRATED_FALLBACK_MAX_CAPACITY", "10000"))
 _HTTP_CLIENT_TIMEOUT = float(os.getenv("NOVEL_MIGRATED_HTTP_TIMEOUT", "30.0"))
+_RAG_CONTENT_MAX_CHARS = int(os.getenv("NOVEL_MIGRATED_RAG_CONTENT_MAX_CHARS", "12000"))
+
+_RAG_SUPPORTED_ENTITY_TYPES = {
+    "book",
+    "chapter",
+    "outline",
+    "character",
+    "relationship",
+    "organization",
+    "foreshadow",
+    "career",
+    "memory",
+    "analysis",
+    "note",
+}
+
+_MEMORY_TYPE_BY_ENTITY = {
+    "book": "project",
+    "chapter": "chapter_content",
+    "outline": "outline",
+    "character": "character_profile",
+    "relationship": "relationship",
+    "organization": "organization_profile",
+    "foreshadow": "foreshadow",
+    "career": "career_system",
+    "memory": "memory",
+    "analysis": "analysis",
+    "note": "note",
+}
 
 
 class MemoryService:
@@ -146,6 +178,201 @@ class MemoryService:
             name=collection_name,
             metadata={"hnsw:space": "cosine"},
         )
+
+    @staticmethod
+    def _build_document_vector_id(project_id: str, entity_type: str, entity_id: str) -> str:
+        digest = hashlib.sha256(f"{project_id}:{entity_type}:{entity_id}".encode()).hexdigest()
+        return f"doc-{digest[:40]}"
+
+    @staticmethod
+    def _normalize_document_for_rag(content: str, *, max_chars: int = _RAG_CONTENT_MAX_CHARS) -> str:
+        normalized = (content or "").replace("\r\n", "\n").strip()
+        if len(normalized) <= max_chars:
+            return normalized
+        return normalized[:max_chars]
+
+    @staticmethod
+    def _extract_chapter_number(entity_id: str) -> int:
+        raw = (entity_id or "").strip()
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        if not digits:
+            return 0
+        try:
+            return int(digits)
+        except ValueError:
+            return 0
+
+    def _build_document_metadata(self, doc: DocumentIndex) -> dict[str, Any]:
+        entity_type = (doc.entity_type or "").strip().lower()
+        memory_type = _MEMORY_TYPE_BY_ENTITY.get(entity_type, "document")
+        chapter_number = self._extract_chapter_number(doc.entity_id) if entity_type == "chapter" else 0
+        return {
+            "memory_type": memory_type,
+            "chapter_id": str(doc.entity_id if entity_type == "chapter" else ""),
+            "chapter_number": chapter_number,
+            "importance": 0.6 if entity_type == "chapter" else 0.5,
+            "importance_score": 0.6 if entity_type == "chapter" else 0.5,
+            "title": (doc.title or "").strip()[:200],
+            "tags": [],
+            "is_foreshadow": 1 if entity_type == "foreshadow" else 0,
+            "entity_type": entity_type,
+            "entity_id": doc.entity_id,
+            "doc_path": doc.doc_path,
+        }
+
+    async def _upsert_document_memory_fallback(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        memory_id: str,
+        content: str,
+        metadata: dict[str, Any],
+        embedding: list[float] | None,
+    ) -> None:
+        key = self._fallback_key(user_id, project_id)
+        items = self._fallback_store.setdefault(key, [])
+        created_at = datetime.now(tz=UTC).isoformat()
+
+        replaced = False
+        for item in items:
+            if item.get("id") != memory_id:
+                continue
+            item["content"] = content
+            item["metadata"] = metadata
+            item["embedding"] = embedding
+            item["created_at"] = created_at
+            replaced = True
+            break
+
+        if replaced:
+            return
+
+        if self._fallback_total_count >= _FALLBACK_STORE_MAX_CAPACITY:
+            if items:
+                # 本项目内优先淘汰最旧条目
+                items.pop(0)
+                self._fallback_total_count -= 1
+            else:
+                oldest_scope = next(iter(self._fallback_store), None)
+                if oldest_scope and self._fallback_store.get(oldest_scope):
+                    dropped = self._fallback_store.pop(oldest_scope, [])
+                    self._fallback_total_count -= len(dropped)
+
+        items.append(
+            {
+                "id": memory_id,
+                "content": content,
+                "metadata": metadata,
+                "embedding": embedding,
+                "created_at": created_at,
+            }
+        )
+        self._fallback_total_count += 1
+
+    async def sync_workspace_documents_incremental(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        db: AsyncSession,
+        limit: int | None = None,
+        force: bool = False,
+    ) -> dict[str, int]:
+        """从工作区文档增量同步到向量记忆索引。
+
+        - 数据源：workspace files + document_indexes（不读取正文 DB 字段）
+        - 增量：仅处理 `status != indexed` 的文档（或 force=True）
+        - 命名空间隔离：collection 已按 user_id/project_id 哈希隔离
+        """
+        scope_user = (user_id or "").strip() or "local_single_user"
+        scope_project = (project_id or "").strip()
+        if not scope_project:
+            return {"total": 0, "indexed": 0, "skipped": 0, "failed": 0}
+
+        query = (
+            select(DocumentIndex)
+            .where(
+                DocumentIndex.user_id == scope_user,
+                DocumentIndex.project_id == scope_project,
+                DocumentIndex.entity_type.in_(sorted(_RAG_SUPPORTED_ENTITY_TYPES)),
+            )
+            .order_by(DocumentIndex.doc_updated_at.desc())
+        )
+        result = await db.execute(query)
+        docs = list(result.scalars().all())
+        if limit is not None and limit > 0:
+            docs = docs[:limit]
+
+        stats = {"total": len(docs), "indexed": 0, "skipped": 0, "failed": 0}
+        collection = self.get_collection(scope_user, scope_project) if self._vector_enabled else None
+
+        for doc in docs:
+            if not force and (doc.status or "").lower() == "indexed":
+                stats["skipped"] += 1
+                continue
+
+            try:
+                payload = await workspace_document_service.read_document(
+                    user_id=scope_user,
+                    project_id=scope_project,
+                    entity_type=doc.entity_type,
+                    entity_id=doc.entity_id,
+                )
+                raw_content = str(payload.get("content", ""))
+                normalized_content = self._normalize_document_for_rag(raw_content)
+                if not normalized_content:
+                    doc.status = "indexed"
+                    doc.indexed_at = datetime.now(tz=UTC)
+                    stats["skipped"] += 1
+                    continue
+
+                metadata = self._build_document_metadata(doc)
+                memory_id = self._build_document_vector_id(scope_project, doc.entity_type, doc.entity_id)
+                vectors = await self._embed_texts(scope_user, [normalized_content])
+                embedding = vectors[0] if vectors and vectors[0] else None
+
+                if collection is not None and embedding is not None:
+                    try:
+                        collection.upsert(
+                            ids=[memory_id],
+                            embeddings=[embedding],
+                            documents=[normalized_content],
+                            metadatas=[metadata],
+                        )
+                    except AttributeError:
+                        # 兼容旧版 Chroma API（无 upsert）
+                        collection.delete(ids=[memory_id])
+                        collection.add(
+                            ids=[memory_id],
+                            embeddings=[embedding],
+                            documents=[normalized_content],
+                            metadatas=[metadata],
+                        )
+                else:
+                    await self._upsert_document_memory_fallback(
+                        user_id=scope_user,
+                        project_id=scope_project,
+                        memory_id=memory_id,
+                        content=normalized_content,
+                        metadata=metadata,
+                        embedding=embedding,
+                    )
+
+                doc.status = "indexed"
+                doc.indexed_at = datetime.now(tz=UTC)
+                stats["indexed"] += 1
+            except FileNotFoundError:
+                doc.status = "missing_file"
+                doc.indexed_at = datetime.now(tz=UTC)
+                stats["failed"] += 1
+            except Exception as exc:
+                logger.warning("⚠️ 文档增量索引失败: project=%s doc=%s/%s error=%s", scope_project, doc.entity_type, doc.entity_id, exc)
+                doc.status = "error"
+                doc.indexed_at = datetime.now(tz=UTC)
+                stats["failed"] += 1
+
+        return stats
 
     @staticmethod
     def _fallback_key(user_id: str, project_id: str) -> tuple[str, str]:

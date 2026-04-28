@@ -32,7 +32,7 @@ async def export_project(
     await verify_project_access(project_id, user_id, db)
 
     try:
-        zip_bytes = await get_import_export_service().export_project(project_id, db)
+        zip_bytes = await get_import_export_service().export_project(project_id, user_id, db)
     except ValueError as exc:
         logger.warning("导出项目失败: project_id=%s, error=%s", project_id, exc)
         raise HTTPException(status_code=404, detail="项目不存在") from exc

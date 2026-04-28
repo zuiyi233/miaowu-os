@@ -14,6 +14,13 @@ const lifecycleMixin = {
   updatedAt: z.string().datetime().optional(),
 };
 
+const documentMetaMixin = {
+  docPath: z.string().optional(),
+  contentSource: z.literal('file').or(z.string()).optional(),
+  contentHash: z.string().optional(),
+  docUpdatedAt: z.string().datetime().optional(),
+};
+
 export const characterSchema = z.object({
   id: z.string().uuid().or(z.string().startsWith('char-')),
   name: z.string().min(1, '角色名不能为空'),
@@ -28,6 +35,7 @@ export const characterSchema = z.object({
   backstory: z.string().optional(),
   factionId: z.string().optional(),
   ...embeddingMixin,
+  ...documentMetaMixin,
   ...lifecycleMixin,
 });
 
@@ -51,6 +59,7 @@ export const chapterSchema = z.object({
   novelId: z.string(),
   order: z.number().optional().default(0),
   wordCount: z.number().int().nonnegative().optional(),
+  ...documentMetaMixin,
   ...lifecycleMixin,
 });
 
@@ -64,6 +73,7 @@ export const outlineSchema = z.object({
   chapterNumber: z.number().int().positive().optional(),
   orderIndex: z.number().int().nonnegative().optional(),
   status: z.string().optional(),
+  ...documentMetaMixin,
   ...lifecycleMixin,
 });
 

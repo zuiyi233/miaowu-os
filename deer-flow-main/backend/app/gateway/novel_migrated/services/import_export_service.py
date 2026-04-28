@@ -1,70 +1,67 @@
 """项目导入导出服务"""
 from __future__ import annotations
 
+import io
 import json
 import zipfile
-import io
-from typing import Dict, Any, Optional
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from typing import Any
 
-from app.gateway.novel_migrated.models.project import Project
-from app.gateway.novel_migrated.models.chapter import Chapter
-from app.gateway.novel_migrated.models.character import Character
-from app.gateway.novel_migrated.models.outline import Outline
-from app.gateway.novel_migrated.models.career import Career
-from app.gateway.novel_migrated.models.foreshadow import Foreshadow
-from app.gateway.novel_migrated.models.memory import StoryMemory, PlotAnalysis
-from app.gateway.novel_migrated.models.relationship import (
-    CharacterRelationship, Organization, OrganizationMember, RelationshipType
-)
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.gateway.novel_migrated.core.logger import get_logger
+from app.gateway.novel_migrated.models.project import Project
+from app.gateway.novel_migrated.services.workspace_document_service import workspace_document_service
 
 logger = get_logger(__name__)
 
 
 class ImportExportService:
 
-    async def export_project(self, project_id: str, db: AsyncSession) -> bytes:
+    async def export_project(self, project_id: str, user_id: str, db: AsyncSession) -> bytes:
         project_result = await db.execute(select(Project).where(Project.id == project_id))
         project = project_result.scalar_one_or_none()
         if not project:
             raise ValueError(f"Project {project_id} not found")
 
-        export_data = {"version": "1.0", "project": self._serialize_model(project)}
+        await workspace_document_service.initialize_workspace(
+            user_id=user_id,
+            project_id=project_id,
+            title=project.title or "",
+            description=project.description or "",
+            theme=project.theme or "",
+            genre=project.genre or "",
+        )
+        workspace = workspace_document_service.workspace_dir(user_id, project_id)
 
-        for model_cls, key in [
-            (Chapter, "chapters"), (Character, "characters"),
-            (Outline, "outlines"), (Career, "careers"),
-            (Foreshadow, "foreshadows"), (StoryMemory, "memories"),
-            (PlotAnalysis, "plot_analyses"),
-            (CharacterRelationship, "relationships"),
-            (Organization, "organizations"),
-            (OrganizationMember, "organization_members"),
-            (RelationshipType, "relationship_types"),
-        ]:
-            result = await db.execute(select(model_cls).where(model_cls.project_id == project_id))
-            items = result.scalars().all()
-            export_data[key] = [self._serialize_model(item) for item in items]
-
-        json_bytes = json.dumps(export_data, ensure_ascii=False, default=str, indent=2).encode('utf-8')
+        export_data = {"version": "2.0-file-workspace", "project": self._serialize_model(project)}
+        json_bytes = json.dumps(export_data, ensure_ascii=False, default=str, indent=2).encode("utf-8")
 
         buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("project_data.json", json_bytes)
+            for path in workspace.rglob("*"):
+                if not path.is_file():
+                    continue
+                rel = path.relative_to(workspace).as_posix()
+                zf.write(path, arcname=f"workspace/{rel}")
         return buffer.getvalue()
 
     async def import_project(self, user_id: str, zip_bytes: bytes, db: AsyncSession) -> str:
         buffer = io.BytesIO(zip_bytes)
-        with zipfile.ZipFile(buffer, 'r') as zf:
-            json_str = zf.read("project_data.json").decode('utf-8')
+        with zipfile.ZipFile(buffer, "r") as zf:
+            if "project_data.json" in zf.namelist():
+                json_str = zf.read("project_data.json").decode("utf-8")
+                data = json.loads(json_str)
+            else:
+                data = {"project": {}}
+            archive_files = [name for name in zf.namelist() if name.startswith("workspace/") and not name.endswith("/")]
 
-        data = json.loads(json_str)
         project_data = data.get("project", {})
 
         project = Project(
             user_id=user_id,
-            title=project_data.get("title", "导入项目"),
+            title=project_data.get("title", "导入项目（文件工作区）"),
             description=project_data.get("description", ""),
             theme=project_data.get("theme", ""),
             genre=project_data.get("genre", ""),
@@ -81,34 +78,35 @@ class ImportExportService:
         db.add(project)
         await db.flush()
 
-        old_to_new_ids: Dict[str, Dict[str, str]] = {}
+        await workspace_document_service.initialize_workspace(
+            user_id=user_id,
+            project_id=project.id,
+            title=project.title or "",
+            description=project.description or "",
+            theme=project.theme or "",
+            genre=project.genre or "",
+        )
+        workspace = workspace_document_service.workspace_dir(user_id, project.id)
 
-        for model_cls, key, id_field in [
-            (Character, "characters", "id"),
-            (Outline, "outlines", "id"),
-            (Career, "careers", "id"),
-        ]:
-            old_to_new_ids[key] = {}
-            for item_data in data.get(key, []):
-                old_id = item_data.get(id_field)
-                item = model_cls(project_id=project.id, **{
-                    k: v for k, v in item_data.items()
-                    if k not in [id_field, "project_id", "created_at", "updated_at"]
-                })
-                db.add(item)
-                await db.flush()
-                old_to_new_ids[key][old_id] = item.id
+        with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
+            for member in archive_files:
+                rel = member[len("workspace/") :].strip()
+                if not rel:
+                    continue
+                target = (workspace / rel).resolve()
+                if not str(target).startswith(str(workspace.resolve())):
+                    raise ValueError(f"非法路径: {member}")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(member, "r") as src, open(target, "wb") as dst:
+                    dst.write(src.read())
 
-        for item_data in data.get("chapters", []):
-            old_outline_id = item_data.get("outline_id")
-            new_outline_id = old_to_new_ids.get("outlines", {}).get(old_outline_id) if old_outline_id else None
-            chapter = Chapter(
-                project_id=project.id,
-                outline_id=new_outline_id,
-                **{k: v for k, v in item_data.items()
-                   if k not in ["id", "project_id", "outline_id", "created_at", "updated_at"]}
-            )
-            db.add(chapter)
+        records = await workspace_document_service.rescan_workspace(user_id=user_id, project_id=project.id)
+        await workspace_document_service.sync_records_to_db(
+            db=db,
+            user_id=user_id,
+            project_id=project.id,
+            records=records,
+        )
 
         await db.commit()
         return project.id

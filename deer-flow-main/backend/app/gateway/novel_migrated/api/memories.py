@@ -1,9 +1,11 @@
 """记忆管理API - 提供记忆的查询、分析等接口"""
 import asyncio
+import json
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import and_, delete, desc, select
+from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
@@ -18,11 +20,70 @@ from app.gateway.novel_migrated.services.character_state_update_service import C
 from app.gateway.novel_migrated.services.foreshadow_service import foreshadow_service
 from app.gateway.novel_migrated.services.memory_service import memory_service
 from app.gateway.novel_migrated.services.plot_analyzer import get_plot_analyzer
+from app.gateway.novel_migrated.services.workspace_document_service import WorkspaceSecurityError, workspace_document_service
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/memories", tags=["memories"])
 MEMORY_MODULE_ID = "memory-ai"
 _ANALYZE_CHAPTER_TIMEOUT_SECONDS = 180
+
+
+def _compose_memory_markdown(*, title: str, content: str, memory_type: str, chapter_id: str, chapter_number: int, metadata: dict[str, Any]) -> str:
+    payload = {
+        "title": title,
+        "content": content,
+        "memory_type": memory_type,
+        "chapter_id": chapter_id,
+        "chapter_number": chapter_number,
+        "metadata": metadata,
+    }
+    return f"# {title or '记忆片段'}\n\n```json\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n```\n"
+
+
+def _extract_json_block(markdown: str) -> dict[str, Any] | None:
+    text = (markdown or "").replace("\r\n", "\n")
+    start = text.find("```json")
+    if start < 0:
+        return None
+    start += len("```json")
+    end = text.find("```", start)
+    if end < 0:
+        return None
+    raw = text[start:end].strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+async def _best_effort_sync_workspace_memory_index(
+    *,
+    user_id: str,
+    project_id: str,
+    db: AsyncSession,
+) -> None:
+    """按文件索引增量刷新向量记忆（失败不阻断主流程）。"""
+    try:
+        sync_stats = await memory_service.sync_workspace_documents_incremental(
+            user_id=user_id,
+            project_id=project_id,
+            db=db,
+        )
+        if sync_stats.get("indexed", 0) or sync_stats.get("failed", 0):
+            logger.info(
+                "🧠 workspace->memory 增量同步: project=%s indexed=%s skipped=%s failed=%s",
+                project_id,
+                sync_stats.get("indexed", 0),
+                sync_stats.get("skipped", 0),
+                sync_stats.get("failed", 0),
+            )
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.warning("⚠️ workspace->memory 增量同步失败（已降级继续）: project=%s error=%s", project_id, exc)
 
 
 @router.post("/projects/{project_id}/analyze-chapter/{chapter_id}")
@@ -143,6 +204,24 @@ async def analyze_chapter(
 
         db.add(plot_analysis)
         await db.flush()
+
+        # 文件真值：章节分析报告
+        analysis_record = await workspace_document_service.write_document(
+            user_id=effective_user_id,
+            project_id=project_id,
+            entity_type="analysis",
+            entity_id=chapter_id,
+            content=analysis_result,
+            title=f"章节分析 第{chapter.chapter_number}章",
+            tags=["analysis", "chapter"],
+        )
+        await workspace_document_service.sync_record_to_db(
+            db=db,
+            user_id=effective_user_id,
+            project_id=project_id,
+            record=analysis_record,
+            status="indexed",
+        )
         
         # 从分析结果中提取记忆片段
         memories_data = analyzer.extract_memories_from_analysis(
@@ -214,6 +293,34 @@ async def analyze_chapter(
             saved_count = len(memory_entries)
 
         await db.flush()
+
+        # 文件真值：记忆片段
+        for memory_id, mem_data in memory_entries:
+            memory_title = str(mem_data.get("title") or mem_data.get("type") or f"记忆 {memory_id}")
+            memory_markdown = _compose_memory_markdown(
+                title=memory_title,
+                content=str(mem_data.get("content") or ""),
+                memory_type=str(mem_data.get("type") or ""),
+                chapter_id=chapter_id,
+                chapter_number=chapter.chapter_number or 0,
+                metadata=mem_data.get("metadata", {}),
+            )
+            memory_record = await workspace_document_service.write_document(
+                user_id=effective_user_id,
+                project_id=project_id,
+                entity_type="memory",
+                entity_id=memory_id,
+                content=memory_markdown,
+                title=memory_title,
+                tags=["memory", str(mem_data.get("type") or "unknown")],
+            )
+            await workspace_document_service.sync_record_to_db(
+                db=db,
+                user_id=effective_user_id,
+                project_id=project_id,
+                record=memory_record,
+                status="indexed",
+            )
 
         entity_changes = {
             "careers": {"updated_count": 0, "changes": []},
@@ -296,7 +403,7 @@ async def analyze_chapter(
         
     except HTTPException:
         raise
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("❌ 章节分析超时: project_id=%s chapter_id=%s timeout=%ss", project_id, chapter_id, _ANALYZE_CHAPTER_TIMEOUT_SECONDS)
         await db.rollback()
         raise HTTPException(status_code=504, detail="章节分析超时，请稍后重试")
@@ -318,29 +425,55 @@ async def get_project_memories(
     """获取项目的记忆列表"""
     try:
         user_id = get_user_id(request)
-        
-        # 验证用户权限
         await verify_project_access(project_id, user_id, db)
-        
-        # 构建查询
-        query = select(StoryMemory).where(StoryMemory.project_id == project_id)
-        
-        if memory_type:
-            query = query.where(StoryMemory.memory_type == memory_type)
-        if chapter_id:
-            query = query.where(StoryMemory.chapter_id == chapter_id)
-        
-        query = query.order_by(desc(StoryMemory.importance_score), desc(StoryMemory.created_at)).limit(limit)
-        
-        result = await db.execute(query)
-        memories = result.scalars().all()
-        
+
+        indexes = await workspace_document_service.list_index_records(
+            db=db,
+            user_id=user_id,
+            project_id=project_id,
+            entity_type="memory",
+        )
+        memories: list[dict[str, Any]] = []
+        for idx in indexes:
+            if len(memories) >= limit:
+                break
+            doc = await workspace_document_service.read_document(
+                user_id=user_id,
+                project_id=project_id,
+                entity_type="memory",
+                entity_id=idx.entity_id,
+            )
+            parsed = _extract_json_block(str(doc.get("content") or ""))
+            if not parsed:
+                continue
+            if memory_type and str(parsed.get("memory_type") or "") != memory_type:
+                continue
+            if chapter_id and str(parsed.get("chapter_id") or "") != chapter_id:
+                continue
+            memories.append(
+                {
+                    "id": idx.entity_id,
+                    "project_id": project_id,
+                    "chapter_id": parsed.get("chapter_id"),
+                    "memory_type": parsed.get("memory_type"),
+                    "title": parsed.get("title"),
+                    "content": parsed.get("content"),
+                    "metadata": parsed.get("metadata") or {},
+                    "doc_path": doc.get("doc_path"),
+                    "content_source": "file",
+                    "content_hash": doc.get("content_hash"),
+                    "doc_updated_at": doc.get("doc_updated_at"),
+                }
+            )
+
         return {
             "success": True,
-            "memories": [mem.to_dict() for mem in memories],
+            "memories": memories,
             "total": len(memories)
         }
-        
+    except (WorkspaceSecurityError, ValueError) as e:
+        logger.error(f"❌ 获取记忆失败: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"❌ 获取记忆失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -356,28 +489,35 @@ async def get_chapter_analysis(
     """获取章节的剧情分析"""
     try:
         user_id = get_user_id(request)
-        
-        # 验证用户权限
         await verify_project_access(project_id, user_id, db)
-        
-        result = await db.execute(
-            select(PlotAnalysis).where(
-                and_(
-                    PlotAnalysis.project_id == project_id,
-                    PlotAnalysis.chapter_id == chapter_id
-                )
-            )
+
+        payload = await workspace_document_service.read_document(
+            user_id=user_id,
+            project_id=project_id,
+            entity_type="analysis",
+            entity_id=chapter_id,
         )
-        analysis = result.scalar_one_or_none()
-        
-        if not analysis:
+        raw_content = str(payload.get("content") or "").strip()
+        if not raw_content:
             raise HTTPException(status_code=404, detail="该章节还未进行分析")
+        try:
+            analysis = json.loads(raw_content)
+        except json.JSONDecodeError:
+            analysis = {"raw": raw_content}
         
         return {
             "success": True,
-            "analysis": analysis.to_dict()
+            "analysis": analysis,
+            "doc_path": payload.get("doc_path"),
+            "content_source": "file",
+            "content_hash": payload.get("content_hash"),
+            "doc_updated_at": payload.get("doc_updated_at"),
         }
-        
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="该章节还未进行分析")
+    except (WorkspaceSecurityError, ValueError) as e:
+        logger.error(f"❌ 获取分析失败: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
@@ -412,6 +552,11 @@ async def search_memories(
         
         # 验证用户权限
         await verify_project_access(project_id, effective_user_id, db)
+        await _best_effort_sync_workspace_memory_index(
+            user_id=effective_user_id,
+            project_id=project_id,
+            db=db,
+        )
         
         # 统一语义：内部只使用 min_similarity。
         # v1 兼容旧客户端：若传入已弃用的 min_importance，则作为别名映射。
@@ -462,6 +607,11 @@ async def get_unresolved_foreshadows(
         
         # 验证用户权限
         await verify_project_access(project_id, user_id, db)
+        await _best_effort_sync_workspace_memory_index(
+            user_id=user_id,
+            project_id=project_id,
+            db=db,
+        )
         
         # 从向量库搜索
         foreshadows = await memory_service.find_unresolved_foreshadows(
@@ -493,6 +643,11 @@ async def get_memory_stats(
         
         # 验证用户权限
         await verify_project_access(project_id, user_id, db)
+        await _best_effort_sync_workspace_memory_index(
+            user_id=user_id,
+            project_id=project_id,
+            db=db,
+        )
         
         stats = await memory_service.get_memory_stats(
             user_id=user_id,
@@ -519,11 +674,9 @@ async def delete_chapter_memories(
     """删除章节的所有记忆"""
     try:
         user_id = get_user_id(request)
-        
-        # 验证用户权限
         await verify_project_access(project_id, user_id, db)
-        
-        # 从数据库删除
+
+        # 从数据库删除（运行态兼容）
         result = await db.execute(
             select(StoryMemory).where(
                 and_(
@@ -533,24 +686,78 @@ async def delete_chapter_memories(
             )
         )
         memories = result.scalars().all()
-        
         for memory in memories:
             await db.delete(memory)
-        
+
+        # 删除文件真值中的记忆文档
+        deleted_file_count = 0
+        indexes = await workspace_document_service.list_index_records(
+            db=db,
+            user_id=user_id,
+            project_id=project_id,
+            entity_type="memory",
+            include_stale=False,
+        )
+        workspace = workspace_document_service.workspace_dir(user_id, project_id)
+        for idx in indexes:
+            try:
+                doc_payload = await workspace_document_service.read_document(
+                    user_id=user_id,
+                    project_id=project_id,
+                    entity_type="memory",
+                    entity_id=idx.entity_id,
+                )
+            except FileNotFoundError:
+                continue
+            parsed = _extract_json_block(str(doc_payload.get("content") or ""))
+            if not parsed:
+                continue
+            if str(parsed.get("chapter_id") or "") != chapter_id:
+                continue
+
+            relative_path = str(idx.doc_path or "").strip()
+            if not relative_path:
+                continue
+            target = (workspace / relative_path).resolve()
+            if not str(target).startswith(str(workspace.resolve())):
+                continue
+            if target.exists() and target.is_file():
+                target.unlink()
+                deleted_file_count += 1
+
+        # 重扫并标记 stale
+        records = await workspace_document_service.rescan_workspace(
+            user_id=user_id,
+            project_id=project_id,
+        )
+        sync_stats = await workspace_document_service.sync_records_to_db(
+            db=db,
+            user_id=user_id,
+            project_id=project_id,
+            records=records,
+            status="pending",
+            mark_stale=True,
+        )
+
         # 从向量库删除
         await memory_service.delete_chapter_memories(
             user_id=user_id,
             project_id=project_id,
             chapter_id=chapter_id
         )
-        
         await db.commit()
-        
+
         return {
             "success": True,
-            "message": f"已删除{len(memories)}条记忆"
+            "message": f"已删除{len(memories)}条数据库记忆与{deleted_file_count}个文件记忆",
+            "deleted_db_count": len(memories),
+            "deleted_file_count": deleted_file_count,
+            "index_sync": sync_stats,
         }
-        
+    except WorkspaceSecurityError as e:
+        logger.error(f"❌ 删除记忆失败(路径安全): {str(e)}")
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"❌ 删除记忆失败: {str(e)}")
         await db.rollback()

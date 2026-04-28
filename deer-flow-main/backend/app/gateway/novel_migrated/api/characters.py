@@ -1,24 +1,29 @@
 """角色管理API - CRUD、批量生成、单个生成"""
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import AliasChoices, BaseModel, Field
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
 from app.gateway.novel_migrated.api.settings import get_user_ai_service
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
+from app.gateway.novel_migrated.models.career import Career
 from app.gateway.novel_migrated.models.character import Character
 from app.gateway.novel_migrated.models.project import Project
-from app.gateway.novel_migrated.models.career import Career, CharacterCareer
-from app.gateway.novel_migrated.models.relationship import CharacterRelationship, Organization, OrganizationMember
+from app.gateway.novel_migrated.models.relationship import CharacterRelationship, Organization
 from app.gateway.novel_migrated.services.ai_service import AIService
 from app.gateway.novel_migrated.services.prompt_service import PromptService
+from app.gateway.novel_migrated.services.workspace_document_service import (
+    WorkspaceSecurityError,
+    workspace_document_service,
+)
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/characters", tags=["characters"])
@@ -66,6 +71,135 @@ class SingleGenerateRequest(BaseModel):
     is_organization: bool = False
 
 
+def _decode_traits(value: str | list | None) -> list[Any] | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, list) else [parsed]
+    except Exception:
+        return [value]
+
+
+def _character_truth_payload(character: Character) -> dict[str, Any]:
+    return {
+        "name": character.name,
+        "is_organization": bool(character.is_organization),
+        "role_type": character.role_type,
+        "personality": character.personality,
+        "background": character.background,
+        "appearance": character.appearance,
+        "age": character.age,
+        "gender": character.gender,
+        "organization_type": character.organization_type,
+        "organization_purpose": character.organization_purpose,
+        "current_state": character.current_state,
+        "traits": _decode_traits(character.traits),
+        "relationships": character.relationships,
+        "main_career_id": character.main_career_id,
+        "main_career_stage": character.main_career_stage,
+        "avatar_url": character.avatar_url,
+    }
+
+
+def _compose_character_markdown(character: Character) -> str:
+    payload = _character_truth_payload(character)
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    return f"# {character.name or '未命名角色'}\n\n```json\n{body}\n```\n"
+
+
+def _extract_character_truth_from_markdown(markdown: str) -> dict[str, Any] | None:
+    text = (markdown or "").replace("\r\n", "\n")
+    marker = "```json"
+    start = text.find(marker)
+    if start == -1:
+        return None
+    start += len(marker)
+    end = text.find("```", start)
+    if end == -1:
+        return None
+    raw_json = text[start:end].strip()
+    if not raw_json:
+        return None
+    try:
+        parsed = json.loads(raw_json)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+async def _sync_character_document(
+    *,
+    character: Character,
+    user_id: str,
+    db: AsyncSession,
+) -> dict[str, str]:
+    record = await workspace_document_service.write_document(
+        user_id=user_id,
+        project_id=character.project_id,
+        entity_type="character",
+        entity_id=character.id,
+        content=_compose_character_markdown(character),
+        title=character.name or "角色",
+        tags=["character"],
+    )
+    await workspace_document_service.sync_record_to_db(
+        db=db,
+        user_id=user_id,
+        project_id=character.project_id,
+        record=record,
+    )
+    return {
+        "doc_path": record.path,
+        "content_hash": record.content_hash,
+        "doc_updated_at": record.mtime,
+    }
+
+
+def _compose_organization_markdown_from_character(character: Character) -> str:
+    payload = {
+        "id": character.id,
+        "project_id": character.project_id,
+        "name": character.name,
+        "organization_type": character.organization_type,
+        "organization_purpose": character.organization_purpose,
+        "personality": character.personality,
+        "background": character.background,
+        "appearance": character.appearance,
+        "members": [],
+    }
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    return f"# {character.name or '未命名组织'}\n\n```json\n{body}\n```\n"
+
+
+async def _sync_organization_document_if_needed(
+    *,
+    character: Character,
+    user_id: str,
+    db: AsyncSession,
+) -> None:
+    if not character.is_organization:
+        return
+    record = await workspace_document_service.write_document(
+        user_id=user_id,
+        project_id=character.project_id,
+        entity_type="organization",
+        entity_id=character.id,
+        content=_compose_organization_markdown_from_character(character),
+        title=character.name or "组织",
+        tags=["organization"],
+    )
+    await workspace_document_service.sync_record_to_db(
+        db=db,
+        user_id=user_id,
+        project_id=character.project_id,
+        record=record,
+        status="indexed",
+    )
+
+
 @router.get("/project/{project_id}")
 async def list_characters(
     project_id: str,
@@ -97,7 +231,20 @@ async def get_character(
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
     await verify_project_access(character.project_id, user_id, db)
-    return _serialize_character(character)
+    try:
+        file_payload = await workspace_document_service.read_document(
+            user_id=user_id,
+            project_id=character.project_id,
+            entity_type="character",
+            entity_id=character.id,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"角色文件不存在: {exc}") from exc
+    except WorkspaceSecurityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _serialize_character(character, file_payload=file_payload)
 
 
 @router.post("/project/{project_id}")
@@ -125,9 +272,23 @@ async def create_character(
         relationships=req.relationships,
     )
     db.add(character)
-    await db.commit()
-    await db.refresh(character)
-    return _serialize_character(character)
+    try:
+        await db.flush()
+        await _sync_character_document(character=character, user_id=user_id, db=db)
+        await _sync_organization_document_if_needed(character=character, user_id=user_id, db=db)
+        await db.commit()
+        await db.refresh(character)
+    except WorkspaceSecurityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        await db.rollback()
+        logger.exception("create_character file-truth sync failed: project_id=%s character_id=%s", project_id, character.id)
+        raise HTTPException(status_code=500, detail="角色落盘失败")
+    return await get_character(character.id, user_id=user_id, db=db)
 
 
 @router.put("/{character_id}")
@@ -154,9 +315,22 @@ async def update_character(
     if req.traits is not None:
         character.traits = json.dumps(req.traits, ensure_ascii=False)
 
-    await db.commit()
-    await db.refresh(character)
-    return _serialize_character(character)
+    try:
+        await _sync_character_document(character=character, user_id=user_id, db=db)
+        await _sync_organization_document_if_needed(character=character, user_id=user_id, db=db)
+        await db.commit()
+        await db.refresh(character)
+    except WorkspaceSecurityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        await db.rollback()
+        logger.exception("update_character file-truth sync failed: character_id=%s", character_id)
+        raise HTTPException(status_code=500, detail="角色落盘失败")
+    return await get_character(character_id, user_id=user_id, db=db)
 
 
 @router.delete("/{character_id}")
@@ -275,9 +449,11 @@ async def generate_single_character(
             )
             db.add(org)
 
+        await _sync_character_document(character=character, user_id=user_id, db=db)
+        await _sync_organization_document_if_needed(character=character, user_id=user_id, db=db)
         await db.commit()
         await db.refresh(character)
-        return _serialize_character(character)
+        return await get_character(character.id, user_id=user_id, db=db)
 
     except json.JSONDecodeError as e:
         logger.error(f"Parse character generation failed (invalid JSON): {e}")
@@ -301,12 +477,12 @@ async def get_characters_summary(
 
     char_result = await db.execute(
         select(func.count(Character.id)).where(
-            Character.project_id == project_id, Character.is_organization == False))
+            Character.project_id == project_id, Character.is_organization.is_(False)))
     char_count = char_result.scalar() or 0
 
     org_result = await db.execute(
         select(func.count(Character.id)).where(
-            Character.project_id == project_id, Character.is_organization == True))
+            Character.project_id == project_id, Character.is_organization.is_(True)))
     org_count = org_result.scalar() or 0
 
     role_result = await db.execute(
@@ -323,7 +499,7 @@ async def get_characters_summary(
     }
 
 
-def _serialize_character(c: Character) -> dict:
+def _serialize_character(c: Character, *, file_payload: dict[str, Any] | None = None) -> dict:
     traits = None
     if c.traits:
         try:
@@ -331,25 +507,50 @@ def _serialize_character(c: Character) -> dict:
         except json.JSONDecodeError:
             traits = c.traits
 
+    truth_overrides = {}
+    doc_path = f"characters/{c.id}.md"
+    doc_updated_at = c.updated_at.isoformat() if c.updated_at else None
+    if file_payload:
+        parsed_truth = _extract_character_truth_from_markdown(str(file_payload.get("content", "")))
+        if parsed_truth:
+            truth_overrides = parsed_truth
+            traits = parsed_truth.get("traits", traits)
+        content_hash = str(file_payload.get("content_hash") or "")
+        doc_path = str(file_payload.get("doc_path") or doc_path)
+        doc_updated_at = str(file_payload.get("doc_updated_at") or doc_updated_at)
+    else:
+        hash_payload = {
+            "name": c.name,
+            "personality": c.personality,
+            "background": c.background,
+            "appearance": c.appearance,
+            "current_state": c.current_state,
+        }
+        content_hash = hashlib.sha256(json.dumps(hash_payload, ensure_ascii=False).encode("utf-8")).hexdigest()
+
     return {
         "id": c.id,
         "project_id": c.project_id,
-        "name": c.name,
-        "is_organization": c.is_organization,
-        "role_type": c.role_type,
-        "personality": c.personality,
-        "background": c.background,
-        "appearance": c.appearance,
-        "age": c.age,
-        "gender": c.gender,
-        "organization_type": c.organization_type,
-        "organization_purpose": c.organization_purpose,
-        "current_state": c.current_state,
+        "name": truth_overrides.get("name", c.name),
+        "is_organization": truth_overrides.get("is_organization", c.is_organization),
+        "role_type": truth_overrides.get("role_type", c.role_type),
+        "personality": truth_overrides.get("personality", c.personality),
+        "background": truth_overrides.get("background", c.background),
+        "appearance": truth_overrides.get("appearance", c.appearance),
+        "age": truth_overrides.get("age", c.age),
+        "gender": truth_overrides.get("gender", c.gender),
+        "organization_type": truth_overrides.get("organization_type", c.organization_type),
+        "organization_purpose": truth_overrides.get("organization_purpose", c.organization_purpose),
+        "current_state": truth_overrides.get("current_state", c.current_state),
         "traits": traits,
-        "relationships": c.relationships,
-        "main_career_id": c.main_career_id,
-        "main_career_stage": c.main_career_stage,
-        "avatar_url": c.avatar_url,
+        "relationships": truth_overrides.get("relationships", c.relationships),
+        "main_career_id": truth_overrides.get("main_career_id", c.main_career_id),
+        "main_career_stage": truth_overrides.get("main_career_stage", c.main_career_stage),
+        "avatar_url": truth_overrides.get("avatar_url", c.avatar_url),
+        "doc_path": doc_path,
+        "content_source": "file",
+        "content_hash": content_hash,
+        "doc_updated_at": doc_updated_at,
         "created_at": c.created_at.isoformat() if c.created_at else None,
         "updated_at": c.updated_at.isoformat() if c.updated_at else None,
     }

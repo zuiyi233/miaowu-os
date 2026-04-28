@@ -2,6 +2,7 @@
 """职业管理API"""
 import json
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
@@ -24,6 +25,7 @@ from app.gateway.novel_migrated.schemas.career import (
     SetMainCareerRequest,
     UpdateCareerStageRequest,
 )
+from app.gateway.novel_migrated.services.workspace_document_service import WorkspaceSecurityError, workspace_document_service
 from app.gateway.novel_migrated.utils.sse_response import SSEResponse, WizardProgressTracker, create_sse_response
 
 router = APIRouter(prefix="/api/careers", tags=["职业管理"])
@@ -51,6 +53,119 @@ def _safe_load_career_attribute_bonuses(career: Career):
         return None
 
 
+def _career_truth_payload(career: Career) -> dict[str, Any]:
+    return {
+        "id": career.id,
+        "project_id": career.project_id,
+        "name": career.name,
+        "type": career.type,
+        "description": career.description,
+        "category": career.category,
+        "stages": _safe_load_career_stages(career),
+        "max_stage": career.max_stage,
+        "requirements": career.requirements,
+        "special_abilities": career.special_abilities,
+        "worldview_rules": career.worldview_rules,
+        "attribute_bonuses": _safe_load_career_attribute_bonuses(career),
+        "source": career.source,
+        "created_at": career.created_at.isoformat() if career.created_at else None,
+        "updated_at": career.updated_at.isoformat() if career.updated_at else None,
+    }
+
+
+def _compose_career_markdown(career: Career) -> str:
+    payload = _career_truth_payload(career)
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    return f"# {career.name or '未命名职业'}\n\n```json\n{body}\n```\n"
+
+
+def _extract_career_truth(markdown: str) -> dict[str, Any] | None:
+    text = (markdown or "").replace("\r\n", "\n")
+    start = text.find("```json")
+    if start < 0:
+        return None
+    start += len("```json")
+    end = text.find("```", start)
+    if end < 0:
+        return None
+    raw = text[start:end].strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+async def _sync_career_document(
+    *,
+    career: Career,
+    user_id: str,
+    db: AsyncSession,
+) -> dict[str, str]:
+    record = await workspace_document_service.write_document(
+        user_id=user_id,
+        project_id=career.project_id,
+        entity_type="career",
+        entity_id=career.id,
+        content=_compose_career_markdown(career),
+        title=career.name,
+        tags=["career"],
+    )
+    await workspace_document_service.sync_record_to_db(
+        db=db,
+        user_id=user_id,
+        project_id=career.project_id,
+        record=record,
+        status="indexed",
+    )
+    return {
+        "doc_path": record.path,
+        "content_hash": record.content_hash,
+        "doc_updated_at": record.mtime,
+    }
+
+
+def _career_response_dict(career: Career, file_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    data = _career_truth_payload(career)
+    doc_path = f"careers/{career.id}.md"
+    content_hash = ""
+    doc_updated_at = career.updated_at.isoformat() if career.updated_at else None
+
+    if file_payload:
+        parsed = _extract_career_truth(str(file_payload.get("content", "")))
+        if parsed:
+            data.update({k: v for k, v in parsed.items() if k in data})
+            if isinstance(data.get("stages"), list):
+                data["stages"] = data["stages"]
+        doc_path = str(file_payload.get("doc_path") or doc_path)
+        content_hash = str(file_payload.get("content_hash") or "")
+        doc_updated_at = str(file_payload.get("doc_updated_at") or doc_updated_at)
+
+    return {
+        "id": career.id,
+        "project_id": career.project_id,
+        "name": data.get("name") or career.name,
+        "type": data.get("type") or career.type,
+        "description": data.get("description"),
+        "category": data.get("category"),
+        "stages": data.get("stages") or [],
+        "max_stage": int(data.get("max_stage") or career.max_stage or 0),
+        "requirements": data.get("requirements"),
+        "special_abilities": data.get("special_abilities"),
+        "worldview_rules": data.get("worldview_rules"),
+        "attribute_bonuses": data.get("attribute_bonuses"),
+        "source": data.get("source") or career.source,
+        "created_at": career.created_at,
+        "updated_at": career.updated_at,
+        "doc_path": doc_path,
+        "content_source": "file",
+        "content_hash": content_hash,
+        "doc_updated_at": doc_updated_at,
+    }
+
+
 @router.get("", response_model=CareerListResponse, summary="获取职业列表")
 async def get_careers(
     project_id: str,
@@ -60,55 +175,43 @@ async def get_careers(
     """获取指定项目的所有职业"""
     user_id = get_user_id(request)
     await verify_project_access(project_id, user_id, db)
-    
-    # 获取总数
-    count_result = await db.execute(
-        select(func.count(Career.id)).where(Career.project_id == project_id)
-    )
-    total = count_result.scalar_one()
-    
-    # 获取职业列表
+
     result = await db.execute(
         select(Career)
         .where(Career.project_id == project_id)
         .order_by(Career.type, Career.created_at.desc())
     )
     careers = result.scalars().all()
-    
-    # 分类返回
+
     main_careers = []
     sub_careers = []
-    
+
+    missing_docs: list[str] = []
     for career in careers:
-        # 解析JSON字段
-        stages = _safe_load_career_stages(career)
-        attribute_bonuses = _safe_load_career_attribute_bonuses(career)
-        
-        career_dict = {
-            "id": career.id,
-            "project_id": career.project_id,
-            "name": career.name,
-            "type": career.type,
-            "description": career.description,
-            "category": career.category,
-            "stages": stages,
-            "max_stage": career.max_stage,
-            "requirements": career.requirements,
-            "special_abilities": career.special_abilities,
-            "worldview_rules": career.worldview_rules,
-            "attribute_bonuses": attribute_bonuses,
-            "source": career.source,
-            "created_at": career.created_at,
-            "updated_at": career.updated_at
-        }
-        
+        try:
+            file_payload = await workspace_document_service.read_document(
+                user_id=user_id,
+                project_id=project_id,
+                entity_type="career",
+                entity_id=career.id,
+            )
+        except FileNotFoundError:
+            missing_docs.append(career.id)
+            continue
+        career_dict = _career_response_dict(career, file_payload=file_payload)
         if career.type == "main":
             main_careers.append(career_dict)
         else:
             sub_careers.append(career_dict)
-    
+
+    if missing_docs:
+        raise HTTPException(
+            status_code=404,
+            detail=f"以下职业缺少文件真值文档，请先执行 workspace/rescan 或重建: {', '.join(missing_docs)}",
+        )
+
     return CareerListResponse(
-        total=total,
+        total=len(careers),
         main_careers=main_careers,
         sub_careers=sub_careers
     )
@@ -145,30 +248,20 @@ async def create_career(
             source=career_data.source
         )
         db.add(career)
+        await db.flush()
+        await _sync_career_document(career=career, user_id=user_id, db=db)
         await db.commit()
         await db.refresh(career)
         
         logger.info(f"✅ 创建职业成功：{career.name} (ID: {career.id}, 类型: {career.type})")
         
-        return CareerResponse(
-            id=career.id,
-            project_id=career.project_id,
-            name=career.name,
-            type=career.type,
-            description=career.description,
-            category=career.category,
-            stages=career_data.stages,
-            max_stage=career.max_stage,
-            requirements=career.requirements,
-            special_abilities=career.special_abilities,
-            worldview_rules=career.worldview_rules,
-            attribute_bonuses=career_data.attribute_bonuses,
-            source=career.source,
-            created_at=career.created_at,
-            updated_at=career.updated_at
-        )
-        
+        return CareerResponse(**_career_response_dict(career))
+    except (WorkspaceSecurityError, ValueError) as e:
+        await db.rollback()
+        logger.error(f"创建职业落盘失败: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"创建职业落盘失败: {str(e)}")
     except Exception as e:
+        await db.rollback()
         logger.error(f"创建职业失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"创建职业失败: {str(e)}")
 
@@ -408,6 +501,7 @@ async def generate_career_system(
                     )
                     db.add(career)
                     await db.flush()
+                    await _sync_career_document(career=career, user_id=effective_user_id, db=db)
                     main_careers_created.append(career.name)
                     logger.info(f"  ✅ 创建主职业：{career.name}")
                 except Exception as e:
@@ -440,6 +534,7 @@ async def generate_career_system(
                     )
                     db.add(career)
                     await db.flush()
+                    await _sync_career_document(career=career, user_id=effective_user_id, db=db)
                     sub_careers_created.append(career.name)
                     logger.info(f"  ✅ 创建副职业：{career.name}")
                 except Exception as e:
@@ -513,33 +608,28 @@ async def update_career(
             setattr(career, field, json.dumps(value, ensure_ascii=False))
         else:
             setattr(career, field, value)
-    
-    await db.commit()
-    await db.refresh(career)
+
+    try:
+        await db.flush()
+        await _sync_career_document(career=career, user_id=user_id, db=db)
+        await db.commit()
+        await db.refresh(career)
+    except (WorkspaceSecurityError, ValueError) as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=f"职业落盘失败: {exc}") from exc
+    except Exception:
+        await db.rollback()
+        raise
     
     logger.info(f"✅ 更新职业成功：{career.name} (ID: {career_id})")
     
-    # 解析JSON返回
-    stages = _safe_load_career_stages(career)
-    attribute_bonuses = _safe_load_career_attribute_bonuses(career)
-    
-    return CareerResponse(
-        id=career.id,
+    file_payload = await workspace_document_service.read_document(
+        user_id=user_id,
         project_id=career.project_id,
-        name=career.name,
-        type=career.type,
-        description=career.description,
-        category=career.category,
-        stages=stages,
-        max_stage=career.max_stage,
-        requirements=career.requirements,
-        special_abilities=career.special_abilities,
-        worldview_rules=career.worldview_rules,
-        attribute_bonuses=attribute_bonuses,
-        source=career.source,
-        created_at=career.created_at,
-        updated_at=career.updated_at
+        entity_type="career",
+        entity_id=career.id,
     )
+    return CareerResponse(**_career_response_dict(career, file_payload=file_payload))
 
 
 @router.delete("/{career_id}", summary="删除职业")
@@ -600,27 +690,21 @@ async def get_career(
     user_id = get_user_id(request)
     await verify_project_access(career.project_id, user_id, db)
     
-    # 解析JSON字段
-    stages = _safe_load_career_stages(career)
-    attribute_bonuses = _safe_load_career_attribute_bonuses(career)
-    
-    return CareerResponse(
-        id=career.id,
-        project_id=career.project_id,
-        name=career.name,
-        type=career.type,
-        description=career.description,
-        category=career.category,
-        stages=stages,
-        max_stage=career.max_stage,
-        requirements=career.requirements,
-        special_abilities=career.special_abilities,
-        worldview_rules=career.worldview_rules,
-        attribute_bonuses=attribute_bonuses,
-        source=career.source,
-        created_at=career.created_at,
-        updated_at=career.updated_at
-    )
+    try:
+        file_payload = await workspace_document_service.read_document(
+            user_id=user_id,
+            project_id=career.project_id,
+            entity_type="career",
+            entity_id=career.id,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"职业文件不存在: {exc}") from exc
+    except WorkspaceSecurityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return CareerResponse(**_career_response_dict(career, file_payload=file_payload))
 
 
 # ===== 角色职业关联API =====

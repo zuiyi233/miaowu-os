@@ -6,6 +6,12 @@ from typing import Any
 
 from langchain.tools import tool
 
+from deerflow.tools.builtins.novel_file_truth_bridge import (
+    DocumentSpec,
+    attach_file_truth_meta,
+    persist_workspace_documents,
+    to_pretty_json,
+)
 from deerflow.tools.builtins.novel_tool_helpers import _fail, _ok, get_base_url, get_json, post_json, put_json
 
 logger = logging.getLogger(__name__)
@@ -26,6 +32,32 @@ _CN_DIGITS = {
 }
 _CN_UNITS = {"十": 10, "百": 100, "千": 1000, "万": 10000}
 _FULLWIDTH_DIGITS_TRANS = str.maketrans("０１２３４５６７８９", "0123456789")
+
+
+def _md_from_mapping(title: str, payload: dict[str, Any]) -> str:
+    lines = [f"# {title}", ""]
+    for key, value in payload.items():
+        if key in {"success", "source"}:
+            continue
+        if value is None or value == "":
+            continue
+        lines.append(f"## {key}")
+        if isinstance(value, (dict, list)):
+            lines.append(to_pretty_json(value))
+        else:
+            lines.append(str(value))
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
+
+
+async def _attach_workspace_meta(
+    *,
+    project_id: str,
+    result: dict[str, Any],
+    documents: list[DocumentSpec],
+) -> dict[str, Any]:
+    writes = await persist_workspace_documents(project_id=project_id, documents=documents)
+    return attach_file_truth_meta(result, writes)
 
 
 def _parse_chinese_number(token: str) -> int:
@@ -315,19 +347,33 @@ async def analyze_chapter(
     Returns:
         A result dict with success, analysis task status, and raw response.
     """
+    result: dict[str, Any]
     try:
-        return await _analyze_chapter_internal(chapter_id=chapter_id, force=force)
+        result = await _analyze_chapter_internal(chapter_id=chapter_id, force=force)
     except Exception as exc:
         logger.warning("analyze_chapter internal failed: %s, falling back to HTTP", exc)
+        base_url = get_base_url()
+        payload: dict[str, Any] = {"force": force}
+        try:
+            data = await post_json(f"{base_url}/api/chapters/{chapter_id}/analyze", payload)
+            result = _ok(data, source="novel_migrated.analyze_chapter")
+        except Exception as post_exc:
+            logger.error("analyze_chapter failed: %s", post_exc)
+            return _fail(str(post_exc), source="novel_migrated.analyze_chapter")
 
-    base_url = get_base_url()
-    payload: dict[str, Any] = {"force": force}
-    try:
-        data = await post_json(f"{base_url}/api/chapters/{chapter_id}/analyze", payload)
-        return _ok(data, source="novel_migrated.analyze_chapter")
-    except Exception as exc:
-        logger.error("analyze_chapter failed: %s", exc)
-        return _fail(str(exc), source="novel_migrated.analyze_chapter")
+    docs = [
+        DocumentSpec(
+            entity_type="analysis",
+            entity_id=chapter_id,
+            content=result,
+            title=f"章节分析 {chapter_id}",
+            tags=("analysis", "chapter"),
+        )
+    ]
+    project_id = str(result.get("project_id") or "")
+    if project_id:
+        return await _attach_workspace_meta(project_id=project_id, result=result, documents=docs)
+    return attach_file_truth_meta(result, [])
 
 
 @tool("manage_foreshadow", parse_docstring=True)
@@ -372,85 +418,112 @@ async def manage_foreshadow(
         )
         if internal_result.get("success") is False and "unknown action" in internal_result.get("error", ""):
             return internal_result
-        return internal_result
+        result = internal_result
     except Exception as exc:
         logger.warning("manage_foreshadow internal failed: %s, falling back to HTTP", exc)
+        base_url = get_base_url()
 
-    base_url = get_base_url()
-
-    if action == "list":
-        if not project_id:
-            return _fail("project_id required for list action")
-        try:
-            data = await get_json(f"{base_url}/api/foreshadows/projects/{project_id}")
-            return _ok(data, source="novel_migrated.foreshadow_list")
-        except Exception as exc:
-            return _fail(str(exc), source="novel_migrated.foreshadow_list")
-
-    if action == "context":
-        if not project_id:
-            return _fail("project_id required for context action")
-        chapter_number = _parse_chapter_number(content)
-        try:
-            data = await get_json(f"{base_url}/api/foreshadows/projects/{project_id}/context/{chapter_number}")
-            return _ok(data, source="novel_migrated.foreshadow_context")
-        except Exception as exc:
-            return _fail(str(exc), source="novel_migrated.foreshadow_context")
-
-    if action == "sync":
-        if not project_id:
-            return _fail("project_id required for sync action")
-        try:
-            data = await post_json(f"{base_url}/api/foreshadows/projects/{project_id}/sync-from-analysis", {})
-            return _ok(data, source="novel_migrated.foreshadow_sync")
-        except Exception as exc:
-            return _fail(str(exc), source="novel_migrated.foreshadow_sync")
-
-    if action == "create":
-        if not project_id or not title or not content:
-            return _fail("project_id, title, and content required for create action")
-        payload: dict[str, Any] = {
-            "project_id": project_id,
-            "title": title,
-            "content": content,
-            "importance": importance,
-            "is_long_term": is_long_term,
-        }
-        if category:
-            payload["category"] = category
-        if related_characters:
-            payload["related_characters"] = related_characters
-        try:
-            data = await post_json(f"{base_url}/api/foreshadows", payload)
-            return _ok(data, source="novel_migrated.foreshadow_create")
-        except Exception as exc:
-            return _fail(str(exc), source="novel_migrated.foreshadow_create")
-
-    if action in ("update", "plant", "resolve", "abandon"):
-        if not foreshadow_id:
-            return _fail("foreshadow_id required for update/plant/resolve/abandon action")
-        if action == "update":
-            payload = {}
-            if title:
-                payload["title"] = title
-            if content:
-                payload["content"] = content
-            if status:
-                payload["status"] = status
+        if action == "list":
+            if not project_id:
+                return _fail("project_id required for list action")
+            try:
+                data = await get_json(f"{base_url}/api/foreshadows/projects/{project_id}")
+                result = _ok(data, source="novel_migrated.foreshadow_list")
+            except Exception as list_exc:
+                return _fail(str(list_exc), source="novel_migrated.foreshadow_list")
+        elif action == "context":
+            if not project_id:
+                return _fail("project_id required for context action")
+            chapter_number = _parse_chapter_number(content)
+            try:
+                data = await get_json(f"{base_url}/api/foreshadows/projects/{project_id}/context/{chapter_number}")
+                result = _ok(data, source="novel_migrated.foreshadow_context")
+            except Exception as ctx_exc:
+                return _fail(str(ctx_exc), source="novel_migrated.foreshadow_context")
+        elif action == "sync":
+            if not project_id:
+                return _fail("project_id required for sync action")
+            try:
+                data = await post_json(f"{base_url}/api/foreshadows/projects/{project_id}/sync-from-analysis", {})
+                result = _ok(data, source="novel_migrated.foreshadow_sync")
+            except Exception as sync_exc:
+                return _fail(str(sync_exc), source="novel_migrated.foreshadow_sync")
+        elif action == "create":
+            if not project_id or not title or not content:
+                return _fail("project_id, title, and content required for create action")
+            payload: dict[str, Any] = {
+                "project_id": project_id,
+                "title": title,
+                "content": content,
+                "importance": importance,
+                "is_long_term": is_long_term,
+            }
             if category:
                 payload["category"] = category
+            if related_characters:
+                payload["related_characters"] = related_characters
             try:
-                data = await put_json(f"{base_url}/api/foreshadows/{foreshadow_id}", payload)
-                return _ok(data, source="novel_migrated.foreshadow_update")
-            except Exception as exc:
-                return _fail(str(exc), source="novel_migrated.foreshadow_update")
-        try:
-            data = await post_json(f"{base_url}/api/foreshadows/{foreshadow_id}/{action}", {})
-            return _ok(data, source=f"novel_migrated.foreshadow_{action}")
-        except Exception as exc:
-            return _fail(str(exc), source=f"novel_migrated.foreshadow_{action}")
+                data = await post_json(f"{base_url}/api/foreshadows", payload)
+                result = _ok(data, source="novel_migrated.foreshadow_create")
+            except Exception as create_exc:
+                return _fail(str(create_exc), source="novel_migrated.foreshadow_create")
+        elif action in ("update", "plant", "resolve", "abandon"):
+            if not foreshadow_id:
+                return _fail("foreshadow_id required for update/plant/resolve/abandon action")
+            if action == "update":
+                payload = {}
+                if title:
+                    payload["title"] = title
+                if content:
+                    payload["content"] = content
+                if status:
+                    payload["status"] = status
+                if category:
+                    payload["category"] = category
+                try:
+                    data = await put_json(f"{base_url}/api/foreshadows/{foreshadow_id}", payload)
+                    result = _ok(data, source="novel_migrated.foreshadow_update")
+                except Exception as update_exc:
+                    return _fail(str(update_exc), source="novel_migrated.foreshadow_update")
+            else:
+                try:
+                    data = await post_json(f"{base_url}/api/foreshadows/{foreshadow_id}/{action}", {})
+                    result = _ok(data, source=f"novel_migrated.foreshadow_{action}")
+                except Exception as state_exc:
+                    return _fail(str(state_exc), source=f"novel_migrated.foreshadow_{action}")
+        else:
+            return _fail(f"unknown action: {action}")
 
-    return _fail(f"unknown action: {action}")
+    effective_project_id = (project_id or result.get("project_id") or "").strip()
+    documents: list[DocumentSpec] = []
+    if action in {"create", "update", "plant", "resolve", "abandon"} and effective_project_id:
+        resolved_id = (
+            str(result.get("id") or result.get("foreshadow_id") or foreshadow_id or "").strip()
+        )
+        if resolved_id:
+            documents.append(
+                DocumentSpec(
+                    entity_type="foreshadow",
+                    entity_id=resolved_id,
+                    content=_md_from_mapping(title or f"伏笔 {resolved_id}", result),
+                    title=title or f"伏笔 {resolved_id}",
+                    tags=("foreshadow", action),
+                )
+            )
+    if action in {"list", "context", "sync"} and effective_project_id:
+        documents.append(
+            DocumentSpec(
+                entity_type="note",
+                entity_id=f"foreshadow_{action}_{effective_project_id}",
+                content=to_pretty_json(result),
+                title=f"伏笔{action}结果",
+                tags=("foreshadow", action),
+            )
+        )
+
+    if effective_project_id and documents:
+        return await _attach_workspace_meta(project_id=effective_project_id, result=result, documents=documents)
+    return attach_file_truth_meta(result, [])
 
 
 @tool("search_memories", parse_docstring=True)
@@ -474,27 +547,57 @@ async def search_memories(
     Returns:
         A result dict with success, matching memories, and raw response.
     """
+    result: dict[str, Any]
     try:
-        return await _search_memories_internal(
+        result = await _search_memories_internal(
             project_id=project_id, query=query,
             memory_type=memory_type, limit=limit,
         )
     except Exception as exc:
         logger.warning("search_memories internal failed: %s, falling back to HTTP", exc)
+        base_url = get_base_url()
+        payload: dict[str, Any] = {
+            "query": query,
+            "limit": limit,
+        }
+        if memory_type:
+            payload["memory_type"] = memory_type
+        try:
+            data = await post_json(f"{base_url}/api/memories/projects/{project_id}/search", payload)
+            result = _ok(data, source="novel_migrated.memory_search")
+        except Exception as post_exc:
+            logger.error("search_memories failed: %s", post_exc)
+            return _fail(str(post_exc), source="novel_migrated.memory_search")
 
-    base_url = get_base_url()
-    payload: dict[str, Any] = {
-        "query": query,
-        "limit": limit,
-    }
-    if memory_type:
-        payload["memory_type"] = memory_type
-    try:
-        data = await post_json(f"{base_url}/api/memories/projects/{project_id}/search", payload)
-        return _ok(data, source="novel_migrated.memory_search")
-    except Exception as exc:
-        logger.error("search_memories failed: %s", exc)
-        return _fail(str(exc), source="novel_migrated.memory_search")
+    docs: list[DocumentSpec] = []
+    memories = result.get("memories")
+    if isinstance(memories, list):
+        for item in memories:
+            if not isinstance(item, dict):
+                continue
+            memory_id = str(item.get("id") or item.get("memory_id") or item.get("title") or "").strip()
+            if not memory_id:
+                continue
+            docs.append(
+                DocumentSpec(
+                    entity_type="memory",
+                    entity_id=memory_id,
+                    content=_md_from_mapping(str(item.get("title") or f"记忆 {memory_id}"), item),
+                    title=str(item.get("title") or f"记忆 {memory_id}"),
+                    tags=("memory", "search"),
+                )
+            )
+    if not docs:
+        docs.append(
+            DocumentSpec(
+                entity_type="note",
+                entity_id=f"memory_search_{project_id}",
+                content=to_pretty_json({"query": query, "memory_type": memory_type, "result": result}),
+                title="记忆检索结果",
+                tags=("memory", "search"),
+            )
+        )
+    return await _attach_workspace_meta(project_id=project_id, result=result, documents=docs)
 
 
 @tool("check_consistency", parse_docstring=True)
@@ -512,18 +615,29 @@ async def check_consistency(
     Returns:
         A result dict with success, consistency report, and raw response.
     """
+    result: dict[str, Any]
     try:
-        return await _check_consistency_internal(project_id=project_id)
+        result = await _check_consistency_internal(project_id=project_id)
     except Exception as exc:
         logger.warning("check_consistency internal failed: %s, falling back to HTTP", exc)
+        base_url = get_base_url()
+        try:
+            data = await get_json(f"{base_url}/polish/projects/{project_id}/consistency-report")
+            result = _ok(data, source="novel_migrated.consistency_check")
+        except Exception as get_exc:
+            logger.error("check_consistency failed: %s", get_exc)
+            return _fail(str(get_exc), source="novel_migrated.consistency_check")
 
-    base_url = get_base_url()
-    try:
-        data = await get_json(f"{base_url}/polish/projects/{project_id}/consistency-report")
-        return _ok(data, source="novel_migrated.consistency_check")
-    except Exception as exc:
-        logger.error("check_consistency failed: %s", exc)
-        return _fail(str(exc), source="novel_migrated.consistency_check")
+    docs = [
+        DocumentSpec(
+            entity_type="note",
+            entity_id=f"consistency_report_{project_id}",
+            content=to_pretty_json(result),
+            title="一致性报告",
+            tags=("consistency",),
+        )
+    ]
+    return await _attach_workspace_meta(project_id=project_id, result=result, documents=docs)
 
 
 @tool("polish_text", parse_docstring=True)
@@ -544,21 +658,35 @@ async def polish_text(
     Returns:
         A result dict with success, polished text, and raw response.
     """
+    result: dict[str, Any]
     try:
-        return await _polish_text_internal(text=text, style=style, project_id=project_id)
+        result = await _polish_text_internal(text=text, style=style, project_id=project_id)
     except Exception as exc:
         logger.warning("polish_text internal failed: %s, falling back to HTTP", exc)
+        base_url = get_base_url()
+        payload: dict[str, Any] = {
+            "text": text,
+            "style": style,
+        }
+        if project_id:
+            payload["project_id"] = project_id
+        try:
+            data = await post_json(f"{base_url}/polish", payload)
+            result = _ok(data, source="novel_migrated.polish")
+        except Exception as post_exc:
+            logger.error("polish_text failed: %s", post_exc)
+            return _fail(str(post_exc), source="novel_migrated.polish")
 
-    base_url = get_base_url()
-    payload: dict[str, Any] = {
-        "text": text,
-        "style": style,
-    }
     if project_id:
-        payload["project_id"] = project_id
-    try:
-        data = await post_json(f"{base_url}/polish", payload)
-        return _ok(data, source="novel_migrated.polish")
-    except Exception as exc:
-        logger.error("polish_text failed: %s", exc)
-        return _fail(str(exc), source="novel_migrated.polish")
+        polished = result.get("polished_text") or result.get("text") or text
+        docs = [
+            DocumentSpec(
+                entity_type="note",
+                entity_id=f"polish_{style}_{project_id}",
+                content=f"# 文本润色结果\n\n## style\n{style}\n\n## polished\n{polished}\n",
+                title=f"润色结果 {style}",
+                tags=("polish", style),
+            )
+        ]
+        return await _attach_workspace_meta(project_id=project_id, result=result, documents=docs)
+    return attach_file_truth_meta(result, [])

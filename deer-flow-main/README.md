@@ -712,6 +712,15 @@ All dict-returning methods are validated against Gateway Pydantic response model
 - [Architecture Overview](backend/CLAUDE.md) - Technical architecture details
 - [Backend Architecture](backend/README.md) - Backend architecture and API reference
 
+### Novel file-truth development notes (Miaowu fork)
+
+- Novel workspace APIs:
+  - `POST /api/novels/{project_id}/workspace/init`
+  - `POST /api/novels/{project_id}/workspace/rescan`
+  - `GET|PUT /api/novels/{project_id}/documents/{entity_type}/{entity_id}`
+- Development DB reset helper:
+  - `uv run python backend/scripts/reset_novel_file_truth_db.py`
+
 ## ⚠️ Security Notice
 
 ### Improper Deployment May Introduce Security Risks

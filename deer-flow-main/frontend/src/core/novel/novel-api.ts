@@ -422,6 +422,30 @@ function normalizeBookImportPreview(raw: unknown): BookImportPreview {
   };
 }
 
+function normalizeDocumentMeta(record: Record<string, unknown>) {
+  const docPath = toOptionalString(record.docPath ?? record.doc_path);
+  const contentSource = toOptionalString(record.contentSource ?? record.content_source);
+  const contentHash = toOptionalString(record.contentHash ?? record.content_hash);
+  const docUpdatedAt = toOptionalString(record.docUpdatedAt ?? record.doc_updated_at);
+
+  return {
+    ...(docPath ? { docPath } : {}),
+    ...(contentSource ? { contentSource } : {}),
+    ...(contentHash ? { contentHash } : {}),
+    ...(docUpdatedAt ? { docUpdatedAt } : {}),
+  };
+}
+
+function withNormalizedDocumentMeta<T>(value: T): T {
+  if (!isRecord(value)) {
+    return value;
+  }
+  return {
+    ...value,
+    ...normalizeDocumentMeta(value),
+  } as T;
+}
+
 function normalizeNovel(raw: unknown): Novel {
   if (!isRecord(raw)) {
     return {
@@ -456,8 +480,12 @@ function normalizeNovel(raw: unknown): Novel {
     ...(raw as Novel),
     id: toStringOr(raw.id),
     title: toStringOr(raw.title),
-    chapters: (Array.isArray(raw.chapters) ? raw.chapters : []) as Chapter[],
-    characters: (Array.isArray(raw.characters) ? raw.characters : []) as Character[],
+    chapters: (
+      Array.isArray(raw.chapters) ? raw.chapters.map((item) => withNormalizedDocumentMeta(item)) : []
+    ) as Chapter[],
+    characters: (
+      Array.isArray(raw.characters) ? raw.characters.map((item) => withNormalizedDocumentMeta(item)) : []
+    ) as Character[],
     settings,
     factions,
     items,
@@ -1128,11 +1156,11 @@ export class NovelApiService {
       });
 
       if (Array.isArray(raw)) {
-        return raw as Outline[];
+        return raw.map((item) => withNormalizedDocumentMeta(item as Outline)) as Outline[];
       }
 
       if (isRecord(raw) && Array.isArray(raw.items)) {
-        return raw.items as Outline[];
+        return raw.items.map((item) => withNormalizedDocumentMeta(item as Outline)) as Outline[];
       }
 
       return [];
@@ -1145,20 +1173,22 @@ export class NovelApiService {
   }
 
   async createOutline(novelId: string, outline: Outline): Promise<Outline> {
-    return request<Outline>('/outlines', {
+    const created = await request<Outline>('/outlines', {
       method: 'POST',
       body: {
         project_id: novelId,
         ...outline,
       },
     });
+    return withNormalizedDocumentMeta(created);
   }
 
   async updateOutline(outlineId: string, updates: Partial<Outline>): Promise<Outline> {
-    return request<Outline>(`/outlines/${encodeURIComponent(outlineId)}`, {
+    const updated = await request<Outline>(`/outlines/${encodeURIComponent(outlineId)}`, {
       method: 'PUT',
       body: updates,
     });
+    return withNormalizedDocumentMeta(updated);
   }
 
   async deleteOutline(outlineId: string): Promise<void> {

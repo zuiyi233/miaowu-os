@@ -8,6 +8,12 @@ from urllib.parse import quote
 import httpx
 from langchain.tools import tool
 
+from deerflow.tools.builtins.novel_file_truth_bridge import (
+    DocumentSpec,
+    attach_file_truth_meta,
+    persist_workspace_documents,
+    to_pretty_json,
+)
 from deerflow.tools.builtins.novel_idempotency import check_idempotency
 from deerflow.tools.builtins.novel_tool_helpers import _fail, _ok, build_headers, get_base_url, get_json, get_timeout_seconds, post_json
 
@@ -23,6 +29,16 @@ def _normalize_required_id(value: str, field_name: str) -> tuple[str | None, dic
 
 def _safe_path_segment(value: str) -> str:
     return quote(value, safe="")
+
+
+async def _attach_workspace_meta(
+    *,
+    project_id: str,
+    result: dict[str, Any],
+    documents: list[DocumentSpec],
+) -> dict[str, Any]:
+    writes = await persist_workspace_documents(project_id=project_id, documents=documents)
+    return attach_file_truth_meta(result, writes)
 
 
 async def _regenerate_chapter_internal(project_id, chapter_id, modification_instructions="", custom_instructions="", target_word_count=3000, focus_areas=None, preserve_elements=None):
@@ -219,7 +235,10 @@ async def regenerate_chapter(
     """
     dup = check_idempotency("regenerate_chapter", idempotency_key)
     if dup["is_duplicate"]:
-        return _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.regenerate")
+        return attach_file_truth_meta(
+            _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.regenerate"),
+            [],
+        )
     normalized_project_id, validation_error = _normalize_required_id(project_id, "project_id")
     if validation_error:
         return validation_error
@@ -227,8 +246,9 @@ async def regenerate_chapter(
     if validation_error:
         return validation_error
 
+    result: dict[str, Any]
     try:
-        return await _regenerate_chapter_internal(
+        result = await _regenerate_chapter_internal(
             project_id=normalized_project_id, chapter_id=normalized_chapter_id,
             modification_instructions=modification_instructions,
             custom_instructions=custom_instructions, target_word_count=target_word_count,
@@ -236,25 +256,42 @@ async def regenerate_chapter(
         )
     except Exception as exc:
         logger.warning("regenerate_chapter internal failed: %s, falling back to HTTP", exc)
+        base_url = get_base_url()
+        payload: dict[str, Any] = {
+            "project_id": normalized_project_id,
+            "chapter_id": normalized_chapter_id,
+            "modification_instructions": modification_instructions,
+            "custom_instructions": custom_instructions,
+            "target_word_count": target_word_count,
+        }
+        if focus_areas:
+            payload["focus_areas"] = focus_areas
+        if preserve_elements:
+            payload["preserve_elements"] = preserve_elements
+        try:
+            data = await post_json(f"{base_url}/chapters/regenerate", payload)
+            result = _ok(data, source="novel_migrated.regenerate")
+        except Exception as post_exc:
+            logger.error("regenerate_chapter failed: %s", post_exc)
+            return _fail(str(post_exc), source="novel_migrated.regenerate")
 
-    base_url = get_base_url()
-    payload: dict[str, Any] = {
-        "project_id": normalized_project_id,
-        "chapter_id": normalized_chapter_id,
-        "modification_instructions": modification_instructions,
-        "custom_instructions": custom_instructions,
-        "target_word_count": target_word_count,
-    }
-    if focus_areas:
-        payload["focus_areas"] = focus_areas
-    if preserve_elements:
-        payload["preserve_elements"] = preserve_elements
-    try:
-        data = await post_json(f"{base_url}/chapters/regenerate", payload)
-        return _ok(data, source="novel_migrated.regenerate")
-    except Exception as exc:
-        logger.error("regenerate_chapter failed: %s", exc)
-        return _fail(str(exc), source="novel_migrated.regenerate")
+    regenerated_text = (
+        result.get("content")
+        or result.get("chapter_content")
+        or result.get("regenerated_content")
+        or result.get("text")
+        or to_pretty_json(result)
+    )
+    docs = [
+        DocumentSpec(
+            entity_type="chapter",
+            entity_id=normalized_chapter_id,
+            content=f"# {result.get('title') or f'章节 {normalized_chapter_id}'}\n\n{regenerated_text}\n",
+            title=str(result.get("title") or f"章节 {normalized_chapter_id}"),
+            tags=("chapter", "regenerate"),
+        )
+    ]
+    return await _attach_workspace_meta(project_id=normalized_project_id, result=result, documents=docs)
 
 
 @tool("partial_regenerate", parse_docstring=True)
@@ -286,7 +323,10 @@ async def partial_regenerate(
     """
     dup = check_idempotency("partial_regenerate", idempotency_key)
     if dup["is_duplicate"]:
-        return _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.partial_regenerate")
+        return attach_file_truth_meta(
+            _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.partial_regenerate"),
+            [],
+        )
     normalized_project_id, validation_error = _normalize_required_id(project_id, "project_id")
     if validation_error:
         return validation_error
@@ -294,30 +334,52 @@ async def partial_regenerate(
     if validation_error:
         return validation_error
 
+    result: dict[str, Any]
     try:
-        return await _partial_regenerate_internal(
+        result = await _partial_regenerate_internal(
             project_id=normalized_project_id, chapter_id=normalized_chapter_id,
             selected_text=selected_text, context_before=context_before,
             context_after=context_after, user_instructions=user_instructions,
         )
     except Exception as exc:
         logger.warning("partial_regenerate internal failed: %s, falling back to HTTP", exc)
+        base_url = get_base_url()
+        payload: dict[str, Any] = {
+            "project_id": normalized_project_id,
+            "chapter_id": normalized_chapter_id,
+            "selected_text": selected_text,
+            "context_before": context_before,
+            "context_after": context_after,
+            "user_instructions": user_instructions,
+        }
+        try:
+            data = await post_json(f"{base_url}/chapters/partial-regenerate", payload)
+            result = _ok(data, source="novel_migrated.partial_regenerate")
+        except Exception as post_exc:
+            logger.error("partial_regenerate failed: %s", post_exc)
+            return _fail(str(post_exc), source="novel_migrated.partial_regenerate")
 
-    base_url = get_base_url()
-    payload: dict[str, Any] = {
-        "project_id": normalized_project_id,
-        "chapter_id": normalized_chapter_id,
-        "selected_text": selected_text,
-        "context_before": context_before,
-        "context_after": context_after,
-        "user_instructions": user_instructions,
-    }
-    try:
-        data = await post_json(f"{base_url}/chapters/partial-regenerate", payload)
-        return _ok(data, source="novel_migrated.partial_regenerate")
-    except Exception as exc:
-        logger.error("partial_regenerate failed: %s", exc)
-        return _fail(str(exc), source="novel_migrated.partial_regenerate")
+    new_text = result.get("new_content") or result.get("content") or result.get("text") or ""
+    docs = [
+        DocumentSpec(
+            entity_type="note",
+            entity_id=f"partial_regenerate_{normalized_chapter_id}",
+            content=to_pretty_json(
+                {
+                    "chapter_id": normalized_chapter_id,
+                    "selected_text": selected_text,
+                    "context_before": context_before,
+                    "context_after": context_after,
+                    "user_instructions": user_instructions,
+                    "new_text": new_text,
+                    "result": result,
+                }
+            ),
+            title=f"局部重写 {normalized_chapter_id}",
+            tags=("chapter", "partial_regenerate"),
+        )
+    ]
+    return await _attach_workspace_meta(project_id=normalized_project_id, result=result, documents=docs)
 
 
 @tool("finalize_project", parse_docstring=True)
@@ -339,13 +401,17 @@ async def finalize_project(
     """
     dup = check_idempotency("finalize_project", idempotency_key)
     if dup["is_duplicate"]:
-        return _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.finalize")
+        return attach_file_truth_meta(
+            _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.finalize"),
+            [],
+        )
     normalized_project_id, validation_error = _normalize_required_id(project_id, "project_id")
     if validation_error:
         return validation_error
 
+    result: dict[str, Any]
     try:
-        return await _finalize_project_internal(project_id=normalized_project_id)
+        result = await _finalize_project_internal(project_id=normalized_project_id)
     except Exception as exc:
         logger.warning("finalize_project internal failed: %s, falling back to HTTP", exc)
 
@@ -354,15 +420,36 @@ async def finalize_project(
     try:
         gate_data = await get_json(f"{base_url}/polish/projects/{project_path_id}/consistency-report")
         if gate_data.get("success") is False:
-            return _ok(gate_data, source="novel_migrated.finalize_gate")
+            result = _ok(gate_data, source="novel_migrated.finalize_gate")
+            docs = [
+                DocumentSpec(
+                    entity_type="note",
+                    entity_id=f"finalize_gate_{normalized_project_id}",
+                    content=to_pretty_json(result),
+                    title="完结质检结果",
+                    tags=("finalize", "gate"),
+                )
+            ]
+            return await _attach_workspace_meta(project_id=normalized_project_id, result=result, documents=docs)
     except Exception as exc:
         logger.warning("finalize_project gate check failed (proceeding anyway): %s", exc)
     try:
         data = await post_json(f"{base_url}/polish/projects/{project_path_id}/finalize", {})
-        return _ok(data, source="novel_migrated.finalize")
-    except Exception as exc:
-        logger.error("finalize_project failed: %s", exc)
-        return _fail(str(exc), source="novel_migrated.finalize")
+        result = _ok(data, source="novel_migrated.finalize")
+    except Exception as post_exc:
+        logger.error("finalize_project failed: %s", post_exc)
+        return _fail(str(post_exc), source="novel_migrated.finalize")
+
+    docs = [
+        DocumentSpec(
+            entity_type="note",
+            entity_id=f"finalize_{normalized_project_id}",
+            content=to_pretty_json(result),
+            title="完结执行结果",
+            tags=("finalize",),
+        )
+    ]
+    return await _attach_workspace_meta(project_id=normalized_project_id, result=result, documents=docs)
 
 
 @tool("import_book", parse_docstring=True)
@@ -386,24 +473,42 @@ async def import_book(
     """
     dup = check_idempotency("import_book", idempotency_key)
     if dup["is_duplicate"]:
-        return _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.import_book")
+        return attach_file_truth_meta(
+            _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.import_book"),
+            [],
+        )
 
+    result: dict[str, Any]
     try:
-        return await _import_book_internal(file_path=file_path, project_title=project_title)
+        result = await _import_book_internal(file_path=file_path, project_title=project_title)
     except Exception as exc:
         logger.warning("import_book internal failed: %s, falling back to HTTP", exc)
 
-    base_url = get_base_url()
-    try:
-        data = await _post_book_import_multipart(
-            url=f"{base_url}/book-import/tasks",
-            file_path=file_path,
-            project_title=project_title,
-        )
-        return _ok(data, source="novel_migrated.import_book")
-    except Exception as exc:
-        logger.error("import_book failed: %s", exc)
-        return _fail(str(exc), source="novel_migrated.import_book")
+        base_url = get_base_url()
+        try:
+            data = await _post_book_import_multipart(
+                url=f"{base_url}/book-import/tasks",
+                file_path=file_path,
+                project_title=project_title,
+            )
+            result = _ok(data, source="novel_migrated.import_book")
+        except Exception as post_exc:
+            logger.error("import_book failed: %s", post_exc)
+            return _fail(str(post_exc), source="novel_migrated.import_book")
+
+    project_id = str(result.get("project_id") or result.get("id") or "").strip()
+    if project_id:
+        docs = [
+            DocumentSpec(
+                entity_type="note",
+                entity_id=f"import_book_{project_id}",
+                content=to_pretty_json({"file_path": file_path, "project_title": project_title, "result": result}),
+                title=f"导入任务 {project_title or project_id}",
+                tags=("import",),
+            )
+        ]
+        return await _attach_workspace_meta(project_id=project_id, result=result, documents=docs)
+    return attach_file_truth_meta(result, [])
 
 
 @tool("update_character_states", parse_docstring=True)
@@ -428,7 +533,10 @@ async def update_character_states(
     """
     dup = check_idempotency("update_character_states", idempotency_key)
     if dup["is_duplicate"]:
-        return _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.character_states")
+        return attach_file_truth_meta(
+            _ok({"skipped": True, "reason": "duplicate_idempotency_key"}, source="novel_migrated.character_states"),
+            [],
+        )
     normalized_chapter_id, validation_error = _normalize_required_id(chapter_id, "chapter_id")
     if validation_error:
         return validation_error
@@ -436,8 +544,9 @@ async def update_character_states(
     if validation_error:
         return validation_error
 
+    result: dict[str, Any]
     try:
-        return await _update_character_states_internal(
+        result = await _update_character_states_internal(
             chapter_id=normalized_chapter_id, project_id=normalized_project_id,
         )
     except Exception as exc:
@@ -452,7 +561,18 @@ async def update_character_states(
             f"{base_url}/api/memories/projects/{project_path_id}/analyze-chapter/{chapter_path_id}",
             payload,
         )
-        return _ok(data, source="novel_migrated.character_states")
-    except Exception as exc:
-        logger.error("update_character_states failed: %s", exc)
-        return _fail(str(exc), source="novel_migrated.character_states")
+        result = _ok(data, source="novel_migrated.character_states")
+    except Exception as post_exc:
+        logger.error("update_character_states failed: %s", post_exc)
+        return _fail(str(post_exc), source="novel_migrated.character_states")
+
+    docs = [
+        DocumentSpec(
+            entity_type="analysis",
+            entity_id=normalized_chapter_id,
+            content=result,
+            title=f"角色状态更新分析 {normalized_chapter_id}",
+            tags=("character", "state_update", "analysis"),
+        )
+    ]
+    return await _attach_workspace_meta(project_id=normalized_project_id, result=result, documents=docs)

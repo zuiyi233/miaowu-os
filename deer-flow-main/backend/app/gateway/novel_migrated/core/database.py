@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -56,6 +57,60 @@ async_session_factory = AsyncSessionLocal
 
 _schema_initialized = asyncio.Event()
 _SCHEMA_INIT_LOCK = asyncio.Lock()
+_SCHEMA_MODE_ENV = "NOVEL_FILE_TRUTH_SCHEMA_MODE"
+_SCHEMA_MODE_FULL = "full"
+_SCHEMA_MODE_MINIMAL = "minimal_file_truth"
+
+
+def _load_models_for_schema_mode(schema_mode: str) -> None:
+    if schema_mode == _SCHEMA_MODE_MINIMAL:
+        from app.gateway.novel_migrated.models import (  # noqa: F401
+            ai_metric,
+            analysis_task,
+            batch_generation_task,
+            document_index,
+            dual_write_log,
+            generation_history,
+            intent_session,
+            mcp_plugin,
+            novel_agent_config,
+            project,
+            project_default_style,
+            prompt_template,
+            prompt_workshop,
+            regeneration_task,
+            settings,
+            user,
+            writing_style,
+        )
+        return
+
+    from app.gateway.novel_migrated.models import (  # noqa: F401
+        ai_metric,
+        analysis_task,
+        batch_generation_task,
+        career,
+        chapter,
+        character,
+        document_index,
+        dual_write_log,
+        foreshadow,
+        generation_history,
+        intent_session,
+        mcp_plugin,
+        memory,
+        novel_agent_config,
+        outline,
+        project,
+        project_default_style,
+        prompt_template,
+        prompt_workshop,
+        regeneration_task,
+        relationship,
+        settings,
+        user,
+        writing_style,
+    )
 
 
 async def init_db_schema() -> None:
@@ -66,32 +121,12 @@ async def init_db_schema() -> None:
         if _schema_initialized.is_set():
             return
 
-        # Ensure all mapped tables are registered on Base.metadata before create_all.
-        from app.gateway.novel_migrated.models import (  # noqa: F401
-            ai_metric,
-            analysis_task,
-            batch_generation_task,
-            career,
-            chapter,
-            character,
-            dual_write_log,
-            foreshadow,
-            generation_history,
-            intent_session,
-            mcp_plugin,
-            memory,
-            novel_agent_config,
-            outline,
-            project,
-            project_default_style,
-            prompt_template,
-            prompt_workshop,
-            regeneration_task,
-            relationship,
-            settings,
-            user,
-            writing_style,
-        )
+        schema_mode = (os.getenv(_SCHEMA_MODE_ENV) or _SCHEMA_MODE_FULL).strip().lower()
+        if schema_mode not in {_SCHEMA_MODE_FULL, _SCHEMA_MODE_MINIMAL}:
+            schema_mode = _SCHEMA_MODE_FULL
+
+        # Ensure mapped tables are registered before create_all.
+        _load_models_for_schema_mode(schema_mode)
 
         async with engine.begin() as conn:
             await _ensure_wal_and_pragma(conn)
