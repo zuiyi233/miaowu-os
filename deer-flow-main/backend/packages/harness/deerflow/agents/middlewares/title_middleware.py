@@ -132,13 +132,16 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
                 model = create_chat_model(thinking_enabled=False)
             timeout = self.title_generation_timeout_sec
             if timeout > 0:
-                response = await asyncio.wait_for(model.ainvoke(prompt), timeout=timeout)
+                response = await asyncio.wait_for(
+                    model.ainvoke(prompt, config={"run_name": "title_agent"}),
+                    timeout=timeout,
+                )
             else:
-                response = await model.ainvoke(prompt)
+                response = await model.ainvoke(prompt, config={"run_name": "title_agent"})
             title = self._parse_title(response.content)
             if title:
                 return {"title": title}
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "Title generation timed out after %.1fs; falling back to local title.",
                 self.title_generation_timeout_sec,

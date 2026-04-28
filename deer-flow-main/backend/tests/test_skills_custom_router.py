@@ -1,5 +1,6 @@
 import errno
 import json
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,6 +34,85 @@ def _make_skill(name: str, *, enabled: bool) -> Skill:
         category="public",
         enabled=enabled,
     )
+
+
+def _make_skill_archive(tmp_path: Path, name: str, content: str | None = None) -> Path:
+    archive = tmp_path / f"{name}.skill"
+    skill_content = content or _skill_content(name)
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr(f"{name}/SKILL.md", skill_content)
+    return archive
+
+
+def test_install_skill_archive_runs_security_scan(monkeypatch, tmp_path):
+    skills_root = tmp_path / "skills"
+    (skills_root / "custom").mkdir(parents=True)
+    archive = _make_skill_archive(tmp_path, "archive-skill")
+    scan_calls = []
+    refresh_calls = []
+
+    async def _scan(content, *, executable, location):
+        from deerflow.skills.security_scanner import ScanResult
+
+        scan_calls.append({"content": content, "executable": executable, "location": location})
+        return ScanResult(decision="allow", reason="ok")
+
+    async def _refresh():
+        refresh_calls.append("refresh")
+
+    monkeypatch.setattr(skills_router, "resolve_thread_virtual_path", lambda thread_id, path: archive)
+    monkeypatch.setattr("deerflow.skills.installer.get_skills_root_path", lambda: skills_root)
+    monkeypatch.setattr("deerflow.skills.installer.scan_skill_content", _scan)
+    monkeypatch.setattr(skills_router, "refresh_skills_system_prompt_cache_async", _refresh)
+
+    app = FastAPI()
+    app.include_router(skills_router.router)
+
+    with TestClient(app) as client:
+        response = client.post("/api/skills/install", json={"thread_id": "thread-1", "path": "mnt/user-data/outputs/archive-skill.skill"})
+
+    assert response.status_code == 200
+    assert response.json()["skill_name"] == "archive-skill"
+    assert (skills_root / "custom" / "archive-skill" / "SKILL.md").exists()
+    assert scan_calls == [
+        {
+            "content": _skill_content("archive-skill"),
+            "executable": False,
+            "location": "archive-skill/SKILL.md",
+        }
+    ]
+    assert refresh_calls == ["refresh"]
+
+
+def test_install_skill_archive_security_scan_block_returns_400(monkeypatch, tmp_path):
+    skills_root = tmp_path / "skills"
+    (skills_root / "custom").mkdir(parents=True)
+    archive = _make_skill_archive(tmp_path, "blocked-skill")
+    refresh_calls = []
+
+    async def _scan(*args, **kwargs):
+        from deerflow.skills.security_scanner import ScanResult
+
+        return ScanResult(decision="block", reason="prompt injection")
+
+    async def _refresh():
+        refresh_calls.append("refresh")
+
+    monkeypatch.setattr(skills_router, "resolve_thread_virtual_path", lambda thread_id, path: archive)
+    monkeypatch.setattr("deerflow.skills.installer.get_skills_root_path", lambda: skills_root)
+    monkeypatch.setattr("deerflow.skills.installer.scan_skill_content", _scan)
+    monkeypatch.setattr(skills_router, "refresh_skills_system_prompt_cache_async", _refresh)
+
+    app = FastAPI()
+    app.include_router(skills_router.router)
+
+    with TestClient(app) as client:
+        response = client.post("/api/skills/install", json={"thread_id": "thread-1", "path": "mnt/user-data/outputs/blocked-skill.skill"})
+
+    assert response.status_code == 400
+    assert "Security scan blocked skill 'blocked-skill': prompt injection" in response.json()["detail"]
+    assert not (skills_root / "custom" / "blocked-skill").exists()
+    assert refresh_calls == []
 
 
 def test_custom_skills_router_lifecycle(monkeypatch, tmp_path):
@@ -249,7 +329,10 @@ def test_update_skill_refreshes_prompt_cache_before_return(monkeypatch, tmp_path
         enabled_state["value"] = False
 
     monkeypatch.setattr("app.gateway.routers.skills.load_skills", _load_skills)
-    monkeypatch.setattr("app.gateway.routers.skills.get_extensions_config", lambda: SimpleNamespace(mcp_servers={}, skills={}))
+    monkeypatch.setattr(
+        "app.gateway.routers.skills.get_extensions_config",
+        lambda: SimpleNamespace(mcp_servers={}, skills={}, features={}),
+    )
     monkeypatch.setattr("app.gateway.routers.skills.reload_extensions_config", lambda: None)
     monkeypatch.setattr(skills_router.ExtensionsConfig, "resolve_config_path", staticmethod(lambda: config_path))
     monkeypatch.setattr("app.gateway.routers.skills.refresh_skills_system_prompt_cache_async", _refresh)
@@ -263,4 +346,8 @@ def test_update_skill_refreshes_prompt_cache_before_return(monkeypatch, tmp_path
     assert response.status_code == 200
     assert response.json()["enabled"] is False
     assert refresh_calls == ["refresh"]
-    assert json.loads(config_path.read_text(encoding="utf-8")) == {"mcpServers": {}, "skills": {"demo-skill": {"enabled": False}}}
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {
+        "mcpServers": {},
+        "skills": {"demo-skill": {"enabled": False}},
+        "features": {},
+    }

@@ -28,6 +28,26 @@
 - 安全备份分支：`backup-before-upstream-sync-20260420-013110`
 - 冲突报告文件：`docs/upstream-sync-conflicts-20260420-014233.txt`
 
+### 2026-04-28 增量同步快照（最新）
+
+- 同步前本地基准：`320ebf2b33e6f28b3bf5385218e9ece6c8d2791c`
+- 上游目标提交：`395c14357b60926a63af2142ac96bbb670ecb768`
+- 安全备份分支：`backup-before-upstream-sync-20260428-213029`
+- 冲突报告文件：`docs/upstream-sync-conflicts-20260428-222512.txt`
+
+本轮冲突核心在 gateway/runtime 与前端 settings 组件：
+
+1. `backend/app/gateway/app.py`
+2. `backend/app/gateway/routers/suggestions.py`
+3. `backend/app/gateway/services.py`
+4. `backend/packages/harness/deerflow/agents/middlewares/title_middleware.py`
+5. `backend/uv.lock`
+6. `frontend/package.json`
+7. `frontend/src/components/ui/command.tsx`
+8. `frontend/src/components/workspace/settings/settings-dialog.tsx`
+
+裁决原则保持不变：**本地二开优先保留**，同时吸收不破坏本地功能的上游修复。
+
 ### 本次人工冲突裁决结果（已完成）
 
 以下文件已人工裁决并落地：

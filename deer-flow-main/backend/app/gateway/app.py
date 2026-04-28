@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import importlib.util
 import logging
@@ -78,6 +79,7 @@ CORE_ROUTER_MODULES = (
     "app.gateway.routers.novel_migrated",
     "app.gateway.api.ai_provider",
 )
+langgraph_runtime = None
 
 
 def _has_deerflow_package() -> bool:
@@ -105,6 +107,29 @@ def _include_router_module(app: FastAPI, module_path: str, *, skip_if_deerflow_m
     return True
 
 
+def get_app_config():
+    """Compatibility wrapper so tests and callers can patch app-level config loading."""
+    from deerflow.config.app_config import get_app_config as _get_app_config
+
+    return _get_app_config()
+
+
+def get_langgraph_runtime():
+    """Resolve LangGraph runtime lazily, while keeping a patchable module attribute."""
+    global langgraph_runtime
+    if langgraph_runtime is None:
+        from app.gateway.deps import langgraph_runtime as _langgraph_runtime
+
+        langgraph_runtime = _langgraph_runtime
+    return langgraph_runtime
+
+
+# Upper bound (seconds) each lifespan shutdown hook is allowed to run.
+# Bounds worker exit time so uvicorn's reload supervisor does not keep
+# firing signals into a worker that is stuck waiting for shutdown cleanup.
+_SHUTDOWN_HOOK_TIMEOUT_SECONDS = 5.0
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
@@ -118,8 +143,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Shutting down API Gateway")
         return
 
+    # Load config and check necessary environment variables at startup
     try:
-        from deerflow.config.app_config import get_app_config
+        get_app_config()
+        logger.info("Configuration loaded successfully")
     except ModuleNotFoundError as exc:
         if _is_deerflow_import_error(exc):
             logger.warning("DeerFlow harness package is unavailable; gateway started in degraded mode")
@@ -127,11 +154,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info("Shutting down API Gateway")
             return
         raise
-
-    # Load config and check necessary environment variables at startup
-    try:
-        get_app_config()
-        logger.info("Configuration loaded successfully")
     except Exception as e:
         error_msg = f"Failed to load configuration during gateway startup: {e}"
         logger.exception(error_msg)
@@ -161,10 +183,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except ImportError:
         logger.debug("Novel crypto module unavailable; skipping encryption check")
 
-    from app.gateway.deps import langgraph_runtime
+    runtime_context = get_langgraph_runtime()
 
     # Initialize LangGraph runtime components (StreamBridge, RunManager, checkpointer, store)
-    async with langgraph_runtime(app):
+    async with runtime_context(app):
         logger.info("LangGraph runtime initialised")
 
         # Start IM channel service if any channels are configured
@@ -178,11 +200,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         yield
 
-        # Stop channel service on shutdown
+        # Stop channel service on shutdown (bounded to prevent worker hang)
         try:
             from app.channels.service import stop_channel_service
 
-            await stop_channel_service()
+            await asyncio.wait_for(
+                stop_channel_service(),
+                timeout=_SHUTDOWN_HOOK_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "Channel service shutdown exceeded %.1fs; proceeding with worker exit.",
+                _SHUTDOWN_HOOK_TIMEOUT_SECONDS,
+            )
         except Exception:
             logger.exception("Failed to stop channel service")
 

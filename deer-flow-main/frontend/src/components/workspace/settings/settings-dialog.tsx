@@ -138,8 +138,8 @@ export function SettingsDialog(props: SettingsDialogProps) {
               })}
             </ul>
           </nav>
-          <ScrollArea className="h-full min-h-0">
-            <div className="p-5">
+          <ScrollArea className="h-full min-h-0 min-w-0">
+            <div className="min-w-0 p-5">
               {activeSection === "appearance" && <AppearanceSettingsPage />}
               {activeSection === "ai-providers" && <AiProviderSettingsPage />}
               {activeSection === "drafts" && <DraftSettingsPage />}
