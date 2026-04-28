@@ -8,6 +8,25 @@ import type { AiModelRoutingPayload, QueryValue } from './novel-api';
 import { emitNovelEvent } from './observability';
 import type { Novel, Chapter, Character, Setting, Faction, Item, PromptTemplate, EntityRelationship, TimelineEvent, GraphLayout, Volume } from './schemas';
 
+function stableSerialize(value: unknown): string {
+  const sortRecursively = (input: unknown): unknown => {
+    if (Array.isArray(input)) {
+      return input.map(sortRecursively);
+    }
+    if (input && typeof input === 'object') {
+      const record = input as Record<string, unknown>;
+      return Object.keys(record)
+        .sort()
+        .reduce<Record<string, unknown>>((acc, key) => {
+          acc[key] = sortRecursively(record[key]);
+          return acc;
+        }, {});
+    }
+    return input;
+  };
+  return JSON.stringify(sortRecursively(value));
+}
+
 export function useNovelQuery(novelTitle?: string) {
   return useQuery({
     queryKey: ['novel', novelTitle],
@@ -559,7 +578,7 @@ export function useSetActivePromptTemplateMutation() {
 
 export function useCareersQuery(projectId: string, modelRouting?: AiModelRoutingPayload) {
   return useQuery({
-    queryKey: ['careers', projectId, modelRouting ? JSON.stringify(modelRouting) : undefined],
+    queryKey: ['careers', projectId, modelRouting ? stableSerialize(modelRouting) : undefined],
     queryFn: () => novelApiService.getCareers(projectId, modelRouting),
     enabled: !!projectId,
   });

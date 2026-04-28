@@ -28,6 +28,7 @@ from app.gateway.novel_migrated.utils.sse_response import SSEResponse, WizardPro
 
 router = APIRouter(prefix="/api/careers", tags=["职业管理"])
 logger = get_logger(__name__)
+MAX_SUB_CAREERS_PER_CHARACTER = 5
 
 
 def _safe_load_career_stages(career: Career):
@@ -372,7 +373,7 @@ async def generate_career_system(
             
             # 清洗并解析JSON
             try:
-                cleaned_response = effective_ai_service._clean_json_response(ai_response)
+                cleaned_response = effective_ai_service.clean_json_response(ai_response)
                 career_data = json.loads(cleaned_response)
                 logger.info("✅ 职业体系JSON解析成功")
             except json.JSONDecodeError as e:
@@ -826,7 +827,7 @@ async def add_sub_career(
     if existing_check.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="该角色已拥有此副职业")
     
-    # 检查副职业数量限制（可选，这里设置为最多5个）
+    # 检查副职业数量限制
     sub_count_result = await db.execute(
         select(func.count(CharacterCareer.id)).where(
             CharacterCareer.character_id == character_id,
@@ -835,8 +836,11 @@ async def add_sub_career(
     )
     sub_count = sub_count_result.scalar_one()
     
-    if sub_count >= 5:
-        raise HTTPException(status_code=400, detail="副职业数量已达上限（最多5个）")
+    if sub_count >= MAX_SUB_CAREERS_PER_CHARACTER:
+        raise HTTPException(
+            status_code=400,
+            detail=f"副职业数量已达上限（最多{MAX_SUB_CAREERS_PER_CHARACTER}个）",
+        )
     
     # 创建副职业关联
     char_career = CharacterCareer(

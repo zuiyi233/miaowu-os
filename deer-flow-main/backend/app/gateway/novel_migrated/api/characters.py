@@ -220,12 +220,13 @@ async def generate_single_character(
         user_input=req.user_input or "请生成一个符合项目设定的角色"
     )
 
-    accumulated = ""
+    chunks: list[str] = []
     async for chunk in ai_service.generate_text_stream(prompt=prompt, temperature=0.7):
-        accumulated += chunk
+        chunks.append(chunk)
+    accumulated = "".join(chunks)
 
     try:
-        cleaned = ai_service._clean_json_response(accumulated)
+        cleaned = AIService.clean_json_response(accumulated)
         char_data = json.loads(cleaned)
 
         character = Character(
@@ -278,7 +279,10 @@ async def generate_single_character(
         await db.refresh(character)
         return _serialize_character(character)
 
-    except (json.JSONDecodeError, Exception) as e:
+    except json.JSONDecodeError as e:
+        logger.error(f"Parse character generation failed (invalid JSON): {e}")
+        raise HTTPException(status_code=500, detail=f"AI response parse error: {str(e)}")
+    except Exception as e:
         logger.error(f"Parse character generation failed: {e}")
         raise HTTPException(status_code=500, detail=f"AI response parse error: {str(e)}")
 

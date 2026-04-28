@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import threading
@@ -284,7 +285,7 @@ class AIService:
         self._cached_tools = None
         self._tools_loaded = False
 
-    def _get_model_instance(
+    async def _get_model_instance(
         self,
         model_name: str | None = None,
         *,
@@ -294,7 +295,12 @@ class AIService:
         resolved_name = self._resolve_model_name(model_name)
         effective_base_url = base_url or self.api_base_url
         effective_api_key = api_key or self.api_key
-        return _get_cached_model(resolved_name, base_url=effective_base_url, api_key=effective_api_key)
+        return await asyncio.to_thread(
+            _get_cached_model,
+            resolved_name,
+            effective_base_url,
+            effective_api_key,
+        )
 
     def _resolve_model_name(self, model_name: str | None = None) -> str:
         config = get_app_config()
@@ -430,7 +436,7 @@ class AIService:
         model_name = self._resolve_model_name(model)
 
         try:
-            llm = self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
+            llm = await self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
             llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
             logger.info(
@@ -720,7 +726,7 @@ class AIService:
         )
 
         model_name = self._resolve_model_name(model)
-        llm = self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
+        llm = await self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
         llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
         logger.info(
@@ -765,7 +771,7 @@ class AIService:
         """非流式文本生成（messages数组直传版本）。"""
         start_time = time.time()
         model_name = self._resolve_model_name(model)
-        llm = self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
+        llm = await self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
         llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
         tools = await self._prepare_mcp_tools(auto_mcp=auto_mcp)
@@ -812,7 +818,7 @@ class AIService:
     ) -> AsyncGenerator[str, None]:
         """流式文本生成（messages数组直传版本）。"""
         model_name = self._resolve_model_name(model)
-        llm = self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
+        llm = await self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
         llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
         tools = await self._prepare_mcp_tools(auto_mcp=auto_mcp)

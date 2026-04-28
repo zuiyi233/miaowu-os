@@ -25,6 +25,11 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/foreshadows", tags=["foreshadows"])
 
 
+def _raise_foreshadow_api_error(action: str, error: Exception) -> None:
+    logger.error("❌ %s: %s", action, error)
+    raise HTTPException(status_code=500, detail=f"{action}: {str(error)}")
+
+
 @router.get("/projects/{project_id}", response_model=ForeshadowListResponse)
 async def get_project_foreshadows(
     project_id: str,
@@ -61,8 +66,7 @@ async def get_project_foreshadows(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("❌ 获取伏笔列表失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"获取伏笔列表失败: {str(e)}")
+        _raise_foreshadow_api_error("获取伏笔列表失败", e)
 
 
 @router.get("/projects/{project_id}/stats", response_model=ForeshadowStatsResponse)
@@ -82,8 +86,7 @@ async def get_foreshadow_stats(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("❌ 获取伏笔统计失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"获取伏笔统计失败: {str(e)}")
+        _raise_foreshadow_api_error("获取伏笔统计失败", e)
 
 
 @router.get("/projects/{project_id}/context/{chapter_number}", response_model=ForeshadowContextResponse)
@@ -118,8 +121,7 @@ async def get_chapter_foreshadow_context(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("❌ 获取伏笔上下文失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"获取伏笔上下文失败: {str(e)}")
+        _raise_foreshadow_api_error("获取伏笔上下文失败", e)
 
 
 @router.get("/projects/{project_id}/pending-resolve")
@@ -149,8 +151,7 @@ async def get_pending_resolve_foreshadows(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("❌ 获取待回收伏笔失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"获取待回收伏笔失败: {str(e)}")
+        _raise_foreshadow_api_error("获取待回收伏笔失败", e)
 
 
 @router.get("/{foreshadow_id}", response_model=ForeshadowResponse)
@@ -173,8 +174,7 @@ async def get_foreshadow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("❌ 获取伏笔详情失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"获取伏笔详情失败: {str(e)}")
+        _raise_foreshadow_api_error("获取伏笔详情失败", e)
 
 
 @router.post("", response_model=ForeshadowResponse)
@@ -197,8 +197,7 @@ async def create_foreshadow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("❌ 创建伏笔失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"创建伏笔失败: {str(e)}")
+        _raise_foreshadow_api_error("创建伏笔失败", e)
 
 
 @router.put("/{foreshadow_id}", response_model=ForeshadowResponse)
@@ -223,8 +222,7 @@ async def update_foreshadow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("❌ 更新伏笔失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"更新伏笔失败: {str(e)}")
+        _raise_foreshadow_api_error("更新伏笔失败", e)
 
 
 @router.delete("/{foreshadow_id}")
@@ -249,8 +247,7 @@ async def delete_foreshadow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("❌ 删除伏笔失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"删除伏笔失败: {str(e)}")
+        _raise_foreshadow_api_error("删除伏笔失败", e)
 
 
 @router.post("/{foreshadow_id}/plant", response_model=ForeshadowResponse)
@@ -279,8 +276,7 @@ async def plant_foreshadow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("❌ 标记伏笔埋入失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"标记伏笔埋入失败: {str(e)}")
+        _raise_foreshadow_api_error("标记伏笔埋入失败", e)
 
 
 @router.post("/{foreshadow_id}/resolve", response_model=ForeshadowResponse)
@@ -309,8 +305,7 @@ async def resolve_foreshadow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("❌ 标记伏笔回收失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"标记伏笔回收失败: {str(e)}")
+        _raise_foreshadow_api_error("标记伏笔回收失败", e)
 
 
 @router.post("/{foreshadow_id}/abandon", response_model=ForeshadowResponse)
@@ -339,8 +334,7 @@ async def abandon_foreshadow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("❌ 标记伏笔废弃失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"标记伏笔废弃失败: {str(e)}")
+        _raise_foreshadow_api_error("标记伏笔废弃失败", e)
 
 
 @router.post("/projects/{project_id}/sync-from-analysis", response_model=SyncFromAnalysisResponse)
@@ -364,5 +358,4 @@ async def sync_foreshadows_from_analysis(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("❌ 同步伏笔失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"同步伏笔失败: {str(e)}")
+        _raise_foreshadow_api_error("同步伏笔失败", e)

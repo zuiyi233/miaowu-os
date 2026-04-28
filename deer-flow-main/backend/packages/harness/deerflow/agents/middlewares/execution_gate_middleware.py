@@ -445,12 +445,10 @@ class ExecutionGateMiddleware(AgentMiddleware[ThreadState]):
             goto=END,
         )
 
-    @override
-    def wrap_tool_call(
+    def _evaluate_tool_call_gate(
         self,
         request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], ToolMessage | Command],
-    ) -> ToolMessage | Command:
+    ) -> tuple[dict[str, Any], Command | None, bool]:
         tool_name = str(request.tool_call.get("name") or "").strip()
         tool_args = request.tool_call.get("args")
         tool_args_mapping = dict(tool_args) if isinstance(tool_args, Mapping) else {}
@@ -470,15 +468,19 @@ class ExecutionGateMiddleware(AgentMiddleware[ThreadState]):
                 source="lead_agent_tool_call",
                 note="blocked_by_planning_only",
             )
-            return self._build_block_response(
-                request=request,
-                gate_state=gate_state,
-                reason="planning_only",
-                pending_action=pending_action,
+            return (
+                gate_state,
+                self._build_block_response(
+                    request=request,
+                    gate_state=gate_state,
+                    reason="planning_only",
+                    pending_action=pending_action,
+                ),
+                False,
             )
 
         if not is_high_risk_tool_call(tool_name, tool_args_mapping):
-            return handler(request)
+            return gate_state, None, True
 
         if answer_only_turn or not execution_mode_active:
             pending_action = build_pending_action_payload(
@@ -490,14 +492,21 @@ class ExecutionGateMiddleware(AgentMiddleware[ThreadState]):
                 note="blocked_by_execution_gate",
             )
             reason = "question_priority" if answer_only_turn else "authorization_required"
-            return self._build_block_response(
-                request=request,
-                gate_state=gate_state,
-                reason=reason,
-                pending_action=pending_action,
+            return (
+                gate_state,
+                self._build_block_response(
+                    request=request,
+                    gate_state=gate_state,
+                    reason=reason,
+                    pending_action=pending_action,
+                ),
+                False,
             )
 
-        result = handler(request)
+        return gate_state, None, False
+
+    @staticmethod
+    def _finalize_authorized_tool_result(gate_state: Mapping[str, Any], result: ToolMessage | Command) -> ToolMessage | Command:
         next_gate = update_execution_gate_state(
             gate_state,
             status=EXECUTION_MODE_ACTIVE,
@@ -513,77 +522,29 @@ class ExecutionGateMiddleware(AgentMiddleware[ThreadState]):
         return Command(update={"execution_gate": next_gate, "messages": [result]})
 
     @override
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command],
+    ) -> ToolMessage | Command:
+        gate_state, blocked_or_none, allow_without_gate = self._evaluate_tool_call_gate(request)
+        if blocked_or_none is not None:
+            return blocked_or_none
+        if allow_without_gate:
+            return handler(request)
+        result = handler(request)
+        return self._finalize_authorized_tool_result(gate_state, result)
+
+    @override
     async def awrap_tool_call(
         self,
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
     ) -> ToolMessage | Command:
-        tool_name = str(request.tool_call.get("name") or "").strip()
-        tool_args = request.tool_call.get("args")
-        tool_args_mapping = dict(tool_args) if isinstance(tool_args, Mapping) else {}
-        request_state = getattr(request, "state", None)
-        request_gate_raw = request_state.get("execution_gate") if isinstance(request_state, Mapping) else None
-        gate_state = coerce_execution_gate_state(request_gate_raw)
-        planning_only_turn = bool(gate_state.get("planning_only_turn"))
-        answer_only_turn = bool(gate_state.get("answer_only_turn"))
-        execution_mode_active = bool(gate_state.get("execution_mode"))
-
-        if planning_only_turn and self._is_planning_blocked_tool_call(tool_name, tool_args_mapping):
-            pending_action = build_pending_action_payload(
-                action_type=tool_name,
-                tool_name=tool_name,
-                args=tool_args_mapping,
-                tool_call_id=str(request.tool_call.get("id") or "") or None,
-                source="lead_agent_tool_call",
-                note="blocked_by_planning_only",
-            )
-            return self._build_block_response(
-                request=request,
-                gate_state=gate_state,
-                reason="planning_only",
-                pending_action=pending_action,
-            )
-
-        if not is_high_risk_tool_call(tool_name, tool_args_mapping):
+        gate_state, blocked_or_none, allow_without_gate = self._evaluate_tool_call_gate(request)
+        if blocked_or_none is not None:
+            return blocked_or_none
+        if allow_without_gate:
             return await handler(request)
-
-        if answer_only_turn or not execution_mode_active:
-            pending_action = build_pending_action_payload(
-                action_type=tool_name,
-                tool_name=tool_name,
-                args=tool_args_mapping,
-                tool_call_id=str(request.tool_call.get("id") or "") or None,
-                source="lead_agent_tool_call",
-                note="blocked_by_execution_gate",
-            )
-            reason = "question_priority" if answer_only_turn else "authorization_required"
-            return self._build_block_response(
-                request=request,
-                gate_state=gate_state,
-                reason=reason,
-                pending_action=pending_action,
-            )
-
         result = await handler(request)
-
-        # Clear pending action after successful authorized execution.
-        next_gate = update_execution_gate_state(
-            gate_state,
-            status=EXECUTION_MODE_ACTIVE,
-            execution_mode=True,
-            pending_action=None,
-            confirmation_required=False,
-            replay_requested=False,
-            answer_only_turn=False,
-            planning_only_turn=False,
-        )
-
-        if isinstance(result, Command):
-            return _clone_command_with_update(result, update_patch={"execution_gate": next_gate})
-
-        return Command(
-            update={
-                "execution_gate": next_gate,
-                "messages": [result],
-            }
-        )
+        return self._finalize_authorized_tool_result(gate_state, result)

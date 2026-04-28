@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"quality check must verify backend changes against repo conventions"}
+{"file":".trellis/spec/frontend/index.md","reason":"quality check must verify frontend changes against repo conventions"}

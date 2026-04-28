@@ -1,13 +1,4 @@
-"""Intent recognition middleware for global AI chat routing.
-
-This middleware provides two guided flows for /api/ai/chat:
-1. Novel creation session (collect fields -> explicit confirmation -> persist)
-2. Novel lifecycle management session (project/chapters/outlines/characters/
-   relationships/organizations/items mapped to foreshadows)
-
-Both flows are opt-in by intent detection and keep normal chat untouched when
-no actionable intent is detected.
-"""
+"""Intent recognition middleware for /api/ai/chat novel create/manage flows."""
 
 from __future__ import annotations
 
@@ -3023,7 +3014,6 @@ class IntentRecognitionMiddleware:
                 enabled_skills = [skill for skill in skills if extensions_config.is_skill_enabled(skill.name, skill.category)]
             except Exception as config_exc:
                 logger.warning("failed to load extensions config for skill toggles: %s", config_exc)
-                # Follow deerflow fail-open behavior: keep skills available when config is unreadable.
                 enabled_skills = skills
                 workspace_states = {}
 
@@ -3423,13 +3413,11 @@ class IntentRecognitionMiddleware:
     @staticmethod
     def _resolve_session_key_from_context(context: dict[str, Any] | None, user_id: str) -> str:
         if isinstance(context, dict):
-            # Keep upstream-compatible thread first to avoid splitting main chat sessions.
             for key in _SESSION_CONTEXT_KEYS:
                 value = context.get(key)
                 if isinstance(value, str) and value.strip():
                     return f"{user_id}:{key}:{value.strip()}"
             if context:
-                # Fallback: unknown context shape still gets a stable per-context key.
                 digest = hashlib.sha1(json.dumps(context, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
                 return f"{user_id}:ctx:{digest}"
         return f"{user_id}:default"

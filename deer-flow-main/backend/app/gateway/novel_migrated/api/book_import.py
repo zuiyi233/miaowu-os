@@ -26,6 +26,7 @@ router = APIRouter(prefix="/book-import", tags=["拆书导入"])
 logger = get_logger(__name__)
 
 MAX_TXT_SIZE = 50 * 1024 * 1024  # 50MB
+_UPLOAD_READ_CHUNK_SIZE = 1024 * 1024
 
 
 @router.post("/tasks", response_model=BookImportTaskCreateResponse, summary="创建拆书任务（上传TXT）")
@@ -70,9 +71,15 @@ async def create_book_import_task(
     if isinstance(file_size, int) and file_size > MAX_TXT_SIZE:
         raise HTTPException(status_code=413, detail="文件大小超过 50MB 限制")
 
-    content = await file.read()
-    if len(content) > MAX_TXT_SIZE:
-        raise HTTPException(status_code=413, detail="文件大小超过 50MB 限制")
+    content_buffer = bytearray()
+    while True:
+        chunk = await file.read(_UPLOAD_READ_CHUNK_SIZE)
+        if not chunk:
+            break
+        content_buffer.extend(chunk)
+        if len(content_buffer) > MAX_TXT_SIZE:
+            raise HTTPException(status_code=413, detail="文件大小超过 50MB 限制")
+    content = bytes(content_buffer)
 
     task = await book_import_service.create_task(
         user_id=user_id,

@@ -7,7 +7,7 @@ import os
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -40,6 +40,7 @@ router = APIRouter(tags=["novel_stream"])
 _ANALYSIS_TASKS: dict[str, dict[str, Any]] = {}
 _ANALYSIS_RESULTS: dict[str, dict[str, Any]] = {}
 _STREAM_REQUEST_WINDOWS: dict[str, deque[float]] = {}
+_ANALYSIS_CACHE_CLEANER_TASK: asyncio.Task[None] | None = None
 
 
 def _read_positive_int_env(env_name: str, default: int) -> int:
@@ -66,9 +67,56 @@ _ANALYSIS_CACHE_MAX_ENTRIES = _read_positive_int_env(
     "NOVEL_ANALYSIS_CACHE_MAX_ENTRIES",
     500,
 )
+_ANALYSIS_CACHE_CLEAN_INTERVAL_SECONDS = _read_positive_int_env(
+    "NOVEL_ANALYSIS_CACHE_CLEAN_INTERVAL_SECONDS",
+    300,
+)
+
+
+def _now_utc_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _warn_rate_limit_scope_once() -> None:
+    workers_raw = (os.getenv("WEB_CONCURRENCY") or os.getenv("UVICORN_WORKERS") or "").strip()
+    if not workers_raw:
+        return
+    try:
+        workers = int(workers_raw)
+    except ValueError:
+        return
+    if workers > 1:
+        logger.warning(
+            "novel_stream rate limit uses in-process window storage; with workers=%s the effective limit is multiplied by worker count.",
+            workers,
+        )
+
+
+_warn_rate_limit_scope_once()
+
+
+async def _analysis_cache_cleaner_loop() -> None:
+    try:
+        while True:
+            await asyncio.sleep(_ANALYSIS_CACHE_CLEAN_INTERVAL_SECONDS)
+            _cleanup_analysis_cache()
+    except asyncio.CancelledError:  # pragma: no cover - graceful shutdown path
+        return
+
+
+def _ensure_analysis_cache_cleaner() -> None:
+    global _ANALYSIS_CACHE_CLEANER_TASK
+    if _ANALYSIS_CACHE_CLEANER_TASK and not _ANALYSIS_CACHE_CLEANER_TASK.done():
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    _ANALYSIS_CACHE_CLEANER_TASK = loop.create_task(_analysis_cache_cleaner_loop())
 
 
 def _enforce_stream_rate_limit(*, user_id: str, action: str) -> None:
+    _ensure_analysis_cache_cleaner()
     now = time.monotonic()
     key = f"{action}:{user_id}"
     window = _STREAM_REQUEST_WINDOWS.setdefault(key, deque())
@@ -87,6 +135,7 @@ def _enforce_stream_rate_limit(*, user_id: str, action: str) -> None:
 
 
 def _cleanup_analysis_cache() -> None:
+    _ensure_analysis_cache_cleaner()
     cutoff = time.time() - _ANALYSIS_CACHE_TTL_SECONDS
 
     def parse_ts(item: dict[str, Any]) -> float:
@@ -148,6 +197,7 @@ class BatchGenerateStreamRequest(BaseModel):
     max_tokens: int | None = Field(default=None, ge=512, le=16000)
     max_retries: int = Field(default=2, ge=0, le=6)
     replay_failed_only: bool = False
+    continue_on_failure: bool = False
     auto_analysis: bool = False
     auto_prepare_revision: bool = False
 
@@ -577,13 +627,13 @@ async def _generate_single_chapter_stream(
                 "status": analysis_result.task.status,
                 "progress": analysis_result.task.progress,
                 "error_message": analysis_result.task.error_message,
-                "updated_at": datetime.utcnow().isoformat(),
+                "updated_at": _now_utc_iso(),
             }
             _ANALYSIS_RESULTS[chapter.id] = {
                 "project_id": project.id,
                 "chapter_id": chapter.id,
                 "analysis": analysis_result.analysis,
-                "updated_at": datetime.utcnow().isoformat(),
+                "updated_at": _now_utc_iso(),
             }
             if request.auto_prepare_revision:
                 revision_suggestions = orchestration_service.normalize_revision_suggestions(
@@ -972,7 +1022,7 @@ async def batch_generate_chapters_stream(
 
             if task.status in {"pending", "failed"}:
                 task.status = "running"
-                task.started_at = datetime.utcnow()
+                task.started_at = datetime.now(UTC)
                 task.error_message = None
 
             resume_plan = recovery_service.compute_batch_resume_plan(
@@ -989,7 +1039,7 @@ async def batch_generate_chapters_stream(
             pending_chapters = [chapter_map[cid] for cid in resume_plan["pending_ids"] if cid in chapter_map]
             if not pending_chapters:
                 task.status = "completed"
-                task.completed_at = datetime.utcnow()
+                task.completed_at = datetime.now(UTC)
                 await db.commit()
                 yield await SSEResponse.send_result(
                     {
@@ -1085,13 +1135,15 @@ async def batch_generate_chapters_stream(
                         error=last_error or "章节生成失败",
                         retry_count=payload.max_retries,
                     )
-                    task.status = "failed"
                     task.error_message = (
                         f"第{chapter.chapter_number}章失败，已进入补偿态，可重放：{last_error or '未知错误'}"
                     )[:500]
-                    task.completed_at = datetime.utcnow()
                     task.current_retry_count = 0
                     await db.commit()
+                    if payload.continue_on_failure:
+                        continue
+                    task.status = "failed"
+                    task.completed_at = datetime.now(UTC)
                     break
 
                 if chapter.id not in already_completed_ids:
@@ -1115,13 +1167,17 @@ async def batch_generate_chapters_stream(
                     chapters=chapters,
                     replay_failed_only=False,
                 )
+                has_failures = bool(task.failed_chapters)
                 if updated_plan["pending_ids"]:
                     task.status = "failed"
                     task.error_message = "任务提前终止，存在未完成章节，可继续断点续跑"
+                elif has_failures:
+                    task.status = "failed"
+                    task.error_message = task.error_message or "部分章节生成失败，可重放失败章节。"
                 else:
                     task.status = "completed"
                     task.error_message = None
-                task.completed_at = datetime.utcnow()
+                task.completed_at = datetime.now(UTC)
                 task.current_chapter_id = None
                 task.current_chapter_number = None
                 task.current_retry_count = 0
@@ -1147,7 +1203,7 @@ async def batch_generate_chapters_stream(
                 if task is not None and task.status == "running":
                     task.status = "failed"
                     task.error_message = f"批量任务异常中断：{exc.detail}"[:500]
-                    task.completed_at = datetime.utcnow()
+                    task.completed_at = datetime.now(UTC)
                     await db.commit()
             except Exception:  # pragma: no cover - best effort
                 await db.rollback()
@@ -1158,7 +1214,7 @@ async def batch_generate_chapters_stream(
                 if task is not None and task.status == "running":
                     task.status = "failed"
                     task.error_message = f"批量任务异常中断：{exc}"[:500]
-                    task.completed_at = datetime.utcnow()
+                    task.completed_at = datetime.now(UTC)
                     await db.commit()
             except Exception:  # pragma: no cover - best effort
                 await db.rollback()
@@ -1180,7 +1236,7 @@ async def generate_novel_outline_stream(
 
     async def worker(progress_callback: Callable[[str, int, str], Awaitable[None]]) -> dict[str, Any]:
         project = await verify_project_access(novel_id, user_id, db)
-        outlines_count = await book_import_service._generate_outline_from_project(  # noqa: SLF001
+        outlines_count = await book_import_service.generate_outline_from_project(
             db=db,
             user_id=user_id,
             project=project,
@@ -1217,7 +1273,7 @@ async def generate_novel_characters_stream(
         if payload.genre:
             project.genre = payload.genre[:50]
 
-        generated_count = await book_import_service._generate_characters_and_organizations_from_project(  # noqa: SLF001
+        generated_count = await book_import_service.generate_characters_and_organizations_from_project(
             db=db,
             user_id=user_id,
             project=project,
@@ -1280,7 +1336,7 @@ async def analyze_chapter(
         "project_id": project.id,
         "chapter_id": chapter_id,
         "analysis": pipeline.analysis,
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": _now_utc_iso(),
     }
     _ANALYSIS_TASKS[chapter_id] = {
         "task_id": pipeline.task.id,
@@ -1288,7 +1344,7 @@ async def analyze_chapter(
         "status": pipeline.task.status,
         "progress": pipeline.task.progress,
         "error_message": pipeline.task.error_message,
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": _now_utc_iso(),
     }
     return _ANALYSIS_TASKS[chapter_id]
 

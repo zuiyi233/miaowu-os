@@ -170,10 +170,24 @@ _STRING_REDACTION_PATTERNS = (
     re.compile(r"secret", re.IGNORECASE),
     re.compile(r"password", re.IGNORECASE),
 )
+_AWAITING_AUTHORIZATION_TTL_SECONDS = 15 * 60
 
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _safe_parse_iso_datetime(value: str) -> datetime | None:
+    normalized = normalize_user_text(value)
+    if not normalized:
+        return None
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def normalize_user_text(text: Any) -> str:
@@ -430,7 +444,7 @@ def coerce_execution_gate_state(raw: Any) -> dict[str, Any]:
         if ui_hints is not None and not isinstance(ui_hints, Mapping):
             ui_hints = None
 
-        return {
+        normalized_state = {
             "status": status,
             "execution_mode": bool(raw.get("execution_mode", False)),
             "pending_action": dict(pending_action) if isinstance(pending_action, Mapping) else None,
@@ -443,6 +457,23 @@ def coerce_execution_gate_state(raw: Any) -> dict[str, Any]:
             "planning_only_turn": bool(raw.get("planning_only_turn", False)),
             "last_user_fingerprint": normalize_user_text(raw.get("last_user_fingerprint")) or None,
         }
+        if normalized_state["status"] == EXECUTION_MODE_AWAITING_AUTHORIZATION:
+            updated_at = _safe_parse_iso_datetime(str(normalized_state.get("updated_at") or ""))
+            now = datetime.now(UTC)
+            if updated_at is None or (now - updated_at).total_seconds() > _AWAITING_AUTHORIZATION_TTL_SECONDS:
+                normalized_state.update(
+                    {
+                        "status": EXECUTION_MODE_READONLY,
+                        "execution_mode": False,
+                        "pending_action": None,
+                        "confirmation_required": False,
+                        "replay_requested": False,
+                        "answer_only_turn": False,
+                        "planning_only_turn": False,
+                        "updated_at": _now_iso(),
+                    }
+                )
+        return normalized_state
     return default_execution_gate_state()
 
 

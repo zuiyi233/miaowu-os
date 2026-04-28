@@ -532,11 +532,12 @@ async def partial_regenerate(
         user_instructions=req.user_instructions,
     )
 
-    accumulated = ""
+    chunks: list[str] = []
     async for chunk in ai_service.generate_text_stream(prompt=prompt, temperature=0.7):
-        accumulated += chunk
+        chunks.append(chunk)
+    accumulated = "".join(chunks)
 
-    new_content = chapter.content.replace(req.selected_text, accumulated) if chapter.content else accumulated
+    new_content = chapter.content.replace(req.selected_text, accumulated, 1) if chapter.content else accumulated
     chapter.content = new_content
     chapter.word_count = len(new_content)
     await db.commit()
@@ -578,14 +579,14 @@ async def update_chapter_status(
 async def reorder_chapters(
     request: Request,
     project_id: str = Query(...),
-    chapter_orders: list = [],
+    chapter_orders: list[dict[str, Any]] | None = None,
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     _bind_idempotency_context(request)
     await verify_project_access(project_id, user_id, db)
 
-    for item in chapter_orders:
+    for item in chapter_orders or []:
         ch_id = item.get("id")
         new_num = item.get("chapter_number")
         if ch_id and new_num:

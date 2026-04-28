@@ -89,7 +89,7 @@ function extractPendingClarification(messages: Message[]): PendingClarification 
       (message) =>
         message.type === "human" &&
         !isOptimisticHumanMessage(message) &&
-        textOfMessage(message).trim().length > 0,
+        (textOfMessage(message)?.trim().length ?? 0) > 0,
     );
   if (hasUserResponded) {
     return null;
@@ -111,13 +111,13 @@ function extractPendingClarification(messages: Message[]): PendingClarification 
 
   const question = typeof clarificationPayload?.question === "string"
     ? clarificationPayload.question.trim()
-    : textOfMessage(clarificationMessage).trim();
+    : (textOfMessage(clarificationMessage)?.trim() ?? "");
 
   const quickActionsRaw = Array.isArray(clarificationPayload?.quick_actions)
     ? clarificationPayload.quick_actions
     : [];
   const parsedActions = quickActionsRaw
-    .map((item) => {
+    .map<ClarificationAction | null>((item) => {
       if (!item || typeof item !== "object" || Array.isArray(item)) {
         return null;
       }
@@ -134,11 +134,11 @@ function extractPendingClarification(messages: Message[]): PendingClarification 
           label.includes("取消") || value.includes("cancel") || value.includes("取消")
             ? "outline"
             : "default",
-      } satisfies ClarificationAction;
+      };
     })
     .filter((item): item is ClarificationAction => item !== null);
 
-  const fallbackActions =
+  const fallbackActions: ClarificationAction[] =
     parsedActions.length > 0
       ? parsedActions
       : question && (question.includes("确认") || question.includes("执行"))

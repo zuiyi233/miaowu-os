@@ -315,7 +315,7 @@ class SessionBrief:
                 "pending_action": self.pending_action,
                 "idempotency_key": self.idempotency_key,
             }.items()
-            if v is not None and v != [] and v is not False
+            if v is not None
         }
 
 

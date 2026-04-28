@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import time
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -160,8 +161,8 @@ class _BookImportTask:
     progress: int = 0
     message: str | None = "任务已创建"
     error: str | None = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     preview: BookImportPreviewResponse | None = None
     cancelled: bool = False
     # 导入后生成的 project_id，用于重试时定位项目
@@ -179,11 +180,12 @@ class BookImportService:
     def __init__(self) -> None:
         self._tasks: dict[str, _BookImportTask] = {}
         self._tasks_lock = asyncio.Lock()
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self._ai_service_cache: dict[str, tuple[AIService, float]] = {}
         self._AI_SERVICE_CACHE_TTL = 60.0
 
     def _cleanup_expired_tasks(self) -> None:
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         expired_keys = [
             tid
             for tid, task in self._tasks.items()
@@ -192,6 +194,22 @@ class BookImportService:
         ]
         for key in expired_keys:
             self._tasks.pop(key, None)
+
+    def _track_background_task(self, task: asyncio.Task[None]) -> None:
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_task_done)
+
+    def _on_background_task_done(self, task: asyncio.Task[None]) -> None:
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        try:
+            exc = task.exception()
+        except Exception as callback_error:  # pragma: no cover - defensive
+            logger.error("拆书后台任务回调失败: %s", callback_error, exc_info=True)
+            return
+        if exc:
+            logger.error("拆书后台任务未捕获异常: %s", exc, exc_info=True)
 
     async def create_task(
         self,
@@ -227,7 +245,8 @@ class BookImportService:
             self._cleanup_expired_tasks()
             self._tasks[task_id] = task
 
-        asyncio.create_task(self._run_pipeline(task_id=task_id, file_content=file_content))
+        pipeline_task = asyncio.create_task(self._run_pipeline(task_id=task_id, file_content=file_content))
+        self._track_background_task(pipeline_task)
         return BookImportTaskCreateResponse(task_id=task_id, status="pending")
 
     async def get_task_status(self, *, task_id: str, user_id: str) -> BookImportTaskStatusResponse:
@@ -1690,11 +1709,6 @@ class BookImportService:
         ai_model: str | None = None,
     ) -> AIService:
         """读取用户AI配置并创建支持MCP的AI服务实例。"""
-        cache_key = f"{user_id}:{module_id}:{ai_provider_id}:{ai_model}"
-        cached = self._ai_service_cache.get(cache_key)
-        if cached and (time.monotonic() - cached[1]) < self._AI_SERVICE_CACHE_TTL:
-            return cached[0]
-
         settings_result = await db.execute(select(Settings).where(Settings.user_id == user_id))
         user_settings = settings_result.scalar_one_or_none()
 
@@ -1704,6 +1718,33 @@ class BookImportService:
             )
             db.add(user_settings)
             await db.flush()
+
+        settings_updated_at = getattr(user_settings, "updated_at", None)
+        settings_revision = settings_updated_at.isoformat() if isinstance(settings_updated_at, datetime) else ""
+        cache_revision_seed = "|".join(
+            [
+                settings_revision,
+                str(user_settings.api_provider or ""),
+                str(user_settings.llm_model or ""),
+                str(user_settings.api_base_url or ""),
+                str(user_settings.preferences or ""),
+            ]
+        )
+        settings_cache_revision = hashlib.sha1(cache_revision_seed.encode("utf-8")).hexdigest()[:16]
+        cache_key = f"{user_id}:{module_id}:{ai_provider_id}:{ai_model}:{settings_cache_revision}"
+
+        cached = self._ai_service_cache.get(cache_key)
+        if cached and (time.monotonic() - cached[1]) < self._AI_SERVICE_CACHE_TTL:
+            return cached[0]
+
+        # 清理同用户旧配置缓存，避免继续命中过期配置实例
+        stale_keys = [
+            key
+            for key in self._ai_service_cache
+            if key.startswith(f"{user_id}:") and key != cache_key
+        ]
+        for stale_key in stale_keys:
+            self._ai_service_cache.pop(stale_key, None)
 
         mcp_result = await db.execute(select(MCPPlugin).where(MCPPlugin.user_id == user_id))
         mcp_plugins = mcp_result.scalars().all()
@@ -2031,6 +2072,32 @@ class BookImportService:
 
         await db.flush()
         return created
+
+    async def generate_characters_and_organizations_from_project(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: str,
+        project: Project,
+        count: int,
+        progress_callback: Any = None,
+        progress_range: tuple[int, int] = (0, 100),
+        module_id: str | None = None,
+        ai_provider_id: str | None = None,
+        ai_model: str | None = None,
+    ) -> int:
+        """公共入口：根据世界观 + 职业体系生成角色和组织。"""
+        return await self._generate_characters_and_organizations_from_project(
+            db=db,
+            user_id=user_id,
+            project=project,
+            count=count,
+            progress_callback=progress_callback,
+            progress_range=progress_range,
+            module_id=module_id,
+            ai_provider_id=ai_provider_id,
+            ai_model=ai_model,
+        )
 
     async def _generate_characters_and_organizations_from_project(
         self,
@@ -2430,6 +2497,34 @@ class BookImportService:
         await db.flush()
         return created
 
+    async def generate_outline_from_project(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: str,
+        project: Project,
+        chapter_count: int,
+        narrative_perspective: str,
+        target_words: int,
+        progress_callback: Any = None,
+        progress_range: tuple[int, int] = (0, 100),
+        ai_provider_id: str | None = None,
+        ai_model: str | None = None,
+    ) -> int:
+        """公共入口：根据项目信息生成章节大纲。"""
+        return await self._generate_outline_from_project(
+            db=db,
+            user_id=user_id,
+            project=project,
+            chapter_count=chapter_count,
+            narrative_perspective=narrative_perspective,
+            target_words=target_words,
+            progress_callback=progress_callback,
+            progress_range=progress_range,
+            ai_provider_id=ai_provider_id,
+            ai_model=ai_model,
+        )
+
     async def _generate_outline_from_project(
         self,
         *,
@@ -2620,7 +2715,7 @@ class BookImportService:
         task.progress = max(0, min(100, progress))
         task.message = message
         task.error = error
-        task.updated_at = datetime.utcnow()
+        task.updated_at = datetime.now(UTC)
 
     def _check_cancelled(self, task: _BookImportTask) -> None:
         if task.cancelled or task.status == "cancelled":

@@ -13,6 +13,8 @@ from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.chapter import Chapter
 from app.gateway.novel_migrated.models.memory import PlotAnalysis, StoryMemory
 from app.gateway.novel_migrated.services.ai_service import create_user_ai_service_from_db
+from app.gateway.novel_migrated.services.career_update_service import CareerUpdateService
+from app.gateway.novel_migrated.services.character_state_update_service import CharacterStateUpdateService
 from app.gateway.novel_migrated.services.foreshadow_service import foreshadow_service
 from app.gateway.novel_migrated.services.memory_service import memory_service
 from app.gateway.novel_migrated.services.plot_analyzer import get_plot_analyzer
@@ -20,6 +22,7 @@ from app.gateway.novel_migrated.services.plot_analyzer import get_plot_analyzer
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/memories", tags=["memories"])
 MEMORY_MODULE_ID = "memory-ai"
+_ANALYZE_CHAPTER_TIMEOUT_SECONDS = 180
 
 
 @router.post("/projects/{project_id}/analyze-chapter/{chapter_id}")
@@ -80,14 +83,17 @@ async def analyze_chapter(
         
         # 执行剧情分析（传入已有伏笔列表）
         analyzer = get_plot_analyzer(ai_service)
-        analysis_result = await analyzer.analyze_chapter(
-            chapter_number=chapter.chapter_number,
-            title=chapter.title,
-            content=chapter.content,
-            word_count=chapter.word_count or len(chapter.content),
-            user_id=effective_user_id,
-            db=db,
-            existing_foreshadows=existing_foreshadows
+        analysis_result = await asyncio.wait_for(
+            analyzer.analyze_chapter(
+                chapter_number=chapter.chapter_number,
+                title=chapter.title,
+                content=chapter.content,
+                word_count=chapter.word_count or len(chapter.content),
+                user_id=effective_user_id,
+                db=db,
+                existing_foreshadows=existing_foreshadows
+            ),
+            timeout=_ANALYZE_CHAPTER_TIMEOUT_SECONDS,
         )
         
         if not analysis_result:
@@ -134,9 +140,9 @@ async def analyze_chapter(
         if existing_analysis:
             await db.delete(existing_analysis)
             await db.flush()
-        
+
         db.add(plot_analysis)
-        await db.commit()
+        await db.flush()
         
         # 从分析结果中提取记忆片段
         memories_data = analyzer.extract_memories_from_analysis(
@@ -207,7 +213,7 @@ async def analyze_chapter(
         else:
             saved_count = len(memory_entries)
 
-        await db.commit()
+        await db.flush()
 
         entity_changes = {
             "careers": {"updated_count": 0, "changes": []},
@@ -224,7 +230,6 @@ async def analyze_chapter(
         # 更新角色职业 / 角色状态关系 / 组织状态
         if analysis_result.get('character_states'):
             try:
-                from app.gateway.novel_migrated.services.career_update_service import CareerUpdateService
                 career_update_result = await CareerUpdateService.update_careers_from_analysis(
                     db=db,
                     project_id=project_id,
@@ -237,7 +242,6 @@ async def analyze_chapter(
                 logger.error(f"⚠️ 更新角色职业失败（不影响分析结果）: {str(career_error)}", exc_info=True)
 
             try:
-                from app.services.character_state_update_service import CharacterStateUpdateService
                 state_update_result = await CharacterStateUpdateService.update_from_analysis(
                     db=db,
                     project_id=project_id,
@@ -251,7 +255,6 @@ async def analyze_chapter(
 
         if analysis_result.get('organization_states'):
             try:
-                from app.services.character_state_update_service import CharacterStateUpdateService
                 org_state_result = await CharacterStateUpdateService.update_organization_states(
                     db=db,
                     project_id=project_id,
@@ -279,6 +282,7 @@ async def analyze_chapter(
             except Exception as fs_error:
                 logger.error(f"⚠️ 伏笔自动更新失败（不影响分析结果）: {str(fs_error)}")
 
+        await db.commit()
         logger.info(f"✅ 章节分析完成: 保存{saved_count}条记忆")
 
         return {
@@ -292,6 +296,10 @@ async def analyze_chapter(
         
     except HTTPException:
         raise
+    except asyncio.TimeoutError:
+        logger.error("❌ 章节分析超时: project_id=%s chapter_id=%s timeout=%ss", project_id, chapter_id, _ANALYZE_CHAPTER_TIMEOUT_SECONDS)
+        await db.rollback()
+        raise HTTPException(status_code=504, detail="章节分析超时，请稍后重试")
     except Exception as e:
         logger.error(f"❌ 章节分析失败: {str(e)}")
         await db.rollback()

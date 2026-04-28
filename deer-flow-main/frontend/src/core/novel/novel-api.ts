@@ -289,7 +289,7 @@ async function requestBookImport<T>(path: string, options: RequestOptions = {}):
   return payload as T;
 }
 
-async function requestStream<T>(path: string, options: StreamRequestOptions = {}): Promise<AsyncGenerator<T>> {
+async function requestStreamResponse(path: string, options: StreamRequestOptions = {}): Promise<Response> {
   const headers: HeadersInit = {
     Accept: 'text/event-stream',
   };
@@ -317,6 +317,12 @@ async function requestStream<T>(path: string, options: StreamRequestOptions = {}
     }
     throw new ApiError(`Novel API stream request failed: ${response.status}`, response.status, details);
   }
+
+  return response;
+}
+
+async function requestStream<T>(path: string, options: StreamRequestOptions = {}): Promise<AsyncGenerator<T>> {
+  const response = await requestStreamResponse(path, options);
 
   const contentType = response.headers.get('content-type') ?? '';
   if (contentType.includes('application/json')) {
@@ -1435,7 +1441,7 @@ export class NovelApiService {
     if (params?.userRequirements) query.user_requirements = params.userRequirements;
     if (params?.enableMcp !== undefined) query.enable_mcp = params.enableMcp;
 
-    const response = await fetch(buildUrl('/careers/generate-system', query), { method: 'GET' });
+    const response = await requestStreamResponse('/careers/generate-system', { method: 'GET', query });
     const shouldEagerlyParse = shouldEagerlyParseCareerSystemResponse(response);
     let cachedText: string | null = null;
     const readResponseText = async () => {

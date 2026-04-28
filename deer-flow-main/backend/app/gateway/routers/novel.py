@@ -178,7 +178,9 @@ class NovelStore:
                 "after": item.get("after"),
             })
 
-        return normalized[: max(1, limit)]
+        if limit <= 0:
+            return []
+        return normalized[:limit]
 
     # -- Novel CRUD --
 
