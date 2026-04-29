@@ -69,14 +69,18 @@ def _resolve_model_name(requested_model_name: str | None = None) -> str:
     return default_model_name
 
 
-def _create_summarization_middleware() -> DeerFlowSummarizationMiddleware | None:
+def _create_summarization_middleware(
+    model_name: str | None = None,
+    runtime_model: str | None = None,
+    runtime_base_url: str | None = None,
+    runtime_api_key: str | None = None,
+) -> DeerFlowSummarizationMiddleware | None:
     """Create and configure the summarization middleware from config."""
     config = get_summarization_config()
 
     if not config.enabled:
         return None
 
-    # Prepare trigger parameter
     trigger = None
     if config.trigger is not None:
         if isinstance(config.trigger, list):
@@ -84,16 +88,21 @@ def _create_summarization_middleware() -> DeerFlowSummarizationMiddleware | None
         else:
             trigger = config.trigger.to_tuple()
 
-    # Prepare keep parameter
     keep = config.keep.to_tuple()
 
-    # Prepare model parameter
-    if config.model_name:
-        model = create_chat_model(name=config.model_name, thinking_enabled=False)
+    effective_model_name = model_name or config.model_name
+    model_kwargs: dict = {}
+    if runtime_model:
+        model_kwargs["model"] = runtime_model
+    if runtime_base_url:
+        model_kwargs["base_url"] = runtime_base_url
+    if runtime_api_key:
+        model_kwargs["api_key"] = runtime_api_key
+
+    if effective_model_name:
+        model = create_chat_model(name=effective_model_name, thinking_enabled=False, **model_kwargs)
     else:
-        # Use a lightweight model for summarization to save costs
-        # Falls back to default model if not explicitly specified
-        model = create_chat_model(thinking_enabled=False)
+        model = create_chat_model(thinking_enabled=False, **model_kwargs)
 
     # Prepare kwargs
     kwargs = {
@@ -262,6 +271,7 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None, agent_nam
 
     Args:
         config: Runtime configuration containing configurable options like is_plan_mode.
+        model_name: The resolved model name for the main chat model.
         agent_name: If provided, MemoryMiddleware will use per-agent memory storage.
         custom_middlewares: Optional list of custom middlewares to inject into the chain.
 
@@ -270,13 +280,39 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None, agent_nam
     """
     middlewares = build_lead_runtime_middlewares(lazy_init=True)
 
-    # Add summarization middleware if enabled
-    summarization_middleware = _create_summarization_middleware()
+    cfg = _get_runtime_config(config)
+
+    title_model_name = _as_non_empty_str(cfg.get("title_model_name"))
+    title_runtime_model = _as_non_empty_str(cfg.get("title_runtime_model"))
+    title_runtime_base_url = _as_non_empty_str(cfg.get("title_runtime_base_url"))
+    title_runtime_api_key = _as_non_empty_str(cfg.get("title_runtime_api_key"))
+
+    memory_model_name = _as_non_empty_str(cfg.get("memory_model_name"))
+    memory_runtime_model = _as_non_empty_str(cfg.get("memory_runtime_model"))
+    memory_runtime_base_url = _as_non_empty_str(cfg.get("memory_runtime_base_url"))
+    memory_runtime_api_key = _as_non_empty_str(cfg.get("memory_runtime_api_key"))
+
+    summarization_model_name = _as_non_empty_str(cfg.get("summarization_model_name"))
+    summarization_runtime_model = _as_non_empty_str(cfg.get("summarization_runtime_model"))
+    summarization_runtime_base_url = _as_non_empty_str(cfg.get("summarization_runtime_base_url"))
+    summarization_runtime_api_key = _as_non_empty_str(cfg.get("summarization_runtime_api_key"))
+
+    if title_model_name is None and any((title_runtime_model, title_runtime_base_url, title_runtime_api_key)):
+        title_model_name = model_name
+    if memory_model_name is None and any((memory_runtime_model, memory_runtime_base_url, memory_runtime_api_key)):
+        memory_model_name = model_name
+    if summarization_model_name is None and any((summarization_runtime_model, summarization_runtime_base_url, summarization_runtime_api_key)):
+        summarization_model_name = model_name
+
+    summarization_middleware = _create_summarization_middleware(
+        model_name=summarization_model_name,
+        runtime_model=summarization_runtime_model,
+        runtime_base_url=summarization_runtime_base_url,
+        runtime_api_key=summarization_runtime_api_key,
+    )
     if summarization_middleware is not None:
         middlewares.append(summarization_middleware)
 
-    # Add TodoList middleware if plan mode is enabled
-    cfg = _get_runtime_config(config)
     is_plan_mode = cfg.get("is_plan_mode", False)
     todo_list_middleware = _create_todo_list_middleware(is_plan_mode)
     if todo_list_middleware is not None:
@@ -286,11 +322,20 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None, agent_nam
     if get_app_config().token_usage.enabled:
         middlewares.append(TokenUsageMiddleware())
 
-    # Add TitleMiddleware
-    middlewares.append(TitleMiddleware())
+    middlewares.append(TitleMiddleware(
+        model_name=title_model_name,
+        runtime_model=title_runtime_model,
+        runtime_base_url=title_runtime_base_url,
+        runtime_api_key=title_runtime_api_key,
+    ))
 
-    # Add MemoryMiddleware (after TitleMiddleware)
-    middlewares.append(MemoryMiddleware(agent_name=agent_name))
+    middlewares.append(MemoryMiddleware(
+        agent_name=agent_name,
+        model_name=memory_model_name,
+        runtime_model=memory_runtime_model,
+        runtime_base_url=memory_runtime_base_url,
+        runtime_api_key=memory_runtime_api_key,
+    ))
 
     # Add ViewImageMiddleware only if the current model supports vision.
     # Use the resolved runtime model_name from make_lead_agent to avoid stale config values.

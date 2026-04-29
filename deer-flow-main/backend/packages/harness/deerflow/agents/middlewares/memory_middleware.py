@@ -33,14 +33,29 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
 
     state_schema = MemoryMiddlewareState
 
-    def __init__(self, agent_name: str | None = None):
+    def __init__(
+        self,
+        agent_name: str | None = None,
+        model_name: str | None = None,
+        runtime_model: str | None = None,
+        runtime_base_url: str | None = None,
+        runtime_api_key: str | None = None,
+    ):
         """Initialize the MemoryMiddleware.
 
         Args:
             agent_name: If provided, memory is stored per-agent. If None, uses global memory.
+            model_name: Override model name for memory updates. If None, uses config default.
+            runtime_model: Override provider-side model id (e.g. selected from user runtime settings).
+            runtime_base_url: Override base URL for the model API.
+            runtime_api_key: Override API key for the model.
         """
         super().__init__()
         self._agent_name = agent_name
+        self._model_name = model_name
+        self._runtime_model = runtime_model
+        self._runtime_base_url = runtime_base_url
+        self._runtime_api_key = runtime_api_key
 
     @override
     def after_agent(self, state: MemoryMiddlewareState, runtime: Runtime) -> dict | None:
@@ -83,7 +98,6 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
         if not user_messages or not assistant_messages:
             return None
 
-        # Queue the filtered conversation for memory update
         correction_detected = detect_correction(filtered_messages)
         reinforcement_detected = not correction_detected and detect_reinforcement(filtered_messages)
         queue = get_memory_queue()
@@ -93,6 +107,10 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
             agent_name=self._agent_name,
             correction_detected=correction_detected,
             reinforcement_detected=reinforcement_detected,
+            model_name=self._model_name,
+            runtime_model=self._runtime_model,
+            runtime_base_url=self._runtime_base_url,
+            runtime_api_key=self._runtime_api_key,
         )
 
         return None

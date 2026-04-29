@@ -42,6 +42,34 @@ def _memory_config(**overrides: object) -> MemoryConfig:
     return config
 
 
+def test_get_model_forwards_runtime_provider_overrides(monkeypatch) -> None:
+    updater = MemoryUpdater(
+        model_name="safe-model",
+        runtime_model="LongCat-Flash-Chat",
+        runtime_base_url="https://runtime.example/v1",
+        runtime_api_key="sk-runtime",
+    )
+
+    fake_model = object()
+    create_model = MagicMock(return_value=fake_model)
+    monkeypatch.setattr("deerflow.agents.memory.updater.create_chat_model", create_model)
+    monkeypatch.setattr(
+        "deerflow.agents.memory.updater.get_memory_config",
+        lambda: _memory_config(model_name="unused-config-model"),
+    )
+
+    result = updater._get_model()
+
+    assert result is fake_model
+    create_model.assert_called_once_with(
+        name="safe-model",
+        thinking_enabled=False,
+        model="LongCat-Flash-Chat",
+        base_url="https://runtime.example/v1",
+        api_key="sk-runtime",
+    )
+
+
 def test_apply_updates_skips_existing_duplicate_and_preserves_removals() -> None:
     updater = MemoryUpdater()
     current_memory = _make_memory(

@@ -93,6 +93,71 @@ def test_process_queue_forwards_reinforcement_flag_to_updater() -> None:
     )
 
 
+def test_process_queue_does_not_reuse_runtime_override_between_contexts() -> None:
+    queue = MemoryUpdateQueue()
+    queue._queue = [
+        ConversationContext(
+            thread_id="thread-override",
+            messages=["conversation-1"],
+            model_name="override-model",
+            runtime_model="LongCat-Flash-Chat",
+            runtime_base_url="https://override.example",
+            runtime_api_key="override-key",
+        ),
+        ConversationContext(
+            thread_id="thread-default",
+            messages=["conversation-2"],
+        ),
+    ]
+
+    constructor_kwargs: list[dict[str, object]] = []
+    updater_instances: list[MagicMock] = []
+
+    def _build_updater(*args: object, **kwargs: object) -> MagicMock:
+        updater = MagicMock()
+        updater.update_memory.return_value = True
+        constructor_kwargs.append(dict(kwargs))
+        updater_instances.append(updater)
+        return updater
+
+    with (
+        patch("deerflow.agents.memory.updater.MemoryUpdater", side_effect=_build_updater) as updater_cls,
+        patch("deerflow.agents.memory.queue.time.sleep"),
+    ):
+        queue._process_queue()
+
+    assert updater_cls.call_count == 2
+    assert constructor_kwargs == [
+        {
+            "model_name": "override-model",
+            "runtime_model": "LongCat-Flash-Chat",
+            "runtime_base_url": "https://override.example",
+            "runtime_api_key": "override-key",
+        },
+        {
+            "model_name": None,
+            "runtime_model": None,
+            "runtime_base_url": None,
+            "runtime_api_key": None,
+        },
+    ]
+
+    updater_instances[0].update_memory.assert_called_once_with(
+        messages=["conversation-1"],
+        thread_id="thread-override",
+        agent_name=None,
+        correction_detected=False,
+        reinforcement_detected=False,
+    )
+    updater_instances[1].update_memory.assert_called_once_with(
+        messages=["conversation-2"],
+        thread_id="thread-default",
+        agent_name=None,
+        correction_detected=False,
+        reinforcement_detected=False,
+    )
+
+
 def test_flush_nowait_cancels_existing_timer_and_starts_immediate_timer() -> None:
     queue = MemoryUpdateQueue()
     existing_timer = MagicMock()

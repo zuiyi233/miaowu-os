@@ -299,19 +299,41 @@ def _fact_content_key(content: Any) -> str | None:
 class MemoryUpdater:
     """Updates memory using LLM based on conversation context."""
 
-    def __init__(self, model_name: str | None = None):
+    def __init__(
+        self,
+        model_name: str | None = None,
+        runtime_model: str | None = None,
+        runtime_base_url: str | None = None,
+        runtime_api_key: str | None = None,
+    ):
         """Initialize the memory updater.
 
         Args:
             model_name: Optional model name to use. If None, uses config or default.
+            runtime_model: Override provider-side model id.
+            runtime_base_url: Override base URL for the model API.
+            runtime_api_key: Override API key for the model.
         """
         self._model_name = model_name
+        self._runtime_model = runtime_model
+        self._runtime_base_url = runtime_base_url
+        self._runtime_api_key = runtime_api_key
 
     def _get_model(self):
         """Get the model for memory updates."""
         config = get_memory_config()
-        model_name = self._model_name or config.model_name
-        return create_chat_model(name=model_name, thinking_enabled=False)
+        effective_model_name = self._model_name or config.model_name
+        model_kwargs: dict = {}
+        if self._runtime_model:
+            model_kwargs["model"] = self._runtime_model
+        if self._runtime_base_url:
+            model_kwargs["base_url"] = self._runtime_base_url
+        if self._runtime_api_key:
+            model_kwargs["api_key"] = self._runtime_api_key
+
+        if effective_model_name:
+            return create_chat_model(name=effective_model_name, thinking_enabled=False, **model_kwargs)
+        return create_chat_model(thinking_enabled=False, **model_kwargs)
 
     def _build_correction_hint(
         self,

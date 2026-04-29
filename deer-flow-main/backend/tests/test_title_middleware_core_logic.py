@@ -95,6 +95,35 @@ class TestTitleMiddlewareCoreLogic:
         model.ainvoke.assert_awaited_once()
         assert model.ainvoke.await_args.kwargs["config"] == {"run_name": "title_agent"}
 
+    def test_generate_title_runtime_model_override_uses_config_alias_and_runtime_model(self, monkeypatch):
+        _set_test_title_config(max_chars=20)
+        middleware = TitleMiddleware(
+            model_name="safe-model",
+            runtime_model="LongCat-Flash-Chat",
+            runtime_base_url="https://runtime.example/v1",
+            runtime_api_key="sk-runtime",
+        )
+        model = MagicMock()
+        model.ainvoke = AsyncMock(return_value=AIMessage(content="短标题"))
+        monkeypatch.setattr(title_middleware_module, "create_chat_model", MagicMock(return_value=model))
+
+        state = {
+            "messages": [
+                HumanMessage(content="请生成标题"),
+                AIMessage(content="好的"),
+            ]
+        }
+        result = asyncio.run(middleware._agenerate_title_result(state))
+
+        assert result == {"title": "短标题"}
+        title_middleware_module.create_chat_model.assert_called_once_with(
+            name="safe-model",
+            thinking_enabled=False,
+            model="LongCat-Flash-Chat",
+            base_url="https://runtime.example/v1",
+            api_key="sk-runtime",
+        )
+
     def test_generate_title_normalizes_structured_message_content(self, monkeypatch):
         _set_test_title_config(max_chars=20)
         middleware = TitleMiddleware()

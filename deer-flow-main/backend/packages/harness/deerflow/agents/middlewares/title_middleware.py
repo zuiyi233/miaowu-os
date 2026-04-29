@@ -25,8 +25,20 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
     """Automatically generate a title for the thread after the first user message."""
 
     state_schema = TitleMiddlewareState
-    # Title generation is best-effort only; never block the whole run for too long.
     title_generation_timeout_sec: float = 8.0
+
+    def __init__(
+        self,
+        model_name: str | None = None,
+        runtime_model: str | None = None,
+        runtime_base_url: str | None = None,
+        runtime_api_key: str | None = None,
+    ) -> None:
+        super().__init__()
+        self._override_model_name = model_name
+        self._runtime_model = runtime_model
+        self._runtime_base_url = runtime_base_url
+        self._runtime_api_key = runtime_api_key
 
     def _normalize_content(self, content: object) -> str:
         if isinstance(content, str):
@@ -126,10 +138,19 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         prompt, user_msg = self._build_title_prompt(state)
 
         try:
-            if config.model_name:
-                model = create_chat_model(name=config.model_name, thinking_enabled=False)
+            effective_model_name = self._override_model_name or config.model_name
+            model_kwargs: dict = {}
+            if self._runtime_model:
+                model_kwargs["model"] = self._runtime_model
+            if self._runtime_base_url:
+                model_kwargs["base_url"] = self._runtime_base_url
+            if self._runtime_api_key:
+                model_kwargs["api_key"] = self._runtime_api_key
+
+            if effective_model_name:
+                model = create_chat_model(name=effective_model_name, thinking_enabled=False, **model_kwargs)
             else:
-                model = create_chat_model(thinking_enabled=False)
+                model = create_chat_model(thinking_enabled=False, **model_kwargs)
             timeout = self.title_generation_timeout_sec
             if timeout > 0:
                 response = await asyncio.wait_for(

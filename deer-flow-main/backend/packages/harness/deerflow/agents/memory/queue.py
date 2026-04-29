@@ -22,6 +22,10 @@ class ConversationContext:
     agent_name: str | None = None
     correction_detected: bool = False
     reinforcement_detected: bool = False
+    model_name: str | None = None
+    runtime_model: str | None = None
+    runtime_base_url: str | None = None
+    runtime_api_key: str | None = None
 
 
 class MemoryUpdateQueue:
@@ -46,16 +50,12 @@ class MemoryUpdateQueue:
         agent_name: str | None = None,
         correction_detected: bool = False,
         reinforcement_detected: bool = False,
+        model_name: str | None = None,
+        runtime_model: str | None = None,
+        runtime_base_url: str | None = None,
+        runtime_api_key: str | None = None,
     ) -> None:
-        """Add a conversation to the update queue.
-
-        Args:
-            thread_id: The thread ID.
-            messages: The conversation messages.
-            agent_name: If provided, memory is stored per-agent. If None, uses global memory.
-            correction_detected: Whether recent turns include an explicit correction signal.
-            reinforcement_detected: Whether recent turns include a positive reinforcement signal.
-        """
+        """Add a conversation to the update queue."""
         config = get_memory_config()
         if not config.enabled:
             return
@@ -67,6 +67,10 @@ class MemoryUpdateQueue:
                 agent_name=agent_name,
                 correction_detected=correction_detected,
                 reinforcement_detected=reinforcement_detected,
+                model_name=model_name,
+                runtime_model=runtime_model,
+                runtime_base_url=runtime_base_url,
+                runtime_api_key=runtime_api_key,
             )
             self._reset_timer()
 
@@ -79,6 +83,10 @@ class MemoryUpdateQueue:
         agent_name: str | None = None,
         correction_detected: bool = False,
         reinforcement_detected: bool = False,
+        model_name: str | None = None,
+        runtime_model: str | None = None,
+        runtime_base_url: str | None = None,
+        runtime_api_key: str | None = None,
     ) -> None:
         """Add a conversation and start processing immediately in the background."""
         config = get_memory_config()
@@ -92,6 +100,10 @@ class MemoryUpdateQueue:
                 agent_name=agent_name,
                 correction_detected=correction_detected,
                 reinforcement_detected=reinforcement_detected,
+                model_name=model_name,
+                runtime_model=runtime_model,
+                runtime_base_url=runtime_base_url,
+                runtime_api_key=runtime_api_key,
             )
             self._schedule_timer(0)
 
@@ -105,6 +117,10 @@ class MemoryUpdateQueue:
         agent_name: str | None,
         correction_detected: bool,
         reinforcement_detected: bool,
+        model_name: str | None = None,
+        runtime_model: str | None = None,
+        runtime_base_url: str | None = None,
+        runtime_api_key: str | None = None,
     ) -> None:
         existing_context = next(
             (context for context in self._queue if context.thread_id == thread_id),
@@ -112,12 +128,20 @@ class MemoryUpdateQueue:
         )
         merged_correction_detected = correction_detected or (existing_context.correction_detected if existing_context is not None else False)
         merged_reinforcement_detected = reinforcement_detected or (existing_context.reinforcement_detected if existing_context is not None else False)
+        effective_model_name = model_name or (existing_context.model_name if existing_context is not None else None)
+        effective_runtime_model = runtime_model or (existing_context.runtime_model if existing_context is not None else None)
+        effective_base_url = runtime_base_url or (existing_context.runtime_base_url if existing_context is not None else None)
+        effective_api_key = runtime_api_key or (existing_context.runtime_api_key if existing_context is not None else None)
         context = ConversationContext(
             thread_id=thread_id,
             messages=messages,
             agent_name=agent_name,
             correction_detected=merged_correction_detected,
             reinforcement_detected=merged_reinforcement_detected,
+            model_name=effective_model_name,
+            runtime_model=effective_runtime_model,
+            runtime_base_url=effective_base_url,
+            runtime_api_key=effective_api_key,
         )
 
         self._queue = [c for c in self._queue if c.thread_id != thread_id]
@@ -165,11 +189,16 @@ class MemoryUpdateQueue:
         logger.info("Processing %d queued memory updates", len(contexts_to_process))
 
         try:
-            updater = MemoryUpdater()
-
             for context in contexts_to_process:
                 try:
                     logger.info("Updating memory for thread %s", context.thread_id)
+                    updater = MemoryUpdater(
+                        model_name=context.model_name,
+                        runtime_model=context.runtime_model,
+                        runtime_base_url=context.runtime_base_url,
+                        runtime_api_key=context.runtime_api_key,
+                    )
+
                     success = updater.update_memory(
                         messages=context.messages,
                         thread_id=context.thread_id,

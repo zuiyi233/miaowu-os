@@ -232,6 +232,20 @@ export const BUILTIN_FEATURE_MODULES: AiFeatureModuleDefinition[] = [
     runtimeReady: true,
   },
   {
+    id: "title-ai",
+    label: "自动标题生成",
+    description: "对话后自动生成会话标题",
+    category: "workspace",
+    runtimeReady: true,
+  },
+  {
+    id: "summarization-ai",
+    label: "对话摘要",
+    description: "长对话自动摘要与上下文压缩",
+    category: "workspace",
+    runtimeReady: true,
+  },
+  {
     id: "chat-suggestions",
     label: "智能推荐 / 后续问题",
     description: "对话结束后自动生成的后续问题建议（Follow-up Suggestions）",

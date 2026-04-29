@@ -421,3 +421,62 @@ def test_apply_runtime_provider_overrides_noop_when_values_empty():
 
     assert changed is False
     assert configurable == {"thread_id": "t-1"}
+
+
+def test_resolve_feature_model_from_routing_returns_runtime_model_and_provider_credentials(monkeypatch):
+    from app.gateway import services as services_module
+
+    monkeypatch.setattr(services_module, "safe_decrypt", lambda value: "sk-feature" if value == "cipher-feature" else None)
+
+    ai_settings = {
+        "providers": [
+            {
+                "id": "provider-a",
+                "base_url": "https://provider-a.example/v1",
+                "api_key_encrypted": "cipher-feature",
+            }
+        ],
+        "feature_routing_settings": {
+            "modules": [
+                {
+                    "moduleId": "title-ai",
+                    "currentMode": "primary",
+                    "primaryTarget": {
+                        "providerId": "provider-a",
+                        "model": "LongCat-Flash-Chat",
+                    },
+                }
+            ]
+        },
+    }
+
+    result = services_module._resolve_feature_model_from_routing("title-ai", ai_settings)
+
+    assert result == {
+        "runtime_model": "LongCat-Flash-Chat",
+        "runtime_base_url": "https://provider-a.example/v1",
+        "runtime_api_key": "sk-feature",
+    }
+
+
+def test_resolve_feature_model_from_routing_without_providers_returns_runtime_model_only():
+    from app.gateway.services import _resolve_feature_model_from_routing
+
+    ai_settings = {
+        "feature_routing_settings": {
+            "modules": [
+                {
+                    "moduleId": "memory-ai",
+                    "currentMode": "primary",
+                    "primaryTarget": {
+                        "providerId": "provider-x",
+                        "model": "LongCat-Flash-Chat",
+                    },
+                }
+            ]
+        }
+    }
+
+    result = _resolve_feature_model_from_routing("memory-ai", ai_settings)
+
+    assert result == {"runtime_model": "LongCat-Flash-Chat"}

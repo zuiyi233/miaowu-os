@@ -186,6 +186,163 @@ async def _resolve_runtime_provider_overrides_for_thread(
     return resolved
 
 
+def _resolve_feature_model_from_routing(
+    feature_module_id: str,
+    ai_settings: dict[str, Any],
+) -> dict[str, str] | None:
+    """Resolve model overrides for a feature from ai-settings feature routing.
+
+    Returns runtime override fields:
+    - runtime_model: provider-side model id (may not exist in config.yaml)
+    - runtime_base_url / runtime_api_key: provider credential overrides
+    """
+    feature_routing = ai_settings.get("feature_routing_settings")
+    if not isinstance(feature_routing, dict):
+        return None
+
+    modules = feature_routing.get("modules")
+    if not isinstance(modules, list):
+        return None
+
+    target_module = None
+    for mod in modules:
+        if isinstance(mod, dict) and mod.get("moduleId") == feature_module_id:
+            target_module = mod
+            break
+
+    if target_module is None:
+        return None
+
+    active_mode = target_module.get("currentMode", "primary")
+    if active_mode == "backup":
+        target = target_module.get("backupTarget")
+    else:
+        target = target_module.get("primaryTarget")
+
+    if not isinstance(target, dict) or not target.get("model"):
+        target = target_module.get("primaryTarget")
+        if not isinstance(target, dict) or not target.get("model"):
+            return None
+
+    model_name = _as_non_empty_str(target.get("model"))
+    provider_id = _as_non_empty_str(target.get("providerId"))
+    if not model_name:
+        return None
+
+    providers = ai_settings.get("providers")
+    if not isinstance(providers, list):
+        return {"runtime_model": model_name}
+
+    provider_record = None
+    if provider_id:
+        for p in providers:
+            if isinstance(p, dict) and p.get("id") == provider_id:
+                provider_record = p
+                break
+
+    result: dict[str, str] = {"runtime_model": model_name}
+    if provider_record:
+        base_url = _as_non_empty_str(provider_record.get("base_url"))
+        api_key_encrypted = _as_non_empty_str(provider_record.get("api_key_encrypted"))
+        api_key = _as_non_empty_str(safe_decrypt(api_key_encrypted)) if api_key_encrypted else None
+        if base_url:
+            result["runtime_base_url"] = base_url
+        if api_key:
+            result["runtime_api_key"] = api_key
+
+    return result
+
+
+async def _resolve_feature_model_overrides_for_thread(
+    request: Request,
+    *,
+    active_provider_overrides: dict[str, str] | None,
+) -> dict[str, str]:
+    """Resolve per-feature model overrides from user ai-settings feature routing.
+
+    For each feature (title, memory, summarization), checks if the user has
+    configured a specific model in feature_routing_settings. If not, falls back
+    to the active provider's model (same as main chat).
+
+    Returns a flat dict with keys like:
+      title_runtime_model, title_runtime_base_url, title_runtime_api_key,
+      memory_runtime_model, memory_runtime_base_url, memory_runtime_api_key,
+      summarization_runtime_model, summarization_runtime_base_url, summarization_runtime_api_key
+    """
+    user_id = get_request_user_id(request)
+    ai_settings: dict[str, Any] = {}
+
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(Settings).where(Settings.user_id == user_id))
+            settings = result.scalar_one_or_none()
+            if settings is None:
+                return {}
+
+            preferences_raw = settings.preferences or "{}"
+            if isinstance(preferences_raw, str):
+                try:
+                    preferences = json.loads(preferences_raw)
+                except Exception:
+                    preferences = {}
+            else:
+                preferences = preferences_raw
+
+            if not isinstance(preferences, dict):
+                preferences = {}
+
+            ai_provider_settings = preferences.get("ai_provider_settings", {})
+            if isinstance(ai_provider_settings, dict):
+                providers_raw = ai_provider_settings.get("providers", [])
+                public_providers = []
+                if isinstance(providers_raw, list):
+                    for p in providers_raw:
+                        if isinstance(p, dict):
+                            public_providers.append(p)
+
+                ai_settings = {
+                    "providers": public_providers,
+                    "feature_routing_settings": ai_provider_settings.get("feature_routing_settings"),
+                }
+    except Exception:
+        logger.debug("Failed to load feature routing settings for user %s", user_id, exc_info=True)
+        return {}
+
+    fallback_runtime_model = active_provider_overrides.get("runtime_model") if active_provider_overrides else None
+    fallback_base_url = active_provider_overrides.get("runtime_base_url") if active_provider_overrides else None
+    fallback_api_key = active_provider_overrides.get("runtime_api_key") if active_provider_overrides else None
+
+    result: dict[str, str] = {}
+
+    for feature_id, prefix in [
+        ("title-ai", "title"),
+        ("memory-ai", "memory"),
+        ("summarization-ai", "summarization"),
+    ]:
+        feature_overrides = _resolve_feature_model_from_routing(feature_id, ai_settings)
+
+        if feature_overrides:
+            runtime_model = feature_overrides.get("runtime_model")
+            base_url = feature_overrides.get("runtime_base_url")
+            api_key = feature_overrides.get("runtime_api_key")
+        else:
+            runtime_model = fallback_runtime_model
+            base_url = fallback_base_url
+            api_key = fallback_api_key
+
+        if not any((runtime_model, base_url, api_key)):
+            continue
+
+        if runtime_model:
+            result[f"{prefix}_runtime_model"] = runtime_model
+        if base_url:
+            result[f"{prefix}_runtime_base_url"] = base_url
+        if api_key:
+            result[f"{prefix}_runtime_api_key"] = api_key
+
+    return result
+
+
 def resolve_agent_factory(assistant_id: str | None):
     """Resolve the agent factory callable from config.
 
@@ -429,6 +586,13 @@ async def start_run(
             runtime_base_url=runtime_overrides.get("runtime_base_url"),
             runtime_api_key=runtime_overrides.get("runtime_api_key"),
         )
+
+    feature_overrides = await _resolve_feature_model_overrides_for_thread(
+        request,
+        active_provider_overrides=runtime_overrides,
+    )
+    if feature_overrides:
+        configurable.update(feature_overrides)
 
     stream_modes = normalize_stream_modes(body.stream_mode)
 
