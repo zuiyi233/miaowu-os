@@ -104,6 +104,7 @@ _model_cache: OrderedDict[tuple[str, ...], Any] = OrderedDict()
 _model_cache_meta: dict[tuple[str, ...], dict[str, Any]] = {}
 _model_cache_lock = threading.Lock()
 _MODEL_CACHE_MAX_SIZE = 64
+_MODEL_CACHE_TTL_SECONDS = 1800
 
 
 def _hash_api_key_for_cache(api_key: str) -> str:
@@ -158,6 +159,21 @@ def _format_cache_key(cache_key: tuple[str, ...]) -> str:
     return "|".join(cache_key)
 
 
+def _evict_expired_cache_entries() -> int:
+    now = time.time()
+    evicted = 0
+    expired_keys: list[tuple[str, ...]] = []
+    for key, meta in _model_cache_meta.items():
+        last_access = float(meta.get("last_accessed_at", 0.0) or 0.0)
+        if now - last_access > _MODEL_CACHE_TTL_SECONDS:
+            expired_keys.append(key)
+    for key in expired_keys:
+        _model_cache.pop(key, None)
+        _model_cache_meta.pop(key, None)
+        evicted += 1
+    return evicted
+
+
 def _get_cached_model(
     model_name: str,
     base_url: str | None = None,
@@ -190,6 +206,10 @@ def _get_cached_model(
             meta["last_accessed_at"] = now
             _model_cache.move_to_end(cache_key)
             return _model_cache[cache_key]
+
+        evicted_ttl = _evict_expired_cache_entries()
+        if evicted_ttl:
+            logger.info("🗑️ 模型缓存 TTL 淘汰 %d 个过期条目", evicted_ttl)
 
         meta = _model_cache_meta.setdefault(
             cache_key,
@@ -382,9 +402,10 @@ class AIService:
         base_url: str | None = None,
         api_key: str | None = None,
     ) -> Any:
-        resolved_name = self._resolve_model_name(model_name)
         effective_base_url = base_url or self.api_base_url
         effective_api_key = api_key or self.api_key
+        has_custom_endpoint = bool(effective_base_url and effective_base_url.strip())
+        resolved_name = self._resolve_model_name(model_name, has_custom_endpoint=has_custom_endpoint)
         cache_scope = _detect_model_cache_scope()
         return await asyncio.to_thread(
             _get_cached_model,
@@ -394,16 +415,22 @@ class AIService:
             cache_scope,
         )
 
-    def _resolve_model_name(self, model_name: str | None = None) -> str:
+    def _resolve_model_name(self, model_name: str | None = None, *, has_custom_endpoint: bool = False) -> str:
         config = get_app_config()
         wanted = model_name or self.default_model
         if wanted and config.get_model_config(wanted) is not None:
+            return wanted
+        if has_custom_endpoint and wanted:
+            logger.info(
+                "模型 %s 未在 deerflow 配置中找到，但搭配自定义 base_url，直接使用。",
+                wanted,
+            )
             return wanted
         if config.models:
             fallback = config.models[0].name
             if wanted and wanted != fallback:
                 logger.warning(
-                    "模型 %s 未在 deerflow 配置中找到，回退到 %s。若搭配自定义 base_url/api_key，请确认该模型在目标 API 端点可用。",
+                    "模型 %s 未在 deerflow 配置中找到，回退到 %s。",
                     wanted,
                     fallback,
                 )

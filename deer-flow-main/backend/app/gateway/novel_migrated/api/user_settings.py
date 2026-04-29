@@ -60,19 +60,17 @@ class ProviderRecordUpdate(BaseModel):
 
 
 class AiSettingsResponse(BaseModel):
-    # canonical fields
     providers: list[ProviderRecordResponse] = Field(default_factory=list)
     default_provider_id: str | None = None
     client_settings: ClientSettings = Field(default_factory=ClientSettings)
     feature_routing_settings: dict[str, object] | None = None
 
-    # legacy-compatible fields (mirrored from active provider / Settings top-level)
-    api_provider: str
-    api_base_url: str
-    llm_model: str
-    temperature: float
-    max_tokens: int
-    system_prompt: str | None
+    api_provider: str = Field(deprecated=True, description="遗留字段，请使用 providers + default_provider_id")
+    api_base_url: str = Field(deprecated=True, description="遗留字段，请使用 providers[id].base_url")
+    llm_model: str = Field(deprecated=True, description="遗留字段，请使用 providers[id].models")
+    temperature: float = Field(deprecated=True, description="遗留字段，请使用 providers[id].temperature")
+    max_tokens: int = Field(deprecated=True, description="遗留字段，请使用 providers[id].max_tokens")
+    system_prompt: str | None = Field(default=None, deprecated=True, description="遗留字段")
 
 
 class AiSettingsUpdateRequest(BaseModel):
@@ -182,23 +180,34 @@ async def _fetch_models_from_upstream(models_url: str, api_key: str) -> list[str
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.get(models_url, headers=headers)
-        if response.status_code != 200:
-            logger.warning(
-                "fetch-provider-models: upstream %s returned %s",
-                models_url,
-                response.status_code,
-            )
-            raise HTTPException(
-                status_code=502,
-                detail=f"上游 API 返回 {response.status_code}",
-            )
-        data = response.json()
-        models = _parse_openai_models_response(data)
-        if not models:
-            logger.warning("fetch-provider-models: no models parsed from %s", models_url)
-        return models
+    import logging as _logging
+    _httpx_logger = _logging.getLogger("httpx")
+    previous_level = _httpx_logger.level
+    if previous_level < _logging.WARNING:
+        _httpx_logger.setLevel(_logging.WARNING)
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(models_url, headers=headers)
+    finally:
+        if previous_level < _logging.WARNING:
+            _httpx_logger.setLevel(previous_level)
+
+    if response.status_code != 200:
+        logger.warning(
+            "fetch-provider-models: upstream %s returned %s",
+            models_url,
+            response.status_code,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"上游 API 返回 {response.status_code}",
+        )
+    data = response.json()
+    models = _parse_openai_models_response(data)
+    if not models:
+        logger.warning("fetch-provider-models: no models parsed from %s", models_url)
+    return models
 
 
 @router.post("/fetch-provider-models", response_model=FetchProviderModelsResponse)

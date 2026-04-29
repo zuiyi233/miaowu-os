@@ -981,7 +981,7 @@ export class GlobalAiService {
           context: requestContext,
           provider_config: {
             provider: targetProvider.provider,
-            base_url: targetProvider.baseUrl,
+            provider_id: targetProvider.id,
             model_name: targetModel,
             temperature,
             max_tokens: maxTokens,
@@ -1049,7 +1049,6 @@ export class GlobalAiService {
         const normalizedSwitchedState = normalizeFeatureRoutingState(switchedState, ctx.providers);
         saveFeatureRoutingState(normalizedSwitchedState);
         updateStoreFeatureRoutingState(normalizedSwitchedState);
-        syncFeatureRoutingStateToServerBestEffort(normalizedSwitchedState);
       }
 
       if (!stream) {

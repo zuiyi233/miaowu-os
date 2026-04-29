@@ -22,11 +22,13 @@ from pydantic import BaseModel, Field
 
 from app.gateway.middleware.domain_protocol import extract_context_fields
 from app.gateway.middleware.intent_recognition_middleware import IntentRecognitionMiddleware
-from app.gateway.novel_migrated.api.settings import get_user_ai_service
+from app.gateway.novel_migrated.api.settings import get_user_ai_service, get_user_ai_service_with_overrides
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.core.user_context import get_request_user_id
 from app.gateway.novel_migrated.schemas.ai_message import AiMessage
 from app.gateway.novel_migrated.services.ai_service import AIService
+from app.gateway.novel_migrated.core.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.gateway.observability.context import (
     copy_trace_context,
     extract_trace_fields_from_context,
@@ -58,8 +60,9 @@ _INTENT_RECOGNITION_MIDDLEWARE = IntentRecognitionMiddleware()
 
 class AiProviderConfig(BaseModel):
     provider: str = Field(..., description="供应商类型: openai/anthropic/google/custom")
+    provider_id: str | None = Field(None, description="前端路由解析出的 provider ID，后端据此从数据库查找完整配置")
     api_key: str | None = Field(None, description="已废弃，后端不再接收明文 API 密钥")
-    base_url: str = Field("", description="自定义API地址")
+    base_url: str = Field("", description="已废弃，后端根据 provider_id 从数据库查找 base_url；仅作兼容回退")
     model_name: str = Field(..., description="模型名称")
     temperature: float = Field(0.7, ge=0.0, le=2.0, description="温度参数")
     max_tokens: int = Field(2000, ge=1, description="最大token数")
@@ -77,6 +80,16 @@ class TestConnectionRequest(BaseModel):
     api_key: str | None = Field(None, description="已废弃，后端不再接收明文 API 密钥")
     base_url: str = Field("", description="已废弃，保留兼容")
     model: str = Field(..., description="模型名称")
+
+
+def _extract_module_id(context: dict[str, Any] | None) -> str | None:
+    if not isinstance(context, dict):
+        return None
+    for key in ("module_id", "moduleId", "module"):
+        val = context.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return None
 
 
 def _extract_bearer_token(request: Request) -> str | None:
@@ -337,12 +350,13 @@ async def _observe_stream_request(
 async def chat_endpoint(
     request: Request,
     body: AiChatRequest,
-    ai_service: AIService = Depends(get_user_ai_service),
+    db: AsyncSession = Depends(get_db),
 ):
     """统一AI聊天接口。
 
-    接收前端请求，根据provider_config动态创建AI服务实例并执行请求。
-    支持流式和非流式两种模式。
+    接收前端请求，根据 provider_id + module_id 从用户数据库配置中
+    查找完整的 provider 记录（含 API Key + base_url + provider 类型），
+    确保后端使用正确的凭证和端点，而非信任前端传来的 base_url。
 
     当 USE_MESSAGES_FORMAT=1（默认）时，直接传递messages数组到LLM Provider，
     保留完整的多轮对话结构以激活Provider原生缓存机制。
@@ -353,6 +367,16 @@ async def chat_endpoint(
     user_id = get_request_user_id(request)
     request_is_retry = _is_retry_request(request, body.context)
     context_fields = extract_context_fields(body.context)
+
+    module_id = _extract_module_id(body.context)
+    provider_id = body.provider_config.provider_id
+
+    ai_service = await get_user_ai_service_with_overrides(
+        request,
+        db,
+        ai_provider_id=provider_id,
+        module_id=module_id,
+    )
 
     session_key = _INTENT_RECOGNITION_MIDDLEWARE.build_session_key_for_context(
         user_id=user_id,
@@ -419,11 +443,6 @@ async def chat_endpoint(
             "temperature": body.provider_config.temperature,
             "max_tokens": body.provider_config.max_tokens,
         }
-        runtime_base_url_raw = body.provider_config.base_url
-        runtime_base_url = runtime_base_url_raw.strip() if isinstance(runtime_base_url_raw, str) else None
-        runtime_base_url = runtime_base_url or None
-        if runtime_base_url:
-            provider_config_params["base_url"] = runtime_base_url
 
         if use_messages_format:
             if body.stream:
@@ -564,11 +583,6 @@ async def _stream_generator_with_messages(
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,
     }
-    runtime_base_url_raw = config.base_url
-    runtime_base_url = runtime_base_url_raw.strip() if isinstance(runtime_base_url_raw, str) else None
-    runtime_base_url = runtime_base_url or None
-    if runtime_base_url:
-        stream_kwargs["base_url"] = runtime_base_url
 
     stream = ai_service.generate_text_stream_with_messages(
         messages=messages,
@@ -604,11 +618,6 @@ async def _stream_generator(
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,
     }
-    runtime_base_url_raw = config.base_url
-    runtime_base_url = runtime_base_url_raw.strip() if isinstance(runtime_base_url_raw, str) else None
-    runtime_base_url = runtime_base_url or None
-    if runtime_base_url:
-        stream_kwargs["base_url"] = runtime_base_url
 
     stream = ai_service.generate_text_stream(
         prompt=prompt,

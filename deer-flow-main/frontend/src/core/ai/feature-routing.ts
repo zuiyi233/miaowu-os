@@ -1,4 +1,5 @@
 import type { AiProviderConfig } from "./ai-provider-store";
+import { putUserAiSettings } from "./useAiSettingsApi";
 
 export type AiParallelStrategy = "compare" | "auto" | "fusion";
 
@@ -598,6 +599,12 @@ export function saveFeatureRoutingState(state: AiFeatureRoutingState): void {
   }
 
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+
+  void putUserAiSettings({
+    feature_routing_settings: state,
+  }).catch((err) => {
+    console.warn("[FeatureRouting] saveFeatureRoutingState 回写后端失败:", err);
+  });
 }
 
 export function buildModelTargetKey(target: AiModelTarget | null | undefined): string {

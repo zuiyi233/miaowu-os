@@ -98,12 +98,12 @@ class PresetFromCurrentRequest(BaseModel):
 class SettingsPayload(BaseModel):
     """设置保存/更新请求（对齐参考项目核心字段）"""
 
-    api_provider: str | None = Field(default=None, description="API 提供商")
-    api_key: str | None = Field(default=None, description="API 密钥")
-    api_base_url: str | None = Field(default=None, description="API 基础 URL")
-    llm_model: str | None = Field(default=None, description="模型名称")
-    temperature: float | None = Field(default=None, description="温度参数")
-    max_tokens: int | None = Field(default=None, description="最大 token 数")
+    api_provider: str | None = Field(default=None, deprecated=True, description="遗留字段，请使用 /api/user/ai-settings 的 providers")
+    api_key: str | None = Field(default=None, deprecated=True, description="遗留字段，请使用 /api/user/ai-settings 的 providers[id].api_key")
+    api_base_url: str | None = Field(default=None, deprecated=True, description="遗留字段，请使用 /api/user/ai-settings 的 providers[id].base_url")
+    llm_model: str | None = Field(default=None, deprecated=True, description="遗留字段，请使用 /api/user/ai-settings 的 providers[id].models")
+    temperature: float | None = Field(default=None, deprecated=True, description="遗留字段")
+    max_tokens: int | None = Field(default=None, deprecated=True, description="遗留字段")
     system_prompt: str | None = Field(default=None, description="系统提示词")
     cover_api_provider: str | None = Field(default=None, description="封面 API 提供商")
     cover_api_key: str | None = Field(default=None, description="封面 API 密钥")
