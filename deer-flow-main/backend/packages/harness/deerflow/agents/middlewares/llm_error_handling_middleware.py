@@ -121,6 +121,8 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         self._circuit_open_until = 0.0
         self._circuit_state = "closed"
         self._circuit_probe_in_flight = False
+        self._loop_closed_recovery_lock = threading.Lock()
+        self._loop_closed_recovery_done = False
 
     def _check_circuit(self) -> bool:
         """Returns True if circuit is OPEN (fast fail), False otherwise."""
@@ -174,6 +176,23 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
                         self.circuit_recovery_timeout_sec,
                     )
 
+    def _recover_loop_closed_once(self) -> None:
+        with self._loop_closed_recovery_lock:
+            if self._loop_closed_recovery_done:
+                return
+            self._loop_closed_recovery_done = True
+
+        try:
+            from app.gateway.novel_migrated.services.ai_service import clear_model_cache
+        except Exception:
+            logger.debug("Failed to import novel ai_service.clear_model_cache for loop_closed recovery", exc_info=True)
+            return
+
+        try:
+            clear_model_cache()
+        except Exception:
+            logger.debug("Best-effort clear_model_cache during loop_closed recovery failed", exc_info=True)
+
     def _classify_error(self, exc: BaseException) -> tuple[bool, str]:
         detail = _extract_error_detail(exc)
         lowered = detail.lower()
@@ -189,13 +208,13 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         if status_code == 403:
             return False, "auth"
 
+        if isinstance(exc, RuntimeError) and "event loop is closed" in lowered:
+            return True, "loop_closed"
+
         if _matches_any(lowered, _AUTH_PATTERNS) and not _matches_any(lowered, ("timeout", "timed out")):
             return False, "auth"
 
-        if (
-            _matches_any(lowered, _MODEL_UNAVAILABLE_PATTERNS)
-            or _matches_any(str(error_code).lower(), _MODEL_UNAVAILABLE_PATTERNS)
-        ):
+        if _matches_any(lowered, _MODEL_UNAVAILABLE_PATTERNS) or _matches_any(str(error_code).lower(), _MODEL_UNAVAILABLE_PATTERNS):
             return False, "model_unavailable"
 
         exc_name = exc.__class__.__name__
@@ -239,7 +258,7 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
             return "The configured LLM provider rejected the request because authentication or access is invalid. Please check the provider credentials and try again."
         if reason == "model_unavailable":
             return "The selected model is unavailable or not enabled on the configured provider channel. Please choose another model or enable this model in your provider gateway."
-        if reason in {"busy", "transient"}:
+        if reason in {"busy", "transient", "loop_closed"}:
             return "The configured LLM provider is temporarily unavailable after multiple retries. Please wait a moment and continue the conversation."
         return f"LLM request failed: {detail}"
 
@@ -301,6 +320,8 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
                 raise
             except Exception as exc:
                 retriable, reason = self._classify_error(exc)
+                if retriable and reason == "loop_closed":
+                    self._recover_loop_closed_once()
                 if retriable and attempt < self.retry_max_attempts:
                     wait_ms = self._build_retry_delay_ms(attempt, exc)
                     logger.warning(
@@ -347,6 +368,8 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
                 raise
             except Exception as exc:
                 retriable, reason = self._classify_error(exc)
+                if retriable and reason == "loop_closed":
+                    self._recover_loop_closed_once()
                 if retriable and attempt < self.retry_max_attempts:
                     wait_ms = self._build_retry_delay_ms(attempt, exc)
                     logger.warning(

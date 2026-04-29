@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, call
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -212,3 +212,31 @@ async def test_rollback_propagates_aput_writes_failure():
     # aput succeeded, aput_writes was called but failed
     checkpointer.aput.assert_awaited_once()
     checkpointer.aput_writes.assert_awaited_once()
+
+
+def test_fire_and_forget_failure_logger_consumes_exception():
+    from deerflow.runtime.runs.worker import _log_fire_and_forget_failure
+
+    task = MagicMock()
+    task.cancelled.return_value = False
+    task.exception.return_value = RuntimeError("boom")
+
+    with patch("deerflow.runtime.runs.worker.logger.debug") as mock_debug:
+        _log_fire_and_forget_failure(task, label="bridge cleanup")
+
+    mock_debug.assert_called_once()
+    assert mock_debug.call_args.args[0] == "%s failed: %s"
+    assert mock_debug.call_args.args[1] == "bridge cleanup"
+    assert str(mock_debug.call_args.args[2]) == "boom"
+
+
+def test_fire_and_forget_failure_logger_ignores_cancelled_task():
+    from deerflow.runtime.runs.worker import _log_fire_and_forget_failure
+
+    task = MagicMock()
+    task.cancelled.return_value = True
+
+    with patch("deerflow.runtime.runs.worker.logger.debug") as mock_debug:
+        _log_fire_and_forget_failure(task, label="bridge cleanup")
+
+    mock_debug.assert_not_called()

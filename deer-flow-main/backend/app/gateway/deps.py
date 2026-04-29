@@ -8,12 +8,37 @@ Initialization is handled directly in ``app.py`` via :class:`AsyncExitStack`.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 
 from deerflow.runtime import RunManager, StreamBridge
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _memory_worker_runtime() -> AsyncGenerator[None, None]:
+    """Start the memory worker for the app lifecycle on a best-effort basis."""
+
+    from deerflow.agents.memory.queue import get_memory_queue
+
+    queue = get_memory_queue()
+    started = False
+    try:
+        started = await queue.start_worker()
+    except Exception:
+        logger.exception("Failed to start memory update worker")
+    try:
+        yield
+    finally:
+        if started:
+            try:
+                await queue.stop_worker()
+            except Exception:
+                logger.exception("Failed to stop memory update worker")
 
 
 @asynccontextmanager
@@ -33,6 +58,7 @@ async def langgraph_runtime(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.checkpointer = await stack.enter_async_context(make_checkpointer())
         app.state.store = await stack.enter_async_context(make_store())
         app.state.run_manager = RunManager()
+        await stack.enter_async_context(_memory_worker_runtime())
         yield
 
 

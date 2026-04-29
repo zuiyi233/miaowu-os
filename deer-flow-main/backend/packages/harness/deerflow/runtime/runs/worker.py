@@ -19,6 +19,7 @@ import asyncio
 import copy
 import inspect
 import logging
+from functools import partial
 from typing import Any, Literal
 
 from deerflow.runtime.serialization import serialize
@@ -31,6 +32,24 @@ logger = logging.getLogger(__name__)
 
 # Valid stream_mode values for LangGraph's graph.astream()
 _VALID_LG_MODES = {"values", "updates", "checkpoints", "tasks", "debug", "messages", "custom"}
+
+
+def _log_fire_and_forget_failure(task: asyncio.Task[Any], *, label: str) -> None:
+    """Consume exceptions from fire-and-forget tasks and log them once."""
+
+    if task.cancelled():
+        return
+
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        logger.debug("%s finished but its exception could not be inspected", label, exc_info=True)
+        return
+
+    if exc is not None:
+        logger.debug("%s failed: %s", label, exc)
 
 
 async def run_agent(
@@ -237,7 +256,16 @@ async def run_agent(
 
     finally:
         await bridge.publish_end(run_id)
-        asyncio.create_task(bridge.cleanup(run_id, delay=60))
+        cleanup_task = asyncio.create_task(
+            bridge.cleanup(run_id, delay=60),
+            name=f"bridge-cleanup:{run_id}",
+        )
+        cleanup_task.add_done_callback(
+            partial(
+                _log_fire_and_forget_failure,
+                label=f"bridge cleanup for run {run_id}",
+            )
+        )
 
 
 # ---------------------------------------------------------------------------

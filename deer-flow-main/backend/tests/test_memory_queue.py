@@ -1,6 +1,7 @@
-import threading
-import time
-from unittest.mock import MagicMock, patch
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from deerflow.agents.memory.queue import ConversationContext, MemoryUpdateQueue
 from deerflow.config.memory_config import MemoryConfig
@@ -18,7 +19,7 @@ def test_queue_add_preserves_existing_correction_flag_for_same_thread() -> None:
 
     with (
         patch("deerflow.agents.memory.queue.get_memory_config", return_value=_memory_config(enabled=True)),
-        patch.object(queue, "_reset_timer"),
+        patch.object(queue, "_signal_worker"),
     ):
         queue.add(thread_id="thread-1", messages=["first"], correction_detected=True)
         queue.add(thread_id="thread-1", messages=["second"], correction_detected=False)
@@ -28,7 +29,8 @@ def test_queue_add_preserves_existing_correction_flag_for_same_thread() -> None:
     assert queue._queue[0].correction_detected is True
 
 
-def test_process_queue_forwards_correction_flag_to_updater() -> None:
+@pytest.mark.anyio
+async def test_process_queue_forwards_correction_flag_to_async_updater() -> None:
     queue = MemoryUpdateQueue()
     queue._queue = [
         ConversationContext(
@@ -39,12 +41,12 @@ def test_process_queue_forwards_correction_flag_to_updater() -> None:
         )
     ]
     mock_updater = MagicMock()
-    mock_updater.update_memory.return_value = True
+    mock_updater.aupdate_memory = AsyncMock(return_value=True)
 
     with patch("deerflow.agents.memory.updater.MemoryUpdater", return_value=mock_updater):
-        queue._process_queue()
+        await queue._process_queue()
 
-    mock_updater.update_memory.assert_called_once_with(
+    mock_updater.aupdate_memory.assert_awaited_once_with(
         messages=["conversation"],
         thread_id="thread-1",
         agent_name="lead_agent",
@@ -53,22 +55,8 @@ def test_process_queue_forwards_correction_flag_to_updater() -> None:
     )
 
 
-def test_queue_add_preserves_existing_reinforcement_flag_for_same_thread() -> None:
-    queue = MemoryUpdateQueue()
-
-    with (
-        patch("deerflow.agents.memory.queue.get_memory_config", return_value=_memory_config(enabled=True)),
-        patch.object(queue, "_reset_timer"),
-    ):
-        queue.add(thread_id="thread-1", messages=["first"], reinforcement_detected=True)
-        queue.add(thread_id="thread-1", messages=["second"], reinforcement_detected=False)
-
-    assert len(queue._queue) == 1
-    assert queue._queue[0].messages == ["second"]
-    assert queue._queue[0].reinforcement_detected is True
-
-
-def test_process_queue_forwards_reinforcement_flag_to_updater() -> None:
+@pytest.mark.anyio
+async def test_process_queue_forwards_reinforcement_flag_to_async_updater() -> None:
     queue = MemoryUpdateQueue()
     queue._queue = [
         ConversationContext(
@@ -79,12 +67,12 @@ def test_process_queue_forwards_reinforcement_flag_to_updater() -> None:
         )
     ]
     mock_updater = MagicMock()
-    mock_updater.update_memory.return_value = True
+    mock_updater.aupdate_memory = AsyncMock(return_value=True)
 
     with patch("deerflow.agents.memory.updater.MemoryUpdater", return_value=mock_updater):
-        queue._process_queue()
+        await queue._process_queue()
 
-    mock_updater.update_memory.assert_called_once_with(
+    mock_updater.aupdate_memory.assert_awaited_once_with(
         messages=["conversation"],
         thread_id="thread-1",
         agent_name="lead_agent",
@@ -93,7 +81,23 @@ def test_process_queue_forwards_reinforcement_flag_to_updater() -> None:
     )
 
 
-def test_process_queue_does_not_reuse_runtime_override_between_contexts() -> None:
+def test_queue_add_preserves_existing_reinforcement_flag_for_same_thread() -> None:
+    queue = MemoryUpdateQueue()
+
+    with (
+        patch("deerflow.agents.memory.queue.get_memory_config", return_value=_memory_config(enabled=True)),
+        patch.object(queue, "_signal_worker"),
+    ):
+        queue.add(thread_id="thread-1", messages=["first"], reinforcement_detected=True)
+        queue.add(thread_id="thread-1", messages=["second"], reinforcement_detected=False)
+
+    assert len(queue._queue) == 1
+    assert queue._queue[0].messages == ["second"]
+    assert queue._queue[0].reinforcement_detected is True
+
+
+@pytest.mark.anyio
+async def test_process_queue_does_not_reuse_runtime_override_between_contexts() -> None:
     queue = MemoryUpdateQueue()
     queue._queue = [
         ConversationContext(
@@ -115,16 +119,16 @@ def test_process_queue_does_not_reuse_runtime_override_between_contexts() -> Non
 
     def _build_updater(*args: object, **kwargs: object) -> MagicMock:
         updater = MagicMock()
-        updater.update_memory.return_value = True
+        updater.aupdate_memory = AsyncMock(return_value=True)
         constructor_kwargs.append(dict(kwargs))
         updater_instances.append(updater)
         return updater
 
     with (
         patch("deerflow.agents.memory.updater.MemoryUpdater", side_effect=_build_updater) as updater_cls,
-        patch("deerflow.agents.memory.queue.time.sleep"),
+        patch("deerflow.agents.memory.queue.asyncio.sleep", new=AsyncMock()),
     ):
-        queue._process_queue()
+        await queue._process_queue()
 
     assert updater_cls.call_count == 2
     assert constructor_kwargs == [
@@ -142,14 +146,14 @@ def test_process_queue_does_not_reuse_runtime_override_between_contexts() -> Non
         },
     ]
 
-    updater_instances[0].update_memory.assert_called_once_with(
+    updater_instances[0].aupdate_memory.assert_awaited_once_with(
         messages=["conversation-1"],
         thread_id="thread-override",
         agent_name=None,
         correction_detected=False,
         reinforcement_detected=False,
     )
-    updater_instances[1].update_memory.assert_called_once_with(
+    updater_instances[1].aupdate_memory.assert_awaited_once_with(
         messages=["conversation-2"],
         thread_id="thread-default",
         agent_name=None,
@@ -158,72 +162,66 @@ def test_process_queue_does_not_reuse_runtime_override_between_contexts() -> Non
     )
 
 
-def test_flush_nowait_cancels_existing_timer_and_starts_immediate_timer() -> None:
+@pytest.mark.anyio
+async def test_worker_processes_immediate_updates_in_background() -> None:
     queue = MemoryUpdateQueue()
-    existing_timer = MagicMock()
-    queue._timer = existing_timer
-    created_timer = MagicMock()
+    started = asyncio.Event()
+    updater = MagicMock()
 
-    with patch("deerflow.agents.memory.queue.threading.Timer", return_value=created_timer) as timer_cls:
-        queue.flush_nowait()
+    async def _fake_aupdate_memory(**kwargs: object) -> bool:
+        started.set()
+        return True
 
-    existing_timer.cancel.assert_called_once_with()
-    timer_cls.assert_called_once_with(0, queue._process_queue)
-    assert created_timer.daemon is True
-    created_timer.start.assert_called_once_with()
-    assert queue._timer is created_timer
-
-
-def test_add_nowait_cancels_existing_timer_and_starts_immediate_timer() -> None:
-    queue = MemoryUpdateQueue()
-    existing_timer = MagicMock()
-    queue._timer = existing_timer
-    created_timer = MagicMock()
+    updater.aupdate_memory = AsyncMock(side_effect=_fake_aupdate_memory)
 
     with (
-        patch("deerflow.agents.memory.queue.get_memory_config", return_value=_memory_config(enabled=True)),
-        patch("deerflow.agents.memory.queue.threading.Timer", return_value=created_timer) as timer_cls,
+        patch("deerflow.agents.memory.queue.get_memory_config", return_value=_memory_config(enabled=True, debounce_seconds=1)),
+        patch("deerflow.agents.memory.updater.MemoryUpdater", return_value=updater),
     ):
-        queue.add_nowait(thread_id="thread-1", messages=["conversation"], agent_name="lead-agent")
+        await queue.start_worker()
+        try:
+            queue.add_nowait(thread_id="thread-1", messages=["conversation"], agent_name="lead-agent")
+            await asyncio.wait_for(started.wait(), timeout=1)
+            assert queue.pending_count == 0
+        finally:
+            await queue.stop_worker(timeout_seconds=1)
 
-    existing_timer.cancel.assert_called_once_with()
-    timer_cls.assert_called_once_with(0, queue._process_queue)
-    assert queue.pending_count == 1
-    assert queue._queue[0].agent_name == "lead-agent"
-    assert created_timer.daemon is True
-    created_timer.start.assert_called_once_with()
+    updater.aupdate_memory.assert_awaited_once_with(
+        messages=["conversation"],
+        thread_id="thread-1",
+        agent_name="lead-agent",
+        correction_detected=False,
+        reinforcement_detected=False,
+    )
 
 
-def test_process_queue_reschedules_immediately_when_already_processing() -> None:
+@pytest.mark.anyio
+async def test_stop_worker_is_best_effort_when_update_hangs() -> None:
     queue = MemoryUpdateQueue()
-    queue._processing = True
-    created_timer = MagicMock()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    updater = MagicMock()
 
-    with patch("deerflow.agents.memory.queue.threading.Timer", return_value=created_timer) as timer_cls:
-        queue._process_queue()
-
-    timer_cls.assert_called_once_with(0, queue._process_queue)
-    assert created_timer.daemon is True
-    created_timer.start.assert_called_once_with()
-
-
-def test_flush_nowait_is_non_blocking() -> None:
-    queue = MemoryUpdateQueue()
-    started = threading.Event()
-    finished = threading.Event()
-
-    def _slow_process_queue() -> None:
+    async def _slow_aupdate_memory(**kwargs: object) -> bool:
         started.set()
-        time.sleep(0.2)
-        finished.set()
+        await release.wait()
+        return True
 
-    queue._process_queue = _slow_process_queue
+    updater.aupdate_memory = AsyncMock(side_effect=_slow_aupdate_memory)
 
-    start = time.perf_counter()
-    queue.flush_nowait()
-    elapsed = time.perf_counter() - start
+    with (
+        patch("deerflow.agents.memory.queue.get_memory_config", return_value=_memory_config(enabled=True, debounce_seconds=1)),
+        patch("deerflow.agents.memory.updater.MemoryUpdater", return_value=updater),
+    ):
+        await queue.start_worker()
+        queue.add_nowait(thread_id="thread-1", messages=["conversation"], agent_name="lead-agent")
+        await asyncio.wait_for(started.wait(), timeout=1)
 
-    assert started.wait(0.1) is True
-    assert elapsed < 0.1
-    assert finished.is_set() is False
-    assert finished.wait(1.0) is True
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        await queue.stop_worker(timeout_seconds=0.05)
+        elapsed = loop.time() - start
+
+    assert elapsed < 0.5
+    assert queue.pending_count == 0
+    assert queue.is_processing is False

@@ -13,6 +13,7 @@ import logging
 import re
 import time
 from collections.abc import Mapping
+from functools import partial
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -38,6 +39,24 @@ from deerflow.runtime import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _log_fire_and_forget_failure(task: asyncio.Task[Any], *, label: str) -> None:
+    """Consume exceptions from fire-and-forget tasks and log them once."""
+
+    if task.cancelled():
+        return
+
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        logger.debug("%s finished but its exception could not be inspected", label, exc_info=True)
+        return
+
+    if exc is not None:
+        logger.debug("%s failed: %s", label, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -618,7 +637,16 @@ async def start_run(
     # the checkpointer into the Store record so that /threads/search returns the
     # correct title instead of an empty values dict.
     if store is not None:
-        asyncio.create_task(_sync_thread_title_after_run(task, thread_id, checkpointer, store))
+        title_sync_task = asyncio.create_task(
+            _sync_thread_title_after_run(task, thread_id, checkpointer, store),
+            name=f"thread-title-sync:{thread_id}",
+        )
+        title_sync_task.add_done_callback(
+            partial(
+                _log_fire_and_forget_failure,
+                label=f"thread title sync for {thread_id}",
+            )
+        )
 
     return record
 

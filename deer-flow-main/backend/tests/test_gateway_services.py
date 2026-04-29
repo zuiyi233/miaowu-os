@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import MagicMock, patch
 
 
 def test_format_sse_basic():
@@ -480,3 +481,31 @@ def test_resolve_feature_model_from_routing_without_providers_returns_runtime_mo
     result = _resolve_feature_model_from_routing("memory-ai", ai_settings)
 
     assert result == {"runtime_model": "LongCat-Flash-Chat"}
+
+
+def test_fire_and_forget_failure_logger_consumes_exception():
+    from app.gateway.services import _log_fire_and_forget_failure
+
+    task = MagicMock()
+    task.cancelled.return_value = False
+    task.exception.return_value = RuntimeError("boom")
+
+    with patch("app.gateway.services.logger.debug") as mock_debug:
+        _log_fire_and_forget_failure(task, label="thread title sync")
+
+    mock_debug.assert_called_once()
+    assert mock_debug.call_args.args[0] == "%s failed: %s"
+    assert mock_debug.call_args.args[1] == "thread title sync"
+    assert str(mock_debug.call_args.args[2]) == "boom"
+
+
+def test_fire_and_forget_failure_logger_ignores_cancelled_task():
+    from app.gateway.services import _log_fire_and_forget_failure
+
+    task = MagicMock()
+    task.cancelled.return_value = True
+
+    with patch("app.gateway.services.logger.debug") as mock_debug:
+        _log_fire_and_forget_failure(task, label="thread title sync")
+
+    mock_debug.assert_not_called()

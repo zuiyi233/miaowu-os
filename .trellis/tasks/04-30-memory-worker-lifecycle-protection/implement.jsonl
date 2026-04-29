@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend implementation guidelines entry point for the memory worker and lifecycle changes."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"The refactor adds async worker failures and background-task exception logging paths."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Background tasks must swallow and log unhandled exceptions consistently."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Tests and backend quality expectations apply to the refactor and lifecycle protection."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The change spans queue, app lifespan, and background execution boundaries."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"We are introducing reusable background-task tracking helpers and should avoid duplicated patterns."}

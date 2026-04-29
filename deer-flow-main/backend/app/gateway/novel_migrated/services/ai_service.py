@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import threading
 import time
@@ -57,6 +58,7 @@ class AgentModelConfig(TypedDict):
 
 
 # ==================== Agent-aware model resolution ====================
+
 
 async def resolve_agent_model_config(
     user_id: str,
@@ -114,13 +116,40 @@ def _hash_api_key_for_cache(api_key: str) -> str:
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
 
 
-def _make_cache_key(model_name: str, base_url: str | None = None, api_key: str | None = None) -> tuple[str, ...]:
+def _detect_model_cache_scope() -> tuple[int, int | None]:
+    thread_id = threading.get_ident()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop_id = None
+    else:
+        loop_id = id(loop)
+    return thread_id, loop_id
+
+
+def _format_cache_scope(cache_scope: tuple[int, int | None]) -> tuple[str, str]:
+    thread_id, loop_id = cache_scope
+    return (f"thread:{thread_id}", f"loop:{loop_id if loop_id is not None else 'none'}")
+
+
+def _make_cache_key(
+    model_name: str,
+    base_url: str | None = None,
+    api_key: str | None = None,
+    cache_scope: tuple[int, int | None] | None = None,
+) -> tuple[str, ...]:
     model_name_key = (model_name or "").strip()
     base_url_key = (base_url or "").strip()
     api_key_raw = (api_key or "").strip()
+    if cache_scope is None:
+        cache_scope = _detect_model_cache_scope()
+    scope_key = _format_cache_scope(cache_scope)
+
+    cache_key: list[str] = [model_name_key]
     if base_url_key or api_key_raw:
-        return (model_name_key, base_url_key, _hash_api_key_for_cache(api_key_raw))
-    return (model_name_key,)
+        cache_key.extend((base_url_key, _hash_api_key_for_cache(api_key_raw)))
+    cache_key.extend(scope_key)
+    return tuple(cache_key)
 
 
 def _format_cache_key(cache_key: tuple[str, ...]) -> str:
@@ -129,9 +158,17 @@ def _format_cache_key(cache_key: tuple[str, ...]) -> str:
     return "|".join(cache_key)
 
 
-def _get_cached_model(model_name: str, base_url: str | None = None, api_key: str | None = None) -> Any:
+def _get_cached_model(
+    model_name: str,
+    base_url: str | None = None,
+    api_key: str | None = None,
+    cache_scope: tuple[int, int | None] | None = None,
+) -> Any:
     model_name = (model_name or "").strip()
-    cache_key = _make_cache_key(model_name, base_url, api_key)
+    if cache_scope is None:
+        cache_scope = _detect_model_cache_scope()
+    thread_id, loop_id = cache_scope
+    cache_key = _make_cache_key(model_name, base_url, api_key, cache_scope=cache_scope)
     now = time.time()
     with _model_cache_lock:
         if cache_key in _model_cache:
@@ -139,12 +176,16 @@ def _get_cached_model(model_name: str, base_url: str | None = None, api_key: str
                 cache_key,
                 {
                     "model_name": model_name,
+                    "thread_id": thread_id,
+                    "loop_id": loop_id,
                     "hits": 0,
                     "misses": 0,
                     "created_at": now,
                     "last_accessed_at": now,
                 },
             )
+            meta.setdefault("thread_id", thread_id)
+            meta.setdefault("loop_id", loop_id)
             meta["hits"] += 1
             meta["last_accessed_at"] = now
             _model_cache.move_to_end(cache_key)
@@ -154,12 +195,16 @@ def _get_cached_model(model_name: str, base_url: str | None = None, api_key: str
             cache_key,
             {
                 "model_name": model_name,
+                "thread_id": thread_id,
+                "loop_id": loop_id,
                 "hits": 0,
                 "misses": 0,
                 "created_at": now,
                 "last_accessed_at": now,
             },
         )
+        meta.setdefault("thread_id", thread_id)
+        meta.setdefault("loop_id", loop_id)
         meta["misses"] += 1
         meta["last_accessed_at"] = now
 
@@ -178,22 +223,67 @@ def _get_cached_model(model_name: str, base_url: str | None = None, api_key: str
         return model
 
 
+def _run_awaitable_best_effort(awaitable: Any) -> None:
+    async def _runner() -> Any:
+        return await awaitable
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            asyncio.run(_runner())
+        except BaseException:
+            logger.debug("Best-effort async model cleanup failed", exc_info=True)
+        return
+
+    future = asyncio.ensure_future(_runner())
+
+    def _consume_result(done_future: asyncio.Future[Any]) -> None:
+        try:
+            done_future.result()
+        except BaseException:
+            logger.debug("Best-effort async model cleanup failed", exc_info=True)
+
+    future.add_done_callback(_consume_result)
+
+
+def _best_effort_close_model_instance(model: Any) -> None:
+    for method_name in ("close", "aclose"):
+        closer = getattr(model, method_name, None)
+        if not callable(closer):
+            continue
+        try:
+            result = closer()
+        except BaseException:
+            logger.debug("Best-effort model cleanup via %s failed", method_name, exc_info=True)
+            continue
+
+        if inspect.isawaitable(result):
+            try:
+                _run_awaitable_best_effort(result)
+            except BaseException:
+                logger.debug("Best-effort async model cleanup via %s failed", method_name, exc_info=True)
+                continue
+        return
+
+
 def clear_model_cache() -> None:
     """清空模型缓存（用于配置变更后刷新）"""
     global _model_cache, _model_cache_meta
     with _model_cache_lock:
         count = len(_model_cache)
+        cached_models = list(_model_cache.values())
         _model_cache.clear()
         _model_cache_meta.clear()
+    for model in cached_models:
+        _best_effort_close_model_instance(model)
     logger.info("🗑️ 已清空模型缓存（共 %s 个实例）", count)
 
 
 def get_model_cache_stats() -> dict:
     """获取模型缓存统计信息"""
     with _model_cache_lock:
-        models: dict[str, dict[str, Any]] = defaultdict(
-            lambda: {"hits": 0, "misses": 0, "created_at": 0.0, "last_accessed_at": 0.0, "cache_entries": 0}
-        )
+        models: dict[str, dict[str, Any]] = defaultdict(lambda: {"hits": 0, "misses": 0, "created_at": 0.0, "last_accessed_at": 0.0, "cache_entries": 0})
         entries: dict[str, dict[str, Any]] = {}
         for cache_key, meta in _model_cache_meta.items():
             key_str = _format_cache_key(cache_key)
@@ -235,7 +325,7 @@ _call_stats: dict[str, dict] = defaultdict(
 def record_call(model_name: str, success: bool, elapsed_ms: float) -> None:
     """
     记录 AI 调用统计
-    
+
     Args:
         model_name: 模型名称
         success: 是否成功
@@ -295,11 +385,13 @@ class AIService:
         resolved_name = self._resolve_model_name(model_name)
         effective_base_url = base_url or self.api_base_url
         effective_api_key = api_key or self.api_key
+        cache_scope = _detect_model_cache_scope()
         return await asyncio.to_thread(
             _get_cached_model,
             resolved_name,
             effective_base_url,
             effective_api_key,
+            cache_scope,
         )
 
     def _resolve_model_name(self, model_name: str | None = None) -> str:
@@ -311,8 +403,7 @@ class AIService:
             fallback = config.models[0].name
             if wanted and wanted != fallback:
                 logger.warning(
-                    "模型 %s 未在 deerflow 配置中找到，回退到 %s。"
-                    "若搭配自定义 base_url/api_key，请确认该模型在目标 API 端点可用。",
+                    "模型 %s 未在 deerflow 配置中找到，回退到 %s。若搭配自定义 base_url/api_key，请确认该模型在目标 API 端点可用。",
                     wanted,
                     fallback,
                 )
@@ -464,9 +555,7 @@ class AIService:
 
             # 处理 tool_calls 循环（参考项目兼容）
             if tool_calls and tools:
-                content, tool_calls = await self._handle_tool_calls_loop(
-                    messages, response, tools, llm, max_iterations=5
-                )
+                content, tool_calls = await self._handle_tool_calls_loop(messages, response, tools, llm, max_iterations=5)
 
             elapsed_ms = (time.time() - start_time) * 1000
             record_call(model_name, success=True, elapsed_ms=elapsed_ms)
@@ -571,14 +660,10 @@ class AIService:
             for tool_id, tool_name, result_or_error, success in results:
                 if success:
                     iteration_stats["successful_calls"] += 1
-                    current_messages.append(
-                        ToolMessage(content=str(result_or_error), tool_call_id=tool_id)
-                    )
+                    current_messages.append(ToolMessage(content=str(result_or_error), tool_call_id=tool_id))
                 else:
                     iteration_stats["failed_calls"] += 1
-                    current_messages.append(
-                        ToolMessage(content=str(result_or_error), tool_call_id=tool_id)
-                    )
+                    current_messages.append(ToolMessage(content=str(result_or_error), tool_call_id=tool_id))
 
             iteration_stats["total_execution_time_ms"] += (time.time() - iteration_start) * 1000
 
@@ -627,10 +712,10 @@ class AIService:
         # 在工具列表中查找匹配的工具
         target_tool = None
         for tool in tools:
-            if hasattr(tool, 'name') and tool.name == tool_name:
+            if hasattr(tool, "name") and tool.name == tool_name:
                 target_tool = tool
                 break
-            elif hasattr(tool, '__name__') and tool.__name__ == tool_name:
+            elif hasattr(tool, "__name__") and tool.__name__ == tool_name:
                 target_tool = tool
                 break
 
@@ -638,7 +723,7 @@ class AIService:
             raise ValueError(f"未找到名为 '{tool_name}' 的工具。可用工具: {[getattr(t, 'name', 'unknown') for t in tools]}")
 
         # 执行工具
-        if hasattr(target_tool, 'ainvoke'):
+        if hasattr(target_tool, "ainvoke"):
             result = await target_tool.ainvoke(tool_args)
         elif callable(target_tool):
             result = target_tool(tool_args)
@@ -672,16 +757,8 @@ class AIService:
                 default_model=self.default_model,
             )
             resolved_model = agent_config.get("model_name") or model
-            resolved_temp = (
-                agent_config.get("temperature")
-                if agent_config.get("temperature") is not None
-                else temperature
-            )
-            resolved_tokens = (
-                agent_config.get("max_tokens")
-                if agent_config.get("max_tokens") is not None
-                else max_tokens
-            )
+            resolved_temp = agent_config.get("temperature") if agent_config.get("temperature") is not None else temperature
+            resolved_tokens = agent_config.get("max_tokens") if agent_config.get("max_tokens") is not None else max_tokens
             resolved_prompt = agent_config.get("system_prompt") or system_prompt
             logger.info(
                 "Agent config resolved: agent=%s model=%s source=%s",
@@ -721,9 +798,7 @@ class AIService:
             agent_type: 智能体类型（writer/critic/polish/outline 等），
                         提供时会从配置服务解析对应模型和参数
         """
-        model, temperature, max_tokens, system_prompt = await self._resolve_agent_params(
-            agent_type, model, temperature, max_tokens, system_prompt
-        )
+        model, temperature, max_tokens, system_prompt = await self._resolve_agent_params(agent_type, model, temperature, max_tokens, system_prompt)
 
         model_name = self._resolve_model_name(model)
         llm = await self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
@@ -791,9 +866,7 @@ class AIService:
         # 处理 tool_calls 循环（与 generate_text 保持一致）
         tool_calls = getattr(response, "tool_calls", None) or []
         if tool_calls and tools:
-            content, tool_calls = await self._handle_tool_calls_loop(
-                langchain_messages, response, tools, llm, max_iterations=5
-            )
+            content, tool_calls = await self._handle_tool_calls_loop(langchain_messages, response, tools, llm, max_iterations=5)
 
         elapsed_ms = (time.time() - start_time) * 1000
         record_call(model_name, success=True, elapsed_ms=elapsed_ms)

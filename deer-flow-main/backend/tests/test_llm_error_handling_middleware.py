@@ -8,6 +8,7 @@ import pytest
 from langchain_core.messages import AIMessage
 from langgraph.errors import GraphBubbleUp
 
+from app.gateway.novel_migrated.services import ai_service
 from deerflow.agents.middlewares.llm_error_handling_middleware import (
     LLMErrorHandlingMiddleware,
 )
@@ -141,6 +142,73 @@ async def test_sync_model_call_skips_blocking_sleep_when_running_in_event_loop(m
     assert result.content == "ok"
     assert attempts == 2
     assert waits == []
+
+
+def test_classify_error_event_loop_closed_is_retriable_loop_closed() -> None:
+    middleware = _build_middleware()
+
+    retriable, reason = middleware._classify_error(RuntimeError("Event loop is closed"))
+
+    assert retriable is True
+    assert reason == "loop_closed"
+
+
+def test_sync_event_loop_closed_clears_cache_once_and_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    middleware = _build_middleware(retry_max_attempts=3, retry_base_delay_ms=0, retry_cap_delay_ms=0)
+    attempts = 0
+    clear_calls = 0
+
+    def fake_clear_model_cache() -> None:
+        nonlocal clear_calls
+        clear_calls += 1
+
+    monkeypatch.setattr(ai_service, "clear_model_cache", fake_clear_model_cache)
+
+    def handler(_request) -> AIMessage:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise RuntimeError("Event loop is closed")
+        return AIMessage(content="ok")
+
+    result = middleware.wrap_model_call(SimpleNamespace(), handler)
+
+    assert isinstance(result, AIMessage)
+    assert result.content == "ok"
+    assert attempts == 3
+    assert clear_calls == 1
+
+
+def test_async_event_loop_closed_clears_cache_once_and_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    middleware = _build_middleware(retry_max_attempts=3, retry_base_delay_ms=0, retry_cap_delay_ms=0)
+    attempts = 0
+    clear_calls = 0
+    waits: list[float] = []
+
+    def fake_clear_model_cache() -> None:
+        nonlocal clear_calls
+        clear_calls += 1
+
+    async def fake_sleep(delay: float) -> None:
+        waits.append(delay)
+
+    monkeypatch.setattr(ai_service, "clear_model_cache", fake_clear_model_cache)
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    async def handler(_request) -> AIMessage:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise RuntimeError("Event loop is closed")
+        return AIMessage(content="ok")
+
+    result = asyncio.run(middleware.awrap_model_call(SimpleNamespace(), handler))
+
+    assert isinstance(result, AIMessage)
+    assert result.content == "ok"
+    assert attempts == 3
+    assert clear_calls == 1
+    assert waits == [0.0, 0.0]
 
 
 def test_sync_model_call_propagates_graph_bubble_up() -> None:
