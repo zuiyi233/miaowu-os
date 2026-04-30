@@ -1,5 +1,7 @@
 import { getBackendBaseURL } from "@/core/config";
 
+import { fetchWithTimeout, mergeAbortSignals } from "../request-utils";
+
 import { useAiProviderStore, type AiProviderConfig } from "./ai-provider-store";
 import {
   loadFeatureRoutingState,
@@ -8,7 +10,9 @@ import {
   saveFeatureRoutingState,
   switchModuleToBackupWithLog,
 } from "./feature-routing";
-import { putUserAiSettings } from "./useAiSettingsApi";
+import { runWithRetry } from "./request-retry";
+
+export { normalizeMaxRetries } from "./request-retry";
 
 function getApiBaseUrl() {
   return getBackendBaseURL();
@@ -221,31 +225,6 @@ const ERROR_CATALOG: Record<ErrorCode, AiErrorInfo> = {
 const CHAT_RETRY_BASE_DELAY_MS = 3000;
 const STREAM_CHUNK_TIMEOUT_CEILING_MS = 90_000;
 
-function mergeAbortSignals(
-  signals: ReadonlyArray<AbortSignal | null | undefined>
-): AbortSignal | undefined {
-  const validSignals = signals.filter(
-    (signal): signal is AbortSignal => Boolean(signal)
-  );
-  if (validSignals.length === 0) return undefined;
-  if (validSignals.length === 1) return validSignals[0];
-
-  if (typeof AbortSignal.any === "function") {
-    return AbortSignal.any(validSignals);
-  }
-
-  const fallbackController = new AbortController();
-  const onAbort = () => fallbackController.abort();
-  for (const signal of validSignals) {
-    if (signal.aborted) {
-      fallbackController.abort();
-      break;
-    }
-    signal.addEventListener("abort", onAbort, { once: true });
-  }
-  return fallbackController.signal;
-}
-
 function isAbortError(error: unknown): boolean {
   return (
     (error instanceof DOMException && error.name === "AbortError") ||
@@ -299,34 +278,6 @@ function isSseErrorPayload(value: unknown): value is SseErrorPayload {
   );
 }
 
-async function fetchWithTimeout(
-  url: string,
-  options: RequestInit,
-  timeoutMs: number
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const signal = mergeAbortSignals([controller.signal, options.signal]);
-    const response = await fetch(url, { ...options, signal });
-    return response;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-export function normalizeMaxRetries(maxRetries: number): number {
-  if (!Number.isFinite(maxRetries)) {
-    return 0;
-  }
-  const normalized = Math.floor(maxRetries);
-  if (normalized < 0) {
-    return 0;
-  }
-  return Math.min(normalized, 20);
-}
-
 export async function fetchWithRetry(
   url: string,
   options: RequestInit,
@@ -334,13 +285,12 @@ export async function fetchWithRetry(
   timeoutMs: number,
   retryDelayMs: number
 ): Promise<Response> {
-  let lastError: Error | null = null;
-  const effectiveRetries = normalizeMaxRetries(retries);
-
-  for (let attempt = 0; attempt <= effectiveRetries; attempt++) {
-    try {
+  return runWithRetry(
+    async () => {
       const response = await fetchWithTimeout(url, options, timeoutMs);
-      if (response.ok) return response;
+      if (response.ok) {
+        return response;
+      }
 
       const errorBody = await response.text().catch(() => "");
       const errorInfo = classifyHttpError(response.status, errorBody);
@@ -348,31 +298,19 @@ export async function fetchWithRetry(
         `API error: ${response.status} ${response.statusText}`,
         errorInfo
       );
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-
-      if (isAbortError(error)) {
-        throw lastError;
-      }
-
-      if (error instanceof AiServiceError && !error.info.retryable) {
-        throw error;
-      }
-
-      if (attempt < effectiveRetries) {
-        const retryIndex = attempt + 1;
-        const backoffDelay = retryDelayMs * retryIndex;
+    },
+    {
+      retries,
+      retryDelayMs,
+      shouldRetryError: (error) =>
+        !(error instanceof AiServiceError && !error.info.retryable),
+      onRetry: ({ attempt, totalAttempts, delayMs, error }) => {
         console.warn(
-          `AI请求失败 (尝试 ${attempt + 1}/${effectiveRetries + 1}): ${lastError.message}. ${backoffDelay}ms后重试...`
+          `AI请求失败 (尝试 ${attempt + 1}/${totalAttempts}): ${error.message}. ${delayMs}ms后重试...`
         );
-        await new Promise((resolve) =>
-          setTimeout(resolve, backoffDelay)
-        );
-      }
+      },
     }
-  }
-
-  throw lastError ?? new Error("Unknown error after retries");
+  );
 }
 
 const HARD_AUTH_PATTERNS = [
@@ -851,17 +789,9 @@ function updateStoreFeatureRoutingState(nextState: ReturnType<typeof normalizeFe
   }));
 }
 
-function syncFeatureRoutingStateToServerBestEffort(
-  nextState: ReturnType<typeof normalizeFeatureRoutingState>
-): void {
-  void putUserAiSettings({
-    feature_routing_settings: nextState,
-  }).catch((err) => {
-    console.warn("[FeatureRouting] 回写后端 feature_routing_settings 失败:", err);
-  });
-}
-
 export class GlobalAiService {
+  // Track every in-flight request so a later abort() can cancel concurrent
+  // calls without leaking controllers or mixing request lifecycles.
   private abortControllers = new Map<string, AbortController>();
   private _requestCounter = 0;
 
@@ -1052,7 +982,20 @@ export class GlobalAiService {
       }
 
       if (!stream) {
-        const data = await response.json() as Record<string, unknown>;
+        let data: Record<string, unknown>;
+        try {
+          data = await response.json() as Record<string, unknown>;
+        } catch {
+          throw new AiServiceError(
+            "服务器返回了非 JSON 格式的响应",
+            {
+              code: "SERVER_ERROR",
+              message: "服务器返回了非 JSON 格式的响应",
+              retryable: false,
+              severity: "medium",
+            },
+          );
+        }
         const content = resolveNonStreamContent(data);
         const structured = extractStructuredResponse(data);
         if (structured && (structured.tool_calls || structured.session || structured.novel)) {
@@ -1108,6 +1051,7 @@ export class GlobalAiService {
         reader.read(),
         new Promise<never>((_, reject) => {
           _timeoutId = setTimeout(() => {
+            void reader.cancel().catch(() => undefined);
             reject(new Error(`SSE stream timed out after ${timeoutMs}ms`));
           }, timeoutMs);
         }),

@@ -19,16 +19,16 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.middleware.domain_protocol import extract_context_fields
 from app.gateway.middleware.intent_recognition_middleware import IntentRecognitionMiddleware
 from app.gateway.novel_migrated.api.settings import get_user_ai_service, get_user_ai_service_with_overrides
+from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.core.user_context import get_request_user_id
 from app.gateway.novel_migrated.schemas.ai_message import AiMessage
 from app.gateway.novel_migrated.services.ai_service import AIService
-from app.gateway.novel_migrated.core.database import get_db
-from sqlalchemy.ext.asyncio import AsyncSession
 from app.gateway.observability.context import (
     copy_trace_context,
     extract_trace_fields_from_context,
@@ -350,6 +350,7 @@ async def _observe_stream_request(
 async def chat_endpoint(
     request: Request,
     body: AiChatRequest,
+    ai_service: AIService = Depends(get_user_ai_service),
     db: AsyncSession = Depends(get_db),
 ):
     """统一AI聊天接口。
@@ -371,12 +372,13 @@ async def chat_endpoint(
     module_id = _extract_module_id(body.context)
     provider_id = body.provider_config.provider_id
 
-    ai_service = await get_user_ai_service_with_overrides(
-        request,
-        db,
-        ai_provider_id=provider_id,
-        module_id=module_id,
-    )
+    if provider_id or module_id:
+        ai_service = await get_user_ai_service_with_overrides(
+            request,
+            db,
+            ai_provider_id=provider_id,
+            module_id=module_id,
+        )
 
     session_key = _INTENT_RECOGNITION_MIDDLEWARE.build_session_key_for_context(
         user_id=user_id,
@@ -506,7 +508,7 @@ async def chat_endpoint(
     except ValueError as exc:
         logger.error("AI service configuration error: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc))
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("AI request timed out (hard timeout)")
         raise HTTPException(status_code=504, detail="AI 请求超时，请稍后重试或减少请求内容")
     except HTTPException:
@@ -559,7 +561,7 @@ async def _apply_chunk_timeout(
             chunk = await asyncio.wait_for(stream_aiter.__anext__(), timeout=timeout_seconds)
         except StopAsyncIteration:
             break
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Stream chunk wait timed out after %.1fs", timeout_seconds)
             raise
         yield chunk

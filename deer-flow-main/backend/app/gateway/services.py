@@ -17,7 +17,7 @@ from functools import partial
 from typing import Any
 
 from fastapi import HTTPException, Request
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from sqlalchemy import select
 
 from app.gateway.deps import get_checkpointer, get_run_manager, get_store, get_stream_bridge
@@ -25,6 +25,7 @@ from app.gateway.novel_migrated.core.crypto import safe_decrypt
 from app.gateway.novel_migrated.core.database import AsyncSessionLocal
 from app.gateway.novel_migrated.core.user_context import get_request_user_id
 from app.gateway.novel_migrated.models.settings import Settings
+from app.gateway.novel_migrated.services.ai_settings_service import resolve_user_ai_runtime_config
 from deerflow.runtime import (
     END_SENTINEL,
     HEARTBEAT_SENTINEL,
@@ -110,8 +111,15 @@ def normalize_input(raw_input: dict[str, Any] | None) -> dict[str, Any]:
                 content = msg.get("content", "")
                 if role in ("user", "human"):
                     converted.append(HumanMessage(content=content))
+                elif role in ("system",):
+                    converted.append(SystemMessage(content=content))
+                elif role in ("ai", "assistant"):
+                    converted.append(AIMessage(content=content))
+                elif role in ("tool",):
+                    tool_call_id = msg.get("tool_call_id", "")
+                    name = msg.get("name", "")
+                    converted.append(ToolMessage(content=content, tool_call_id=tool_call_id, name=name))
                 else:
-                    # TODO: handle other message types (system, ai, tool)
                     converted.append(HumanMessage(content=content))
             else:
                 converted.append(msg)
@@ -127,6 +135,17 @@ def _as_non_empty_str(value: Any) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _extract_module_id(context: dict[str, Any] | None) -> str | None:
+    if not isinstance(context, dict):
+        return None
+
+    for key in ("module_id", "moduleId", "module"):
+        value = context.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _apply_runtime_provider_overrides(
@@ -161,6 +180,7 @@ async def _resolve_runtime_provider_overrides_for_thread(
     request: Request,
     *,
     requested_model_name: str | None,
+    module_id: str | None = None,
 ) -> dict[str, str] | None:
     """Resolve per-user provider credentials for LangGraph runtime calls.
 
@@ -168,10 +188,6 @@ async def _resolve_runtime_provider_overrides_for_thread(
     We intentionally do NOT read `.env`/`config.yaml` here so frontend-saved
     user settings can take effect immediately for thread runs.
     """
-    runtime_model = _as_non_empty_str(requested_model_name)
-    if runtime_model is None:
-        return None
-
     user_id = get_request_user_id(request)
     try:
         async with AsyncSessionLocal() as db:
@@ -188,20 +204,19 @@ async def _resolve_runtime_provider_overrides_for_thread(
     if settings is None:
         return None
 
-    runtime_provider = _as_non_empty_str(settings.api_provider)
-    runtime_base_url = _as_non_empty_str(settings.api_base_url)
-    runtime_api_key = _as_non_empty_str(safe_decrypt(settings.api_key))
+    runtime, _ = resolve_user_ai_runtime_config(
+        settings,
+        ai_model=requested_model_name,
+        module_id=module_id,
+    )
 
-    if not any((runtime_provider, runtime_base_url, runtime_api_key)):
-        return None
-
-    resolved: dict[str, str] = {"runtime_model": runtime_model}
-    if runtime_provider:
-        resolved["runtime_provider"] = runtime_provider
-    if runtime_base_url:
-        resolved["runtime_base_url"] = runtime_base_url
-    if runtime_api_key:
-        resolved["runtime_api_key"] = runtime_api_key
+    resolved: dict[str, str] = {"runtime_model": runtime["model_name"]}
+    if runtime["api_provider"]:
+        resolved["runtime_provider"] = runtime["api_provider"]
+    if runtime["api_base_url"]:
+        resolved["runtime_base_url"] = runtime["api_base_url"]
+    if runtime["api_key"]:
+        resolved["runtime_api_key"] = runtime["api_key"]
     return resolved
 
 
@@ -263,6 +278,8 @@ def _resolve_feature_model_from_routing(
     if provider_record:
         base_url = _as_non_empty_str(provider_record.get("base_url"))
         api_key_encrypted = _as_non_empty_str(provider_record.get("api_key_encrypted"))
+        if not api_key_encrypted:
+            api_key_encrypted = _as_non_empty_str(provider_record.get("api_key"))
         api_key = _as_non_empty_str(safe_decrypt(api_key_encrypted)) if api_key_encrypted else None
         if base_url:
             result["runtime_base_url"] = base_url
@@ -444,6 +461,8 @@ def build_run_config(
             target["agent_name"] = normalized
     if "configurable" in config and "include_novel" not in config["configurable"]:
         config["configurable"]["include_novel"] = True
+    elif "context" in config and "include_novel" not in config["context"]:
+        config["context"]["include_novel"] = True
     if metadata:
         config.setdefault("metadata", {}).update(metadata)
     return config
@@ -572,6 +591,7 @@ async def start_run(
     # that carries agent configuration (model_name, thinking_enabled, etc.).
     # Only agent-relevant keys are forwarded; unknown keys (e.g. thread_id) are ignored.
     context = getattr(body, "context", None)
+    module_id = _extract_module_id(context)
     if context:
         _CONTEXT_CONFIGURABLE_KEYS = {
             "model_name",
@@ -596,6 +616,7 @@ async def start_run(
     runtime_overrides = await _resolve_runtime_provider_overrides_for_thread(
         request,
         requested_model_name=requested_model_name,
+        module_id=module_id,
     )
     if runtime_overrides:
         _apply_runtime_provider_overrides(

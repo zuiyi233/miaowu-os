@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Any
@@ -13,10 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
 from app.gateway.novel_migrated.core.database import get_db
+from app.gateway.novel_migrated.models.character import Character
 from app.gateway.novel_migrated.models.document_index import DocumentIndex
 from app.gateway.novel_migrated.services.workspace_document_service import WorkspaceSecurityError, workspace_document_service
 
 router = APIRouter(prefix="/relationships", tags=["relationships"])
+_RELATIONSHIP_INDEX_TAG_PREFIX = "relationship_id:"
+_RELATIONSHIP_ID_TO_PROJECT_ID: dict[str, str] = {}
+_PROJECT_RELATIONSHIP_IDS: dict[str, set[str]] = {}
 
 
 class RelationshipCreateRequest(BaseModel):
@@ -65,6 +70,51 @@ def _normalize_relationship_store(raw_content: str) -> dict[str, Any]:
     return {"relationships": [], "relationship_types": []}
 
 
+def _extract_relationship_ids(store: dict[str, Any]) -> list[str]:
+    relationship_ids: list[str] = []
+    for item in store.get("relationships", []):
+        if not isinstance(item, dict):
+            continue
+        rel_id = str(item.get("id") or "").strip()
+        if rel_id:
+            relationship_ids.append(rel_id)
+    return list(dict.fromkeys(relationship_ids))
+
+
+def _relationship_index_tag(relationship_id: str) -> str:
+    return f"{_RELATIONSHIP_INDEX_TAG_PREFIX}{relationship_id}"
+
+
+def _forget_relationship_project(project_id: str) -> None:
+    old_relationship_ids = _PROJECT_RELATIONSHIP_IDS.pop(project_id, set())
+    for relationship_id in old_relationship_ids:
+        if _RELATIONSHIP_ID_TO_PROJECT_ID.get(relationship_id) == project_id:
+            _RELATIONSHIP_ID_TO_PROJECT_ID.pop(relationship_id, None)
+
+
+def _refresh_relationship_index(project_id: str, store: dict[str, Any]) -> None:
+    _forget_relationship_project(project_id)
+    relationship_ids = set(_extract_relationship_ids(store))
+    if not relationship_ids:
+        return
+    _PROJECT_RELATIONSHIP_IDS[project_id] = relationship_ids
+    for relationship_id in relationship_ids:
+        _RELATIONSHIP_ID_TO_PROJECT_ID[relationship_id] = project_id
+
+
+def _relationship_store_contains_id(store: dict[str, Any], relationship_id: str) -> bool:
+    return any(
+        isinstance(item, dict) and str(item.get("id") or "") == relationship_id
+        for item in store.get("relationships", [])
+    )
+
+
+def _relationship_store_tags(store: dict[str, Any]) -> list[str]:
+    tags = ["relationship"]
+    tags.extend(_relationship_index_tag(relationship_id) for relationship_id in _extract_relationship_ids(store))
+    return list(dict.fromkeys(tags))
+
+
 async def _load_relationship_store(
     *,
     project_id: str,
@@ -90,6 +140,7 @@ async def _load_relationship_store(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     store = _normalize_relationship_store(str(payload.get("content") or ""))
+    _refresh_relationship_index(project_id, store)
     return store, payload
 
 
@@ -99,6 +150,41 @@ async def _find_store_by_relationship_id(
     user_id: str,
     db: AsyncSession,
 ) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+    relationship_id = str(relationship_id or "").strip()
+    if not relationship_id:
+        return None
+
+    cached_project_id = _RELATIONSHIP_ID_TO_PROJECT_ID.get(relationship_id)
+    if cached_project_id:
+        try:
+            store, doc_meta = await _load_relationship_store(project_id=cached_project_id, user_id=user_id, db=db)
+        except HTTPException:
+            _forget_relationship_project(cached_project_id)
+        else:
+            if _relationship_store_contains_id(store, relationship_id):
+                return cached_project_id, store, doc_meta
+
+    indexed_project_stmt = (
+        select(DocumentIndex.project_id)
+        .where(
+            DocumentIndex.user_id == user_id,
+            DocumentIndex.entity_type == "relationship",
+            DocumentIndex.status != "stale",
+            DocumentIndex.tags_json.like(f"%{_relationship_index_tag(relationship_id)}%"),
+        )
+        .limit(1)
+    )
+    indexed_project_id = await db.execute(indexed_project_stmt)
+    project_id = indexed_project_id.scalar_one_or_none()
+    if project_id:
+        try:
+            store, doc_meta = await _load_relationship_store(project_id=project_id, user_id=user_id, db=db)
+        except HTTPException:
+            pass
+        else:
+            if _relationship_store_contains_id(store, relationship_id):
+                return project_id, store, doc_meta
+
     stmt = (
         select(DocumentIndex.project_id)
         .where(
@@ -114,9 +200,8 @@ async def _find_store_by_relationship_id(
             store, doc_meta = await _load_relationship_store(project_id=project_id, user_id=user_id, db=db)
         except HTTPException:
             continue
-        for item in store.get("relationships", []):
-            if isinstance(item, dict) and str(item.get("id") or "") == relationship_id:
-                return project_id, store, doc_meta
+        if _relationship_store_contains_id(store, relationship_id):
+            return project_id, store, doc_meta
     return None
 
 
@@ -135,7 +220,7 @@ async def _save_relationship_store(
             entity_id="relationships",
             content=store,
             title="关系网络",
-            tags=["relationship"],
+            tags=_relationship_store_tags(store),
         )
         await workspace_document_service.sync_record_to_db(
             db=db,
@@ -145,6 +230,7 @@ async def _save_relationship_store(
             status="indexed",
         )
         await db.commit()
+        _refresh_relationship_index(project_id, store)
     except WorkspaceSecurityError as exc:
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -171,7 +257,7 @@ def _serialize_relationship(item: dict[str, Any]) -> dict[str, Any]:
         "character_from_id": str(item.get("character_from_id") or ""),
         "character_to_id": str(item.get("character_to_id") or ""),
         "relationship_name": str(item.get("relationship_name") or ""),
-        "intimacy_level": int(item.get("intimacy_level") or 0),
+        "intimacy_level": (lambda v: int(v) if isinstance(v, (int, float)) else (int(v) if str(v).isdigit() else 0))(item.get("intimacy_level")),
         "description": str(item.get("description") or ""),
         "status": str(item.get("status") or "active"),
         "started_at": item.get("started_at"),
@@ -254,6 +340,17 @@ async def create_relationship(
 ):
     await verify_project_access(req.project_id, user_id, db)
     for character_id in (req.character_from_id, req.character_to_id):
+        character_row = await db.execute(
+            select(Character.project_id).where(Character.id == character_id)
+        )
+        character_project_id = character_row.scalar_one_or_none()
+        if character_project_id is None:
+            raise HTTPException(status_code=404, detail=f"Character not found: {character_id}")
+        if str(character_project_id) != req.project_id:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Character does not belong to project {req.project_id}: {character_id}",
+            )
         try:
             await workspace_document_service.read_document(
                 user_id=user_id,
@@ -397,15 +494,21 @@ async def get_relationship_graph(
         project_id=project_id,
         entity_type="character",
     )
-    nodes = []
-    for idx in character_indexes:
-        doc_payload = await workspace_document_service.read_document(
-            user_id=user_id,
-            project_id=project_id,
-            entity_type="character",
-            entity_id=idx.entity_id,
-        )
-        nodes.append(_extract_character_node(str(doc_payload.get("content") or ""), idx.entity_id))
+    character_payloads = await asyncio.gather(
+        *[
+            workspace_document_service.read_document(
+                user_id=user_id,
+                project_id=project_id,
+                entity_type="character",
+                entity_id=idx.entity_id,
+            )
+            for idx in character_indexes
+        ]
+    )
+    nodes = [
+        _extract_character_node(str(doc_payload.get("content") or ""), idx.entity_id)
+        for idx, doc_payload in zip(character_indexes, character_payloads)
+    ]
 
     edges = []
     for rel in store.get("relationships", []):

@@ -339,7 +339,10 @@ async def _generate_career_system_internal(project_id, main_career_count=3, sub_
             )
 
         cleaned = ai_service._clean_json_response(ai_response)
-        career_data = json.loads(cleaned)
+        try:
+            career_data = json.loads(cleaned)
+        except json.JSONDecodeError as e:
+            return _fail(f"AI 返回的 JSON 格式无效: {e}", source="novel_migrated.career_generate")
 
         result = await CareerService.parse_and_save_careers(career_data, project_id, db)
         await db.commit()

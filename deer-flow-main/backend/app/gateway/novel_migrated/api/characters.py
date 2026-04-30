@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import AliasChoices, BaseModel, Field
@@ -36,30 +36,30 @@ class CharacterCreateRequest(BaseModel):
     personality: str = ""
     background: str = ""
     appearance: str = ""
-    age: Optional[str] = None
-    gender: Optional[str] = None
-    organization_type: Optional[str] = None
-    organization_purpose: Optional[str] = None
-    traits: Optional[list] = None
-    relationships: Optional[str] = Field(
+    age: str | None = None
+    gender: str | None = None
+    organization_type: str | None = None
+    organization_purpose: str | None = None
+    traits: list | None = None
+    relationships: str | None = Field(
         default=None,
         validation_alias=AliasChoices("relationships", "relationships_text"),
     )
 
 
 class CharacterUpdateRequest(BaseModel):
-    name: Optional[str] = None
-    role_type: Optional[str] = None
-    personality: Optional[str] = None
-    background: Optional[str] = None
-    appearance: Optional[str] = None
-    age: Optional[str] = None
-    gender: Optional[str] = None
-    organization_type: Optional[str] = None
-    organization_purpose: Optional[str] = None
-    current_state: Optional[str] = None
-    traits: Optional[list] = None
-    relationships: Optional[str] = Field(
+    name: str | None = None
+    role_type: str | None = None
+    personality: str | None = None
+    background: str | None = None
+    appearance: str | None = None
+    age: str | None = None
+    gender: str | None = None
+    organization_type: str | None = None
+    organization_purpose: str | None = None
+    current_state: str | None = None
+    traits: list | None = None
+    relationships: str | None = Field(
         default=None,
         validation_alias=AliasChoices("relationships", "relationships_text"),
     )
@@ -205,8 +205,8 @@ async def list_characters(
     project_id: str,
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
-    is_organization: Optional[bool] = None,
-    role_type: Optional[str] = None,
+    is_organization: bool | None = None,
+    role_type: str | None = None,
 ):
     await verify_project_access(project_id, user_id, db)
     query = select(Character).where(Character.project_id == project_id)
@@ -411,7 +411,7 @@ async def generate_single_character(
             personality=char_data.get("personality", ""),
             background=char_data.get("background", ""),
             appearance=char_data.get("appearance", ""),
-            age=str(char_data.get("age", "")) if char_data.get("age") else None,
+            age=str(char_data.get("age", "")) if char_data.get("age") is not None else None,
             gender=char_data.get("gender"),
             organization_type=char_data.get("organization_type"),
             organization_purpose=char_data.get("organization_purpose"),
@@ -421,14 +421,36 @@ async def generate_single_character(
         db.add(character)
         await db.flush()
 
-        if not req.is_organization and char_data.get("relationships"):
-            for rel in char_data["relationships"]:
-                target_name = rel.get("target_character_name", "")
+        relationships_data = char_data.get("relationships")
+        if not req.is_organization and isinstance(relationships_data, list) and relationships_data:
+            target_names: list[str] = []
+            for rel in relationships_data:
+                if not isinstance(rel, dict):
+                    continue
+                target_name = str(rel.get("target_character_name") or "").strip()
+                if target_name:
+                    target_names.append(target_name)
+
+            target_map: dict[str, Character] = {}
+            if target_names:
                 target_result = await db.execute(
                     select(Character).where(
                         Character.project_id == req.project_id,
-                        Character.name == target_name))
-                target = target_result.scalar_one_or_none()
+                        Character.name.in_(list(dict.fromkeys(target_names))),
+                    )
+                )
+                for target in target_result.scalars().all():
+                    target_name = str(target.name or "").strip()
+                    if target_name and target_name not in target_map:
+                        target_map[target_name] = target
+
+            for rel in relationships_data:
+                if not isinstance(rel, dict):
+                    continue
+                target_name = str(rel.get("target_character_name") or "").strip()
+                if not target_name:
+                    continue
+                target = target_map.get(target_name)
                 if target:
                     rel_obj = CharacterRelationship(
                         project_id=req.project_id,
@@ -457,9 +479,11 @@ async def generate_single_character(
 
     except json.JSONDecodeError as e:
         logger.error(f"Parse character generation failed (invalid JSON): {e}")
+        await db.rollback()
         raise HTTPException(status_code=500, detail=f"AI response parse error: {str(e)}")
     except Exception as e:
         logger.error(f"Parse character generation failed: {e}")
+        await db.rollback()
         raise HTTPException(status_code=500, detail=f"AI response parse error: {str(e)}")
 
 

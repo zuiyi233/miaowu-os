@@ -141,8 +141,95 @@ function normalizeDraftSettings(draft: AiGlobalSettings): AiGlobalSettings {
   };
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isFiniteNumberOrNil(value: unknown): boolean {
+  return value === undefined || value === null || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isAiProviderType(value: unknown): value is AiProviderType {
+  return value === "openai" || value === "anthropic" || value === "google" || value === "custom";
+}
+
+function isAiProviderConfigRecord(value: unknown): value is AiProviderConfig {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.id !== "string" || typeof obj.name !== "string" || !isAiProviderType(obj.provider)) {
+    return false;
+  }
+  if (typeof obj.apiKey !== "string" || typeof obj.baseUrl !== "string") {
+    return false;
+  }
+  if (!isStringArray(obj.models) || typeof obj.isActive !== "boolean") {
+    return false;
+  }
+  if (!isFiniteNumberOrNil(obj.temperature) || !isFiniteNumberOrNil(obj.maxTokens)) {
+    return false;
+  }
+  if (obj.hasApiKey !== undefined && typeof obj.hasApiKey !== "boolean") {
+    return false;
+  }
+  if (obj.clearApiKey !== undefined && typeof obj.clearApiKey !== "boolean") {
+    return false;
+  }
+  return true;
+}
+
 function isAiProviderConfigArray(value: unknown): value is AiProviderConfig[] {
-  return Array.isArray(value);
+  return Array.isArray(value) && value.every(isAiProviderConfigRecord);
+}
+
+function parseImportedDraftSettings(value: unknown): AiGlobalSettings | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  if (!isAiProviderConfigArray(source.providers)) return null;
+
+  if (source.defaultProviderId !== undefined && source.defaultProviderId !== null && typeof source.defaultProviderId !== "string") {
+    return null;
+  }
+  if (source.globalSystemPrompt !== undefined && typeof source.globalSystemPrompt !== "string") {
+    return null;
+  }
+  if (source.enableStreamMode !== undefined && typeof source.enableStreamMode !== "boolean") {
+    return null;
+  }
+  if (!isFiniteNumberOrNil(source.requestTimeout) || !isFiniteNumberOrNil(source.maxRetries)) {
+    return null;
+  }
+  if (
+    source.featureRoutingSettings !== undefined &&
+    source.featureRoutingSettings !== null &&
+    (typeof source.featureRoutingSettings !== "object" || Array.isArray(source.featureRoutingSettings))
+  ) {
+    return null;
+  }
+
+  return normalizeDraftSettings({
+    ...DEFAULT_SETTINGS,
+    defaultProviderId: typeof source.defaultProviderId === "string" ? source.defaultProviderId : null,
+    providers: source.providers,
+    globalSystemPrompt:
+      typeof source.globalSystemPrompt === "string"
+        ? source.globalSystemPrompt
+        : DEFAULT_SETTINGS.globalSystemPrompt,
+    enableStreamMode:
+      typeof source.enableStreamMode === "boolean"
+        ? source.enableStreamMode
+        : DEFAULT_SETTINGS.enableStreamMode,
+    requestTimeout:
+      typeof source.requestTimeout === "number"
+        ? source.requestTimeout
+        : DEFAULT_SETTINGS.requestTimeout,
+    maxRetries:
+      typeof source.maxRetries === "number"
+        ? source.maxRetries
+        : DEFAULT_SETTINGS.maxRetries,
+    featureRoutingSettings: (source.featureRoutingSettings as AiFeatureRoutingState | null | undefined) ?? null,
+  });
 }
 
 function buildPutPayloadFromDraft(draft: AiGlobalSettings): UserAiSettingsUpdate {
@@ -527,18 +614,23 @@ export const useAiProviderStore = create<AiSettingsState>()((set, get) => ({
     return findActiveProvider(state.effective.providers, state.effective.defaultProviderId);
   },
 
-  exportConfig: () => JSON.stringify(get().draft, null, 2),
+  exportConfig: () => {
+    const draft = get().draft;
+    const sanitized = {
+      ...draft,
+      providers: draft.providers.map((p) => {
+        const { apiKey, ...rest } = p;
+        void apiKey;
+        return { ...rest, apiKey: "***" };
+      }),
+    };
+    return JSON.stringify(sanitized, null, 2);
+  },
 
   importConfig: (jsonText) => {
     const parsed = safeParseJson(jsonText);
-    if (!parsed || typeof parsed !== "object") return false;
-    const obj = parsed as Partial<AiGlobalSettings>;
-    if (!isAiProviderConfigArray(obj.providers)) return false;
-    const draft: AiGlobalSettings = normalizeDraftSettings({
-      ...DEFAULT_SETTINGS,
-      ...obj,
-      providers: obj.providers,
-    });
+    const draft = parseImportedDraftSettings(parsed);
+    if (!draft) return false;
     set({ draft, isDirty: true });
     return true;
   },

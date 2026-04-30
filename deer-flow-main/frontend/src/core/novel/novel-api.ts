@@ -1,5 +1,11 @@
 import { getBackendBaseURL } from '@/core/config';
+import { buildUrlWithPrefix, parseJsonOrText, type QueryValue } from '@/core/request-utils';
 
+import {
+  clearNovelCache as clearNovelCacheStore,
+  createNovelCache,
+  getCachedOrLoadNovel,
+} from './novel-cache';
 import type {
   BookImportPreview,
   BookImportTask,
@@ -21,7 +27,7 @@ import { parseSseStream } from './utils';
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
-export type QueryValue = string | number | boolean | null | undefined;
+export type { QueryValue } from '@/core/request-utils';
 
 export interface AiModelRoutingPayload {
   module_id?: string;
@@ -166,37 +172,9 @@ function getNovelApiPrefix() {
   return _cachedApiPrefix!;
 }
 
-function buildUrl(path: string, query?: Record<string, QueryValue>) {
-  return buildUrlWithPrefix(getNovelApiPrefix(), path, query);
-}
-
-function buildUrlWithPrefix(prefix: string, path: string, query?: Record<string, QueryValue>) {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  const base = `${prefix}${normalizedPath}`;
-
-  if (!query) {
-    return base;
-  }
-
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(query)) {
-    if (value === undefined || value === null) {
-      continue;
-    }
-    params.set(key, String(value));
-  }
-
-  const queryString = params.toString();
-  return queryString ? `${base}?${queryString}` : base;
-}
-
 function getBookImportApiPrefix() {
   const backendBase = getBackendBaseURL();
   return `${backendBase}/book-import`;
-}
-
-function buildBookImportUrl(path: string, query?: Record<string, QueryValue>) {
-  return buildUrlWithPrefix(getBookImportApiPrefix(), path, query);
 }
 
 function withModelRoutingQuery(
@@ -231,20 +209,8 @@ function withModelRoutingBody<T extends Record<string, unknown>>(
   };
 }
 
-function parseJsonOrText(responseText: string): unknown {
-  if (!responseText || !responseText.trim()) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(responseText);
-  } catch {
-    return responseText;
-  }
-}
-
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const response = await fetch(buildUrl(path, options.query), {
+  const response = await fetch(buildUrlWithPrefix(getNovelApiPrefix(), path, options.query), {
     method: options.method ?? 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -271,7 +237,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 }
 
 async function requestBookImport<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const response = await fetch(buildBookImportUrl(path, options.query), {
+  const response = await fetch(buildUrlWithPrefix(getBookImportApiPrefix(), path, options.query), {
     method: options.method ?? 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -298,7 +264,7 @@ async function requestStreamResponse(path: string, options: StreamRequestOptions
     headers['Content-Type'] = 'application/json';
   }
 
-  const response = await fetch(buildUrl(path, options.query), {
+  const response = await fetch(buildUrlWithPrefix(getNovelApiPrefix(), path, options.query), {
     method: options.method ?? 'POST',
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
@@ -476,21 +442,34 @@ function normalizeNovel(raw: unknown): Novel {
     return acc;
   }, { settings: [], factions: [], items: [] });
 
+  const chapters: Chapter[] = Array.isArray(raw.chapters)
+    ? raw.chapters
+        .filter(isRecord)
+        .map((item) => withNormalizedDocumentMeta(item) as Chapter)
+    : [];
+  const characters: Character[] = Array.isArray(raw.characters)
+    ? raw.characters
+        .filter(isRecord)
+        .map((item) => withNormalizedDocumentMeta(item) as Character)
+    : [];
+  const volumes = Array.isArray(raw.volumes)
+    ? raw.volumes.filter(isRecord)
+    : [];
+  const relationships = Array.isArray(raw.relationships)
+    ? raw.relationships.filter(isRecord)
+    : [];
+
   return {
-    ...(raw as Novel),
+    ...raw,
     id: toStringOr(raw.id),
-    title: toStringOr(raw.title),
-    chapters: (
-      Array.isArray(raw.chapters) ? raw.chapters.map((item) => withNormalizedDocumentMeta(item)) : []
-    ) as Chapter[],
-    characters: (
-      Array.isArray(raw.characters) ? raw.characters.map((item) => withNormalizedDocumentMeta(item)) : []
-    ) as Character[],
+    title: toStringOr(raw.title, 'Untitled'),
+    chapters,
+    characters,
     settings,
     factions,
     items,
-    volumes: (Array.isArray(raw.volumes) ? raw.volumes : []),
-    relationships: (Array.isArray(raw.relationships) ? raw.relationships : []),
+    volumes,
+    relationships,
   } as Novel;
 }
 
@@ -954,27 +933,15 @@ export class NovelApiService {
     params: Record<string, unknown> = {},
     signal?: AbortSignal,
   ): Promise<AsyncGenerator<NovelStreamEvent>> {
-    try {
-      return await requestStreamWith404Fallback<NovelStreamEvent>(
-        `/novels/${encodeURIComponent(novelId)}/chapters/${encodeURIComponent(chapterId)}/continue-stream`,
-        `/chapters/${encodeURIComponent(chapterId)}/continue-stream`,
-        {
-          method: 'POST',
-          body: params,
-          signal,
-        },
-      );
-    } catch (error) {
-      if (!(error instanceof ApiError) || error.status !== 404) {
-        throw error;
-      }
-      return this.generateChapterStream(
-        novelId,
-        chapterId,
-        params,
+    return requestStreamWith404Fallback<NovelStreamEvent>(
+      `/novels/${encodeURIComponent(novelId)}/chapters/${encodeURIComponent(chapterId)}/continue-stream`,
+      `/chapters/${encodeURIComponent(chapterId)}/continue-stream`,
+      {
+        method: 'POST',
+        body: params,
         signal,
-      );
-    }
+      },
+    );
   }
 
   async regenerateChapterStream(
@@ -1129,24 +1096,16 @@ export class NovelApiService {
     return novel?.chapters ?? [];
   }
 
-  private _novelCache = new Map<string, { data: Novel; ts: number }>();
-  private static CACHE_TTL = 30_000;
+  private _novelCache = createNovelCache<Novel>();
 
   async getNovelCached(novelId: string): Promise<Novel | null> {
-    const cached = this._novelCache.get(novelId);
-    if (cached && Date.now() - cached.ts < NovelApiService.CACHE_TTL) {
-      return cached.data;
-    }
-    const novel = await this.getNovelByIdOrTitle(novelId);
-    if (novel) {
-      this._novelCache.set(novelId, { data: novel, ts: Date.now() });
-    }
-    return novel;
+    return getCachedOrLoadNovel(this._novelCache, novelId, () =>
+      this.getNovelByIdOrTitle(novelId),
+    );
   }
 
   clearNovelCache(novelId?: string) {
-    if (novelId) this._novelCache.delete(novelId);
-    else this._novelCache.clear();
+    clearNovelCacheStore(this._novelCache, novelId);
   }
 
   async getOutlines(novelId: string): Promise<Outline[]> {
@@ -1635,7 +1594,7 @@ export class NovelApiService {
       formData.append('ai_model', modelRouting.ai_model);
     }
 
-    const response = await fetch(buildBookImportUrl('/tasks'), {
+    const response = await fetch(buildUrlWithPrefix(getBookImportApiPrefix(), '/tasks'), {
       method: 'POST',
       body: formData,
     });
@@ -1683,7 +1642,7 @@ export class NovelApiService {
     payload: Record<string, unknown>,
     modelRouting?: AiModelRoutingPayload,
   ): Promise<Response> {
-    const response = await fetch(buildBookImportUrl(`/tasks/${encodeURIComponent(taskId)}/apply-stream`), {
+    const response = await fetch(buildUrlWithPrefix(getBookImportApiPrefix(), `/tasks/${encodeURIComponent(taskId)}/apply-stream`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(withModelRoutingBody(payload, modelRouting)),
@@ -1710,7 +1669,7 @@ export class NovelApiService {
     steps: string[],
     modelRouting?: AiModelRoutingPayload,
   ): Promise<Response> {
-    const response = await fetch(buildBookImportUrl(`/tasks/${encodeURIComponent(taskId)}/retry-stream`), {
+    const response = await fetch(buildUrlWithPrefix(getBookImportApiPrefix(), `/tasks/${encodeURIComponent(taskId)}/retry-stream`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(withModelRoutingBody({ steps }, modelRouting)),

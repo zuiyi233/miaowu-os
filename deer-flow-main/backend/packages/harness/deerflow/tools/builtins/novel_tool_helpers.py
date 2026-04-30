@@ -10,6 +10,15 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+_shared_client: httpx.AsyncClient | None = None
+
+
+def _get_shared_client(timeout: httpx.Timeout) -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(timeout=timeout)
+    return _shared_client
+
 _NOVEL_TOOL_BASE_URL_ENV = "DEERFLOW_NOVEL_TOOL_BASE_URL"
 _INTERNAL_GATEWAY_BASE_URL_ENV = "DEER_FLOW_INTERNAL_GATEWAY_BASE_URL"
 _DEFAULT_NOVEL_TOOL_BASE_URL = "http://127.0.0.1:8551"
@@ -121,28 +130,28 @@ async def _request_json(
     timeout = httpx.Timeout(effective_timeout)
     fallback_url = _build_route_fallback_url(url) if allow_route_fallback else None
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    client = _get_shared_client(timeout)
+    response = await client.request(
+        method,
+        url,
+        json=payload,
+        params=params,
+        headers=build_headers(),
+    )
+    if response.status_code == 404 and fallback_url:
+        logger.warning("Novel tool route fallback triggered: %s -> %s", url, fallback_url)
         response = await client.request(
             method,
-            url,
+            fallback_url,
             json=payload,
             params=params,
             headers=build_headers(),
         )
-        if response.status_code == 404 and fallback_url:
-            logger.warning("Novel tool route fallback triggered: %s -> %s", url, fallback_url)
-            response = await client.request(
-                method,
-                fallback_url,
-                json=payload,
-                params=params,
-                headers=build_headers(),
-            )
-        response.raise_for_status()
-        data = response.json()
-        if isinstance(data, dict):
-            return data
-        return {"raw": data}
+    response.raise_for_status()
+    data = response.json()
+    if isinstance(data, dict):
+        return data
+    return {"raw": data}
 
 
 async def post_json(
@@ -194,9 +203,12 @@ async def put_json(
 
 
 def _ok(data: dict[str, Any], **extra: Any) -> dict[str, Any]:
-    result: dict[str, Any] = {"success": True, **data}
+    result: dict[str, Any] = {**data}
+    result["success"] = True
     conflicts: dict[str, Any] = {}
     for key, value in extra.items():
+        if key == "success":
+            continue
         if key in result and result[key] != value:
             conflicts[key] = value
             continue

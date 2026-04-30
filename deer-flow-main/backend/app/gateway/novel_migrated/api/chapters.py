@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import AliasChoices, BaseModel, Field
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
@@ -216,6 +216,59 @@ async def _safe_db_call(db: AsyncSession, method_name: str, *args) -> Any:
     return await method(*args)
 
 
+def _replace_selected_text_with_context(
+    *,
+    original: str,
+    selected_text: str,
+    replacement: str,
+    context_before: str = "",
+    context_after: str = "",
+) -> str:
+    if not original:
+        return replacement
+    if not selected_text:
+        return original
+
+    match_positions: list[int] = []
+    search_from = 0
+    while True:
+        index = original.find(selected_text, search_from)
+        if index < 0:
+            break
+        match_positions.append(index)
+        search_from = index + 1
+
+    if not match_positions:
+        return original
+    if len(match_positions) == 1:
+        pos = match_positions[0]
+        return original[:pos] + replacement + original[pos + len(selected_text) :]
+
+    before_anchor = (context_before or "")[-80:]
+    after_anchor = (context_after or "")[:80]
+    scored: list[tuple[int, int]] = []
+    for pos in match_positions:
+        score = 0
+        if before_anchor:
+            left = original[max(0, pos - len(before_anchor)) : pos]
+            if left == before_anchor:
+                score += 3
+            elif left.endswith(before_anchor[-min(20, len(before_anchor)) :]):
+                score += 1
+        if after_anchor:
+            right_start = pos + len(selected_text)
+            right = original[right_start : right_start + len(after_anchor)]
+            if right == after_anchor:
+                score += 3
+            elif right.startswith(after_anchor[: min(20, len(after_anchor))]):
+                score += 1
+        scored.append((score, pos))
+
+    scored.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+    _, pos = scored[0]
+    return original[:pos] + replacement + original[pos + len(selected_text) :]
+
+
 @router.get("/project/{project_id}")
 async def list_chapters(
     project_id: str,
@@ -408,7 +461,7 @@ async def delete_chapter(
 @router.post("/batch-generate")
 async def batch_generate_chapters(
     req: BatchGenerateRequest,
-    request: Request = None,
+    request: Request,
     user_id: str | None = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
     ai_service: AIService = Depends(get_user_ai_service),
@@ -573,7 +626,7 @@ async def get_active_batch_task(
 @router.post("/regenerate")
 async def regenerate_chapter(
     req: RegenerateRequest,
-    request: Request = None,
+    request: Request,
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
@@ -636,7 +689,7 @@ async def get_regen_task_status(
 @router.post("/partial-regenerate")
 async def partial_regenerate(
     req: PartialRegenerateRequest,
-    request: Request = None,
+    request: Request,
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
     ai_service: AIService = Depends(get_user_ai_service),
@@ -665,7 +718,13 @@ async def partial_regenerate(
 
     try:
         await _snapshot_chapter_history_before_mutation(chapter=chapter, user_id=user_id)
-        new_content = chapter.content.replace(req.selected_text, accumulated, 1) if chapter.content else accumulated
+        new_content = _replace_selected_text_with_context(
+            original=chapter.content or "",
+            selected_text=req.selected_text,
+            replacement=accumulated,
+            context_before=req.context_before,
+            context_after=req.context_after,
+        )
         chapter.content = new_content
         chapter.word_count = len(new_content)
         await _sync_chapter_document(chapter=chapter, user_id=user_id, db=db)
@@ -725,16 +784,67 @@ async def reorder_chapters(
     _bind_idempotency_context(request)
     await verify_project_access(project_id, user_id, db)
 
+    chapter_order_map: dict[str, int] = {}
     for item in chapter_orders or []:
-        ch_id = item.get("id")
-        new_num = item.get("chapter_number")
-        if ch_id and new_num:
-            try:
-                await optimistic_update(
-                    Chapter, ch_id, {"chapter_number": new_num}, db=db
-                )
-            except ValueError:
-                logger.warning("Reorder conflict on chapter %s, skipping", ch_id)
+        if not isinstance(item, dict):
+            continue
+        ch_id = str(item.get("id") or "").strip()
+        raw_number = item.get("chapter_number")
+        if not ch_id or raw_number is None:
+            continue
+        try:
+            new_num = int(raw_number)
+        except (TypeError, ValueError):
+            logger.warning("Reorder payload has invalid chapter_number for chapter %s: %r", ch_id, raw_number)
+            continue
+        if new_num < 1:
+            logger.warning("Reorder payload has non-positive chapter_number for chapter %s: %s", ch_id, new_num)
+            continue
+        chapter_order_map[ch_id] = new_num
+
+    if not chapter_order_map:
+        await db.commit()
+        return {"message": "Chapters reordered"}
+
+    existing_result = await db.execute(
+        select(Chapter.id, Chapter.version).where(
+            Chapter.project_id == project_id,
+            Chapter.id.in_(list(chapter_order_map)),
+        )
+    )
+    existing_versions = {chapter_id: version for chapter_id, version in existing_result.all()}
+    if not existing_versions:
+        await db.commit()
+        return {"message": "Chapters reordered"}
+
+    matched_ids = [chapter_id for chapter_id in chapter_order_map if chapter_id in existing_versions]
+    if not matched_ids:
+        await db.commit()
+        return {"message": "Chapters reordered"}
+
+    version_guards = [
+        and_(Chapter.id == chapter_id, Chapter.version == existing_versions[chapter_id])
+        for chapter_id in matched_ids
+    ]
+    update_stmt = (
+        update(Chapter)
+        .where(Chapter.project_id == project_id, or_(*version_guards))
+        .values(
+            chapter_number=case(
+                {chapter_id: chapter_order_map[chapter_id] for chapter_id in matched_ids},
+                value=Chapter.id,
+            ),
+            version=Chapter.version + 1,
+        )
+    )
+    result = await db.execute(update_stmt)
+    if result.rowcount is not None and result.rowcount < len(matched_ids):
+        logger.warning(
+            "Reorder applied partially for project %s: matched=%d updated=%d",
+            project_id,
+            len(matched_ids),
+            result.rowcount,
+        )
 
     await db.commit()
     return {"message": "Chapters reordered"}

@@ -13,7 +13,7 @@ import logging
 import smtplib
 import time
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from email.mime.text import MIMEText
 from typing import Any
 
@@ -27,7 +27,12 @@ from app.gateway.novel_migrated.core.crypto import encrypt_secret, is_encryption
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.models.settings import Settings
 from app.gateway.novel_migrated.services.ai_service import AIService, create_user_ai_service
-from app.gateway.novel_migrated.services.ai_settings_service import get_ai_settings_service
+from app.gateway.novel_migrated.services.ai_settings_service import (
+    get_ai_settings_service,
+)
+from app.gateway.novel_migrated.services.ai_settings_service import (
+    resolve_user_ai_runtime_config as resolve_ai_runtime_config,
+)
 from app.gateway.novel_migrated.services.cover_generation_service import cover_generation_service
 
 logger = logging.getLogger(__name__)
@@ -285,83 +290,12 @@ def _resolve_user_ai_runtime_config(
     ai_model: str | None = None,
     module_id: str | None = None,
 ) -> tuple[dict[str, Any], str]:
-    runtime = {
-        "api_provider": _as_non_empty_str(settings.api_provider) or "openai",
-        "api_key": safe_decrypt(settings.api_key) or "",
-        "api_base_url": settings.api_base_url or "",
-        "model_name": _as_non_empty_str(settings.llm_model) or "gpt-4",
-        "temperature": float(settings.temperature) if settings.temperature is not None else 0.7,
-        "max_tokens": int(settings.max_tokens) if settings.max_tokens is not None else 2000,
-    }
-    source = "settings-default"
-
-    bundle = _extract_ai_provider_bundle(settings)
-
-    explicit_provider_id = _as_non_empty_str(ai_provider_id)
-    explicit_model_name = _as_non_empty_str(ai_model)
-    normalized_module_id = _as_non_empty_str(module_id)
-
-    routed_provider_id, routed_model = _resolve_feature_routing_target(bundle, normalized_module_id)
-
-    target_provider_id = explicit_provider_id or routed_provider_id
-    provider_record = _find_provider_record(bundle, target_provider_id)
-
-    if provider_record is None and target_provider_id:
-        logger.warning(
-            "未找到 provider_id=%s（module=%s），回退 Settings 顶层配置",
-            target_provider_id,
-            normalized_module_id,
-        )
-
-    if provider_record is not None:
-        runtime["api_provider"] = _as_non_empty_str(provider_record.get("provider")) or runtime["api_provider"]
-        runtime["api_base_url"] = _as_non_empty_str(provider_record.get("base_url")) or ""
-
-        encrypted_key = _as_non_empty_str(provider_record.get("api_key_encrypted"))
-        if encrypted_key is not None:
-            runtime["api_key"] = safe_decrypt(encrypted_key) or ""
-
-        provider_temperature = provider_record.get("temperature")
-        if provider_temperature is not None:
-            try:
-                runtime["temperature"] = float(provider_temperature)
-            except Exception:
-                pass
-
-        provider_max_tokens = provider_record.get("max_tokens")
-        if provider_max_tokens is not None:
-            try:
-                runtime["max_tokens"] = int(provider_max_tokens)
-            except Exception:
-                pass
-
-        provider_models = _provider_models(provider_record)
-
-        if explicit_model_name:
-            runtime["model_name"] = explicit_model_name
-            source = "explicit-provider+explicit-model"
-        elif routed_model:
-            if not provider_models or routed_model in provider_models:
-                runtime["model_name"] = routed_model
-                source = f"feature-routing:{normalized_module_id or 'default'}"
-            elif provider_models:
-                runtime["model_name"] = provider_models[0]
-                source = f"feature-routing-fallback:{normalized_module_id or 'default'}"
-        elif provider_models:
-            runtime["model_name"] = provider_models[0]
-            source = "provider-default-model"
-
-        if explicit_provider_id and not explicit_model_name:
-            source = "explicit-provider"
-    else:
-        if explicit_model_name:
-            runtime["model_name"] = explicit_model_name
-            source = "explicit-model"
-        elif routed_model:
-            runtime["model_name"] = routed_model
-            source = f"feature-routing-model-only:{normalized_module_id or 'default'}"
-
-    return runtime, source
+    return resolve_ai_runtime_config(
+        settings,
+        ai_provider_id=ai_provider_id,
+        ai_model=ai_model,
+        module_id=module_id,
+    )
 
 
 async def get_user_ai_service_with_overrides(
@@ -863,7 +797,7 @@ async def create_preset(
             "name": data.name,
             "description": data.description,
             "config": data.config,
-            "created_at": __import__('datetime').datetime.utcnow().isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
 
         if "presets" not in presets_data:
@@ -919,7 +853,7 @@ async def update_preset(
                     preset["description"] = data.description
                 if data.config is not None:
                     preset["config"] = data.config
-                preset["updated_at"] = __import__('datetime').datetime.utcnow().isoformat()
+                preset["updated_at"] = datetime.now(UTC).isoformat()
                 preset_found = True
                 break
 
@@ -1005,7 +939,7 @@ async def activate_preset(
         if preset.get("id") == preset_id:
             target_preset = preset
             preset["is_active"] = True
-            preset["activated_at"] = datetime.utcnow().isoformat()
+            preset["activated_at"] = datetime.now(UTC).isoformat()
         else:
             preset["is_active"] = False
 
@@ -1132,7 +1066,7 @@ async def create_preset_from_current(
         "name": preset_name,
         "description": preset_description,
         "is_active": False,
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "config": {
             "api_provider": settings.api_provider,
             "api_base_url": settings.api_base_url,
@@ -1311,7 +1245,7 @@ async def test_smtp_connection(
             raise HTTPException(status_code=400, detail="SMTP 配置不完整，请先配置所有必需项")
 
         # 创建邮件
-        msg = MIMEText(f"这是一封来自 Miaowu OS 的测试邮件。\n\n发送时间: {__import__('datetime').datetime.utcnow().isoformat()}\n\n如果您收到此邮件，说明 SMTP 配置正确！")
+        msg = MIMEText(f"这是一封来自 Miaowu OS 的测试邮件。\n\n发送时间: {datetime.now(UTC).isoformat()}\n\n如果您收到此邮件，说明 SMTP 配置正确！")
         msg["Subject"] = data.subject
         msg["From"] = from_email
         msg["To"] = data.to_email
@@ -1334,7 +1268,7 @@ async def test_smtp_connection(
             "message": f"测试邮件已发送至 {data.to_email}，请检查收件箱",
             "data": {
                 "to_email": data.to_email,
-                "sent_at": __import__('datetime').datetime.utcnow().isoformat(),
+                "sent_at": datetime.now(UTC).isoformat(),
             },
         }
     except HTTPException:

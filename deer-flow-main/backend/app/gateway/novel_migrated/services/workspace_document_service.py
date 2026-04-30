@@ -118,6 +118,20 @@ class WorkspaceDocumentService:
 
     def __init__(self, workspace_root: Path | None = None) -> None:
         self._workspace_root = workspace_root or self._resolve_workspace_root()
+        self._manifest_locks: dict[str, asyncio.Lock] = {}
+        self._manifest_locks_guard = asyncio.Lock()
+
+    async def _get_manifest_lock(self, workspace: Path) -> asyncio.Lock:
+        key = str(workspace.resolve())
+        existing = self._manifest_locks.get(key)
+        if existing is not None:
+            return existing
+        async with self._manifest_locks_guard:
+            lock = self._manifest_locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._manifest_locks[key] = lock
+            return lock
 
     @staticmethod
     def _resolve_workspace_root() -> Path:
@@ -273,7 +287,11 @@ class WorkspaceDocumentService:
         if not manifest_path.exists():
             return self._empty_manifest(user_id=user_id, project_id=project_id)
         raw = await asyncio.to_thread(manifest_path.read_text, "utf-8")
-        data = json.loads(raw or "{}")
+        try:
+            data = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            logger.warning("manifest.json corrupted for user=%s project=%s, resetting to empty", user_id, project_id)
+            data = {}
         if not isinstance(data, dict):
             raise ValueError("manifest.json 格式错误：根节点必须为对象")
         data.setdefault("schema_version", MANIFEST_SCHEMA_VERSION)
@@ -355,10 +373,12 @@ class WorkspaceDocumentService:
             tags=[str(tag) for tag in (tags or []) if str(tag).strip()],
         )
 
-        manifest = await self._load_manifest(workspace, user_id=user_id, project_id=project_id)
-        docs = manifest.get("documents", [])
-        manifest["documents"] = self._upsert_record(docs, record)
-        await self._save_manifest(workspace, manifest)
+        manifest_lock = await self._get_manifest_lock(workspace)
+        async with manifest_lock:
+            manifest = await self._load_manifest(workspace, user_id=user_id, project_id=project_id)
+            docs = manifest.get("documents", [])
+            manifest["documents"] = self._upsert_record(docs, record)
+            await self._save_manifest(workspace, manifest)
         return record
 
     async def snapshot_chapter_history(

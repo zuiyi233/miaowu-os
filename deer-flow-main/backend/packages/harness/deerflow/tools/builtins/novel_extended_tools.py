@@ -415,30 +415,30 @@ async def finalize_project(
     except Exception as exc:
         logger.warning("finalize_project internal failed: %s, falling back to HTTP", exc)
 
-    project_path_id = _safe_path_segment(normalized_project_id)
-    base_url = get_base_url()
-    try:
-        gate_data = await get_json(f"{base_url}/polish/projects/{project_path_id}/consistency-report")
-        if gate_data.get("success") is False:
-            result = _ok(gate_data, source="novel_migrated.finalize_gate")
-            docs = [
-                DocumentSpec(
-                    entity_type="note",
-                    entity_id=f"finalize_gate_{normalized_project_id}",
-                    content=to_pretty_json(result),
-                    title="完结质检结果",
-                    tags=("finalize", "gate"),
-                )
-            ]
-            return await _attach_workspace_meta(project_id=normalized_project_id, result=result, documents=docs)
-    except Exception as exc:
-        logger.warning("finalize_project gate check failed (proceeding anyway): %s", exc)
-    try:
-        data = await post_json(f"{base_url}/polish/projects/{project_path_id}/finalize", {})
-        result = _ok(data, source="novel_migrated.finalize")
-    except Exception as post_exc:
-        logger.error("finalize_project failed: %s", post_exc)
-        return _fail(str(post_exc), source="novel_migrated.finalize")
+        project_path_id = _safe_path_segment(normalized_project_id)
+        base_url = get_base_url()
+        try:
+            gate_data = await get_json(f"{base_url}/polish/projects/{project_path_id}/consistency-report")
+            if gate_data.get("success") is False:
+                result = _ok(gate_data, source="novel_migrated.finalize_gate")
+                docs = [
+                    DocumentSpec(
+                        entity_type="note",
+                        entity_id=f"finalize_gate_{normalized_project_id}",
+                        content=to_pretty_json(result),
+                        title="完结质检结果",
+                        tags=("finalize", "gate"),
+                    )
+                ]
+                return await _attach_workspace_meta(project_id=normalized_project_id, result=result, documents=docs)
+        except Exception as exc:
+            logger.warning("finalize_project gate check failed (proceeding anyway): %s", exc)
+        try:
+            data = await post_json(f"{base_url}/polish/projects/{project_path_id}/finalize", {})
+            result = _ok(data, source="novel_migrated.finalize")
+        except Exception as post_exc:
+            logger.error("finalize_project failed: %s", post_exc)
+            return _fail(str(post_exc), source="novel_migrated.finalize")
 
     docs = [
         DocumentSpec(
@@ -552,19 +552,19 @@ async def update_character_states(
     except Exception as exc:
         logger.warning("update_character_states internal failed: %s, falling back to HTTP", exc)
 
-    base_url = get_base_url()
-    payload: dict[str, Any] = {"chapter_id": normalized_chapter_id, "project_id": normalized_project_id}
-    project_path_id = _safe_path_segment(normalized_project_id)
-    chapter_path_id = _safe_path_segment(normalized_chapter_id)
-    try:
-        data = await post_json(
-            f"{base_url}/api/memories/projects/{project_path_id}/analyze-chapter/{chapter_path_id}",
-            payload,
-        )
-        result = _ok(data, source="novel_migrated.character_states")
-    except Exception as post_exc:
-        logger.error("update_character_states failed: %s", post_exc)
-        return _fail(str(post_exc), source="novel_migrated.character_states")
+        base_url = get_base_url()
+        payload: dict[str, Any] = {"chapter_id": normalized_chapter_id, "project_id": normalized_project_id}
+        project_path_id = _safe_path_segment(normalized_project_id)
+        chapter_path_id = _safe_path_segment(normalized_chapter_id)
+        try:
+            data = await post_json(
+                f"{base_url}/api/memories/projects/{project_path_id}/analyze-chapter/{chapter_path_id}",
+                payload,
+            )
+            result = _ok(data, source="novel_migrated.character_states")
+        except Exception as post_exc:
+            logger.error("update_character_states failed: %s", post_exc)
+            return _fail(str(post_exc), source="novel_migrated.character_states")
 
     docs = [
         DocumentSpec(

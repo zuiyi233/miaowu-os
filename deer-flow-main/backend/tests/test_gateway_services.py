@@ -320,7 +320,7 @@ def test_build_run_config_null_context_becomes_empty_context():
 
     config = build_run_config("thread-1", {"context": None}, None)
 
-    assert config["context"] == {}
+    assert config["context"] == {"include_novel": True}
     assert "configurable" not in config
 
 
@@ -340,7 +340,7 @@ def test_build_run_config_null_context_custom_agent_injects_agent_name():
 
     config = build_run_config("thread-1", {"context": None}, None, assistant_id="finalis")
 
-    assert config["context"] == {"agent_name": "finalis"}
+    assert config["context"] == {"agent_name": "finalis", "include_novel": True}
     assert "configurable" not in config
 
 

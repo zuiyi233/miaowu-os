@@ -106,7 +106,7 @@ def create_memory_fact(
     facts = list(memory_data.get("facts", []))
     facts.append(
         {
-            "id": f"fact_{uuid.uuid4().hex[:8]}",
+            "id": f"fact_{uuid.uuid4().hex[:16]}",
             "content": normalized_content,
             "category": normalized_category,
             "confidence": validated_confidence,
@@ -319,8 +319,10 @@ class MemoryUpdater:
         self._runtime_base_url = runtime_base_url
         self._runtime_api_key = runtime_api_key
 
+    _model_cache: dict[str, Any] = {}
+
     def _get_model(self):
-        """Get the model for memory updates."""
+        """Get the model for memory updates (with caching)."""
         config = get_memory_config()
         effective_model_name = self._model_name or config.model_name
         model_kwargs: dict = {}
@@ -331,9 +333,17 @@ class MemoryUpdater:
         if self._runtime_api_key:
             model_kwargs["api_key"] = self._runtime_api_key
 
+        cache_key = f"{effective_model_name}:{self._runtime_model or ''}:{self._runtime_base_url or ''}"
+        cached = MemoryUpdater._model_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         if effective_model_name:
-            return create_chat_model(name=effective_model_name, thinking_enabled=False, **model_kwargs)
-        return create_chat_model(thinking_enabled=False, **model_kwargs)
+            model = create_chat_model(name=effective_model_name, thinking_enabled=False, **model_kwargs)
+        else:
+            model = create_chat_model(thinking_enabled=False, **model_kwargs)
+        MemoryUpdater._model_cache[cache_key] = model
+        return model
 
     def _build_correction_hint(
         self,
@@ -497,6 +507,7 @@ class MemoryUpdater:
 
         # Update user sections
         user_updates = update_data.get("user", {})
+        current_memory.setdefault("user", {})
         for section in ["workContext", "personalContext", "topOfMind"]:
             section_data = user_updates.get(section, {})
             if section_data.get("shouldUpdate") and section_data.get("summary"):
@@ -507,6 +518,7 @@ class MemoryUpdater:
 
         # Update history sections
         history_updates = update_data.get("history", {})
+        current_memory.setdefault("history", {})
         for section in ["recentMonths", "earlierContext", "longTermBackground"]:
             section_data = history_updates.get(section, {})
             if section_data.get("shouldUpdate") and section_data.get("summary"):
@@ -535,7 +547,7 @@ class MemoryUpdater:
                     continue
 
                 fact_entry = {
-                    "id": f"fact_{uuid.uuid4().hex[:8]}",
+                    "id": f"fact_{uuid.uuid4().hex[:16]}",
                     "content": normalized_content,
                     "category": fact.get("category", "context"),
                     "confidence": confidence,

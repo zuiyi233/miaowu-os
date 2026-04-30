@@ -232,12 +232,16 @@ def _get_cached_model(
             evicted_key, _ = _model_cache.popitem(last=False)
             _model_cache_meta.pop(evicted_key, None)
 
-        overrides: dict[str, Any] = {}
-        if base_url and base_url.strip():
-            overrides["base_url"] = base_url.strip()
-        if api_key and api_key.strip():
-            overrides["api_key"] = api_key.strip()
-        model = create_chat_model(name=model_name, thinking_enabled=False, **overrides)
+    overrides: dict[str, Any] = {}
+    if base_url and base_url.strip():
+        overrides["base_url"] = base_url.strip()
+    if api_key and api_key.strip():
+        overrides["api_key"] = api_key.strip()
+    model = create_chat_model(name=model_name, thinking_enabled=False, **overrides)
+
+    with _model_cache_lock:
+        if cache_key in _model_cache:
+            return _model_cache[cache_key]
         _model_cache[cache_key] = model
         logger.info("📦 模型缓存未命中，创建新实例: %s (overrides=%s)", model_name, list(overrides.keys()) if overrides else "none")
         return model
@@ -1063,8 +1067,8 @@ async def create_user_ai_service_from_db(
 ) -> AIService:
     from sqlalchemy import select as _sel
 
-    from app.gateway.novel_migrated.api.settings import _resolve_user_ai_runtime_config
     from app.gateway.novel_migrated.models.settings import Settings as _Settings
+    from app.gateway.novel_migrated.services.ai_settings_service import resolve_user_ai_runtime_config
 
     _sresult = await db.execute(_sel(_Settings).where(_Settings.user_id == user_id))
     _settings = _sresult.scalar_one_or_none()
@@ -1073,7 +1077,7 @@ async def create_user_ai_service_from_db(
         db.add(_settings)
         await db.commit()
         await db.refresh(_settings)
-    _runtime, _ = _resolve_user_ai_runtime_config(_settings, module_id=module_id)
+    _runtime, _ = resolve_user_ai_runtime_config(_settings, module_id=module_id)
     return create_user_ai_service(
         api_provider=_runtime["api_provider"],
         api_key=_runtime["api_key"],

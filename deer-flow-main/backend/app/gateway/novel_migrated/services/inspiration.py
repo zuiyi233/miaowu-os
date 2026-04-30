@@ -7,6 +7,7 @@ response contracts compatible with existing inspiration endpoints.
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -211,7 +212,8 @@ class InspirationService:
             "description": context.get("description", ""),
             "theme": context.get("theme", ""),
         }
-        return system_template.format(**format_params), user_template.format(**format_params)
+        safe_params = collections.defaultdict(str, format_params)
+        return system_template.format_map(safe_params), user_template.format_map(safe_params)
 
     def _build_runtime_system_prompt(
         self,

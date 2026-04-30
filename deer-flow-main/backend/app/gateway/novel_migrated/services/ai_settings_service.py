@@ -15,13 +15,15 @@ Design goals:
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from typing import Any, TypedDict
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.novel_migrated.core.crypto import encrypt_secret, is_encryption_enabled
+from app.gateway.novel_migrated.core.crypto import encrypt_secret, is_encryption_enabled, safe_decrypt
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.settings import Settings
 
@@ -30,7 +32,7 @@ logger = get_logger(__name__)
 AI_PROVIDER_SETTINGS_PREF_KEY = "ai_provider_settings"
 AI_PROVIDER_SETTINGS_VERSION = 1
 
-DEFAULT_CLIENT_SETTINGS: "ClientSettings" = {
+DEFAULT_CLIENT_SETTINGS: ClientSettings = {
     "enable_stream_mode": True,
     "request_timeout": 660000,
     "max_retries": 2,
@@ -68,6 +70,15 @@ class ProviderRecordPublic(TypedDict):
     has_api_key: bool
 
 
+class UserAIRuntimeConfig(TypedDict):
+    api_provider: str
+    api_key: str
+    api_base_url: str
+    model_name: str
+    temperature: float
+    max_tokens: int
+
+
 class AIProviderSettings(TypedDict):
     version: int
     default_provider_id: str | None
@@ -85,6 +96,13 @@ def _map_model_use_to_provider_type(use: Any) -> str:
     if "google" in lowered or "genai" in lowered or "vertex" in lowered:
         return "google"
     return "custom"
+
+
+def _as_non_empty_str(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def _try_build_seed_bundle_from_config_yaml(
@@ -133,8 +151,8 @@ def _try_build_seed_bundle_from_config_yaml(
                     is_active=(idx == 0),
                     temperature=getattr(settings, "temperature", None),
                     max_tokens=getattr(settings, "max_tokens", None),
-                    # Do NOT copy cfg.api_key into DB here; keep current DB value if any.
-                    api_key_encrypted=(getattr(settings, "api_key", None) or None),
+                    # Never seed persisted secrets from config.yaml directly.
+                    api_key_encrypted=None,
                 )
             )
 
@@ -206,7 +224,29 @@ def _normalize_models(value: Any) -> list[str]:
     return models
 
 
-def _normalize_provider_record(raw: dict[str, Any], *, previous: ProviderRecord | None = None) -> ProviderRecord:
+def _provider_secret_value(provider: dict[str, Any]) -> str | None:
+    for field_name in ("api_key_encrypted", "api_key"):
+        secret_value = provider.get(field_name)
+        if isinstance(secret_value, str):
+            trimmed = secret_value.strip()
+            if trimmed:
+                return trimmed
+    return None
+
+
+def _provider_secret_for_runtime(provider: dict[str, Any]) -> str | None:
+    secret_value = _provider_secret_value(provider)
+    if secret_value is None:
+        return None
+    return safe_decrypt(secret_value) or secret_value
+
+
+def _normalize_provider_record(
+    raw: dict[str, Any],
+    *,
+    previous: ProviderRecord | None = None,
+    allow_raw_backend_secret_fields: bool = False,
+) -> ProviderRecord:
     prev = previous or {}
     provider_id = (raw.get("id") or prev.get("id") or "").strip()
     if not provider_id:
@@ -231,14 +271,18 @@ def _normalize_provider_record(raw: dict[str, Any], *, previous: ProviderRecord 
     is_active = bool(raw.get("is_active")) if raw.get("is_active") is not None else bool(prev.get("is_active"))
 
     # Secret handling:
-    # - When normalizing persisted records (previous is None), we accept the stored
-    #   api_key_encrypted field from raw.
-    # - When normalizing request payloads (previous is provided), we ignore any
-    #   raw api_key_encrypted to avoid letting clients spoof backend-only fields.
+    # - Persisted records may contain api_key_encrypted or historical api_key.
+    # - Request payloads must never be allowed to inject api_key_encrypted.
     api_key_encrypted = prev.get("api_key_encrypted")
-    if previous is None and isinstance(raw.get("api_key_encrypted"), str):
-        api_key_encrypted = raw["api_key_encrypted"].strip() or None
-    if raw.get("clear_api_key") is True:
+    if allow_raw_backend_secret_fields:
+        raw_backend_secret = _as_non_empty_str(raw.get("api_key_encrypted"))
+        if raw_backend_secret is not None:
+            api_key_encrypted = raw_backend_secret
+        else:
+            raw_legacy_secret = _as_non_empty_str(raw.get("api_key"))
+            if raw_legacy_secret is not None:
+                api_key_encrypted = encrypt_secret(raw_legacy_secret) if is_encryption_enabled() else raw_legacy_secret
+    elif raw.get("clear_api_key") is True:
         api_key_encrypted = None
     else:
         api_key_plain = raw.get("api_key")
@@ -269,7 +313,7 @@ def _public_provider_record(provider: ProviderRecord) -> ProviderRecordPublic:
         is_active=bool(provider.get("is_active")),
         temperature=provider.get("temperature"),
         max_tokens=provider.get("max_tokens"),
-        has_api_key=bool(provider.get("api_key_encrypted")),
+        has_api_key=bool(_provider_secret_value(provider)),
     )
 
 
@@ -329,7 +373,7 @@ def _ensure_ai_provider_settings(preferences: dict[str, Any]) -> AIProviderSetti
                 continue
             # Normalize/sanitize persisted records; do NOT pass "previous=item"
             # (it defeats sanitization fallbacks like models normalization).
-            providers.append(_normalize_provider_record(item))
+            providers.append(_normalize_provider_record(item, allow_raw_backend_secret_fields=True))
 
     client_settings = _ensure_client_settings(raw.get("client_settings"))
     feature_routing_settings = _ensure_feature_routing_settings(raw.get("feature_routing_settings"))
@@ -366,6 +410,179 @@ def _select_active_provider(
     return active
 
 
+def _extract_target_from_routing_node(node: Any) -> tuple[str | None, str | None]:
+    if not isinstance(node, dict):
+        return None, None
+
+    provider_id = _as_non_empty_str(node.get("providerId") or node.get("provider_id"))
+    model_name = _as_non_empty_str(node.get("model") or node.get("model_name"))
+    return provider_id, model_name
+
+
+def _resolve_feature_routing_target(
+    bundle: AIProviderSettings,
+    module_id: str | None,
+) -> tuple[str | None, str | None]:
+    feature_settings = bundle.get("feature_routing_settings")
+    if not isinstance(feature_settings, dict):
+        return None, None
+
+    target_provider_id: str | None = None
+    target_model: str | None = None
+
+    if module_id:
+        modules = feature_settings.get("modules")
+        if isinstance(modules, list):
+            matched_module = next(
+                (
+                    item
+                    for item in modules
+                    if isinstance(item, dict) and _as_non_empty_str(item.get("moduleId")) == module_id
+                ),
+                None,
+            )
+            if isinstance(matched_module, dict):
+                current_mode = _as_non_empty_str(matched_module.get("currentMode")) or "primary"
+                backup_provider_id, backup_model = _extract_target_from_routing_node(matched_module.get("backupTarget"))
+                primary_provider_id, primary_model = _extract_target_from_routing_node(matched_module.get("primaryTarget"))
+                default_provider_id, default_model = _extract_target_from_routing_node(matched_module.get("defaultTarget"))
+
+                if current_mode == "backup" and backup_provider_id and backup_model:
+                    target_provider_id, target_model = backup_provider_id, backup_model
+                elif primary_provider_id and primary_model:
+                    target_provider_id, target_model = primary_provider_id, primary_model
+                elif default_provider_id and default_model:
+                    target_provider_id, target_model = default_provider_id, default_model
+
+    if target_provider_id and target_model:
+        return target_provider_id, target_model
+
+    return _extract_target_from_routing_node(feature_settings.get("defaultTarget"))
+
+
+def _find_provider_record(bundle: AIProviderSettings, provider_id: str | None) -> ProviderRecord | None:
+    if not provider_id:
+        return None
+
+    providers = bundle.get("providers")
+    if not isinstance(providers, list):
+        return None
+
+    for provider in providers:
+        if not isinstance(provider, dict):
+            continue
+        if _as_non_empty_str(provider.get("id")) == provider_id:
+            return provider
+
+    return None
+
+
+def _provider_models(provider_record: dict[str, Any] | None) -> list[str]:
+    if not isinstance(provider_record, dict):
+        return []
+
+    models = provider_record.get("models")
+    if not isinstance(models, list):
+        return []
+
+    parsed: list[str] = []
+    for model_name in models:
+        if not isinstance(model_name, str):
+            continue
+        trimmed = model_name.strip()
+        if trimmed:
+            parsed.append(trimmed)
+    return parsed
+
+
+def resolve_user_ai_runtime_config(
+    settings: Settings,
+    *,
+    ai_provider_id: str | None = None,
+    ai_model: str | None = None,
+    module_id: str | None = None,
+) -> tuple[UserAIRuntimeConfig, str]:
+    """Resolve the effective provider/runtime config for a user."""
+    runtime: UserAIRuntimeConfig = {
+        "api_provider": _as_non_empty_str(settings.api_provider) or "openai",
+        "api_key": safe_decrypt(settings.api_key) or "",
+        "api_base_url": _as_non_empty_str(settings.api_base_url) or "",
+        "model_name": _as_non_empty_str(settings.llm_model) or "gpt-4",
+        "temperature": float(settings.temperature) if settings.temperature is not None else 0.7,
+        "max_tokens": int(settings.max_tokens) if settings.max_tokens is not None else 2000,
+    }
+    source = "settings-default"
+
+    preferences = _load_preferences(settings)
+    ai_provider_settings = _ensure_ai_provider_settings(preferences)
+    providers = ai_provider_settings["providers"]
+    active_provider = _select_active_provider(
+        providers,
+        default_provider_id=ai_provider_settings.get("default_provider_id"),
+    )
+
+    explicit_provider_id = _as_non_empty_str(ai_provider_id)
+    explicit_model_name = _as_non_empty_str(ai_model)
+    normalized_module_id = _as_non_empty_str(module_id)
+    routed_provider_id: str | None = None
+    routed_model: str | None = None
+
+    if normalized_module_id:
+        routed_provider_id, routed_model = _resolve_feature_routing_target(ai_provider_settings, normalized_module_id)
+
+    target_provider_id = explicit_provider_id or routed_provider_id or (active_provider.get("id") if active_provider else None)
+    provider_record = _find_provider_record(ai_provider_settings, target_provider_id)
+
+    if provider_record is None and target_provider_id:
+        logger.warning(
+            "未找到 provider_id=%s（module=%s），回退 Settings 顶层配置",
+            target_provider_id,
+            normalized_module_id,
+        )
+
+    if provider_record is not None:
+        runtime["api_provider"] = _as_non_empty_str(provider_record.get("provider")) or runtime["api_provider"]
+        runtime["api_base_url"] = _as_non_empty_str(provider_record.get("base_url")) or ""
+
+        provider_secret = _provider_secret_for_runtime(provider_record)
+        if provider_secret is not None:
+            runtime["api_key"] = provider_secret
+
+        provider_temperature = provider_record.get("temperature")
+        if provider_temperature is not None:
+            try:
+                runtime["temperature"] = float(provider_temperature)
+            except Exception:
+                pass
+
+        provider_max_tokens = provider_record.get("max_tokens")
+        if provider_max_tokens is not None:
+            try:
+                runtime["max_tokens"] = int(provider_max_tokens)
+            except Exception:
+                pass
+
+    provider_models = _provider_models(provider_record)
+    if explicit_model_name:
+        runtime["model_name"] = explicit_model_name
+        source = "explicit-provider+explicit-model" if explicit_provider_id and provider_record is not None else "explicit-model"
+    elif routed_model:
+        if not provider_models or routed_model in provider_models:
+            runtime["model_name"] = routed_model
+            source = f"feature-routing:{normalized_module_id or 'default'}"
+        elif provider_models:
+            runtime["model_name"] = provider_models[0]
+            source = f"feature-routing-fallback:{normalized_module_id or 'default'}"
+    elif provider_models:
+        runtime["model_name"] = provider_models[0]
+        source = "provider-default-model"
+
+    if explicit_provider_id and not explicit_model_name and provider_record is not None:
+        source = "explicit-provider"
+
+    return runtime, source
+
+
 class AISettingsService:
     """Orchestrates unified AI settings read/write + legacy field mirroring."""
 
@@ -374,6 +591,7 @@ class AISettingsService:
         settings = result.scalar_one_or_none()
         if settings:
             return settings
+
         settings = Settings(user_id=user_id)
 
         # Seed initial bundle from config.yaml if possible.
@@ -398,7 +616,7 @@ class AISettingsService:
                     settings.temperature = float(active["temperature"])
                 if active.get("max_tokens") is not None:
                     settings.max_tokens = int(active["max_tokens"])
-                settings.api_key = active.get("api_key_encrypted") or None
+                settings.api_key = active.get("api_key_encrypted") or active.get("api_key") or None
 
             preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = {
                 "version": AI_PROVIDER_SETTINGS_VERSION,
@@ -410,7 +628,16 @@ class AISettingsService:
             _save_preferences(settings, preferences)
 
         db.add(settings)
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            # Concurrent create for same user_id may happen under load.
+            await db.rollback()
+            result = await db.execute(select(Settings).where(Settings.user_id == user_id))
+            existing = result.scalar_one_or_none()
+            if existing is not None:
+                return existing
+            raise
         await db.refresh(settings)
         return settings
 
@@ -462,17 +689,27 @@ class AISettingsService:
                 preferences = _load_preferences(settings)
                 ai_provider_settings = _ensure_ai_provider_settings(preferences)
 
+        active_provider = _select_active_provider(
+            ai_provider_settings["providers"],
+            default_provider_id=ai_provider_settings["default_provider_id"],
+        )
+        effective_default_provider_id = ai_provider_settings["default_provider_id"]
+        if effective_default_provider_id is None and active_provider is not None and active_provider.get("id"):
+            effective_default_provider_id = active_provider["id"]
+
+        runtime, _ = resolve_user_ai_runtime_config(settings)
+
         return {
             "providers": [_public_provider_record(p) for p in ai_provider_settings["providers"]],
-            "default_provider_id": ai_provider_settings["default_provider_id"],
+            "default_provider_id": effective_default_provider_id,
             "client_settings": ai_provider_settings["client_settings"],
             "feature_routing_settings": ai_provider_settings.get("feature_routing_settings"),
             # legacy fields (mirror source-of-truth for runtime)
-            "api_provider": settings.api_provider or "openai",
-            "api_base_url": settings.api_base_url or "",
-            "llm_model": settings.llm_model or "gpt-4o-mini",
-            "temperature": settings.temperature if settings.temperature is not None else 0.7,
-            "max_tokens": settings.max_tokens if settings.max_tokens is not None else 4096,
+            "api_provider": runtime["api_provider"],
+            "api_base_url": runtime["api_base_url"],
+            "llm_model": runtime["model_name"],
+            "temperature": runtime["temperature"],
+            "max_tokens": runtime["max_tokens"],
             "system_prompt": settings.system_prompt,
         }
 
@@ -507,7 +744,13 @@ class AISettingsService:
                 if not isinstance(item, dict):
                     continue
                 prev = previous_by_id.get((item.get("id") or "").strip())
-                next_providers.append(_normalize_provider_record(item, previous=prev))
+                next_providers.append(
+                    _normalize_provider_record(
+                        item,
+                        previous=prev,
+                        allow_raw_backend_secret_fields=False,
+                    )
+                )
 
             current["providers"] = next_providers
             # If the default provider was deleted/changed, clear it so active selection
@@ -544,12 +787,12 @@ class AISettingsService:
                 try:
                     settings.temperature = float(payload["temperature"])
                 except Exception:
-                    pass
+                    logger.warning("Invalid temperature value: %r, ignoring", payload["temperature"])
             if "max_tokens" in payload and payload["max_tokens"] is not None:
                 try:
                     settings.max_tokens = int(payload["max_tokens"])
                 except Exception:
-                    pass
+                    logger.warning("Invalid max_tokens value: %r, ignoring", payload["max_tokens"])
             if "api_key" in payload and payload["api_key"] is not None:
                 api_key_plain = str(payload["api_key"]).strip()
                 if not api_key_plain:
@@ -580,7 +823,7 @@ class AISettingsService:
             if active.get("max_tokens") is not None:
                 settings.max_tokens = int(active["max_tokens"])
 
-            settings.api_key = active.get("api_key_encrypted") or None
+            settings.api_key = active.get("api_key_encrypted") or active.get("api_key") or None
 
         # system_prompt is global; keep from payload if provided, else keep existing.
         if "system_prompt" in payload and payload["system_prompt"] is not None:
@@ -680,10 +923,14 @@ class AISettingsService:
 
 
 _ai_settings_service: AISettingsService | None = None
+_ai_settings_service_lock = threading.Lock()
 
 
 def get_ai_settings_service() -> AISettingsService:
     global _ai_settings_service
-    if _ai_settings_service is None:
-        _ai_settings_service = AISettingsService()
+    if _ai_settings_service is not None:
+        return _ai_settings_service
+    with _ai_settings_service_lock:
+        if _ai_settings_service is None:
+            _ai_settings_service = AISettingsService()
     return _ai_settings_service

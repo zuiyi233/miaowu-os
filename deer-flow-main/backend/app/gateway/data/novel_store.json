@@ -15,6 +15,25 @@
       "version": 1,
       "createdAt": "2026-04-27T16:27:43.498847+00:00",
       "updatedAt": "2026-04-27T16:27:43.498847+00:00"
+    },
+    "novel-123": {
+      "id": "novel-123",
+      "title": "星海回声",
+      "outline": "",
+      "coverImage": null,
+      "metadata": {
+        "genre": "科幻",
+        "theme": "文明冲突",
+        "audience": "青少年",
+        "target_words": 180000,
+        "description": "主题: 文明冲突\n目标受众: 青少年",
+        "created_by": "intent_recognition_dual_write",
+        "modern_project_id": "novel-123"
+      },
+      "syncStatus": "local",
+      "version": 1,
+      "createdAt": "2026-04-30T09:50:04.174668+00:00",
+      "updatedAt": "2026-04-30T09:50:04.174668+00:00"
     }
   },
   "chapters": {},
@@ -107,6 +126,60 @@
           "version": 1
         },
         "createdAt": "2026-04-27T16:27:43.498847+00:00"
+      }
+    ],
+    "novel-123": [
+      {
+        "id": "audit-b97a6b062b1b",
+        "novelId": "novel-123",
+        "action": "novel.create",
+        "entityType": "novel",
+        "entityId": "novel-123",
+        "author": "system",
+        "details": {
+          "title": "星海回声",
+          "version": 1
+        },
+        "createdAt": "2026-04-30T09:36:51.818754+00:00"
+      },
+      {
+        "id": "audit-533a51bed85b",
+        "novelId": "novel-123",
+        "action": "novel.create",
+        "entityType": "novel",
+        "entityId": "novel-123",
+        "author": "system",
+        "details": {
+          "title": "星海回声",
+          "version": 1
+        },
+        "createdAt": "2026-04-30T09:41:56.391796+00:00"
+      },
+      {
+        "id": "audit-cb5e28bfc8b0",
+        "novelId": "novel-123",
+        "action": "novel.create",
+        "entityType": "novel",
+        "entityId": "novel-123",
+        "author": "system",
+        "details": {
+          "title": "星海回声",
+          "version": 1
+        },
+        "createdAt": "2026-04-30T09:46:47.238720+00:00"
+      },
+      {
+        "id": "audit-f3f8b69fc959",
+        "novelId": "novel-123",
+        "action": "novel.create",
+        "entityType": "novel",
+        "entityId": "novel-123",
+        "author": "system",
+        "details": {
+          "title": "星海回声",
+          "version": 1
+        },
+        "createdAt": "2026-04-30T09:50:04.174668+00:00"
       }
     ]
   }

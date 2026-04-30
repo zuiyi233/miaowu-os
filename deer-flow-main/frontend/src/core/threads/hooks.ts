@@ -388,6 +388,8 @@ export function useThreadStream({
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const sendInFlightRef = useRef(false);
+  const threadMessageCountRef = useRef(thread.messages.length);
+  const threadSubmitRef = useRef(thread.submit);
   // Track message count before sending so we know when server has responded
   const prevMsgCountRef = useRef(thread.messages.length);
   const wasLoadingRef = useRef(false);
@@ -422,6 +424,11 @@ export function useThreadStream({
     void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
   }, [queryClient, thread.isLoading, thread.values]);
 
+  useEffect(() => {
+    threadMessageCountRef.current = thread.messages.length;
+    threadSubmitRef.current = thread.submit;
+  }, [thread.messages.length, thread.submit]);
+
   // Clear optimistic when server messages arrive (count increases)
   useEffect(() => {
     if (
@@ -447,7 +454,7 @@ export function useThreadStream({
       const text = message.text.trim();
 
       // Capture current count before showing optimistic messages
-      prevMsgCountRef.current = thread.messages.length;
+      prevMsgCountRef.current = threadMessageCountRef.current;
 
       // Build optimistic files list with uploading status
       const optimisticFiles: FileInMessage[] = (message.files ?? []).map(
@@ -569,7 +576,7 @@ export function useThreadStream({
           }),
         );
 
-        const submitPayload: Parameters<typeof thread.submit>[0] = {
+        const submitPayload: Parameters<typeof threadSubmitRef.current>[0] = {
           messages: [
             {
               type: "human",
@@ -589,7 +596,7 @@ export function useThreadStream({
           ],
         };
 
-        const submitOptions: Parameters<typeof thread.submit>[1] = {
+        const submitOptions: Parameters<typeof threadSubmitRef.current>[1] = {
           threadId: threadId,
           streamSubgraphs: true,
           streamResumable: true,
@@ -620,10 +627,10 @@ export function useThreadStream({
           attempt <= STREAM_SUBMIT_MAX_ATTEMPTS;
           attempt += 1
         ) {
-          try {
-            await thread.submit(submitPayload, submitOptions);
-            break;
-          } catch (error) {
+            try {
+              await threadSubmitRef.current(submitPayload, submitOptions);
+              break;
+            } catch (error) {
             const canRetry =
               shouldRetrySubmitError(error) &&
               attempt < STREAM_SUBMIT_MAX_ATTEMPTS;
@@ -652,7 +659,7 @@ export function useThreadStream({
         sendInFlightRef.current = false;
       }
     },
-    [thread, _handleOnStart, t.uploads.uploadingFiles, context, queryClient],
+    [_handleOnStart, t.uploads.uploadingFiles, context, queryClient],
   );
 
   // Merge optimistic messages without spreading `thread`, because `useStream`
@@ -734,8 +741,6 @@ export function useDeleteThread() {
   const apiClient = getAPIClient();
   return useMutation({
     mutationFn: async ({ threadId }: { threadId: string }) => {
-      await apiClient.threads.delete(threadId);
-
       const response = await fetch(
         `${getBackendBaseURL()}/api/threads/${encodeURIComponent(threadId)}`,
         {
@@ -748,6 +753,16 @@ export function useDeleteThread() {
           .json()
           .catch(() => ({ detail: "Failed to delete local thread data." }));
         throw new Error(error.detail ?? "Failed to delete local thread data.");
+      }
+
+      try {
+        await apiClient.threads.delete(threadId);
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Failed to delete remote thread.";
+        throw new Error(`Local thread data deleted, but remote delete failed: ${message}`);
       }
     },
     onSuccess(_, { threadId }) {

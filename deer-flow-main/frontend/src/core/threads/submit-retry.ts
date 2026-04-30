@@ -255,7 +255,7 @@ export function shouldRetrySubmitError(error: unknown): boolean {
     if (statusCode === 408 || statusCode === 409 || statusCode === 425) {
       return true;
     }
-    if (statusCode === 429 || statusCode === 502 || statusCode === 503 || statusCode === 504) {
+    if (statusCode === 429 || statusCode === 502 || statusCode === 503) {
       return true;
     }
 

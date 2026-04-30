@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -20,6 +21,21 @@ from app.gateway.middleware.intent_components import (
     ManageActionRouter,
     SessionManager,
     SessionPersistence,
+)
+from app.gateway.middleware.intent_text_helpers import (
+    compiled_assignment_patterns,
+    compiled_name_pattern,
+    compiled_prefix_pattern,
+    extract_assignment,
+    extract_audience,
+    extract_genre,
+    extract_integer_assignment,
+    extract_long_text,
+    extract_name_after_keyword,
+    extract_outline_mode,
+    extract_target_words,
+    extract_theme,
+    extract_title,
 )
 from app.gateway.novel_migrated.services.skill_governance_service import (
     DegradedFallbackMode,
@@ -2480,13 +2496,12 @@ class IntentRecognitionMiddleware:
         return action_hit and (entity_hit or chapter_hint)
 
     @staticmethod
+    def _compiled_name_pattern(keyword: str, max_len: int) -> re.Pattern[str]:
+        return compiled_name_pattern(keyword, max_len)
+
+    @staticmethod
     def _extract_name_after_keyword(text: str, *, keywords: tuple[str, ...], max_len: int) -> str | None:
-        for keyword in keywords:
-            pattern = re.compile(rf"{re.escape(keyword)}\s*[：:]?\s*([\u4e00-\u9fa5A-Za-z0-9_\-]{1, {max_len}})")
-            match = pattern.search(text)
-            if match:
-                return match.group(1).strip()
-        return None
+        return extract_name_after_keyword(text, keywords=keywords, max_len=max_len)
 
     def _extract_project_update_payload(self, text: str) -> dict[str, Any]:
         payload: dict[str, Any] = {}
@@ -2811,49 +2826,28 @@ class IntentRecognitionMiddleware:
         return payload
 
     @staticmethod
+    def _compiled_assignment_patterns(label: str, max_len: int) -> tuple[re.Pattern[str], re.Pattern[str]]:
+        return compiled_assignment_patterns(label, max_len)
+
+    @staticmethod
     def _extract_assignment(text: str, *, labels: tuple[str, ...], max_len: int) -> str | None:
-        for label in labels:
-            patterns = (
-                rf"{re.escape(label)}\s*(?:改成|改为|设为|设置为|为|是|:|：)\s*([^\n，。!?；;]{{1,{max_len}}})",
-                rf"{re.escape(label)}\s*[:：]\s*([^\n，。!?；;]{{1,{max_len}}})",
-            )
-            for pattern in patterns:
-                match = re.search(pattern, text, flags=re.IGNORECASE)
-                if not match:
-                    continue
-                candidate = match.group(1).strip().strip('"“”')
-                if candidate:
-                    return candidate[:max_len]
-        return None
+        return extract_assignment(text, labels=labels, max_len=max_len)
 
     @staticmethod
     def _extract_integer_assignment(text: str, *, labels: tuple[str, ...]) -> int | None:
-        for label in labels:
-            match = re.search(rf"{re.escape(label)}\s*(?:改成|改为|设为|设置为|为|是|:|：)?\s*(-?\d{{1,6}})", text, flags=re.IGNORECASE)
-            if match:
-                return int(match.group(1))
-        return None
+        return extract_integer_assignment(text, labels=labels)
+
+    @staticmethod
+    def _compiled_prefix_pattern(prefix: str) -> re.Pattern[str]:
+        return compiled_prefix_pattern(prefix)
 
     @staticmethod
     def _extract_long_text(text: str, *, prefixes: tuple[str, ...], max_len: int) -> str | None:
-        lowered = text.lower()
-        for prefix in prefixes:
-            idx = lowered.find(prefix.lower())
-            if idx == -1:
-                continue
-            candidate = text[idx + len(prefix) :].strip().lstrip("：:，, ")
-            if candidate:
-                return candidate[:max_len]
-        return None
+        return extract_long_text(text, prefixes=prefixes, max_len=max_len)
 
     @staticmethod
     def _extract_outline_mode(text: str) -> str | None:
-        lowered = text.lower()
-        if "一对一" in text or "one-to-one" in lowered:
-            return "one-to-one"
-        if "一对多" in text or "one-to-many" in lowered:
-            return "one-to-many"
-        return None
+        return extract_outline_mode(text)
 
     @staticmethod
     def _extract_role_type(text: str) -> str | None:
@@ -3278,53 +3272,23 @@ class IntentRecognitionMiddleware:
 
     @staticmethod
     def _extract_title(user_message: str) -> str | None:
-        stripped = user_message.strip()
-        for pattern in _TITLE_PATTERNS:
-            match = pattern.search(stripped)
-            if not match:
-                continue
-            candidate = (match.group(1) or "").strip()
-            if not candidate:
-                continue
-            if candidate in {"小说", "一本小说", "一部小说"}:
-                continue
-            return candidate[:60]
-        return None
+        return extract_title(user_message)
 
     @staticmethod
     def _extract_genre(user_message: str) -> str | None:
-        lowered = user_message.lower()
-        for keyword, canonical in _GENRE_MAP:
-            if keyword in lowered or keyword in user_message:
-                return canonical
-        return None
+        return extract_genre(user_message)
 
     @staticmethod
     def _extract_theme(user_message: str) -> str | None:
-        match = _THEME_PATTERN.search(user_message)
-        if not match:
-            return None
-        return match.group(1).strip()[:80]
+        return extract_theme(user_message)
 
     @staticmethod
     def _extract_audience(user_message: str) -> str | None:
-        match = _AUDIENCE_PATTERN.search(user_message)
-        if not match:
-            return None
-        return match.group(1).strip()[:60]
+        return extract_audience(user_message)
 
     @staticmethod
     def _extract_target_words(user_message: str) -> int | None:
-        match = _TARGET_WORDS_PATTERN.search(user_message)
-        if not match:
-            return None
-
-        number = int(match.group(1))
-        has_wan = bool(match.group(2))
-        if has_wan:
-            number *= 10000
-
-        return max(1000, number)
+        return extract_target_words(user_message)
 
     def _update_session_fields_from_message(self, session: _NovelCreationSession, user_message: str) -> None:
         updates = self._extract_fields_from_message(user_message)
@@ -4008,7 +3972,7 @@ class IntentRecognitionMiddleware:
 
     @staticmethod
     def _generate_idempotency_key(user_id: str, action: str) -> str:
-        raw = f"{user_id}:{action}:{datetime.now().isoformat()}"
+        raw = f"{user_id}:{action}:{uuid.uuid4().hex}"
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     @staticmethod

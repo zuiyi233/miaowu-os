@@ -133,6 +133,8 @@ async def _manage_foreshadow_internal(
     action, project_id="", foreshadow_id="", title="", content="",
     status="", category="", is_long_term=False, importance=0.5,
     related_characters=None,
+    chapter_id: str = "",
+    chapter_number: int | None = None,
 ):
     from deerflow.tools.builtins.novel_internal import (
         get_internal_db,
@@ -177,7 +179,9 @@ async def _manage_foreshadow_internal(
         sync_fn = load_attr("app.gateway.novel_migrated.api.foreshadows", "sync_foreshadows_from_analysis")
         if not callable(sync_fn):
             raise RuntimeError("internal foreshadow_sync unavailable")
-        req = SyncFromAnalysisRequest() if SyncFromAnalysisRequest else None
+        if SyncFromAnalysisRequest is None:
+            return _fail("internal foreshadow schema unavailable", source="novel_migrated.foreshadow_sync.internal")
+        req = SyncFromAnalysisRequest()
         async with AsyncSessionLocal() as db:
             result = await sync_fn(project_id=project_id, data=req, request=None, db=db, user_id=user_id)
         return _ok(to_dict(result), source="novel_migrated.foreshadow_sync.internal")
@@ -231,8 +235,18 @@ async def _manage_foreshadow_internal(
             plant_fn = load_attr("app.gateway.novel_migrated.api.foreshadows", "plant_foreshadow")
             if PlantForeshadowRequest is None or not callable(plant_fn):
                 raise RuntimeError("internal foreshadow_plant unavailable")
+            resolved_chapter_id = str(chapter_id or "").strip()
+            if not resolved_chapter_id:
+                return _fail("chapter_id required for plant action")
+            resolved_chapter_number = (
+                int(chapter_number)
+                if isinstance(chapter_number, int) and chapter_number > 0
+                else _parse_chapter_number(content)
+            )
             plant_data = PlantForeshadowRequest(
-                chapter_id="", chapter_number=1, hint_text=content or None,
+                chapter_id=resolved_chapter_id,
+                chapter_number=max(1, resolved_chapter_number),
+                hint_text=content or None,
             )
             async with AsyncSessionLocal() as db:
                 result = await plant_fn(
@@ -248,8 +262,18 @@ async def _manage_foreshadow_internal(
             resolve_fn = load_attr("app.gateway.novel_migrated.api.foreshadows", "resolve_foreshadow")
             if ResolveForeshadowRequest is None or not callable(resolve_fn):
                 raise RuntimeError("internal foreshadow_resolve unavailable")
+            resolved_chapter_id = str(chapter_id or "").strip()
+            if not resolved_chapter_id:
+                return _fail("chapter_id required for resolve action")
+            resolved_chapter_number = (
+                int(chapter_number)
+                if isinstance(chapter_number, int) and chapter_number > 0
+                else _parse_chapter_number(content)
+            )
             resolve_data = ResolveForeshadowRequest(
-                chapter_id="", chapter_number=1, resolution_text=content or None,
+                chapter_id=resolved_chapter_id,
+                chapter_number=max(1, resolved_chapter_number),
+                resolution_text=content or None,
             )
             async with AsyncSessionLocal() as db:
                 result = await resolve_fn(
@@ -381,6 +405,8 @@ async def manage_foreshadow(
     action: str,
     project_id: str = "",
     foreshadow_id: str = "",
+    chapter_id: str = "",
+    chapter_number: int | None = None,
     title: str = "",
     content: str = "",
     status: str = "",
@@ -398,6 +424,8 @@ async def manage_foreshadow(
                 "plant", "resolve", "abandon", "context", "sync".
         project_id: The project ID (required for list, create, context, sync).
         foreshadow_id: The foreshadow ID (required for update, plant, resolve, abandon).
+        chapter_id: Chapter ID used by plant/resolve actions.
+        chapter_number: Chapter number used by plant/resolve actions.
         title: Foreshadow title (for create/update).
         content: Foreshadow content/description (for create/update).
         status: Target status for update operations.
@@ -412,6 +440,7 @@ async def manage_foreshadow(
     try:
         internal_result = await _manage_foreshadow_internal(
             action=action, project_id=project_id, foreshadow_id=foreshadow_id,
+            chapter_id=chapter_id, chapter_number=chapter_number,
             title=title, content=content, status=status, category=category,
             is_long_term=is_long_term, importance=importance,
             related_characters=related_characters,
@@ -487,7 +516,26 @@ async def manage_foreshadow(
                     return _fail(str(update_exc), source="novel_migrated.foreshadow_update")
             else:
                 try:
-                    data = await post_json(f"{base_url}/api/foreshadows/{foreshadow_id}/{action}", {})
+                    if action in {"plant", "resolve"}:
+                        resolved_chapter_id = str(chapter_id or "").strip()
+                        if not resolved_chapter_id:
+                            return _fail(f"chapter_id required for {action} action")
+                        resolved_chapter_number = (
+                            int(chapter_number)
+                            if isinstance(chapter_number, int) and chapter_number > 0
+                            else _parse_chapter_number(content)
+                        )
+                        body: dict[str, Any] = {
+                            "chapter_id": resolved_chapter_id,
+                            "chapter_number": max(1, resolved_chapter_number),
+                        }
+                        if action == "plant":
+                            body["hint_text"] = content or None
+                        if action == "resolve":
+                            body["resolution_text"] = content or None
+                        data = await post_json(f"{base_url}/api/foreshadows/{foreshadow_id}/{action}", body)
+                    else:
+                        data = await post_json(f"{base_url}/api/foreshadows/{foreshadow_id}/{action}", {})
                     result = _ok(data, source=f"novel_migrated.foreshadow_{action}")
                 except Exception as state_exc:
                     return _fail(str(state_exc), source=f"novel_migrated.foreshadow_{action}")

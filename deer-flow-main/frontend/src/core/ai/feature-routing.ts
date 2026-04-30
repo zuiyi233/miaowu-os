@@ -529,7 +529,7 @@ export function normalizeFeatureRoutingState(
 
   const modules: AiFeatureModuleRoute[] = [...normalizedModules.values()].map((moduleRoute) => {
     if (moduleRoute.category === "custom") {
-      return moduleRoute;
+      return { ...moduleRoute };
     }
 
     const def = moduleDefsById.get(moduleRoute.moduleId);
@@ -549,7 +549,8 @@ export function normalizeFeatureRoutingState(
   });
 
   // Remove any target referencing deleted providers.
-  for (const moduleRoute of modules) {
+  for (let i = 0; i < modules.length; i++) {
+    const moduleRoute = { ...modules[i] };
     if (moduleRoute.defaultTarget && !providerIds.has(moduleRoute.defaultTarget.providerId)) {
       moduleRoute.defaultTarget = normalizedDefaultTarget;
     }
@@ -559,9 +560,10 @@ export function normalizeFeatureRoutingState(
     if (moduleRoute.backupTarget && !providerIds.has(moduleRoute.backupTarget.providerId)) {
       moduleRoute.backupTarget = null;
     }
-    moduleRoute.parallelTargets = moduleRoute.parallelTargets.filter((target) =>
+    moduleRoute.parallelTargets = (moduleRoute.parallelTargets ?? []).filter((target) =>
       providerIds.has(target.providerId)
     );
+    modules[i] = moduleRoute as AiFeatureModuleRoute;
   }
 
   return {

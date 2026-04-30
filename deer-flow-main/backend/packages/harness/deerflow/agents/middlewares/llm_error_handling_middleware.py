@@ -287,15 +287,22 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
             return
 
         try:
-            asyncio.get_running_loop()
+            loop = asyncio.get_running_loop()
         except RuntimeError:
             time.sleep(seconds)
             return
 
         logger.warning(
-            "Detected running event loop in sync retry path; skipping blocking sleep (%dms).",
+            "Detected running event loop in sync retry path; using minimum delay instead of blocking sleep (%dms).",
             wait_ms,
         )
+        try:
+            import threading
+            event = threading.Event()
+            loop.call_later(min(seconds, 0.1), event.set)
+            event.wait(timeout=min(seconds, 0.1) + 0.05)
+        except Exception:
+            pass
 
     @override
     def wrap_model_call(

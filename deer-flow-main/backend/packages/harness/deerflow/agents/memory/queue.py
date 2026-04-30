@@ -173,9 +173,10 @@ class MemoryUpdateQueue:
         effective_runtime_model = runtime_model or (existing_context.runtime_model if existing_context is not None else None)
         effective_base_url = runtime_base_url or (existing_context.runtime_base_url if existing_context is not None else None)
         effective_api_key = runtime_api_key or (existing_context.runtime_api_key if existing_context is not None else None)
+        merged_messages = list(messages)
         context = ConversationContext(
             thread_id=thread_id,
-            messages=messages,
+            messages=merged_messages,
             agent_name=agent_name,
             correction_detected=merged_correction_detected,
             reinforcement_detected=merged_reinforcement_detected,

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 
+from app.gateway.novel_migrated.services import memory_service as memory_service_module
 from app.gateway.novel_migrated.services.memory_service import MemoryService
 
 
@@ -80,3 +83,37 @@ async def test_search_memories_filters_by_min_similarity(
 
     assert [item['id'] for item in results] == ['keep']
     assert results[0]['similarity'] >= 0.4
+
+
+def test_fallback_store_evicts_oldest_and_logs(
+    isolated_memory_service: MemoryService,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(memory_service_module, "_FALLBACK_STORE_MAX_CAPACITY", 1)
+
+    with caplog.at_level(logging.INFO):
+        isolated_memory_service._store_memory_fallback_entry(
+            user_id='u1',
+            project_id='p1',
+            memory_id='old',
+            content='旧内容',
+            memory_type='plot_point',
+            metadata={'importance_score': 0.9},
+            embedding=[0.1, 0.9],
+        )
+        isolated_memory_service._store_memory_fallback_entry(
+            user_id='u1',
+            project_id='p1',
+            memory_id='new',
+            content='新内容',
+            memory_type='plot_point',
+            metadata={'importance_score': 0.8},
+            embedding=[0.2, 0.8],
+        )
+
+    items = isolated_memory_service._fallback_store[('u1', 'p1')]
+    assert isolated_memory_service._fallback_total_count == 1
+    assert len(items) == 1
+    assert items[0]['id'] == 'new'
+    assert any('容量淘汰' in record.message for record in caplog.records)

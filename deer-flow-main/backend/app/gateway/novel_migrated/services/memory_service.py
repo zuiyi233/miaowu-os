@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import math
 import os
-import time
+import threading
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,11 +15,13 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.cache_policy import TimedOrderedCache
 from app.gateway.novel_migrated.core.crypto import safe_decrypt
 from app.gateway.novel_migrated.core.database import AsyncSessionLocal
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.document_index import DocumentIndex
 from app.gateway.novel_migrated.models.settings import Settings
+from app.gateway.novel_migrated.services.memory_fallback_store import ensure_fallback_capacity
 from app.gateway.novel_migrated.services.workspace_document_service import workspace_document_service
 
 try:
@@ -37,6 +40,8 @@ logger = get_logger(__name__)
 _FALLBACK_STORE_MAX_CAPACITY = int(os.getenv("NOVEL_MIGRATED_FALLBACK_MAX_CAPACITY", "10000"))
 _HTTP_CLIENT_TIMEOUT = float(os.getenv("NOVEL_MIGRATED_HTTP_TIMEOUT", "30.0"))
 _RAG_CONTENT_MAX_CHARS = int(os.getenv("NOVEL_MIGRATED_RAG_CONTENT_MAX_CHARS", "12000"))
+_CLOUD_CONFIG_CACHE_TTL_SECONDS = float(os.getenv("NOVEL_MIGRATED_CLOUD_CONFIG_CACHE_TTL_SECONDS", "120"))
+_CLOUD_CONFIG_CACHE_MAX_SIZE = int(os.getenv("NOVEL_MIGRATED_CLOUD_CONFIG_CACHE_MAX_SIZE", "256"))
 
 _RAG_SUPPORTED_ENTITY_TYPES = {
     "book",
@@ -86,6 +91,7 @@ class MemoryService:
     _instance = None
     _initialized = False
     _http_client: httpx.AsyncClient | None = None  # 复用的 HTTP 客户端
+    _http_client_lock = threading.Lock()
 
     def __new__(cls):
         if cls._instance is None:
@@ -109,9 +115,14 @@ class MemoryService:
             "NOVEL_MIGRATED_EMBEDDING_MODEL",
             "text-embedding-3-small",
         )
-        self._cloud_config_cache_ttl = 120
-        self._cloud_config_cache: dict[str, tuple[float, dict[str, str] | None]] = {}
+        self._cloud_config_cache = TimedOrderedCache[str, dict[str, str] | None](
+            name="memory cloud embedding config",
+            ttl_seconds=_CLOUD_CONFIG_CACHE_TTL_SECONDS,
+            max_size=_CLOUD_CONFIG_CACHE_MAX_SIZE,
+            logger=logger,
+        )
         self._fallback_total_count = 0  # 跟踪总条目数（用于容量控制）
+        self._state_lock = threading.RLock()
 
         try:
             self._vector_enabled = self._try_init_vector_stack()
@@ -121,11 +132,13 @@ class MemoryService:
 
         # 初始化复用的 HTTP 客户端
         if MemoryService._http_client is None:
-            try:
-                MemoryService._http_client = httpx.AsyncClient(timeout=_HTTP_CLIENT_TIMEOUT)
-                logger.info("✅ HTTP 客户端初始化成功（复用模式）")
-            except Exception as e:
-                logger.warning("⚠️ HTTP 客户端初始化失败: %s", e)
+            with MemoryService._http_client_lock:
+                if MemoryService._http_client is None:
+                    try:
+                        MemoryService._http_client = httpx.AsyncClient(timeout=_HTTP_CLIENT_TIMEOUT)
+                        logger.info("✅ HTTP 客户端初始化成功（复用模式）")
+                    except Exception as e:
+                        logger.warning("⚠️ HTTP 客户端初始化失败: %s", e)
 
         if self._vector_enabled:
             logger.info("✅ MemoryService 初始化成功（向量模式）")
@@ -220,6 +233,57 @@ class MemoryService:
             "doc_path": doc.doc_path,
         }
 
+    @staticmethod
+    def _build_memory_vector_meta(memory_type: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "memory_type": memory_type,
+            "chapter_id": str(metadata.get("chapter_id", "")),
+            "chapter_number": int(metadata.get("chapter_number", 0) or 0),
+            "importance": float(metadata.get("importance_score", 0.5) or 0.5),
+            "tags": json.dumps(metadata.get("tags", []), ensure_ascii=False),
+            "title": str(metadata.get("title", ""))[:200],
+            "is_foreshadow": int(metadata.get("is_foreshadow", 0) or 0),
+        }
+
+    def _store_memory_fallback_entry(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        memory_id: str,
+        content: str,
+        memory_type: str,
+        metadata: dict[str, Any],
+        embedding: list[float] | None,
+    ) -> None:
+        key = self._fallback_key(user_id, project_id)
+        with self._state_lock:
+            _, self._fallback_total_count = ensure_fallback_capacity(
+                self._fallback_store,
+                self._fallback_total_count,
+                capacity=_FALLBACK_STORE_MAX_CAPACITY,
+                preferred_key=key,
+                logger=logger,
+            )
+
+            if key not in self._fallback_store:
+                self._fallback_store[key] = []
+
+            self._fallback_store[key].append(
+                {
+                    "id": memory_id,
+                    "content": content,
+                    "metadata": {
+                        **metadata,
+                        "memory_type": memory_type,
+                        "importance": float(metadata.get("importance_score", 0.5) or 0.5),
+                    },
+                    "embedding": embedding,
+                    "created_at": datetime.now(UTC).isoformat(),
+                }
+            )
+            self._fallback_total_count += 1
+
     async def _upsert_document_memory_fallback(
         self,
         *,
@@ -231,44 +295,43 @@ class MemoryService:
         embedding: list[float] | None,
     ) -> None:
         key = self._fallback_key(user_id, project_id)
-        items = self._fallback_store.setdefault(key, [])
-        created_at = datetime.now(tz=UTC).isoformat()
+        with self._state_lock:
+            items = self._fallback_store.get(key, [])
+            created_at = datetime.now(tz=UTC).isoformat()
 
-        replaced = False
-        for item in items:
-            if item.get("id") != memory_id:
-                continue
-            item["content"] = content
-            item["metadata"] = metadata
-            item["embedding"] = embedding
-            item["created_at"] = created_at
-            replaced = True
-            break
+            replaced = False
+            for item in items:
+                if item.get("id") != memory_id:
+                    continue
+                item["content"] = content
+                item["metadata"] = metadata
+                item["embedding"] = embedding
+                item["created_at"] = created_at
+                replaced = True
+                break
 
-        if replaced:
-            return
+            if replaced:
+                return
 
-        if self._fallback_total_count >= _FALLBACK_STORE_MAX_CAPACITY:
-            if items:
-                # 本项目内优先淘汰最旧条目
-                items.pop(0)
-                self._fallback_total_count -= 1
-            else:
-                oldest_scope = next(iter(self._fallback_store), None)
-                if oldest_scope and self._fallback_store.get(oldest_scope):
-                    dropped = self._fallback_store.pop(oldest_scope, [])
-                    self._fallback_total_count -= len(dropped)
+            _, self._fallback_total_count = ensure_fallback_capacity(
+                self._fallback_store,
+                self._fallback_total_count,
+                capacity=_FALLBACK_STORE_MAX_CAPACITY,
+                preferred_key=key,
+                logger=logger,
+            )
 
-        items.append(
-            {
-                "id": memory_id,
-                "content": content,
-                "metadata": metadata,
-                "embedding": embedding,
-                "created_at": created_at,
-            }
-        )
-        self._fallback_total_count += 1
+            items = self._fallback_store.setdefault(key, [])
+            items.append(
+                {
+                    "id": memory_id,
+                    "content": content,
+                    "metadata": metadata,
+                    "embedding": embedding,
+                    "created_at": created_at,
+                }
+            )
+            self._fallback_total_count += 1
 
     async def sync_workspace_documents_incremental(
         self,
@@ -307,70 +370,135 @@ class MemoryService:
         stats = {"total": len(docs), "indexed": 0, "skipped": 0, "failed": 0}
         collection = self.get_collection(scope_user, scope_project) if self._vector_enabled else None
 
+        pending_docs = []
         for doc in docs:
             if not force and (doc.status or "").lower() == "indexed":
                 stats["skipped"] += 1
                 continue
+            pending_docs.append(doc)
 
-            try:
-                payload = await workspace_document_service.read_document(
+        if not pending_docs:
+            return stats
+
+        read_results = await asyncio.gather(
+            *[
+                workspace_document_service.read_document(
                     user_id=scope_user,
                     project_id=scope_project,
                     entity_type=doc.entity_type,
                     entity_id=doc.entity_id,
                 )
-                raw_content = str(payload.get("content", ""))
-                normalized_content = self._normalize_document_for_rag(raw_content)
-                if not normalized_content:
-                    doc.status = "indexed"
-                    doc.indexed_at = datetime.now(tz=UTC)
-                    stats["skipped"] += 1
-                    continue
+                for doc in pending_docs
+            ],
+            return_exceptions=True,
+        )
 
-                metadata = self._build_document_metadata(doc)
-                memory_id = self._build_document_vector_id(scope_project, doc.entity_type, doc.entity_id)
-                vectors = await self._embed_texts(scope_user, [normalized_content])
-                embedding = vectors[0] if vectors and vectors[0] else None
-
-                if collection is not None and embedding is not None:
-                    try:
-                        collection.upsert(
-                            ids=[memory_id],
-                            embeddings=[embedding],
-                            documents=[normalized_content],
-                            metadatas=[metadata],
-                        )
-                    except AttributeError:
-                        # 兼容旧版 Chroma API（无 upsert）
-                        collection.delete(ids=[memory_id])
-                        collection.add(
-                            ids=[memory_id],
-                            embeddings=[embedding],
-                            documents=[normalized_content],
-                            metadatas=[metadata],
-                        )
+        batch_items: list[dict[str, Any]] = []
+        for doc, payload in zip(pending_docs, read_results):
+            if isinstance(payload, Exception):
+                if isinstance(payload, FileNotFoundError):
+                    doc.status = "missing_file"
                 else:
+                    logger.warning(
+                        "⚠️ 文档增量索引失败: project=%s doc=%s/%s error=%s",
+                        scope_project,
+                        doc.entity_type,
+                        doc.entity_id,
+                        payload,
+                    )
+                    doc.status = "error"
+                doc.indexed_at = datetime.now(tz=UTC)
+                stats["failed"] += 1
+                continue
+
+            raw_content = str(payload.get("content", ""))
+            normalized_content = self._normalize_document_for_rag(raw_content)
+            if not normalized_content:
+                doc.status = "indexed"
+                doc.indexed_at = datetime.now(tz=UTC)
+                stats["skipped"] += 1
+                continue
+
+            batch_items.append(
+                {
+                    "doc": doc,
+                    "memory_id": self._build_document_vector_id(scope_project, doc.entity_type, doc.entity_id),
+                    "content": normalized_content,
+                    "metadata": self._build_document_metadata(doc),
+                }
+            )
+
+        if batch_items:
+            embeddings: list[list[float] | None] = [None] * len(batch_items)
+            try:
+                vectors = await self._embed_texts(scope_user, [item["content"] for item in batch_items])
+            except Exception as exc:
+                logger.warning("⚠️ 文档批量 Embedding 失败，回退到降级存储: project=%s error=%s", scope_project, exc)
+                vectors = None
+            if vectors is not None:
+                if len(vectors) != len(batch_items):
+                    logger.warning(
+                        "⚠️ 文档批量 Embedding 数量不匹配: project=%s expected=%d actual=%d",
+                        scope_project,
+                        len(batch_items),
+                        len(vectors),
+                    )
+                for idx, vector in enumerate(vectors[: len(batch_items)]):
+                    embeddings[idx] = vector if vector else None
+
+            vector_items = []
+            fallback_items = []
+            for item, embedding in zip(batch_items, embeddings):
+                if collection is not None and embedding is not None:
+                    vector_items.append({**item, "embedding": embedding})
+                else:
+                    fallback_items.append({**item, "embedding": embedding})
+
+            if collection is not None and vector_items:
+                ids = [item["memory_id"] for item in vector_items]
+                documents = [item["content"] for item in vector_items]
+                metadatas = [item["metadata"] for item in vector_items]
+                embedding_batch = [item["embedding"] for item in vector_items]
+                try:
+                    if hasattr(collection, "upsert"):
+                        collection.upsert(
+                            ids=ids,
+                            embeddings=embedding_batch,
+                            documents=documents,
+                            metadatas=metadatas,
+                        )
+                    else:
+                        collection.delete(ids=ids)
+                        collection.add(
+                            ids=ids,
+                            embeddings=embedding_batch,
+                            documents=documents,
+                            metadatas=metadatas,
+                        )
+                except Exception as exc:
+                    logger.warning("⚠️ 文档向量批量写入失败，回退到降级存储: project=%s error=%s", scope_project, exc)
+                    fallback_items.extend(vector_items)
+                else:
+                    for item in vector_items:
+                        doc = item["doc"]
+                        doc.status = "indexed"
+                        doc.indexed_at = datetime.now(tz=UTC)
+                        stats["indexed"] += 1
+
+            if fallback_items:
+                for item in fallback_items:
                     await self._upsert_document_memory_fallback(
                         user_id=scope_user,
                         project_id=scope_project,
-                        memory_id=memory_id,
-                        content=normalized_content,
-                        metadata=metadata,
-                        embedding=embedding,
+                        memory_id=item["memory_id"],
+                        content=item["content"],
+                        metadata=item["metadata"],
+                        embedding=item["embedding"],
                     )
-
-                doc.status = "indexed"
-                doc.indexed_at = datetime.now(tz=UTC)
-                stats["indexed"] += 1
-            except FileNotFoundError:
-                doc.status = "missing_file"
-                doc.indexed_at = datetime.now(tz=UTC)
-                stats["failed"] += 1
-            except Exception as exc:
-                logger.warning("⚠️ 文档增量索引失败: project=%s doc=%s/%s error=%s", scope_project, doc.entity_type, doc.entity_id, exc)
-                doc.status = "error"
-                doc.indexed_at = datetime.now(tz=UTC)
-                stats["failed"] += 1
+                    doc = item["doc"]
+                    doc.status = "indexed"
+                    doc.indexed_at = datetime.now(tz=UTC)
+                    stats["indexed"] += 1
 
         return stats
 
@@ -386,7 +514,24 @@ class MemoryService:
     def _tokenize(text: str) -> set[str]:
         normalized = MemoryService._normalize_text(text)
         tokens = [t for t in normalized.replace("\n", " ").split(" ") if t]
-        return set(tokens)
+        cjk_tokens: list[str] = []
+        for token in tokens:
+            has_cjk = any("\u4e00" <= ch <= "\u9fff" for ch in token)
+            if has_cjk:
+                current = ""
+                for ch in token:
+                    if "\u4e00" <= ch <= "\u9fff":
+                        if current:
+                            cjk_tokens.append(current)
+                            current = ""
+                        cjk_tokens.append(ch)
+                    else:
+                        current += ch
+                if current:
+                    cjk_tokens.append(current)
+            else:
+                cjk_tokens.append(token)
+        return set(cjk_tokens)
 
     @staticmethod
     def _fallback_score(query: str, content: str, metadata: dict[str, Any]) -> float:
@@ -450,10 +595,9 @@ class MemoryService:
         return self._cloud_embedding_model
 
     async def _load_cloud_embedding_config(self, user_id: str) -> dict[str, str] | None:
-        now = time.time()
-        cached = self._cloud_config_cache.get(user_id)
-        if cached and now - cached[0] < self._cloud_config_cache_ttl:
-            return cached[1]
+        cached = self._cloud_config_cache.get_entry(user_id)
+        if cached is not None:
+            return cached.value
 
         config: dict[str, str] | None = None
         try:
@@ -470,7 +614,7 @@ class MemoryService:
         except Exception as exc:
             logger.warning("⚠️ 读取云 Embedding 配置失败: %s", exc)
 
-        self._cloud_config_cache[user_id] = (now, config)
+        self._cloud_config_cache.set(user_id, config)
         return config
 
     def _embed_with_local_model(self, texts: list[str]) -> list[list[float]] | None:
@@ -582,15 +726,7 @@ class MemoryService:
             try:
                 collection = self.get_collection(user_id, project_id)
                 if collection is not None:
-                    vector_meta = {
-                        "memory_type": memory_type,
-                        "chapter_id": str(metadata.get("chapter_id", "")),
-                        "chapter_number": int(metadata.get("chapter_number", 0) or 0),
-                        "importance": float(metadata.get("importance_score", 0.5) or 0.5),
-                        "tags": json.dumps(metadata.get("tags", []), ensure_ascii=False),
-                        "title": str(metadata.get("title", ""))[:200],
-                        "is_foreshadow": int(metadata.get("is_foreshadow", 0) or 0),
-                    }
+                    vector_meta = self._build_memory_vector_meta(memory_type, metadata)
                     collection.add(
                         ids=[memory_id],
                         embeddings=[semantic_embedding],
@@ -601,49 +737,95 @@ class MemoryService:
             except Exception as exc:
                 logger.warning("⚠️ 向量写入失败，回退到内存存储: %s", exc)
 
-        key = self._fallback_key(user_id, project_id)
-
-        # 容量控制：如果总条目数超过上限，移除最旧的条目
-        if self._fallback_total_count >= _FALLBACK_STORE_MAX_CAPACITY:
-            oldest_user_project = next(iter(self._fallback_store), None)
-            if oldest_user_project and oldest_user_project != key:
-                removed_count = len(self._fallback_store.get(oldest_user_project, []))
-                del self._fallback_store[oldest_user_project]
-                self._fallback_total_count -= removed_count
-                logger.debug("🗑️ 容量淘汰: 移除 %s 条旧记忆（用户项目: %s）", removed_count, oldest_user_project)
-
-        if key not in self._fallback_store:
-            self._fallback_store[key] = []
-
-        self._fallback_store[key].append(
-            {
-                "id": memory_id,
-                "content": content,
-                "metadata": {
-                    **metadata,
-                    "memory_type": memory_type,
-                    "importance": float(metadata.get("importance_score", 0.5) or 0.5),
-                },
-                "embedding": semantic_embedding,
-                "created_at": datetime.utcnow().isoformat(),
-            }
+        self._store_memory_fallback_entry(
+            user_id=user_id,
+            project_id=project_id,
+            memory_id=memory_id,
+            content=content,
+            memory_type=memory_type,
+            metadata=metadata,
+            embedding=semantic_embedding,
         )
-        self._fallback_total_count += 1
         return True
 
     async def batch_add_memories(self, user_id: str, project_id: str, memories: list[dict[str, Any]]) -> int:
-        saved = 0
+        if not memories:
+            return 0
+
+        normalized_memories: list[tuple[str, str, str, dict[str, Any]]] = []
         for mem in memories:
-            ok = await self.add_memory(
+            normalized_memories.append(
+                (
+                    mem["memory_id"],
+                    mem["content"],
+                    mem["memory_type"],
+                    mem.get("metadata", {}) or {},
+                )
+            )
+
+        contents = [content for _, content, _, _ in normalized_memories]
+        embeddings = await self._embed_texts(user_id, contents)
+        if embeddings is None or len(embeddings) != len(normalized_memories):
+            if embeddings is not None and len(embeddings) != len(normalized_memories):
+                logger.warning(
+                    "⚠️ 批量记忆 Embedding 数量不匹配: expected=%d actual=%d",
+                    len(normalized_memories),
+                    len(embeddings),
+                )
+            embeddings = [None] * len(normalized_memories)
+
+        collection = self.get_collection(user_id, project_id) if self._vector_enabled else None
+        vector_payloads: list[tuple[str, str, str, dict[str, Any], list[float]]] = []
+        fallback_payloads: list[tuple[str, str, str, dict[str, Any], list[float] | None]] = []
+        for (memory_id, content, memory_type, mem_metadata), embedding in zip(normalized_memories, embeddings):
+            if collection is not None and embedding is not None:
+                vector_payloads.append((memory_id, content, memory_type, mem_metadata, embedding))
+            else:
+                fallback_payloads.append((memory_id, content, memory_type, mem_metadata, embedding))
+
+        saved = 0
+        if collection is not None and vector_payloads:
+            ids = [memory_id for memory_id, _, _, _, _ in vector_payloads]
+            embedding_batch = [embedding for _, _, _, _, embedding in vector_payloads]
+            documents = [content for _, content, _, _, _ in vector_payloads]
+            metadatas = [
+                self._build_memory_vector_meta(memory_type, metadata)
+                for _, _, memory_type, metadata, _ in vector_payloads
+            ]
+            try:
+                if hasattr(collection, "upsert"):
+                    collection.upsert(
+                        ids=ids,
+                        embeddings=embedding_batch,
+                        documents=documents,
+                        metadatas=metadatas,
+                    )
+                else:
+                    collection.delete(ids=ids)
+                    collection.add(
+                        ids=ids,
+                        embeddings=embedding_batch,
+                        documents=documents,
+                        metadatas=metadatas,
+                    )
+            except Exception as exc:
+                logger.warning("⚠️ 批量向量记忆写入失败，回退到内存存储: %s", exc)
+                fallback_payloads.extend(vector_payloads)
+            else:
+                saved += len(vector_payloads)
+
+        for memory_id, content, memory_type, mem_metadata, embedding in fallback_payloads:
+            self._store_memory_fallback_entry(
                 user_id=user_id,
                 project_id=project_id,
-                memory_id=mem["memory_id"],
-                content=mem["content"],
-                memory_type=mem["memory_type"],
-                metadata=mem.get("metadata", {}),
+                memory_id=memory_id,
+                content=content,
+                memory_type=memory_type,
+                metadata=mem_metadata,
+                embedding=embedding,
             )
-            if ok:
-                saved += 1
+            saved += 1
+
         return saved
 
     async def search_memories(
@@ -700,7 +882,8 @@ class MemoryService:
                 logger.warning("⚠️ 向量检索失败，回退到非向量检索: %s", exc)
 
         key = self._fallback_key(user_id, project_id)
-        candidates = self._fallback_store.get(key, [])
+        with self._state_lock:
+            candidates = list(self._fallback_store.get(key, []))
         if memory_types:
             candidates = [m for m in candidates if m.get("metadata", {}).get("memory_type") in memory_types]
 
@@ -768,7 +951,8 @@ class MemoryService:
                 logger.warning("⚠️ 读取最近记忆失败，回退到降级模式: %s", exc)
 
         key = self._fallback_key(user_id, project_id)
-        items = list(self._fallback_store.get(key, []))
+        with self._state_lock:
+            items = list(self._fallback_store.get(key, []))
         if memory_types:
             items = [m for m in items if m.get("metadata", {}).get("memory_type") in memory_types]
 
@@ -881,23 +1065,24 @@ class MemoryService:
                 logger.warning("⚠️ 删除向量伏笔记忆失败，回退到降级存储删除: %s", exc)
 
         key = self._fallback_key(user_id, project_id)
-        before = len(self._fallback_store.get(key, []))
         keywords = [k.strip().lower() for k in foreshadow_keywords if k and k.strip()]
+        with self._state_lock:
+            before = len(self._fallback_store.get(key, []))
 
-        kept = []
-        for mem in self._fallback_store.get(key, []):
-            metadata = mem.get("metadata", {})
-            if metadata.get("memory_type") != "foreshadow":
+            kept = []
+            for mem in self._fallback_store.get(key, []):
+                metadata = mem.get("metadata", {})
+                if metadata.get("memory_type") != "foreshadow":
+                    kept.append(mem)
+                    continue
+                title = str(metadata.get("title", "")).lower()
+                content = str(mem.get("content", "")).lower()
+                if any(k in title or k in content for k in keywords):
+                    continue
                 kept.append(mem)
-                continue
-            title = str(metadata.get("title", "")).lower()
-            content = str(mem.get("content", "")).lower()
-            if any(k in title or k in content for k in keywords):
-                continue
-            kept.append(mem)
 
-        self._fallback_store[key] = kept
-        return before - len(kept)
+            self._fallback_store[key] = kept
+            return before - len(kept)
 
     async def delete_chapter_memories(self, user_id: str, project_id: str, chapter_id: str) -> int:
         if self._vector_enabled:
@@ -913,11 +1098,12 @@ class MemoryService:
                 logger.warning("⚠️ 删除章节向量记忆失败，回退到降级存储删除: %s", exc)
 
         key = self._fallback_key(user_id, project_id)
-        before = len(self._fallback_store.get(key, []))
-        self._fallback_store[key] = [
-            m for m in self._fallback_store.get(key, []) if str(m.get("metadata", {}).get("chapter_id", "")) != str(chapter_id)
-        ]
-        return before - len(self._fallback_store[key])
+        with self._state_lock:
+            before = len(self._fallback_store.get(key, []))
+            self._fallback_store[key] = [
+                m for m in self._fallback_store.get(key, []) if str(m.get("metadata", {}).get("chapter_id", "")) != str(chapter_id)
+            ]
+            return before - len(self._fallback_store[key])
 
     async def delete_project_memories(self, user_id: str, project_id: str) -> bool:
         if self._vector_enabled and self.client is not None:
@@ -932,7 +1118,8 @@ class MemoryService:
                     logger.warning("⚠️ 删除向量 collection 失败: %s", exc)
 
         key = self._fallback_key(user_id, project_id)
-        self._fallback_store.pop(key, None)
+        with self._state_lock:
+            self._fallback_store.pop(key, None)
         return True
 
     async def update_memory(
@@ -977,17 +1164,18 @@ class MemoryService:
                 logger.warning("⚠️ 更新向量记忆失败，回退到降级存储更新: %s", exc)
 
         key = self._fallback_key(user_id, project_id)
-        for item in self._fallback_store.get(key, []):
-            if item.get("id") != memory_id:
-                continue
-            if content is not None:
-                item["content"] = content
-            if updated_embedding is not None:
-                item["embedding"] = updated_embedding
-            if metadata:
-                item["metadata"].update(metadata)
-            return True
-        return False
+        with self._state_lock:
+            for item in self._fallback_store.get(key, []):
+                if item.get("id") != memory_id:
+                    continue
+                if content is not None:
+                    item["content"] = content
+                if updated_embedding is not None:
+                    item["embedding"] = updated_embedding
+                if metadata:
+                    item["metadata"].update(metadata)
+                return True
+            return False
 
     async def get_memory_stats(self, user_id: str, project_id: str) -> dict[str, Any]:
         memories: list[dict[str, Any]] = []
@@ -1013,7 +1201,8 @@ class MemoryService:
 
         if not memories:
             key = self._fallback_key(user_id, project_id)
-            memories = list(self._fallback_store.get(key, []))
+            with self._state_lock:
+                memories = list(self._fallback_store.get(key, []))
 
         type_counts: dict[str, int] = {}
         chapter_counts: dict[str, int] = {}

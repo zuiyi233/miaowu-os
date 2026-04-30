@@ -298,7 +298,10 @@ class ExecutionGateMiddleware(AgentMiddleware[ThreadState]):
         if not _extract_text_content(content):
             content = "已收到执行授权，正在自动执行刚才被拦截的动作。"
 
-        updated_ai = last_ai.model_copy(update={"tool_calls": [forced_tool_call], "content": content})
+        existing_tool_calls = list(last_ai.tool_calls) if last_ai.tool_calls else []
+        merged_tool_calls = [tc for tc in existing_tool_calls if tc.get("id") != call_id]
+        merged_tool_calls.append(forced_tool_call)
+        updated_ai = last_ai.model_copy(update={"tool_calls": merged_tool_calls, "content": content})
         next_gate = update_execution_gate_state(
             gate_state,
             replay_requested=False,

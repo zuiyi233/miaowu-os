@@ -22,6 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from app.gateway.cache_policy import TimedOrderedCache
 from app.gateway.middleware.domain_protocol import ActionUiHints, IntentCandidate, IntentDecisionPayload
 from deerflow.protocols.execution_protocol import (
     has_explicit_execution_intent,
@@ -97,7 +98,12 @@ class IntentDecisionEngine:
         self._exemplars = self._load_exemplars()
         self._embedding_model: Any | None = None
         self._embedding_failed = False
-        self._embedding_cache: dict[str, list[float]] = {}
+        self._embedding_cache = TimedOrderedCache[str, list[float]](
+            name="intent decision embeddings",
+            ttl_seconds=24 * 60 * 60,
+            max_size=2048,
+            logger=logger,
+        )
 
     def _load_exemplars(self) -> dict[str, list[str]]:
         if self._exemplar_path is not None and self._exemplar_path.exists():
@@ -173,7 +179,7 @@ class IntentDecisionEngine:
         try:
             vector = model.encode([text])[0]
             normalized = [float(v) for v in vector]
-            self._embedding_cache[text] = normalized
+            self._embedding_cache.set(text, normalized)
             return normalized
         except Exception:  # pragma: no cover - runtime fallback
             self._embedding_failed = True

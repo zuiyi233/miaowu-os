@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -139,7 +139,7 @@ class DomainAction:
     payload: dict[str, Any] = field(default_factory=dict)
     idempotency_key: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
     requires_confirmation: bool = True
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_dict(self) -> dict[str, Any]:
         return {
