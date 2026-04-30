@@ -1,4 +1,4 @@
-import type { AIMessage, Message } from "@langchain/langgraph-sdk";
+import type { AIMessage, Message, Run } from "@langchain/langgraph-sdk";
 import type { ThreadsClient } from "@langchain/langgraph-sdk/client";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -9,6 +9,7 @@ import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { env } from "@/env";
 
 import { getAPIClient } from "../api";
+import { fetch } from "../api/fetcher";
 import { getBackendBaseURL } from "../config";
 import { useI18n } from "../i18n/hooks";
 import type { FileInMessage } from "../messages/utils";
@@ -35,7 +36,8 @@ export type ThreadStreamOptions = {
   threadId?: string | null | undefined;
   context: LocalSettings["context"];
   isMock?: boolean;
-  onStart?: (threadId: string) => void;
+  onSend?: (threadId: string) => void;
+  onStart?: (threadId: string, runId: string) => void;
   onFinish?: (state: AgentThreadState) => void;
   onToolEnd?: (event: ToolEndEvent) => void;
 };
@@ -44,79 +46,41 @@ type SendMessageOptions = {
   additionalKwargs?: Record<string, unknown>;
 };
 
-function normalizeStoredRunId(runId: string | null): string | null {
-  if (!runId) {
-    return null;
-  }
+function mergeMessages(
+  historyMessages: Message[],
+  threadMessages: Message[],
+  optimisticMessages: Message[],
+): Message[] {
+  const threadMessageIds = new Set(
+    threadMessages
+      .map((m) => ("tool_call_id" in m ? m.tool_call_id : m.id))
+      .filter(Boolean),
+  );
 
-  const trimmed = runId.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const queryIndex = trimmed.indexOf("?");
-  if (queryIndex >= 0) {
-    const params = new URLSearchParams(trimmed.slice(queryIndex + 1));
-    const queryRunId = params.get("run_id")?.trim();
-    if (queryRunId) {
-      return queryRunId;
+  // The overlap is a contiguous suffix of historyMessages (newest history == oldest thread).
+  // Scan from the end: shrink cutoff while messages are already in thread, stop as soon as
+  // we hit one that isn't — everything before that point is non-overlapping.
+  let cutoff = historyMessages.length;
+  for (let i = historyMessages.length - 1; i >= 0; i--) {
+    const msg = historyMessages[i];
+    if (!msg) {
+      continue;
+    }
+    if (
+      (msg?.id && threadMessageIds.has(msg.id)) ||
+      ("tool_call_id" in msg && threadMessageIds.has(msg.tool_call_id))
+    ) {
+      cutoff = i;
+    } else {
+      break;
     }
   }
 
-  const pathWithoutQueryOrHash = trimmed.split(/[?#]/, 1)[0]?.trim() ?? "";
-  if (!pathWithoutQueryOrHash) {
-    return null;
-  }
-
-  const runsMarker = "/runs/";
-  const runsIndex = pathWithoutQueryOrHash.lastIndexOf(runsMarker);
-  if (runsIndex >= 0) {
-    const runIdAfterMarker = pathWithoutQueryOrHash
-      .slice(runsIndex + runsMarker.length)
-      .split("/", 1)[0]
-      ?.trim();
-    if (runIdAfterMarker) {
-      return runIdAfterMarker;
-    }
-    return null;
-  }
-
-  const segments = pathWithoutQueryOrHash
-    .split("/")
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-  return segments.at(-1) ?? null;
-}
-
-function getRunMetadataStorage(): {
-  getItem(key: `lg:stream:${string}`): string | null;
-  setItem(key: `lg:stream:${string}`, value: string): void;
-  removeItem(key: `lg:stream:${string}`): void;
-} {
-  return {
-    getItem(key) {
-      const normalized = normalizeStoredRunId(
-        window.sessionStorage.getItem(key),
-      );
-      if (normalized) {
-        window.sessionStorage.setItem(key, normalized);
-        return normalized;
-      }
-      window.sessionStorage.removeItem(key);
-      return null;
-    },
-    setItem(key, value) {
-      const normalized = normalizeStoredRunId(value);
-      if (normalized) {
-        window.sessionStorage.setItem(key, normalized);
-        return;
-      }
-      window.sessionStorage.removeItem(key);
-    },
-    removeItem(key) {
-      window.sessionStorage.removeItem(key);
-    },
-  };
+  return [
+    ...historyMessages.slice(0, cutoff),
+    ...threadMessages,
+    ...optimisticMessages,
+  ];
 }
 
 const STREAM_SUBMIT_MAX_ATTEMPTS = 3;
@@ -152,6 +116,7 @@ export function useThreadStream({
   threadId,
   context,
   isMock,
+  onSend,
   onStart,
   onFinish,
   onToolEnd,
@@ -166,15 +131,24 @@ export function useThreadStream({
   const createNovelProgressRef = useRef<Map<string, string>>(new Map());
 
   const listeners = useRef({
+    onSend,
     onStart,
     onFinish,
     onToolEnd,
   });
 
+  const {
+    messages: history,
+    hasMore: hasMoreHistory,
+    loadMore: loadMoreHistory,
+    loading: isHistoryLoading,
+    appendMessages,
+  } = useThreadHistory(onStreamThreadId ?? "");
+
   // Keep listeners ref updated with latest callbacks
   useEffect(() => {
-    listeners.current = { onStart, onFinish, onToolEnd };
-  }, [onStart, onFinish, onToolEnd]);
+    listeners.current = { onSend, onStart, onFinish, onToolEnd };
+  }, [onSend, onStart, onFinish, onToolEnd]);
 
   useEffect(() => {
     const normalizedThreadId = threadId ?? null;
@@ -189,20 +163,14 @@ export function useThreadStream({
     createNovelProgressRef.current.clear();
   }, [threadId]);
 
-  const _handleOnStart = useCallback((id: string) => {
+  const handleStreamStart = useCallback((_threadId: string, _runId: string) => {
+    threadIdRef.current = _threadId;
     if (!startedRef.current) {
-      listeners.current.onStart?.(id);
+      listeners.current.onStart?.(_threadId, _runId);
       startedRef.current = true;
     }
+    setOnStreamThreadId(_threadId);
   }, []);
-
-  const handleStreamStart = useCallback(
-    (_threadId: string) => {
-      threadIdRef.current = _threadId;
-      _handleOnStart(_threadId);
-    },
-    [_handleOnStart],
-  );
 
   const queryClient = useQueryClient();
   const updateSubtask = useUpdateSubtask();
@@ -232,8 +200,7 @@ export function useThreadStream({
     // Restrict to a small page to reduce overhead.
     fetchStateHistory: { limit: 1 },
     onCreated(meta) {
-      handleStreamStart(meta.thread_id);
-      setOnStreamThreadId(meta.thread_id);
+      handleStreamStart(meta.thread_id, meta.run_id);
       if (context.agent_name && !isMock) {
         void getAPIClient()
           .threads.update(meta.thread_id, {
@@ -265,6 +232,34 @@ export function useThreadStream({
           },
         }),
     onUpdateEvent(data) {
+      if (data["SummarizationMiddleware.before_model"]) {
+        const _messages = [
+          ...(data["SummarizationMiddleware.before_model"].messages ?? []),
+        ];
+
+        if (_messages.length < 2) {
+          return;
+        }
+        for (const m of _messages) {
+          if (m.name === "summary" && m.type === "human") {
+            summarizedRef.current?.add(m.id ?? "");
+          }
+        }
+        const _lastKeepMessage = _messages[2];
+        const _currentMessages = [...messagesRef.current];
+        const _movedMessages: Message[] = [];
+        for (const m of _currentMessages) {
+          if (m.id !== undefined && m.id === _lastKeepMessage?.id) {
+            break;
+          }
+          if (!summarizedRef.current?.has(m.id ?? "")) {
+            _movedMessages.push(m);
+          }
+        }
+        appendMessages(_movedMessages);
+        messagesRef.current = [];
+      }
+
       const updates: Array<Partial<AgentThreadState> | null> = Object.values(
         data || {},
       );
@@ -394,6 +389,8 @@ export function useThreadStream({
   const prevMsgCountRef = useRef(thread.messages.length);
   const wasLoadingRef = useRef(false);
 
+  summarizedRef.current ??= new Set<string>();
+
   // Reset thread-local pending UI state when switching between threads so
   // optimistic messages and in-flight guards do not leak across chat views.
   useEffect(() => {
@@ -492,12 +489,7 @@ export function useThreadStream({
       }
       setOptimisticMessages(newOptimistic);
 
-      // Only fire onStart immediately for an existing persisted thread.
-      // Brand-new chats should wait for onCreated(meta.thread_id) so URL sync
-      // uses the real server-generated thread id.
-      if (threadIdRef.current) {
-        _handleOnStart(threadId);
-      }
+      listeners.current.onSend?.(threadId);
 
       let uploadedFileInfo: UploadedFileInfo[] = [];
 
@@ -666,7 +658,97 @@ export function useThreadStream({
   // exposes getter properties (e.g. `history`) that can throw when disabled.
   const mergedThread = withOptimisticMessages(thread, optimisticMessages);
 
-  return [mergedThread, sendMessage, isUploading] as const;
+  const mergedMessages = mergeMessages(
+    history,
+    thread.messages,
+    optimisticMessages,
+  );
+
+  // Merge history, live stream, and optimistic messages for display
+  // History messages may overlap with thread.messages; thread.messages take precedence
+  const mergedThread = {
+    ...thread,
+    messages: mergedMessages,
+  } as typeof thread;
+
+  return {
+    thread: mergedThread,
+    sendMessage,
+    isUploading,
+    isHistoryLoading,
+    hasMoreHistory,
+    loadMoreHistory,
+  } as const;
+}
+
+export function useThreadHistory(threadId: string) {
+  const runs = useThreadRuns(threadId);
+  const threadIdRef = useRef(threadId);
+  const runsRef = useRef(runs.data ?? []);
+  const indexRef = useRef(-1);
+  const loadingRef = useRef(false);
+  const [loading, setLoading] = useState(false);
+  const [messages, setMessages] = useState<Message[]>([]);
+
+  loadingRef.current = loading;
+  const loadMessages = useCallback(async () => {
+    if (runsRef.current.length === 0) {
+      return;
+    }
+    const run = runsRef.current[indexRef.current];
+    if (!run || loadingRef.current) {
+      return;
+    }
+    try {
+      setLoading(true);
+      const result: { data: RunMessage[]; hasMore: boolean } = await fetch(
+        `${getBackendBaseURL()}/api/threads/${encodeURIComponent(threadIdRef.current)}/runs/${encodeURIComponent(run.run_id)}/messages`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+        },
+      ).then((res) => {
+        return res.json();
+      });
+      const _messages = result.data
+        .filter((m) => !m.metadata.caller?.startsWith("middleware:"))
+        .map((m) => m.content);
+      setMessages((prev) => [..._messages, ...prev]);
+      indexRef.current -= 1;
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    threadIdRef.current = threadId;
+    if (runs.data && runs.data.length > 0) {
+      runsRef.current = runs.data ?? [];
+      indexRef.current = runs.data.length - 1;
+    }
+    loadMessages().catch(() => {
+      toast.error("Failed to load thread history.");
+    });
+  }, [threadId, runs.data, loadMessages]);
+
+  const appendMessages = useCallback((_messages: Message[]) => {
+    setMessages((prev) => {
+      return [...prev, ..._messages];
+    });
+  }, []);
+  const hasMore = indexRef.current >= 0 || !runs.data;
+  return {
+    runs: runs.data,
+    messages,
+    loading,
+    appendMessages,
+    hasMore,
+    loadMore: loadMessages,
+  };
 }
 
 export function useThreads(
@@ -731,6 +813,33 @@ export function useThreads(
       }
 
       return threads;
+    },
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useThreadRuns(threadId?: string) {
+  const apiClient = getAPIClient();
+  return useQuery<Run[]>({
+    queryKey: ["thread", threadId],
+    queryFn: async () => {
+      if (!threadId) {
+        return [];
+      }
+      const response = await apiClient.runs.list(threadId);
+      return response;
+    },
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useRunDetail(threadId: string, runId: string) {
+  const apiClient = getAPIClient();
+  return useQuery<Run>({
+    queryKey: ["thread", threadId, "run", runId],
+    queryFn: async () => {
+      const response = await apiClient.runs.get(threadId, runId);
+      return response;
     },
     refetchOnWindowFocus: false,
   });

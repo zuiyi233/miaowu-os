@@ -76,6 +76,8 @@ def test_generate_suggestions_parses_and_limits(monkeypatch):
         )
 
     assert result.suggestions == ["Q1", "Q2", "Q3"]
+    fake_model.ainvoke.assert_awaited_once()
+    assert fake_model.ainvoke.await_args.kwargs["config"] == {"run_name": "suggest_agent"}
 
 
 def test_generate_suggestions_parses_list_block_content(monkeypatch):
@@ -95,6 +97,8 @@ def test_generate_suggestions_parses_list_block_content(monkeypatch):
         )
 
     assert result.suggestions == ["Q1", "Q2"]
+    fake_model.ainvoke.assert_awaited_once()
+    assert fake_model.ainvoke.await_args.kwargs["config"] == {"run_name": "suggest_agent"}
 
 
 def test_generate_suggestions_parses_output_text_block_content(monkeypatch):
@@ -114,6 +118,8 @@ def test_generate_suggestions_parses_output_text_block_content(monkeypatch):
         )
 
     assert result.suggestions == ["Q1", "Q2"]
+    fake_model.ainvoke.assert_awaited_once()
+    assert fake_model.ainvoke.await_args.kwargs["config"] == {"run_name": "suggest_agent"}
 
 
 def test_generate_suggestions_returns_empty_on_model_error(monkeypatch):

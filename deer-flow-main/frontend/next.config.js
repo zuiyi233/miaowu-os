@@ -26,10 +26,6 @@ const config = {
   ...(isDesktopBuild ? { output: "standalone" } : {}),
   async rewrites() {
     const rewrites = [];
-    const langgraphURL = getInternalServiceURL(
-      "DEER_FLOW_INTERNAL_LANGGRAPH_BASE_URL",
-      "http://127.0.0.1:2024",
-    );
     const gatewayURL = getInternalServiceURL(
       "DEER_FLOW_INTERNAL_GATEWAY_BASE_URL",
       "http://127.0.0.1:8551",
@@ -38,11 +34,11 @@ const config = {
     if (forceDesktopProxy || !process.env.NEXT_PUBLIC_LANGGRAPH_BASE_URL) {
       rewrites.push({
         source: "/api/langgraph",
-        destination: langgraphURL,
+        destination: `${gatewayURL}/api`,
       });
       rewrites.push({
         source: "/api/langgraph/:path*",
-        destination: `${langgraphURL}/:path*`,
+        destination: `${gatewayURL}/api/:path*`,
       });
     }
 

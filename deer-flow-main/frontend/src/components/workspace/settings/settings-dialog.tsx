@@ -7,6 +7,7 @@ import {
   BrainIcon,
   PaletteIcon,
   SparklesIcon,
+  UserIcon,
   WrenchIcon,
   ClockIcon,
 } from "lucide-react";
@@ -31,6 +32,7 @@ import { useI18n } from "@/core/i18n/hooks";
 import { cn } from "@/lib/utils";
 
 type SettingsSection =
+  | "account"
   | "appearance"
   | "memory"
   | "tools"
@@ -61,6 +63,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
   const sections = useMemo(
     () => [
       {
+        id: "account",
+        label: t.settings.sections.account,
+        icon: UserIcon,
+      },
+      {
         id: "appearance",
         label: t.settings.sections.appearance,
         icon: PaletteIcon,
@@ -90,6 +97,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
       { id: "about", label: t.settings.sections.about, icon: InfoIcon },
     ],
     [
+      t.settings.sections.account,
       t.settings.sections.appearance,
       t.settings.sections.memory,
       t.settings.sections.tools,

@@ -164,6 +164,7 @@ export interface Translations {
     close: string;
     more: string;
     search: string;
+    loadMore: string;
     download: string;
     thinking: string;
     artifacts: string;
@@ -315,6 +316,7 @@ export interface Translations {
     reportIssue: string;
     contactUs: string;
     about: string;
+    logout: string;
   };
 
   // Conversation
@@ -402,6 +404,7 @@ export interface Translations {
     title: string;
     description: string;
     sections: {
+      account: string;
       appearance: string;
       memory: string;
       tools: string;

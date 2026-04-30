@@ -55,6 +55,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import { fetch } from "@/core/api/fetcher";
 import { getBackendBaseURL } from "@/core/config";
 import { useI18n } from "@/core/i18n/hooks";
 import { useModels } from "@/core/models/hooks";
@@ -189,6 +190,7 @@ export function InputBox({
   const [followupsLoading, setFollowupsLoading] = useState(false);
   const lastGeneratedForAiIdRef = useRef<string | null>(null);
   const wasStreamingRef = useRef(false);
+  const messagesRef = useRef(thread.messages);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingSuggestion, setPendingSuggestion] = useState<string | null>(
@@ -412,6 +414,10 @@ export function InputBox({
   }, [showFollowups]);
 
   useEffect(() => {
+    messagesRef.current = thread.messages;
+  }, [thread.messages]);
+
+  useEffect(() => {
     return () => followupsVisibilityChangeRef.current?.(false);
   }, []);
 
@@ -443,7 +449,9 @@ export function InputBox({
       return;
     }
 
-    const lastAi = [...thread.messages].reverse().find((m) => m.type === "ai");
+    const lastAi = [...messagesRef.current]
+      .reverse()
+      .find((m) => m.type === "ai");
     const lastAiId = lastAi?.id ?? null;
     if (!lastAiId || lastAiId === lastGeneratedForAiIdRef.current) {
       console.debug("[followup] skipped: lastAiId=%s alreadyGenerated=%s", lastAiId, lastGeneratedForAiIdRef.current);
@@ -451,7 +459,7 @@ export function InputBox({
     }
     lastGeneratedForAiIdRef.current = lastAiId;
 
-    const recent = thread.messages
+    const recent = messagesRef.current
       .filter((m) => m.type === "human" || m.type === "ai")
       .map((m) => {
         const role = m.type === "human" ? "user" : "assistant";

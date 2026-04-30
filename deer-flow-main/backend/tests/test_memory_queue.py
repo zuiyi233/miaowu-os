@@ -52,6 +52,7 @@ async def test_process_queue_forwards_correction_flag_to_async_updater() -> None
         agent_name="lead_agent",
         correction_detected=True,
         reinforcement_detected=False,
+        user_id=None,
     )
 
 
@@ -78,6 +79,7 @@ async def test_process_queue_forwards_reinforcement_flag_to_async_updater() -> N
         agent_name="lead_agent",
         correction_detected=False,
         reinforcement_detected=True,
+        user_id=None,
     )
 
 

@@ -165,17 +165,24 @@ export default function ChatPage() {
   const { threadId, setThreadId, isNewThread, setIsNewThread, isMock } =
     useThreadChat();
   const [settings, setSettings] = useThreadSettings(threadId);
-  const [mounted, setMounted] = useState(false);
   const { tokenUsageEnabled } = useModels();
+  const mountedRef = useRef(false);
   useSpecificChatMode();
 
   useEffect(() => {
-    setMounted(true);
+    mountedRef.current = true;
   }, []);
 
   const { showNotification } = useNotification();
 
-  const [thread, sendMessage, isUploading] = useThreadStream({
+  const {
+    thread,
+    sendMessage,
+    isUploading,
+    isHistoryLoading,
+    hasMoreHistory,
+    loadMoreHistory,
+  } = useThreadStream({
     threadId: isNewThread ? undefined : threadId,
     context: {
       ...settings.context,
@@ -183,6 +190,10 @@ export default function ChatPage() {
       module_id: "chat-main",
     },
     isMock,
+    onSend: (_threadId) => {
+      setThreadId(_threadId);
+      setIsNewThread(false);
+    },
     onStart: (createdThreadId) => {
       setThreadId(createdThreadId);
       setIsNewThread(false);
@@ -338,6 +349,9 @@ export default function ChatPage() {
                 thread={thread}
                 paddingBottom={messageListPaddingBottom}
                 tokenUsageEnabled={tokenUsageEnabled}
+                hasMoreHistory={hasMoreHistory}
+                loadMoreHistory={loadMoreHistory}
+                isHistoryLoading={isHistoryLoading}
               />
             </div>
             <div className="absolute right-0 bottom-0 left-0 z-30 flex justify-center px-4">
@@ -362,7 +376,7 @@ export default function ChatPage() {
                     />
                   </div>
                 </div>
-                {mounted ? (
+                {mountedRef.current ? (
                   <InputBox
                     className={cn("bg-background/5 w-full -translate-y-4")}
                     isNewThread={isNewThread}
@@ -398,7 +412,7 @@ export default function ChatPage() {
                   <div
                     aria-hidden="true"
                     className={cn(
-                      "bg-background/5 h-32 w-full -translate-y-4 rounded-2xl border",
+                      "bg-background/5 h-32 w-full -translate-y-4 rounded-2xl",
                     )}
                   />
                 )}

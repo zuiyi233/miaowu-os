@@ -49,7 +49,13 @@ export default function AgentChatPage() {
   const { tokenUsageEnabled } = useModels();
 
   const { showNotification } = useNotification();
-  const [thread, sendMessage] = useThreadStream({
+  const {
+    thread,
+    sendMessage,
+    isHistoryLoading,
+    hasMoreHistory,
+    loadMoreHistory,
+  } = useThreadStream({
     threadId: isNewThread ? undefined : threadId,
     context: {
       ...settings.context,
@@ -196,6 +202,9 @@ export default function AgentChatPage() {
                 thread={thread}
                 paddingBottom={messageListPaddingBottom}
                 tokenUsageEnabled={tokenUsageEnabled}
+                hasMoreHistory={hasMoreHistory}
+                loadMoreHistory={loadMoreHistory}
+                isHistoryLoading={isHistoryLoading}
               />
             </div>
 

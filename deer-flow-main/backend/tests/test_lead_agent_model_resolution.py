@@ -99,7 +99,7 @@ def test_make_lead_agent_disables_thinking_when_model_does_not_support_it(monkey
 
     monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: app_config)
     monkeypatch.setattr(tools_module, "get_available_tools", lambda **kwargs: [])
-    monkeypatch.setattr(lead_agent_module, "_build_middlewares", lambda config, model_name, agent_name=None: [])
+    monkeypatch.setattr(lead_agent_module, "_build_middlewares", lambda config, model_name, agent_name=None, **kwargs: [])
 
     captured: dict[str, object] = {}
 
@@ -271,11 +271,50 @@ def test_build_middlewares_uses_resolved_model_name_for_vision(monkeypatch):
     monkeypatch.setattr(lead_agent_module, "_create_summarization_middleware", lambda **kwargs: None)
     monkeypatch.setattr(lead_agent_module, "_create_todo_list_middleware", lambda is_plan_mode: None)
 
-    middlewares = lead_agent_module._build_middlewares({"configurable": {"model_name": "stale-model", "is_plan_mode": False, "subagent_enabled": False}}, model_name="vision-model", custom_middlewares=[MagicMock()])
+    middlewares = lead_agent_module._build_middlewares(
+        {"configurable": {"model_name": "stale-model", "is_plan_mode": False, "subagent_enabled": False}},
+        model_name="vision-model",
+        custom_middlewares=[MagicMock()],
+        app_config=app_config,
+    )
 
     assert any(isinstance(m, lead_agent_module.ViewImageMiddleware) for m in middlewares)
     # verify the custom middleware is injected correctly
     assert len(middlewares) > 0 and isinstance(middlewares[-2], MagicMock)
+
+
+def test_build_middlewares_passes_explicit_app_config_to_shared_factory(monkeypatch):
+    app_config = _make_app_config([_make_model("safe-model", supports_thinking=False)])
+    captured: dict[str, object] = {}
+
+    def _raise_get_app_config():
+        raise AssertionError("ambient get_app_config() must not be used when app_config is explicit")
+
+    def _fake_build_lead_runtime_middlewares(*, app_config, lazy_init):
+        captured["app_config"] = app_config
+        captured["lazy_init"] = lazy_init
+        return ["base-middleware"]
+
+    monkeypatch.setattr(lead_agent_module, "get_app_config", _raise_get_app_config)
+    monkeypatch.setattr(
+        lead_agent_module,
+        "build_lead_runtime_middlewares",
+        _fake_build_lead_runtime_middlewares,
+    )
+    monkeypatch.setattr(lead_agent_module, "_create_summarization_middleware", lambda **kwargs: None)
+    monkeypatch.setattr(lead_agent_module, "_create_todo_list_middleware", lambda is_plan_mode: None)
+
+    middlewares = lead_agent_module._build_middlewares(
+        {"configurable": {"is_plan_mode": False, "subagent_enabled": False}},
+        model_name="safe-model",
+        app_config=app_config,
+    )
+
+    assert captured == {
+        "app_config": app_config,
+        "lazy_init": True,
+    }
+    assert middlewares[0] == "base-middleware"
 
 
 def test_create_summarization_middleware_uses_configured_model_alias(monkeypatch):
@@ -286,22 +325,23 @@ def test_create_summarization_middleware_uses_configured_model_alias(monkeypatch
     )
     monkeypatch.setattr(lead_agent_module, "get_memory_config", lambda: MemoryConfig(enabled=False))
 
-    captured: dict[str, object] = {}
-    fake_model = object()
+    from unittest.mock import MagicMock
 
     def _fake_create_chat_model(*, name=None, thinking_enabled, reasoning_effort=None, **kwargs):
         captured["name"] = name
         captured["thinking_enabled"] = thinking_enabled
         captured["reasoning_effort"] = reasoning_effort
+        captured["app_config"] = app_config
         return fake_model
 
     monkeypatch.setattr(lead_agent_module, "create_chat_model", _fake_create_chat_model)
     monkeypatch.setattr(lead_agent_module, "DeerFlowSummarizationMiddleware", lambda **kwargs: kwargs)
 
-    middleware = lead_agent_module._create_summarization_middleware()
+    middleware = lead_agent_module._create_summarization_middleware(app_config=_make_app_config([_make_model("model-masswork", supports_thinking=False)]))
 
     assert captured["name"] == "model-masswork"
     assert captured["thinking_enabled"] is False
+    assert captured["app_config"] is not None
     assert middleware["model"] is fake_model
 
 

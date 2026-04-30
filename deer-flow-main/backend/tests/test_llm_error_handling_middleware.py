@@ -12,6 +12,13 @@ from app.gateway.novel_migrated.services import ai_service
 from deerflow.agents.middlewares.llm_error_handling_middleware import (
     LLMErrorHandlingMiddleware,
 )
+from deerflow.config.app_config import AppConfig
+from deerflow.config.sandbox_config import SandboxConfig
+
+
+def _make_app_config() -> AppConfig:
+    """Minimal AppConfig for middleware tests; circuit_breaker uses defaults."""
+    return AppConfig(sandbox=SandboxConfig(use="test"))
 
 
 class FakeError(Exception):
@@ -32,7 +39,7 @@ class FakeError(Exception):
 
 
 def _build_middleware(**attrs: int) -> LLMErrorHandlingMiddleware:
-    middleware = LLMErrorHandlingMiddleware()
+    middleware = LLMErrorHandlingMiddleware(app_config=_make_app_config())
     for key, value in attrs.items():
         setattr(middleware, key, value)
     return middleware
@@ -320,9 +327,7 @@ def test_circuit_breaker_trips_and_recovers(monkeypatch: pytest.MonkeyPatch) -> 
     current_time = 1000.0
     monkeypatch.setattr("time.time", lambda: current_time)
 
-    middleware = LLMErrorHandlingMiddleware()
-    middleware.circuit_failure_threshold = 3
-    middleware.circuit_recovery_timeout_sec = 10
+    middleware = _build_middleware(circuit_failure_threshold=3, circuit_recovery_timeout_sec=10)
     monkeypatch.setattr(middleware, "_classify_error", mock_classify_retriable)
 
     request: Any = {"messages": []}
@@ -378,8 +383,7 @@ def test_circuit_breaker_does_not_trip_on_non_retriable_errors(monkeypatch: pyte
     waits: list[float] = []
     monkeypatch.setattr("time.sleep", lambda d: waits.append(d))
 
-    middleware = LLMErrorHandlingMiddleware()
-    middleware.circuit_failure_threshold = 3
+    middleware = _build_middleware(circuit_failure_threshold=3)
     monkeypatch.setattr(middleware, "_classify_error", mock_classify_non_retriable)
 
     request: Any = {"messages": []}
@@ -480,9 +484,7 @@ async def test_async_circuit_breaker_trips_and_recovers(monkeypatch: pytest.Monk
     current_time = 1000.0
     monkeypatch.setattr("time.time", lambda: current_time)
 
-    middleware = LLMErrorHandlingMiddleware()
-    middleware.circuit_failure_threshold = 3
-    middleware.circuit_recovery_timeout_sec = 10
+    middleware = _build_middleware(circuit_failure_threshold=3, circuit_recovery_timeout_sec=10)
     monkeypatch.setattr(middleware, "_classify_error", mock_classify_retriable)
 
     async def async_failing_handler(request: Any) -> Any:
