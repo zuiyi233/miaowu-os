@@ -6,7 +6,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
-import { env } from "@/env";
 
 import { getAPIClient } from "../api";
 import { fetch } from "../api/fetcher";
@@ -18,14 +17,7 @@ import { useUpdateSubtask } from "../tasks/context";
 import type { UploadedFileInfo } from "../uploads";
 import { promptInputFilePartToFile, uploadFiles } from "../uploads";
 
-import {
-  getThreadStreamErrorMessage,
-  getThreadSubmitHint,
-  isAbortLikeError,
-  shouldRetrySubmitError,
-} from "./submit-retry";
-import type { AgentThread, AgentThreadState } from "./types";
-import { withOptimisticMessages } from "./utils";
+import type { AgentThread, AgentThreadState, RunMessage } from "./types";
 
 export type ToolEndEvent = {
   name: string;
@@ -83,33 +75,27 @@ function mergeMessages(
   ];
 }
 
-const STREAM_SUBMIT_MAX_ATTEMPTS = 3;
-const STREAM_SUBMIT_RETRY_BASE_DELAY_MS = 3000;
-
-function waitMs(ms: number): Promise<void> {
-  if (ms <= 0) {
-    return Promise.resolve();
+function getStreamErrorMessage(error: unknown): string {
+  if (typeof error === "string" && error.trim()) {
+    return error;
   }
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
-}
-
-function normalizeAgentThreadState(
-  values: Partial<AgentThreadState> | null | undefined,
-): AgentThreadState {
-  const valuesCandidate = values ?? {};
-  return {
-    ...(valuesCandidate as AgentThreadState),
-    title:
-      typeof valuesCandidate.title === "string" ? valuesCandidate.title : "",
-    messages: Array.isArray(valuesCandidate.messages)
-      ? valuesCandidate.messages
-      : [],
-    artifacts: Array.isArray(valuesCandidate.artifacts)
-      ? valuesCandidate.artifacts
-      : [],
-  };
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  if (typeof error === "object" && error !== null) {
+    const message = Reflect.get(error, "message");
+    if (typeof message === "string" && message.trim()) {
+      return message;
+    }
+    const nestedError = Reflect.get(error, "error");
+    if (nestedError instanceof Error && nestedError.message.trim()) {
+      return nestedError.message;
+    }
+    if (typeof nestedError === "string" && nestedError.trim()) {
+      return nestedError;
+    }
+  }
+  return "Request failed.";
 }
 
 export function useThreadStream({
@@ -174,30 +160,12 @@ export function useThreadStream({
 
   const queryClient = useQueryClient();
   const updateSubtask = useUpdateSubtask();
-  const isGatewayCompatRuntime = Boolean(
-    env.NEXT_PUBLIC_LANGGRAPH_BASE_URL?.includes("/api"),
-  );
-  const runMetadataStorageRef = useRef<
-    ReturnType<typeof getRunMetadataStorage> | undefined
-  >(undefined);
-
-  if (
-    typeof window !== "undefined" &&
-    runMetadataStorageRef.current === undefined
-  ) {
-    runMetadataStorageRef.current = getRunMetadataStorage();
-  }
 
   const thread = useStream<AgentThreadState>({
     client: getAPIClient(isMock),
     assistantId: "lead_agent",
     threadId: onStreamThreadId,
-    reconnectOnMount: runMetadataStorageRef.current
-      ? () => runMetadataStorageRef.current!
-      : false,
-    // Keep history enabled because the stream object exposes `history` getter;
-    // LangGraph SDK throws when that getter is touched while disabled.
-    // Restrict to a small page to reduce overhead.
+    reconnectOnMount: true,
     fetchStateHistory: { limit: 1 },
     onCreated(meta) {
       handleStreamStart(meta.thread_id, meta.run_id);
@@ -206,31 +174,17 @@ export function useThreadStream({
           .threads.update(meta.thread_id, {
             metadata: { agent_name: context.agent_name },
           })
-          .catch((error) => {
-            console.warn(
-              "[threads] Failed to persist agent_name metadata for thread",
-              meta.thread_id,
-              error,
-            );
-          });
+          .catch(() => ({}));
       }
     },
-    ...(isGatewayCompatRuntime
-      ? {}
-      : {
-          onLangChainEvent(event: {
-            event: string;
-            name: string;
-            data: unknown;
-          }) {
-            if (event.event === "on_tool_end") {
-              listeners.current.onToolEnd?.({
-                name: event.name,
-                data: event.data,
-              });
-            }
-          },
-        }),
+    onLangChainEvent(event) {
+      if (event.event === "on_tool_end") {
+        listeners.current.onToolEnd?.({
+          name: event.name,
+          data: event.data,
+        });
+      }
+    },
     onUpdateEvent(data) {
       if (data["SummarizationMiddleware.before_model"]) {
         const _messages = [
@@ -371,11 +325,12 @@ export function useThreadStream({
     onError(error) {
       setOptimisticMessages([]);
       createNovelProgressRef.current.clear();
-      if (isAbortLikeError(error)) {
-        console.debug("[threads] request aborted by user");
-        return;
-      }
-      toast.error(getThreadSubmitHint(error) ?? getThreadStreamErrorMessage(error));
+      toast.error(getStreamErrorMessage(error));
+    },
+    onFinish(state) {
+      listeners.current.onFinish?.(state.values);
+      createNovelProgressRef.current.clear();
+      void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
     },
   });
 
@@ -383,11 +338,10 @@ export function useThreadStream({
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const sendInFlightRef = useRef(false);
-  const threadMessageCountRef = useRef(thread.messages.length);
-  const threadSubmitRef = useRef(thread.submit);
+  const messagesRef = useRef<Message[]>([]);
+  const summarizedRef = useRef<Set<string>>(null);
   // Track message count before sending so we know when server has responded
   const prevMsgCountRef = useRef(thread.messages.length);
-  const wasLoadingRef = useRef(false);
 
   summarizedRef.current ??= new Set<string>();
 
@@ -396,35 +350,8 @@ export function useThreadStream({
   useEffect(() => {
     startedRef.current = false;
     sendInFlightRef.current = false;
-    prevMsgCountRef.current = 0;
-    wasLoadingRef.current = false;
     createNovelProgressRef.current.clear();
-    setOptimisticMessages([]);
-    setIsUploading(false);
   }, [threadId]);
-
-  useEffect(() => {
-    if (thread.isLoading) {
-      wasLoadingRef.current = true;
-      return;
-    }
-
-    if (!wasLoadingRef.current) {
-      return;
-    }
-
-    wasLoadingRef.current = false;
-    listeners.current.onFinish?.(
-      normalizeAgentThreadState(thread.values as Partial<AgentThreadState>),
-    );
-    createNovelProgressRef.current.clear();
-    void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
-  }, [queryClient, thread.isLoading, thread.values]);
-
-  useEffect(() => {
-    threadMessageCountRef.current = thread.messages.length;
-    threadSubmitRef.current = thread.submit;
-  }, [thread.messages.length, thread.submit]);
 
   // Clear optimistic when server messages arrive (count increases)
   useEffect(() => {
@@ -451,7 +378,7 @@ export function useThreadStream({
       const text = message.text.trim();
 
       // Capture current count before showing optimistic messages
-      prevMsgCountRef.current = threadMessageCountRef.current;
+      prevMsgCountRef.current = thread.messages.length;
 
       // Build optimistic files list with uploading status
       const optimisticFiles: FileInMessage[] = (message.files ?? []).map(
@@ -568,95 +495,69 @@ export function useThreadStream({
           }),
         );
 
-        const submitPayload: Parameters<typeof threadSubmitRef.current>[0] = {
-          messages: [
-            {
-              type: "human",
-              content: [
-                {
-                  type: "text" as const,
-                  text,
+        await thread.submit(
+          {
+            messages: [
+              {
+                type: "human",
+                content: [
+                  {
+                    type: "text",
+                    text,
+                  },
+                ],
+                additional_kwargs: {
+                  ...options?.additionalKwargs,
+                  ...(filesForSubmit.length > 0
+                    ? { files: filesForSubmit }
+                    : {}),
                 },
-              ],
-              additional_kwargs: {
-                ...options?.additionalKwargs,
-                ...(filesForSubmit.length > 0
-                  ? { files: filesForSubmit }
-                  : {}),
               },
+            ],
+          },
+          {
+            threadId: threadId,
+            streamSubgraphs: true,
+            streamResumable: true,
+            config: {
+              recursion_limit: 1000,
             },
-          ],
-        };
-
-        const submitOptions: Parameters<typeof threadSubmitRef.current>[1] = {
-          threadId: threadId,
-          streamSubgraphs: true,
-          streamResumable: true,
-          config: {
-            recursion_limit: 1000,
+            context: {
+              ...extraContext,
+              ...context,
+              thinking_enabled: context.mode !== "flash",
+              is_plan_mode: context.mode === "pro" || context.mode === "ultra",
+              subagent_enabled: context.mode === "ultra",
+              reasoning_effort:
+                context.reasoning_effort ??
+                (context.mode === "ultra"
+                  ? "high"
+                  : context.mode === "pro"
+                    ? "medium"
+                    : context.mode === "thinking"
+                      ? "low"
+                      : undefined),
+              thread_id: threadId,
+            },
           },
-          context: {
-            ...extraContext,
-            ...context,
-            thinking_enabled: context.mode !== "flash",
-            is_plan_mode: context.mode === "pro" || context.mode === "ultra",
-            subagent_enabled: context.mode === "ultra",
-            reasoning_effort:
-              context.reasoning_effort ??
-              (context.mode === "ultra"
-                ? "high"
-                : context.mode === "pro"
-                  ? "medium"
-                  : context.mode === "thinking"
-                    ? "low"
-                    : undefined),
-            thread_id: threadId,
-          },
-        };
-
-        for (
-          let attempt = 1;
-          attempt <= STREAM_SUBMIT_MAX_ATTEMPTS;
-          attempt += 1
-        ) {
-            try {
-              await threadSubmitRef.current(submitPayload, submitOptions);
-              break;
-            } catch (error) {
-            const canRetry =
-              shouldRetrySubmitError(error) &&
-              attempt < STREAM_SUBMIT_MAX_ATTEMPTS;
-            if (!canRetry) {
-              throw error;
-            }
-
-            const delayMs = STREAM_SUBMIT_RETRY_BASE_DELAY_MS * attempt;
-            toast(
-              `网络波动，${Math.round(delayMs / 1000)} 秒后自动重试（第 ${attempt + 1}/${STREAM_SUBMIT_MAX_ATTEMPTS} 次）`,
-            );
-            await waitMs(delayMs);
-          }
-        }
-
+        );
         void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
       } catch (error) {
         setOptimisticMessages([]);
         setIsUploading(false);
-        if (isAbortLikeError(error)) {
-          console.debug("[threads] submit aborted before completion");
-          return;
-        }
         throw error;
       } finally {
         sendInFlightRef.current = false;
       }
     },
-    [_handleOnStart, t.uploads.uploadingFiles, context, queryClient],
+    [thread, t.uploads.uploadingFiles, context, queryClient],
   );
 
-  // Merge optimistic messages without spreading `thread`, because `useStream`
-  // exposes getter properties (e.g. `history`) that can throw when disabled.
-  const mergedThread = withOptimisticMessages(thread, optimisticMessages);
+  // Cache the latest thread messages in a ref to compare against incoming history messages for deduplication,
+  // and to allow access to the full message list in onUpdateEvent without causing re-renders.
+  if (thread.messages.length >= messagesRef.current.length) {
+    messagesRef.current = thread.messages;
+  }
 
   const mergedMessages = mergeMessages(
     history,
@@ -756,7 +657,7 @@ export function useThreads(
     limit: 50,
     sortBy: "updated_at",
     sortOrder: "desc",
-    select: ["thread_id", "updated_at", "values", "metadata", "context"],
+    select: ["thread_id", "updated_at", "values", "metadata"],
   },
 ) {
   const apiClient = getAPIClient();
@@ -850,6 +751,8 @@ export function useDeleteThread() {
   const apiClient = getAPIClient();
   return useMutation({
     mutationFn: async ({ threadId }: { threadId: string }) => {
+      await apiClient.threads.delete(threadId);
+
       const response = await fetch(
         `${getBackendBaseURL()}/api/threads/${encodeURIComponent(threadId)}`,
         {
@@ -862,16 +765,6 @@ export function useDeleteThread() {
           .json()
           .catch(() => ({ detail: "Failed to delete local thread data." }));
         throw new Error(error.detail ?? "Failed to delete local thread data.");
-      }
-
-      try {
-        await apiClient.threads.delete(threadId);
-      } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Failed to delete remote thread.";
-        throw new Error(`Local thread data deleted, but remote delete failed: ${message}`);
       }
     },
     onSuccess(_, { threadId }) {

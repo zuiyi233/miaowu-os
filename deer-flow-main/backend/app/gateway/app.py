@@ -124,12 +124,6 @@ def get_langgraph_runtime():
         langgraph_runtime = _langgraph_runtime
     return langgraph_runtime
 
-
-# Upper bound (seconds) each lifespan shutdown hook is allowed to run.
-# Bounds worker exit time so uvicorn's reload supervisor does not keep
-# firing signals into a worker that is stuck waiting for shutdown cleanup.
-_SHUTDOWN_HOOK_TIMEOUT_SECONDS = 5.0
-
 # Upper bound (seconds) each lifespan shutdown hook is allowed to run.
 # Bounds worker exit time so uvicorn's reload supervisor does not keep
 # firing signals into a worker that is stuck waiting for shutdown cleanup.

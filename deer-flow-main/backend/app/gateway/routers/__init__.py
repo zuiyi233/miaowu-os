@@ -14,6 +14,7 @@ __all__ = [
     "memory",
     "models",
     "novel",
+    "novel_migrated",
     "runs",
     "skills",
     "suggestions",
