@@ -4,8 +4,10 @@ import asyncio
 import logging
 import threading
 import uuid
+from collections.abc import Callable, Coroutine
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from contextvars import Context, copy_context
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -110,21 +112,6 @@ def _filter_tools(
     return filtered
 
 
-def _get_model_name(config: SubagentConfig, parent_model: str | None) -> str | None:
-    """Resolve the model name for a subagent.
-
-    Args:
-        config: Subagent configuration.
-        parent_model: The parent agent's model name.
-
-    Returns:
-        Model name to use, or None to use default.
-    """
-    if config.model == "inherit":
-        return parent_model
-    return config.model
-
-
 class SubagentExecutor:
     """Executor for running subagents."""
 
@@ -203,10 +190,10 @@ class SubagentExecutor:
             return []
 
         try:
-            from deerflow.skills.loader import load_skills
+            from deerflow.skills.storage import get_or_new_skill_storage
 
             # Use asyncio.to_thread to avoid blocking the event loop (LangGraph ASGI requirement)
-            all_skills = await asyncio.to_thread(load_skills, enabled_only=True)
+            all_skills = await asyncio.to_thread(get_or_new_skill_storage().load_skills, enabled_only=True)
             logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} loaded {len(all_skills)} enabled skills from disk")
         except Exception:
             logger.warning(f"[trace={self.trace_id}] Failed to load skills for subagent {self.config.name}", exc_info=True)
@@ -552,6 +539,8 @@ class SubagentExecutor:
 
         with _background_tasks_lock:
             _background_tasks[task_id] = result
+
+        parent_context = copy_context()
 
         # Submit to scheduler pool
         def run_task():

@@ -10,8 +10,6 @@ matching the LangGraph Platform wire format expected by the
 ``useStream`` React hook.
 """
 
-from __future__ import annotations
-
 import logging
 import time
 import uuid
@@ -21,6 +19,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
+from app.gateway.authz import require_permission
 from app.gateway.deps import get_checkpointer, get_store
 from deerflow.media import draft_media_store
 from deerflow.config.paths import Paths, get_paths

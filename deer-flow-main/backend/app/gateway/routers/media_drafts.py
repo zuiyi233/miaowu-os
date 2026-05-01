@@ -115,7 +115,7 @@ async def _patch_thread_draft_media(
     await checkpointer.aput(cfg, checkpoint, metadata, {})
 
 
-@router.get("/threads/{thread_id}/media/drafts/{draft_id}/content")
+@router.get("/threads/{thread_id}/media/drafts/{draft_id}/content", response_model=None, response_class=Response)
 async def get_draft_content(thread_id: str, draft_id: str, request: Request) -> Response:
     _increment_metric("content_requests_total")
     meta = draft_media_store.load_metadata(thread_id=thread_id, draft_id=draft_id)
@@ -335,7 +335,7 @@ async def get_media_draft_metrics() -> MediaDraftMetricsResponse:
     return MediaDraftMetricsResponse(metrics=_snapshot_metrics())
 
 
-@router.get("/media/assets/{asset_id}/content")
+@router.get("/media/assets/{asset_id}/content", response_model=None, response_class=FileResponse)
 async def get_asset_content(asset_id: str) -> Response:
     paths = draft_media_store.load_asset_paths(asset_id=asset_id)
     if paths is None:

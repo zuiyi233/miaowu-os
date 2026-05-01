@@ -68,6 +68,24 @@ For each boundary:
 
 **Good**: Each layer only knows its neighbors
 
+### Mistake 4: Mixing profile-specific runtime defaults
+
+**Bad**: Treating upstream generic defaults as the local-dev runtime contract.
+
+**Good**: Keep an explicit profile contract and verify all dependent layers together.
+
+Example for this repo family:
+- Upstream docs and docker examples may still mention `8001`
+- Miaowu local-dev runtime contract uses `127.0.0.1:8551`
+- Novel-related tool paths must keep the local-dev contract unless the task explicitly changes it
+
+When changing base URLs or ports, always trace all layers in one pass:
+- local startup scripts
+- backend default constants
+- frontend runtime/env fallbacks
+- gateway/internal call sites
+- tests that assert runtime wiring
+
 ---
 
 ## Checklist for Cross-Layer Features
@@ -82,6 +100,7 @@ After implementation:
 - [ ] Tested with edge cases (null, empty, invalid)
 - [ ] Verified error handling at each boundary
 - [ ] Checked data survives round-trip
+- [ ] If config values changed, searched both old and new values repo-wide and reconciled profile-specific defaults
 
 ---
 

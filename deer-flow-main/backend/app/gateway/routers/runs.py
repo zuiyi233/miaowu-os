@@ -32,7 +32,7 @@ def _resolve_thread_id(body: RunCreateRequest) -> str:
     return str(uuid.uuid4())
 
 
-@router.post("/stream")
+@router.post("/stream", response_model=None, response_class=StreamingResponse)
 async def stateless_stream(body: RunCreateRequest, request: Request) -> StreamingResponse:
     """Create a run and stream events via SSE.
 

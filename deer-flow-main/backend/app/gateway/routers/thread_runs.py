@@ -100,7 +100,7 @@ async def create_run(thread_id: str, body: RunCreateRequest, request: Request) -
     return _record_to_response(record)
 
 
-@router.post("/{thread_id}/runs/stream")
+@router.post("/{thread_id}/runs/stream", response_model=None, response_class=StreamingResponse)
 @require_permission("runs", "create", owner_check=True, require_existing=True)
 async def stream_run(thread_id: str, body: RunCreateRequest, request: Request) -> StreamingResponse:
     """Create a run and stream events via SSE.
@@ -174,7 +174,7 @@ async def get_run(thread_id: str, run_id: str, request: Request) -> RunResponse:
     return _record_to_response(record)
 
 
-@router.post("/{thread_id}/runs/{run_id}/cancel")
+@router.post("/{thread_id}/runs/{run_id}/cancel", response_model=None, response_class=Response)
 @require_permission("runs", "cancel", owner_check=True, require_existing=True)
 async def cancel_run(
     thread_id: str,
@@ -212,7 +212,7 @@ async def cancel_run(
     return Response(status_code=202)
 
 
-@router.get("/{thread_id}/runs/{run_id}/join")
+@router.get("/{thread_id}/runs/{run_id}/join", response_model=None, response_class=StreamingResponse)
 @require_permission("runs", "read", owner_check=True)
 async def join_run(thread_id: str, run_id: str, request: Request) -> StreamingResponse:
     """Join an existing run's SSE stream."""

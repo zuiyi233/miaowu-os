@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from deerflow.runtime.runs.worker import _agent_factory_supports_app_config, _rollback_to_pre_run_checkpoint
+from deerflow.runtime.runs.worker import _agent_factory_supports_app_config, _build_runtime_context, _rollback_to_pre_run_checkpoint
 
 
 class FakeCheckpointer:

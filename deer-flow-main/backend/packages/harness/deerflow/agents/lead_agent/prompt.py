@@ -5,7 +5,7 @@ from datetime import datetime
 from functools import lru_cache
 
 from deerflow.config.agents_config import load_agent_soul
-from deerflow.skills import load_skills
+from deerflow.skills.storage import get_or_new_skill_storage
 from deerflow.skills.types import Skill
 from deerflow.subagents import get_available_subagent_names
 
@@ -20,7 +20,7 @@ _enabled_skills_refresh_event = threading.Event()
 
 
 def _load_enabled_skills_sync() -> list[Skill]:
-    return list(load_skills(enabled_only=True))
+    return list(get_or_new_skill_storage().load_skills(enabled_only=True))
 
 
 def _start_enabled_skills_refresh_thread() -> None:

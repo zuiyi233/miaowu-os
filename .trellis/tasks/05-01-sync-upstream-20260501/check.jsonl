@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"检查 backend 变更是否符合规范"}
+{"file":".trellis/spec/frontend/index.md","reason":"检查 frontend 变更是否符合规范"}
+{"file":"docs/upstream-sync-guide.md","reason":"核验是否遵循既定同步流程与关键修复项"}
+{"file":".trellis/tasks/05-01-sync-upstream-20260501/prd.md","reason":"按本任务验收标准执行质量检查"}
