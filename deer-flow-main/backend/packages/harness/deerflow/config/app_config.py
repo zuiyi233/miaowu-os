@@ -13,6 +13,7 @@ from deerflow.config.agents_api_config import AgentsApiConfig, load_agents_api_c
 from deerflow.config.checkpointer_config import CheckpointerConfig, load_checkpointer_config_from_dict
 from deerflow.config.extensions_config import ExtensionsConfig
 from deerflow.config.guardrails_config import GuardrailsConfig, load_guardrails_config_from_dict
+from deerflow.config.runtime_paths import existing_project_file
 from deerflow.config.memory_config import MemoryConfig, load_memory_config_from_dict
 from deerflow.config.model_config import ModelConfig
 from deerflow.config.sandbox_config import SandboxConfig
@@ -29,6 +30,29 @@ from deerflow.config.tool_search_config import ToolSearchConfig, load_tool_searc
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+_LOG_LEVEL_MAP: dict[str, int] = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+    "critical": logging.CRITICAL,
+}
+
+
+def logging_level_from_config(name: str | None) -> int:
+    if not name:
+        return logging.INFO
+    return _LOG_LEVEL_MAP.get(name.strip().lower(), logging.INFO)
+
+
+def apply_logging_level(name: str | None) -> None:
+    level = logging_level_from_config(name)
+    for logger_name in ("deerflow", "app"):
+        logging.getLogger(logger_name).setLevel(level)
+    for handler in logging.root.handlers:
+        if handler.level > level:
+            handler.setLevel(level)
 
 
 class CircuitBreakerConfig(BaseModel):

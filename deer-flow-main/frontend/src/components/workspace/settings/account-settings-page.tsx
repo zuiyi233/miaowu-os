@@ -5,7 +5,7 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { fetch, getCsrfHeaders } from "@/core/api/fetcher";
+import { fetch, getCsrfHeaders, resolveApiUrl } from "@/core/api/fetcher";
 import { useAuth } from "@/core/auth/AuthProvider";
 import { parseAuthError } from "@/core/auth/types";
 
@@ -36,7 +36,7 @@ export function AccountSettingsPage() {
 
     setLoading(true);
     try {
-      const res = await fetch("/api/v1/auth/change-password", {
+      const res = await fetch(resolveApiUrl("/api/v1/auth/change-password"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

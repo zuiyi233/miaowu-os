@@ -78,12 +78,18 @@ async def langgraph_runtime(app: FastAPI) -> AsyncGenerator[None, None]:
     from deerflow.runtime.events.store import make_run_event_store
 
     async with AsyncExitStack() as stack:
+        database_config = getattr(app.state.config, "database", None)
+        if database_config is None:
+            from deerflow.config.database_config import DatabaseConfig
+            database_config = DatabaseConfig(backend="sqlite", sqlite_dir=".deer-flow/data")
+        await init_engine_from_config(database_config)
         app.state.stream_bridge = await stack.enter_async_context(make_stream_bridge())
         app.state.checkpointer = await stack.enter_async_context(make_checkpointer())
         app.state.store = await stack.enter_async_context(make_store())
         app.state.run_manager = RunManager()
         await stack.enter_async_context(_memory_worker_runtime())
         yield
+        await close_engine()
 
 
 # ---------------------------------------------------------------------------

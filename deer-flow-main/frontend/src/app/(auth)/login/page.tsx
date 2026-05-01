@@ -10,6 +10,7 @@ import { FlickeringGrid } from "@/components/ui/flickering-grid";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/core/auth/AuthProvider";
 import { parseAuthError } from "@/core/auth/types";
+import { resolveApiUrl } from "@/core/api/fetcher";
 
 /**
  * Validate next parameter
@@ -71,10 +72,14 @@ export default function LoginPage() {
   useEffect(() => {
     let cancelled = false;
 
-    void fetch("/api/v1/auth/setup-status")
-      .then((r) => r.json())
-      .then((data: { needs_setup?: boolean }) => {
-        if (!cancelled && data.needs_setup) {
+    void fetch(resolveApiUrl("/api/v1/auth/setup-status"))
+      .then((r) => {
+        // 429 rate-limited — silently skip, retry on next render cycle
+        if (r.status === 429) return undefined;
+        return r.json();
+      })
+      .then((data: { needs_setup?: boolean } | undefined) => {
+        if (!cancelled && data?.needs_setup) {
           router.push("/setup");
         }
       })
@@ -93,9 +98,10 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const endpoint = isLogin
+      const path = isLogin
         ? "/api/v1/auth/login/local"
         : "/api/v1/auth/register";
+      const endpoint = resolveApiUrl(path);
       const body = isLogin
         ? `username=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`
         : JSON.stringify({ email, password });

@@ -1,6 +1,48 @@
 # 上游同步操作手册
 
 > 基于 2026-05-01 首次成功同步 bytedance/deer-flow 上游的实战经验总结。
+> 最后更新：2026-05-02（验证通过、全部差距修复）
+
+---
+
+## 0. 当前同步状态速查
+
+| 项目 | 值 |
+|------|-----|
+| 同步分支 | `merge/upstream-main` |
+| 上游最新 commit | `189b8240` |
+| 上游 commit 总数 | 8 个（从 squash 基点之后） |
+| 同步完整度 | **8/8 已全部对齐**（含 2 个手动补全） |
+| 后端测试 | **11 passed, 0 skipped** |
+| 前端 tsc | **零错误** |
+| dev-local.bat | **启动成功**（后端 8551 + 前端 4560） |
+
+### 上游已同步的 8 个 commit
+
+| 上游 commit | 描述 | 状态 |
+|-------------|------|------|
+| `189b8240` | fix(sandbox): pass no_change_timeout to exec_command | ✅ 已合并 |
+| `487c1d93` | fix(subagents): use model override for tools and middleware | ✅ 已合并 |
+| `c09c3345` | fix(harness): resolve runtime paths from project root | ✅ 已合并 |
+| `8939ccae` | fix(uploads): enforce streaming upload limits in gateway | ✅ 已合并 |
+| `83938cf3` | fix(subagents): propagate user context across threaded execution | ✅ 部分→已补全 |
+| `78633c69` | fix(agents): propagate agent_name into ToolRuntime.context | ✅ 已补全 |
+| `8b61c94e` | fix: keep lead agent graph factory signature compatible | ✅ 已合并 |
+| `1ad1420e` | refactor(skills): Unified skill storage capability | ✅ 已合并 |
+
+> 注：`83938cf3` 的 `_submit_to_isolated_loop_in_context` 无需引入——miaowu-os 使用 `ThreadPoolExecutor.submit()` 架构，contextvars 已自动保留。
+
+### 已验证的依赖版本组合（与上游完全一致）
+
+| 包 | 版本 | 约束来源 |
+|----|------|----------|
+| `langgraph` | **1.0.9** | `pyproject.toml`: `>=1.0.6,<1.0.10` |
+| `langgraph-prebuilt` | **1.0.8** | `pyproject.toml`: `<1.0.9`（手动锁定，防自动升级到不兼容的 1.0.13） |
+| `langgraph-runtime-inmem` | 0.27.4 | 自动解析 |
+| `langchain` | 1.2.10 | 自动解析 |
+| `langchain-core` | 1.3.2 | 自动解析 |
+
+> ⚠️ **重要**：`langgraph-prebuilt ≥ 1.0.9` 与 `langgraph 1.0.9` 不兼容（前者引入了 `ExecutionInfo` / `ServerInfo` 导入，需 `langgraph ≥ 1.0.10`）。上游约束 `<1.0.10` 禁止了 langgraph 升级路径，因此必须锁定 `langgraph-prebuilt<1.0.9`。详见本手册 7.2 节。
 
 ---
 
@@ -175,6 +217,20 @@ pnpm install
 pnpm add better-auth
 ```
 
+**后端依赖同步**：如果上游 `pyproject.toml` 有依赖变更，需重建后端 venv：
+
+```bash
+cd deer-flow-main\backend
+Remove-Item -Recurse -Force .venv
+Remove-Item -Force uv.lock
+uv sync
+```
+
+> ⚠️ 每次重建 venv 后必须验证 `langgraph-prebuilt` 版本：
+> ```bash
+> uv pip show langgraph-prebuilt   # 必须为 1.0.8，若 ≥ 1.0.9 需检查 pyproject.toml 锁定
+> ```
+
 ### 3.9 编译验证
 
 ```bash
@@ -183,6 +239,9 @@ cd deer-flow-main/frontend && npx tsc --noEmit
 
 # 后端 Python 编译
 cd deer-flow-main/backend && python -m py_compile app/gateway/app.py
+
+# 后端 pytest 核心用例
+cd deer-flow-main/backend && .\.venv\Scripts\python.exe -m pytest tests/test_gateway_docs_toggle.py tests/test_gateway_runtime_cleanup.py -q
 ```
 
 ### 3.10 提交修复并推送
@@ -226,8 +285,17 @@ git push origin merge/upstream-main
 - [ ] routers/__init__.py 已添加 novel_migrated
 - [ ] app.py 无重复定义
 - [ ] 上游新增依赖已安装
+- [ ] langgraph-prebuilt 锁定在 <1.0.9（防止自动升级到不兼容版本）
+- [ ] 若重建 venv，已重新 `uv sync`
+- [ ] existing_project_file 导入链完整
+- [ ] apply_logging_level / logging_level_from_config 函数存在
+- [ ] merge_run_context_overrides 已应用到 services.py
+- [ ] _build_runtime_context 已应用到 worker.py
 - [ ] 前端 TypeScript 编译 0 错误
 - [ ] 后端 Python 编译 0 错误
+- [ ] 后端 pytest 全部通过
+- [ ] dev-local.bat 启动成功
+- [ ] 后端 /health 返回 healthy
 - [ ] 推送成功
 
 ---
@@ -251,6 +319,83 @@ const createNovelProgressRef = useRef<Map<string, string>>(new Map());
 ```typescript
 createNovelProgressRef.current.clear();
 ```
+
+---
+
+## 7. 本次同步实战记录（2026-05-02）
+
+> 基于 2026-05-01 squash 合并后，逐项比对 upstream/main 的 8 个新增 commit 并修复差距。
+
+### 7.1 发现并修复的差距
+
+| # | 问题 | 根因 | 涉及文件 | 修复方式 |
+|---|------|------|----------|----------|
+| 1 | `ImportError: cannot import name 'RunContext'` | miaowu-os 的 `deps.py` 引用了 `RunContext`，但 runtime 包未定义此类 | `runtime/context.py`（新建）、`runtime/__init__.py` | 新建 `RunContext` 数据类并导出 |
+| 2 | `ImportError: cannot import name 'load_skills'` | miaowu-os 重构了 skills 模块（引入 `SkillStorage`），删除了旧的 `loader.py`，但中间件仍引用旧 API | `skills/loader.py`（新建）、`skills/__init__.py` | 新建兼容层，通过 `LocalSkillStorage` 实现旧 API |
+| 3 | `NameError: name 'require_permission' is not defined` | `uploads.py`、`threads.py` 使用了 `@require_permission` 装饰器但缺少导入 | `routers/uploads.py`、`routers/threads.py` | 补充 `from app.gateway.authz import require_permission` |
+| 4 | `StreamingResponse` / `Response` 返回类型导致 Pydantic V2 OpenAPI schema 生成崩溃 | Pydantic V2 无法为 Starlette 响应类生成 JSON schema | `routers/thread_runs.py`、`routers/runs.py`、`routers/artifacts.py`、`routers/media_drafts.py` | 为流式/文件端点添加 `response_model=None, response_class=...` |
+| 5 | `from __future__ import annotations` 导致 ForwardRef 解析失败 | `threads.py` 的 `ThreadPatchRequest` 作为 Query 参数时，字符串注解无法被 Pydantic V2 TypeAdapter 解析 | `routers/threads.py` | 移除 `from __future__ import annotations` |
+| 6 | `name 'existing_project_file' is not defined` | `app_config.py` 使用了 `runtime_paths.py` 的函数但未导入 | `config/app_config.py` | 添加 `from deerflow.config.runtime_paths import existing_project_file` |
+| 7 | `name 'apply_logging_level' is not defined` | 二开功能只写了测试 (`test_logging_level_from_config.py`) 和调用点 (`app.py` lifespan)，忘了在 `app_config.py` 中实现函数 | `config/app_config.py`、`gateway/app.py` | 实现 `logging_level_from_config()` + `apply_logging_level()`，在 lifespan 中导入 |
+| 8 | 上游 commit `78633c69` 完全未合并 | squash 合并时漏掉了 `merge_run_context_overrides` 和 `_build_runtime_context` | `gateway/services.py`、`runtime/runs/worker.py` | 从上游 diff 手动补全两个函数并接入调用链 |
+
+### 7.2 langgraph-prebuilt 版本锁定详解
+
+**问题链**：
+1. `uv sync` 将 `langgraph-prebuilt` 自动解析为 **1.0.13**（当时最新）
+2. `langgraph-prebuilt ≥ 1.0.9` 的 `tool_node.py` 导入 `ExecutionInfo, ServerInfo` from `langgraph.runtime`
+3. `langgraph` 被 `pyproject.toml` 约束在 `<1.0.10`，实际安装 **1.0.9**，该版本 `runtime.py` 无 `ExecutionInfo` 类
+4. 启动时 `from langgraph.prebuilt.tool_node import ToolNode` → `ImportError`
+
+**修复**：在 `backend/packages/harness/pyproject.toml` 添加：
+```toml
+"langgraph-prebuilt<1.0.9",
+```
+然后 `Remove-Item -Recurse .venv; uv sync`
+
+**验证**：
+```bash
+uv pip show langgraph-prebuilt   # 应显示 1.0.8
+```
+
+**为什么不能升级到最新**：上游 `pyproject.toml` 约束 `langgraph<1.0.10`，即明确不支持 1.1.x 产品线。若强制升级 langgraph 需评估 breaking changes 并可能修改二开代码。
+
+### 7.3 验证命令速查
+
+```bash
+# 后端
+cd deer-flow-main\backend
+.\.venv\Scripts\python.exe -m pytest tests/test_gateway_docs_toggle.py tests/test_gateway_runtime_cleanup.py -q
+.\.venv\Scripts\python.exe -m py_compile app\gateway\app.py
+
+# 前端
+cd deer-flow-main\frontend
+pnpm tsc --noEmit
+
+# 全栈启动
+scripts\dev-local.bat start
+# 或 PowerShell:
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev-local.ps1" -Action start -View single
+
+# 健康检查
+curl http://localhost:8551/health
+# 预期: {"status":"healthy","deerflow_available":true,"registered_harness_routers":15,"total_harness_routers":15}
+```
+
+### 7.4 二开关键文件完整性验证
+
+以下文件在每次同步后都必须确认存在且内容完整：
+
+| 类别 | 文件/目录 | 验证方式 |
+|------|----------|----------|
+| 后端路由 | `routers/novel.py`、`routers/novel_migrated/` | 确认文件存在 |
+| 中间件 | `middleware/intent_recognition_middleware.py` (173KB) | 确认文件存在 |
+| 运行时扩展 | `runtime/context.py`、`runtime/events/store/`、`runtime/runs/store/`、`persistence/thread_meta/`、`persistence/feedback/` | 确认文件/目录存在 |
+| 网关配置 | `app.py`（含 novel 路由注册）、`deps.py`（含 RunContext 等） | 搜索 `novel`、`RunContext` |
+| 小说工具 | `tools/builtins/novel_tools.py` (31KB) | 确认文件存在 |
+| 前端核心 | `core/novel/`（hooks, api, stores...） | 确认目录存在 |
+| 前端组件 | `components/novel/`（47 个文件） | 确认目录存在 |
+| 冲突关注点 | `frontend/src/core/threads/hooks.ts`、`frontend/src/components/workspace/messages/message-list.tsx`、`frontend/src/app/workspace/chats/[thread_id]/page.tsx` | 确认其中小说自定义代码完整 |
 
 ### A.3 create_novel_progress 事件处理器
 

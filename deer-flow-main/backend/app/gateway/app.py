@@ -74,6 +74,7 @@ HARNESS_ROUTER_MODULES = (
     "app.gateway.routers.assistants_compat",
     "app.gateway.routers.thread_runs",
     "app.gateway.routers.runs",
+    "app.gateway.routers.auth",
 )
 CORE_ROUTER_MODULES = (
     "app.gateway.routers.novel",
@@ -255,6 +256,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Load config and check necessary environment variables at startup
     try:
         app.state.config = get_app_config()
+        from deerflow.config.app_config import apply_logging_level
         apply_logging_level(app.state.config.log_level)
         logger.info("Configuration loaded successfully")
     except ModuleNotFoundError as exc:
@@ -441,6 +443,8 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    app.add_middleware(AuthMiddleware)
 
     deerflow_available = _has_deerflow_package()
     registered_harness_router_count = 0

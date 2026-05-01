@@ -544,7 +544,6 @@ function Start-AllServices {
         -Name "frontend" `
         -WorkingDirectory $FrontendDir `
         -SetupLines @(
-            '$env:NEXT_PUBLIC_BACKEND_BASE_URL = "http://127.0.0.1:8551"',
             '$env:NEXT_PUBLIC_LANGGRAPH_BASE_URL = "http://127.0.0.1:8551/api"',
             '$env:DEER_FLOW_INTERNAL_GATEWAY_BASE_URL = "http://127.0.0.1:8551"',
             '$env:DEER_FLOW_INTERNAL_LANGGRAPH_BASE_URL = "http://127.0.0.1:8551/api"'

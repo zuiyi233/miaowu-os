@@ -1,4 +1,15 @@
 import { buildLoginUrl } from "@/core/auth/types";
+import { getBackendBaseURL } from "@/core/config";
+
+/**
+ * Resolve an API path to a full URL when NEXT_PUBLIC_BACKEND_BASE_URL
+ * is configured, so client-side calls work without Next.js rewrites.
+ * Returns the path unchanged when no base URL is set (rewrite mode).
+ */
+export function resolveApiUrl(path: string): string {
+  const base = getBackendBaseURL();
+  return base ? `${base}${path}` : path;
+}
 
 /** HTTP methods that the gateway's CSRFMiddleware checks. */
 export type StateChangingMethod = "POST" | "PUT" | "DELETE" | "PATCH";
