@@ -130,6 +130,36 @@ def normalize_input(raw_input: dict[str, Any] | None) -> dict[str, Any]:
 _DEFAULT_ASSISTANT_ID = "lead_agent"
 
 
+_CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
+    {
+        "model_name",
+        "mode",
+        "thinking_enabled",
+        "reasoning_effort",
+        "is_plan_mode",
+        "subagent_enabled",
+        "max_concurrent_subagents",
+        "agent_name",
+        "is_bootstrap",
+        "media_draft_retention",
+        "provider_id",
+    }
+)
+
+
+def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, Any] | None) -> None:
+    if not context:
+        return
+    configurable = config.setdefault("configurable", {})
+    runtime_context = config.setdefault("context", {})
+    for key in _CONTEXT_CONFIGURABLE_KEYS:
+        if key in context:
+            if isinstance(configurable, dict):
+                configurable.setdefault(key, context[key])
+            if isinstance(runtime_context, dict):
+                runtime_context.setdefault(key, context[key])
+
+
 def _as_non_empty_str(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -530,30 +560,13 @@ async def start_run(
     graph_input = normalize_input(body.input)
     config = build_run_config(thread_id, body.config, body.metadata, assistant_id=body.assistant_id)
 
-    # Merge DeerFlow-specific context overrides into configurable.
+    # Merge DeerFlow-specific context overrides into both configurable and context.
     # The ``context`` field is a custom extension for the langgraph-compat layer
     # that carries agent configuration (model_name, thinking_enabled, etc.).
     # Only agent-relevant keys are forwarded; unknown keys (e.g. thread_id) are ignored.
     context = getattr(body, "context", None)
     module_id = _extract_module_id(context)
-    if context:
-        _CONTEXT_CONFIGURABLE_KEYS = {
-            "model_name",
-            "mode",
-            "thinking_enabled",
-            "reasoning_effort",
-            "is_plan_mode",
-            "subagent_enabled",
-            "max_concurrent_subagents",
-            "agent_name",
-            "is_bootstrap",
-            "media_draft_retention",
-            "provider_id",
-        }
-        configurable = config.setdefault("configurable", {})
-        for key in _CONTEXT_CONFIGURABLE_KEYS:
-            if key in context:
-                configurable[key] = context[key]
+    merge_run_context_overrides(config, context)
 
     configurable = config.setdefault("configurable", {})
     requested_model_name = _as_non_empty_str(configurable.get("model_name") or configurable.get("model"))

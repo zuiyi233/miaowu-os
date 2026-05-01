@@ -52,6 +52,23 @@ def _log_fire_and_forget_failure(task: asyncio.Task[Any], *, label: str) -> None
         logger.debug("%s failed: %s", label, exc)
 
 
+def _build_runtime_context(thread_id: str, run_id: str, config: dict[str, Any], store: Any | None) -> dict[str, Any]:
+    """Build the ``context`` dict passed to ``langgraph.runtime.Runtime``.
+
+    Guarantees that ``thread_id`` and ``run_id`` are always present, and
+    merges in any caller-provided ``context`` (e.g. ``agent_name``,
+    ``is_bootstrap``) without allowing the caller to override the two
+    identity keys.
+    """
+    base: dict[str, Any] = {"thread_id": thread_id, "run_id": run_id}
+    caller_context = config.get("context", {})
+    if isinstance(caller_context, dict):
+        for key, value in caller_context.items():
+            if key not in base:
+                base[key] = value
+    return base
+
+
 async def run_agent(
     bridge: StreamBridge,
     run_manager: RunManager,
@@ -119,14 +136,16 @@ async def run_agent(
         from langchain_core.runnables import RunnableConfig
         from langgraph.runtime import Runtime
 
-        # Inject runtime context so middlewares can access thread_id
-        # (langgraph-cli does this automatically; we must do it manually)
-        runtime = Runtime(context={"thread_id": thread_id}, store=store)
+        # Inject runtime context so middlewares can access thread_id and run_id.
+        # This is what langgraph-cli does automatically; the compat layer must do it manually.
+        runtime_context = _build_runtime_context(thread_id, run_id, config, store)
+        runtime = Runtime(context=runtime_context, store=store)
         # If the caller already set a ``context`` key (LangGraph >= 0.6.0
         # prefers it over ``configurable`` for thread-level data), make
-        # sure ``thread_id`` is available there too.
+        # sure ``thread_id`` and ``run_id`` are available there too.
         if "context" in config and isinstance(config["context"], dict):
             config["context"].setdefault("thread_id", thread_id)
+            config["context"].setdefault("run_id", run_id)
         config.setdefault("configurable", {})["__pregel_runtime"] = runtime
 
         runnable_config = RunnableConfig(**config)
