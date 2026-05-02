@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AboutSettingsPage } from "@/components/workspace/settings/about-settings-page";
+import { AccountSettingsPage } from "@/components/workspace/settings/account-settings-page";
 import { AiProviderSettingsPage } from "@/components/workspace/settings/ai-provider-settings-page";
 import { AppearanceSettingsPage } from "@/components/workspace/settings/appearance-settings-page";
 import { DraftSettingsPage } from "@/components/workspace/settings/draft-settings-page";
@@ -148,6 +149,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
           </nav>
           <ScrollArea className="h-full min-h-0 min-w-0">
             <div className="min-w-0 p-5">
+              {activeSection === "account" && <AccountSettingsPage />}
               {activeSection === "appearance" && <AppearanceSettingsPage />}
               {activeSection === "ai-providers" && <AiProviderSettingsPage />}
               {activeSection === "drafts" && <DraftSettingsPage />}

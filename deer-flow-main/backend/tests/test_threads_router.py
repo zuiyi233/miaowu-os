@@ -136,3 +136,21 @@ def test_strip_reserved_metadata_empty_input():
 def test_strip_reserved_metadata_strips_all_reserved_keys():
     out = threads._strip_reserved_metadata({"user_id": "x", "keep": "me"})
     assert out == {"keep": "me"}
+
+
+def test_search_threads_no_store_records_returns_empty_list():
+    class _DummyCheckpointer:
+        async def alist(self, _config):
+            if False:
+                yield None
+
+    app = make_authed_test_app()
+    app.include_router(threads.router)
+    app.state.store = None
+    app.state.checkpointer = _DummyCheckpointer()
+
+    with TestClient(app) as client:
+        response = client.post("/api/threads/search", json={})
+
+    assert response.status_code == 200
+    assert response.json() == []

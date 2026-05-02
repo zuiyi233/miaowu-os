@@ -31,11 +31,21 @@ function injectCsrfHeader(_url: URL, init: RequestInit): RequestInit {
   return { ...init, headers };
 }
 
+function fetchWithCredentials(input: RequestInfo | URL, init?: RequestInit) {
+  return globalThis.fetch(input, {
+    ...init,
+    credentials: "include",
+  });
+}
+
 function createCompatibleClient(isMock?: boolean): LangGraphClient {
   const apiUrl = getLangGraphBaseURL(isMock);
   console.log(`Creating API client with base URL: ${apiUrl}`);
   const client = new LangGraphClient({
     apiUrl,
+    callerOptions: {
+      fetch: fetchWithCredentials,
+    },
     onRequest: injectCsrfHeader,
   });
 

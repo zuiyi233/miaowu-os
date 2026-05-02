@@ -1,5 +1,7 @@
 """Tests for the global AuthMiddleware (fail-closed safety net)."""
 
+from __future__ import annotations
+
 import pytest
 from starlette.testclient import TestClient
 
@@ -234,3 +236,41 @@ def test_unknown_endpoint_with_junk_cookie_rejected(client):
     client.cookies.set("access_token", "tok")
     res = client.get("/api/future-endpoint")
     assert res.status_code == 401
+
+
+def test_cors_preflight_is_handled_before_auth(monkeypatch):
+    """OPTIONS preflight should be answered by CORS before auth rejects it."""
+    import app.gateway.app as gateway_app
+    import app.gateway.config as gateway_config
+
+    original_config = gateway_config._gateway_config
+    gateway_config._gateway_config = None
+    monkeypatch.setenv(
+        "CORS_ORIGINS",
+        "http://localhost:4560,http://127.0.0.1:4560",
+    )
+    monkeypatch.setattr(gateway_app, "_has_deerflow_package", lambda: False)
+    monkeypatch.setattr(
+        gateway_app,
+        "_include_router_module",
+        lambda *args, **kwargs: True,
+    )
+
+    try:
+        app = gateway_app.create_app()
+        client = TestClient(app)
+        response = client.options(
+            "/api/threads/search",
+            headers={
+                "Origin": "http://localhost:4560",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == "http://localhost:4560"
+        assert response.headers["access-control-allow-credentials"] == "true"
+        assert "POST" in response.headers["access-control-allow-methods"]
+    finally:
+        gateway_config._gateway_config = original_config

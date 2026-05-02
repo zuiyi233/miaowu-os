@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend gateway middleware and auth contract for CORS and preflight fixes"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Backend runtime recovery and auth failure boundaries"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality expectations for middleware and request-scoped behavior"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend layer conventions for the settings-dialog and API client fixes"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality expectations for the API client and settings fixes"}

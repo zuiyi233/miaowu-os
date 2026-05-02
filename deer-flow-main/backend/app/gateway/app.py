@@ -432,6 +432,10 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
         ],
     )
 
+    # Auth stays inside the CORS layer so browser preflight requests can be
+    # answered with the negotiated CORS headers before auth rejects the call.
+    app.add_middleware(AuthMiddleware)
+
     # Allow direct frontend->gateway calls in local dev (without nginx).
     # In docker/nginx mode this remains compatible because gateway is usually
     # same-origin behind the reverse proxy.
@@ -443,8 +447,6 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    app.add_middleware(AuthMiddleware)
 
     deerflow_available = _has_deerflow_package()
     registered_harness_router_count = 0

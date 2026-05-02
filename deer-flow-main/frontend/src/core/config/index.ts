@@ -1,6 +1,19 @@
 import { env } from "@/env";
 
 const isDesktopBuild = process.env.NEXT_PUBLIC_DEERFLOW_DESKTOP_BUILD === "1";
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1"]);
+
+function normalizeHostname(hostname: string): string {
+  return hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
+}
+
+function formatHostnameForURL(hostname: string): string {
+  return hostname.includes(":") && !hostname.startsWith("[")
+    ? `[${hostname}]`
+    : hostname;
+}
 
 function getBaseOrigin() {
   if (typeof window !== "undefined") {
@@ -8,6 +21,44 @@ function getBaseOrigin() {
   }
   // Fallback for SSR
   return "http://localhost:2026";
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return LOOPBACK_HOSTNAMES.has(normalizeHostname(hostname));
+}
+
+/**
+ * Align client-side API requests with the browser's loopback host.
+ *
+ * Browser cookies are host-scoped. If the frontend runs on `localhost`
+ * but the API base URL is `127.0.0.1` (or vice versa), authenticated
+ * requests may miss the session cookie even when the port is identical.
+ */
+function normalizeLoopbackBaseURL(baseURL: string): string {
+  if (typeof window === "undefined") {
+    return baseURL;
+  }
+
+  const currentHostname = normalizeHostname(window.location.hostname);
+  if (!isLoopbackHostname(currentHostname)) {
+    return baseURL;
+  }
+
+  try {
+    const url = new URL(baseURL);
+    const backendHostname = normalizeHostname(url.hostname);
+    if (
+      !isLoopbackHostname(backendHostname) ||
+      backendHostname === currentHostname
+    ) {
+      return baseURL;
+    }
+
+    url.hostname = formatHostnameForURL(currentHostname);
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return baseURL;
+  }
 }
 
 let _cachedBackendBaseURL: string | undefined;
@@ -23,6 +74,7 @@ export function getBackendBaseURL() {
     result = new URL(env.NEXT_PUBLIC_BACKEND_BASE_URL, getBaseOrigin())
       .toString()
       .replace(/\/+$/, "");
+    result = normalizeLoopbackBaseURL(result);
   } else {
     result = "";
   }
@@ -43,10 +95,11 @@ export function getLangGraphBaseURL(isMock?: boolean) {
   }
 
   if (env.NEXT_PUBLIC_LANGGRAPH_BASE_URL) {
-    return new URL(
+    const result = new URL(
       env.NEXT_PUBLIC_LANGGRAPH_BASE_URL,
       getBaseOrigin(),
     ).toString();
+    return normalizeLoopbackBaseURL(result);
   } else if (isMock) {
     if (typeof window !== "undefined") {
       return `${window.location.origin}/mock/api`;

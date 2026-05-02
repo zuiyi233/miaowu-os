@@ -10,6 +10,8 @@ matching the LangGraph Platform wire format expected by the
 ``useStream`` React hook.
 """
 
+from __future__ import annotations
+
 import logging
 import time
 import uuid
@@ -21,13 +23,22 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.gateway.authz import require_permission
 from app.gateway.deps import get_checkpointer, get_store
-from deerflow.media import draft_media_store
+from app.gateway.utils import sanitize_log_param
 from deerflow.config.paths import Paths, get_paths
+from deerflow.media import draft_media_store
 from deerflow.runtime import serialize_channel_values
 from deerflow.runtime.user_context import get_effective_user_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/threads", tags=["threads"])
+
+
+# ---------------------------------------------------------------------------
+# Store namespace
+# ---------------------------------------------------------------------------
+
+THREADS_NS: tuple[str, ...] = ("threads",)
+"""Namespace used by the Store for thread metadata records."""
 
 
 # Metadata keys that the server controls; clients are not allowed to set
@@ -382,6 +393,7 @@ async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadRe
     """
     from app.gateway.deps import get_thread_store
 
+    store = get_store(request)
     checkpointer = get_checkpointer(request)
     thread_store = get_thread_store(request)
     thread_id = body.thread_id or str(uuid.uuid4())
@@ -447,11 +459,12 @@ async def search_threads(body: ThreadSearchRequest, request: Request) -> list[Th
     Delegates to the configured ThreadMetaStore implementation
     (SQL-backed for sqlite/postgres, Store-backed for memory mode).
     """
-    from app.gateway.deps import get_thread_store
-
     # -----------------------------------------------------------------------
     # Phase 1: Store
     # -----------------------------------------------------------------------
+    store = get_store(request)
+    checkpointer = get_checkpointer(request)
+
     merged: dict[str, ThreadResponse] = {}
 
     if store is not None:
@@ -559,10 +572,10 @@ async def patch_thread(thread_id: str, body: ThreadPatchRequest, request: Reques
     record = await thread_store.get(thread_id) or record
     return ThreadResponse(
         thread_id=thread_id,
-        status=updated.get("status", "idle"),
-        created_at=_to_iso_timestamp(updated.get("created_at")),
-        updated_at=_to_iso_timestamp(now),
-        metadata=updated.get("metadata", {}),
+        status=record.get("status", "idle"),
+        created_at=_to_iso_timestamp(record.get("created_at")),
+        updated_at=_to_iso_timestamp(record.get("updated_at")),
+        metadata=record.get("metadata", {}),
     )
 
 
@@ -689,8 +702,6 @@ async def get_thread_state(thread_id: str, request: Request) -> ThreadStateRespo
     tasks_raw = getattr(checkpoint_tuple, "tasks", []) or []
     next_tasks = [t.name for t in tasks_raw if hasattr(t, "name")]
     tasks = [{"id": getattr(t, "id", ""), "name": getattr(t, "name", "")} for t in tasks_raw]
-
-    values = serialize_channel_values(channel_values)
 
     return ThreadStateResponse(
         values=serialize_channel_values(cleaned_channel_values),
