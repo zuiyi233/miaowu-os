@@ -24,6 +24,7 @@ class ConversationContext:
     agent_name: str | None = None
     correction_detected: bool = False
     reinforcement_detected: bool = False
+    user_id: str | None = None
     model_name: str | None = None
     runtime_model: str | None = None
     runtime_base_url: str | None = None
@@ -85,6 +86,7 @@ class MemoryUpdateQueue:
         agent_name: str | None = None,
         correction_detected: bool = False,
         reinforcement_detected: bool = False,
+        user_id: str | None = None,
         model_name: str | None = None,
         runtime_model: str | None = None,
         runtime_base_url: str | None = None,
@@ -102,6 +104,7 @@ class MemoryUpdateQueue:
                 agent_name=agent_name,
                 correction_detected=correction_detected,
                 reinforcement_detected=reinforcement_detected,
+                user_id=user_id,
                 model_name=model_name,
                 runtime_model=runtime_model,
                 runtime_base_url=runtime_base_url,
@@ -119,6 +122,7 @@ class MemoryUpdateQueue:
         agent_name: str | None = None,
         correction_detected: bool = False,
         reinforcement_detected: bool = False,
+        user_id: str | None = None,
         model_name: str | None = None,
         runtime_model: str | None = None,
         runtime_base_url: str | None = None,
@@ -136,6 +140,7 @@ class MemoryUpdateQueue:
                 agent_name=agent_name,
                 correction_detected=correction_detected,
                 reinforcement_detected=reinforcement_detected,
+                user_id=user_id,
                 model_name=model_name,
                 runtime_model=runtime_model,
                 runtime_base_url=runtime_base_url,
@@ -158,6 +163,7 @@ class MemoryUpdateQueue:
         agent_name: str | None,
         correction_detected: bool,
         reinforcement_detected: bool,
+        user_id: str | None = None,
         model_name: str | None = None,
         runtime_model: str | None = None,
         runtime_base_url: str | None = None,
@@ -169,6 +175,7 @@ class MemoryUpdateQueue:
         )
         merged_correction_detected = correction_detected or (existing_context.correction_detected if existing_context is not None else False)
         merged_reinforcement_detected = reinforcement_detected or (existing_context.reinforcement_detected if existing_context is not None else False)
+        effective_user_id = user_id or (existing_context.user_id if existing_context is not None else None)
         effective_model_name = model_name or (existing_context.model_name if existing_context is not None else None)
         effective_runtime_model = runtime_model or (existing_context.runtime_model if existing_context is not None else None)
         effective_base_url = runtime_base_url or (existing_context.runtime_base_url if existing_context is not None else None)
@@ -180,6 +187,7 @@ class MemoryUpdateQueue:
             agent_name=agent_name,
             correction_detected=merged_correction_detected,
             reinforcement_detected=merged_reinforcement_detected,
+            user_id=effective_user_id,
             model_name=effective_model_name,
             runtime_model=effective_runtime_model,
             runtime_base_url=effective_base_url,

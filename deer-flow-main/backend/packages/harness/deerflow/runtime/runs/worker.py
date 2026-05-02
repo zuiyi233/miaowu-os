@@ -22,6 +22,8 @@ import logging
 from functools import partial
 from typing import Any, Literal
 
+from langgraph.checkpoint.base import empty_checkpoint
+
 from deerflow.runtime.serialization import serialize
 from deerflow.runtime.stream_bridge import StreamBridge
 
@@ -339,6 +341,12 @@ async def _rollback_to_pre_run_checkpoint(
     if checkpoint_to_restore.get("id") is None:
         logger.warning("Run %s rollback skipped: pre-run checkpoint has no checkpoint id", run_id)
         return
+    restore_marker = _new_checkpoint_marker()
+    checkpoint_to_restore = {
+        **checkpoint_to_restore,
+        "id": restore_marker["id"],
+        "ts": restore_marker["ts"],
+    }
     metadata = pre_run_snapshot.get("metadata", {})
     metadata_to_restore = metadata if isinstance(metadata, dict) else {}
     raw_checkpoint_ns = pre_run_snapshot.get("checkpoint_ns")
@@ -388,6 +396,11 @@ async def _rollback_to_pre_run_checkpoint(
             writes,
             task_id=task_id,
         )
+
+
+def _new_checkpoint_marker() -> dict[str, str]:
+    marker = empty_checkpoint()
+    return {"id": marker["id"], "ts": marker["ts"]}
 
 
 def _lg_mode_to_sse_event(mode: str) -> str:

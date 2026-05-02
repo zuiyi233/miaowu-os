@@ -1,7 +1,7 @@
 """Middleware for memory mechanism."""
 
 import logging
-from typing import override
+from typing import TYPE_CHECKING, override
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
@@ -11,6 +11,10 @@ from langgraph.runtime import Runtime
 from deerflow.agents.memory.message_processing import detect_correction, detect_reinforcement, filter_messages_for_memory
 from deerflow.agents.memory.queue import get_memory_queue
 from deerflow.config.memory_config import get_memory_config
+from deerflow.runtime.user_context import get_effective_user_id
+
+if TYPE_CHECKING:
+    from deerflow.config.memory_config import MemoryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +40,8 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
     def __init__(
         self,
         agent_name: str | None = None,
+        *,
+        memory_config: "MemoryConfig | None" = None,
         model_name: str | None = None,
         runtime_model: str | None = None,
         runtime_base_url: str | None = None,
@@ -45,6 +51,8 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
 
         Args:
             agent_name: If provided, memory is stored per-agent. If None, uses global memory.
+            memory_config: Explicit memory config. When omitted, legacy global
+                config fallback is used.
             model_name: Override model name for memory updates. If None, uses config default.
             runtime_model: Override provider-side model id (e.g. selected from user runtime settings).
             runtime_base_url: Override base URL for the model API.
@@ -52,6 +60,7 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
         """
         super().__init__()
         self._agent_name = agent_name
+        self._memory_config = memory_config
         self._model_name = model_name
         self._runtime_model = runtime_model
         self._runtime_base_url = runtime_base_url
@@ -68,7 +77,7 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
         Returns:
             None (no state changes needed from this middleware).
         """
-        config = get_memory_config()
+        config = self._memory_config or get_memory_config()
         if not config.enabled:
             return None
 
@@ -100,11 +109,13 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
 
         correction_detected = detect_correction(filtered_messages)
         reinforcement_detected = not correction_detected and detect_reinforcement(filtered_messages)
+        user_id = get_effective_user_id()
         queue = get_memory_queue()
         queue.add(
             thread_id=thread_id,
             messages=filtered_messages,
             agent_name=self._agent_name,
+            user_id=user_id,
             correction_detected=correction_detected,
             reinforcement_detected=reinforcement_detected,
             model_name=self._model_name,

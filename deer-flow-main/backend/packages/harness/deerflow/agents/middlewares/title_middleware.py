@@ -3,14 +3,19 @@
 import asyncio
 import logging
 import re
-from typing import NotRequired, override
+from typing import TYPE_CHECKING, Any, NotRequired, override
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
+from langgraph.config import get_config
 from langgraph.runtime import Runtime
 
 from deerflow.config.title_config import get_title_config
 from deerflow.models import create_chat_model
+
+if TYPE_CHECKING:
+    from deerflow.config.app_config import AppConfig
+    from deerflow.config.title_config import TitleConfig
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +34,28 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
 
     def __init__(
         self,
+        *,
+        app_config: "AppConfig | None" = None,
+        title_config: "TitleConfig | None" = None,
         model_name: str | None = None,
         runtime_model: str | None = None,
         runtime_base_url: str | None = None,
         runtime_api_key: str | None = None,
     ) -> None:
         super().__init__()
+        self._app_config = app_config
+        self._title_config = title_config
         self._override_model_name = model_name
         self._runtime_model = runtime_model
         self._runtime_base_url = runtime_base_url
         self._runtime_api_key = runtime_api_key
+
+    def _get_title_config(self):
+        if self._title_config is not None:
+            return self._title_config
+        if self._app_config is not None:
+            return self._app_config.title
+        return get_title_config()
 
     def _normalize_content(self, content: object) -> str:
         if isinstance(content, str):
@@ -61,7 +78,7 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
 
     def _should_generate_title(self, state: TitleMiddlewareState) -> bool:
         """Check if we should generate a title for this thread."""
-        config = get_title_config()
+        config = self._get_title_config()
         if not config.enabled:
             return False
 
@@ -86,7 +103,7 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
 
         Returns (prompt_string, user_msg) so callers can use user_msg as fallback.
         """
-        config = get_title_config()
+        config = self._get_title_config()
         messages = state.get("messages", [])
 
         user_msg_content = next((m.content for m in messages if m.type == "human"), "")
@@ -108,14 +125,14 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
 
     def _parse_title(self, content: object) -> str:
         """Normalize model output into a clean title string."""
-        config = get_title_config()
+        config = self._get_title_config()
         title_content = self._normalize_content(content)
         title_content = self._strip_think_tags(title_content)
         title = title_content.strip().strip('"').strip("'")
         return title[: config.max_chars] if len(title) > config.max_chars else title
 
     def _fallback_title(self, user_msg: str) -> str:
-        config = get_title_config()
+        config = self._get_title_config()
         fallback_chars = min(config.max_chars, 50)
         if len(user_msg) > fallback_chars:
             return user_msg[:fallback_chars].rstrip() + "..."
@@ -129,17 +146,30 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         _, user_msg = self._build_title_prompt(state)
         return {"title": self._fallback_title(user_msg)}
 
+    def _get_runnable_config(self) -> dict[str, Any]:
+        """Inherit the parent RunnableConfig and add middleware tag."""
+        try:
+            parent = get_config()
+        except Exception:
+            parent = {}
+        config = {**parent}
+        config["run_name"] = "title_agent"
+        config["tags"] = [*(config.get("tags") or []), "middleware:title"]
+        return config
+
     async def _agenerate_title_result(self, state: TitleMiddlewareState) -> dict | None:
         """Generate a title asynchronously and fall back locally on failure."""
         if not self._should_generate_title(state):
             return None
 
-        config = get_title_config()
+        config = self._get_title_config()
         prompt, user_msg = self._build_title_prompt(state)
 
         try:
+            model_kwargs: dict = {"thinking_enabled": False}
+            if self._app_config is not None:
+                model_kwargs["app_config"] = self._app_config
             effective_model_name = self._override_model_name or config.model_name
-            model_kwargs: dict = {}
             if self._runtime_model:
                 model_kwargs["model"] = self._runtime_model
             if self._runtime_base_url:
@@ -148,17 +178,17 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
                 model_kwargs["api_key"] = self._runtime_api_key
 
             if effective_model_name:
-                model = create_chat_model(name=effective_model_name, thinking_enabled=False, **model_kwargs)
+                model = create_chat_model(name=effective_model_name, **model_kwargs)
             else:
-                model = create_chat_model(thinking_enabled=False, **model_kwargs)
+                model = create_chat_model(**model_kwargs)
             timeout = self.title_generation_timeout_sec
             if timeout > 0:
                 response = await asyncio.wait_for(
-                    model.ainvoke(prompt, config={"run_name": "title_agent"}),
+                    model.ainvoke(prompt, config=self._get_runnable_config()),
                     timeout=timeout,
                 )
             else:
-                response = await model.ainvoke(prompt, config={"run_name": "title_agent"})
+                response = await model.ainvoke(prompt, config=self._get_runnable_config())
             title = self._parse_title(response.content)
             if title:
                 return {"title": title}

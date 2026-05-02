@@ -1,12 +1,47 @@
+import re
 from unittest.mock import patch
 
 import pytest
 from _router_auth_helpers import make_authed_test_app
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.store.memory import InMemoryStore
 
 from app.gateway.routers import threads
 from deerflow.config.paths import Paths
+from deerflow.persistence.thread_meta.memory import THREADS_NS, MemoryThreadMetaStore
+
+_ISO_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+
+
+class _PermissiveThreadMetaStore(MemoryThreadMetaStore):
+    async def _get_owned_record(self, thread_id, user_id, method_name):  # type: ignore[override]
+        item = await self._store.aget(THREADS_NS, thread_id)
+        return dict(item.value) if item is not None else None
+
+    async def check_access(self, thread_id, user_id, *, require_existing=False):  # type: ignore[override]
+        item = await self._store.aget(THREADS_NS, thread_id)
+        if item is None:
+            return not require_existing
+        return True
+
+    async def create(self, thread_id, *, assistant_id=None, user_id=None, display_name=None, metadata=None):  # type: ignore[override]
+        return await super().create(thread_id, assistant_id=assistant_id, user_id=None, display_name=display_name, metadata=metadata)
+
+    async def search(self, *, metadata=None, status=None, limit=100, offset=0, user_id=None):  # type: ignore[override]
+        return await super().search(metadata=metadata, status=status, limit=limit, offset=offset, user_id=None)
+
+
+def _build_thread_app():
+    app = make_authed_test_app()
+    store = InMemoryStore()
+    checkpointer = InMemorySaver()
+    app.state.store = store
+    app.state.checkpointer = checkpointer
+    app.state.thread_store = _PermissiveThreadMetaStore(store)
+    app.include_router(threads.router)
+    return app, store, checkpointer
 
 
 def test_delete_thread_data_removes_thread_directory(tmp_path):
@@ -144,13 +179,87 @@ def test_search_threads_no_store_records_returns_empty_list():
             if False:
                 yield None
 
+    class _DummyThreadStore:
+        async def search(self, *, metadata=None, status=None, limit=100, offset=0, user_id=None):
+            return []
+
     app = make_authed_test_app()
     app.include_router(threads.router)
     app.state.store = None
     app.state.checkpointer = _DummyCheckpointer()
+    app.state.thread_store = _DummyThreadStore()
 
     with TestClient(app) as client:
         response = client.post("/api/threads/search", json={})
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_create_thread_returns_iso_timestamps() -> None:
+    app, _store, _checkpointer = _build_thread_app()
+
+    with TestClient(app) as client:
+        response = client.post("/api/threads", json={"metadata": {}})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert _ISO_TIMESTAMP_RE.match(body["created_at"]), body["created_at"]
+    assert _ISO_TIMESTAMP_RE.match(body["updated_at"]), body["updated_at"]
+    assert body["created_at"] == body["updated_at"]
+
+
+def test_get_thread_returns_iso_for_legacy_unix_record() -> None:
+    app, store, checkpointer = _build_thread_app()
+
+    legacy_thread_id = "legacy-thread"
+    legacy_ts = "1777252410.411327"
+
+    async def _seed() -> None:
+        await store.aput(
+            THREADS_NS,
+            legacy_thread_id,
+            {
+                "thread_id": legacy_thread_id,
+                "status": "idle",
+                "created_at": legacy_ts,
+                "updated_at": legacy_ts,
+                "metadata": {},
+            },
+        )
+        from langgraph.checkpoint.base import empty_checkpoint
+
+        await checkpointer.aput(
+            {"configurable": {"thread_id": legacy_thread_id, "checkpoint_ns": ""}},
+            empty_checkpoint(),
+            {"step": -1, "source": "input", "writes": None, "parents": {}},
+            {},
+        )
+
+    import asyncio
+
+    asyncio.run(_seed())
+
+    with TestClient(app) as client:
+        response = client.get(f"/api/threads/{legacy_thread_id}")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert _ISO_TIMESTAMP_RE.match(body["created_at"]), body["created_at"]
+    assert _ISO_TIMESTAMP_RE.match(body["updated_at"]), body["updated_at"]
+
+
+def test_memory_thread_meta_store_writes_iso_on_create() -> None:
+    import asyncio
+
+    store = InMemoryStore()
+    repo = MemoryThreadMetaStore(store)
+
+    async def _scenario() -> dict:
+        await repo.create("fresh", user_id=None, metadata={"a": 1})
+        record = (await store.aget(THREADS_NS, "fresh")).value
+        return record
+
+    record = asyncio.run(_scenario())
+    assert _ISO_TIMESTAMP_RE.match(record["created_at"]), record
+    assert _ISO_TIMESTAMP_RE.match(record["updated_at"]), record
