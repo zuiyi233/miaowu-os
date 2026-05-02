@@ -13,32 +13,23 @@ matching the LangGraph Platform wire format expected by the
 from __future__ import annotations
 
 import logging
-import time
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from langgraph.checkpoint.base import empty_checkpoint
 from pydantic import BaseModel, Field, field_validator
 
 from app.gateway.authz import require_permission
-from app.gateway.deps import get_checkpointer, get_store
+from app.gateway.deps import get_checkpointer
 from app.gateway.utils import sanitize_log_param
 from deerflow.config.paths import Paths, get_paths
-from deerflow.media import draft_media_store
 from deerflow.runtime import serialize_channel_values
 from deerflow.runtime.user_context import get_effective_user_id
+from deerflow.utils.time import coerce_iso, now_iso
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/threads", tags=["threads"])
-
-
-# ---------------------------------------------------------------------------
-# Store namespace
-# ---------------------------------------------------------------------------
-
-THREADS_NS: tuple[str, ...] = ("threads",)
-"""Namespace used by the Store for thread metadata records."""
 
 
 # Metadata keys that the server controls; clients are not allowed to set
@@ -172,159 +163,6 @@ def _delete_thread_data(thread_id: str, paths: Paths | None = None, *, user_id: 
     return ThreadDeleteResponse(success=True, message=f"Deleted local thread data for {thread_id}")
 
 
-async def _store_get(store, thread_id: str) -> dict | None:
-    """Fetch a thread record from the Store; returns ``None`` if absent."""
-    item = await store.aget(THREADS_NS, thread_id)
-    return item.value if item is not None else None
-
-
-async def _store_put(store, record: dict) -> None:
-    """Write a thread record to the Store."""
-    await store.aput(THREADS_NS, record["thread_id"], record)
-
-
-async def _store_upsert(store, thread_id: str, *, metadata: dict | None = None, values: dict | None = None) -> None:
-    """Create or refresh a thread record in the Store.
-
-    On creation the record is written with ``status="idle"``.  On update only
-    ``updated_at`` (and optionally ``metadata`` / ``values``) are changed so
-    that existing fields are preserved.
-
-    ``values`` carries the agent-state snapshot exposed to the frontend
-    (currently just ``{"title": "..."}``).
-    """
-    now = time.time()
-    existing = await _store_get(store, thread_id)
-    if existing is None:
-        await _store_put(
-            store,
-            {
-                "thread_id": thread_id,
-                "status": "idle",
-                "created_at": now,
-                "updated_at": now,
-                "metadata": metadata or {},
-                "values": values or {},
-            },
-        )
-    else:
-        val = dict(existing)
-        val["updated_at"] = now
-        if metadata:
-            val.setdefault("metadata", {}).update(metadata)
-        if values:
-            val.setdefault("values", {}).update(values)
-        await _store_put(store, val)
-
-
-def _to_timestamp_seconds(value: Any) -> float | None:
-    """Parse timestamp-like values into epoch seconds."""
-    if value is None:
-        return None
-
-    if isinstance(value, (int, float)):
-        return float(value)
-
-    if isinstance(value, str):
-        trimmed = value.strip()
-        if not trimmed:
-            return None
-        try:
-            return float(trimmed)
-        except ValueError:
-            try:
-                parsed = datetime.fromisoformat(trimmed.replace("Z", "+00:00"))
-            except ValueError:
-                return None
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=UTC)
-            return parsed.timestamp()
-
-    return None
-
-
-def _to_iso_timestamp(value: Any) -> str:
-    """Normalize numeric or ISO-like timestamps into UTC ISO-8601 string."""
-    ts = _to_timestamp_seconds(value)
-    if ts is None:
-        if isinstance(value, str):
-            return value
-        return ""
-    return datetime.fromtimestamp(ts, tz=UTC).isoformat().replace("+00:00", "Z")
-
-
-def _parse_expiration_ts(value: Any) -> float | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.timestamp()
-
-
-def _filter_expired_draft_media(values: dict[str, Any]) -> dict[str, Any]:
-    draft_media = values.get("draft_media")
-    if not isinstance(draft_media, dict) or not draft_media:
-        return values
-
-    now = time.time()
-    filtered_draft_media: dict[str, Any] = {}
-    changed = False
-
-    for draft_id, draft_value in draft_media.items():
-        if not isinstance(draft_value, dict):
-            filtered_draft_media[draft_id] = draft_value
-            continue
-
-        expires_ts = _parse_expiration_ts(draft_value.get("expires_at"))
-        if expires_ts is not None and expires_ts <= now:
-            changed = True
-            continue
-
-        filtered_draft_media[draft_id] = draft_value
-
-    if not changed:
-        return values
-
-    filtered_values = dict(values)
-    if filtered_draft_media:
-        filtered_values["draft_media"] = filtered_draft_media
-    else:
-        filtered_values.pop("draft_media", None)
-    return filtered_values
-
-
-def _cleanup_expired_channel_values(thread_id: str, channel_values: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    try:
-        draft_media_store.cleanup_expired(thread_id=thread_id)
-    except Exception:
-        logger.debug("Failed to cleanup expired draft media for thread %s", thread_id, exc_info=True)
-    filtered_values = _filter_expired_draft_media(channel_values)
-    return filtered_values, filtered_values != channel_values
-
-
-async def _persist_cleaned_draft_media_checkpoint(
-    *,
-    checkpointer: Any,
-    thread_id: str,
-    checkpoint_tuple: Any,
-    channel_values: dict[str, Any],
-    as_node: str,
-) -> None:
-    checkpoint: dict[str, Any] = dict(getattr(checkpoint_tuple, "checkpoint", {}) or {})
-    metadata: dict[str, Any] = dict(getattr(checkpoint_tuple, "metadata", {}) or {})
-    checkpoint["channel_values"] = channel_values
-    metadata["updated_at"] = time.time()
-    metadata["source"] = "update"
-    metadata["step"] = metadata.get("step", 0) + 1
-    metadata["writes"] = {as_node: {"draft_media": {"_expired_removed": True}}}
-    config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
-    await checkpointer.aput(config, checkpoint, metadata, {})
-
-
 def _derive_thread_status(checkpoint_tuple) -> str:
     """Derive thread status from checkpoint metadata."""
     if checkpoint_tuple is None:
@@ -393,25 +231,23 @@ async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadRe
     """
     from app.gateway.deps import get_thread_store
 
-    store = get_store(request)
     checkpointer = get_checkpointer(request)
     thread_store = get_thread_store(request)
     thread_id = body.thread_id or str(uuid.uuid4())
-    now = time.time()
+    now = now_iso()
     # ``body.metadata`` is already stripped of server-reserved keys by
     # ``ThreadCreateRequest._strip_reserved`` — see the model definition.
 
-    # Idempotency: return existing record from Store when already present
-    if store is not None:
-        existing_record = await _store_get(store, thread_id)
-        if existing_record is not None:
-            return ThreadResponse(
-                thread_id=thread_id,
-                status=existing_record.get("status", "idle"),
-                created_at=_to_iso_timestamp(existing_record.get("created_at")),
-                updated_at=_to_iso_timestamp(existing_record.get("updated_at")),
-                metadata=existing_record.get("metadata", {}),
-            )
+    # Idempotency: return existing record when already present
+    existing_record = await thread_store.get(thread_id)
+    if existing_record is not None:
+        return ThreadResponse(
+            thread_id=thread_id,
+            status=existing_record.get("status", "idle"),
+            created_at=coerce_iso(existing_record.get("created_at", "")),
+            updated_at=coerce_iso(existing_record.get("updated_at", "")),
+            metadata=existing_record.get("metadata", {}),
+        )
 
     # Write thread_meta so the thread appears in /threads/search immediately
     try:
@@ -427,8 +263,6 @@ async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadRe
     # Write an empty checkpoint so state endpoints work immediately
     config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
     try:
-        from langgraph.checkpoint.base import empty_checkpoint
-
         ckpt_metadata = {
             "step": -1,
             "source": "input",
@@ -446,8 +280,8 @@ async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadRe
     return ThreadResponse(
         thread_id=thread_id,
         status="idle",
-        created_at=_to_iso_timestamp(now),
-        updated_at=_to_iso_timestamp(now),
+        created_at=now,
+        updated_at=now,
         metadata=body.metadata,
     )
 
@@ -459,95 +293,30 @@ async def search_threads(body: ThreadSearchRequest, request: Request) -> list[Th
     Delegates to the configured ThreadMetaStore implementation
     (SQL-backed for sqlite/postgres, Store-backed for memory mode).
     """
-    # -----------------------------------------------------------------------
-    # Phase 1: Store
-    # -----------------------------------------------------------------------
-    store = get_store(request)
-    checkpointer = get_checkpointer(request)
+    from app.gateway.deps import get_thread_store
 
-    merged: dict[str, ThreadResponse] = {}
-
-    if store is not None:
-        try:
-            items = await store.asearch(THREADS_NS, limit=10_000)
-        except Exception:
-            logger.warning("Store search failed — falling back to checkpointer only", exc_info=True)
-            items = []
-
-        for item in items:
-            val = item.value
-            merged[val["thread_id"]] = ThreadResponse(
-                thread_id=val["thread_id"],
-                status=val.get("status", "idle"),
-                created_at=_to_iso_timestamp(val.get("created_at")),
-                updated_at=_to_iso_timestamp(val.get("updated_at")),
-                metadata=val.get("metadata", {}),
-                values=val.get("values", {}),
-            )
-
-    # -----------------------------------------------------------------------
-    # Phase 2: Checkpointer supplement
-    # Discovers threads not yet in the Store (e.g. created by LangGraph
-    # Server) and lazily migrates them so future searches skip this phase.
-    # -----------------------------------------------------------------------
-    try:
-        async for checkpoint_tuple in checkpointer.alist(None):
-            cfg = getattr(checkpoint_tuple, "config", {})
-            thread_id = cfg.get("configurable", {}).get("thread_id")
-            if not thread_id or thread_id in merged:
-                continue
-
-            # Skip sub-graph checkpoints (checkpoint_ns is non-empty for those)
-            if cfg.get("configurable", {}).get("checkpoint_ns", ""):
-                continue
-
-            ckpt_meta = getattr(checkpoint_tuple, "metadata", {}) or {}
-            # Strip LangGraph internal keys from the user-visible metadata dict
-            user_meta = {k: v for k, v in ckpt_meta.items() if k not in ("created_at", "updated_at", "step", "source", "writes", "parents")}
-
-            # Extract state values (title) from the checkpoint's channel_values
-            checkpoint_data = getattr(checkpoint_tuple, "checkpoint", {}) or {}
-            channel_values = checkpoint_data.get("channel_values", {})
-            ckpt_values = {}
-            if title := channel_values.get("title"):
-                ckpt_values["title"] = title
-
-            thread_resp = ThreadResponse(
-                thread_id=thread_id,
-                status=_derive_thread_status(checkpoint_tuple),
-                created_at=_to_iso_timestamp(ckpt_meta.get("created_at")),
-                updated_at=_to_iso_timestamp(ckpt_meta.get("updated_at", ckpt_meta.get("created_at"))),
-                metadata=user_meta,
-                values=ckpt_values,
-            )
-            merged[thread_id] = thread_resp
-
-            # Lazy migration — write to Store so the next search finds it there
-            if store is not None:
-                try:
-                    await _store_upsert(store, thread_id, metadata=user_meta, values=ckpt_values or None)
-                except Exception:
-                    logger.debug("Failed to migrate thread %s to store (non-fatal)", thread_id)
-    except Exception:
-        logger.exception("Checkpointer scan failed during thread search")
-        # Don't raise — return whatever was collected from Store + partial scan
-
-    # -----------------------------------------------------------------------
-    # Phase 3: Filter → sort → paginate
-    # -----------------------------------------------------------------------
-    results = list(merged.values())
-
-    if body.metadata:
-        results = [r for r in results if all(r.metadata.get(k) == v for k, v in body.metadata.items())]
-
-    if body.status:
-        results = [r for r in results if r.status == body.status]
-
-    results.sort(
-        key=lambda r: _to_timestamp_seconds(r.updated_at) or 0.0,
-        reverse=True,
+    repo = get_thread_store(request)
+    rows = await repo.search(
+        metadata=body.metadata or None,
+        status=body.status,
+        limit=body.limit,
+        offset=body.offset,
     )
-    return results[body.offset : body.offset + body.limit]
+    return [
+        ThreadResponse(
+            thread_id=r["thread_id"],
+            status=r.get("status", "idle"),
+            # ``coerce_iso`` heals legacy unix-second values that
+            # ``MemoryThreadMetaStore`` historically wrote with ``time.time()``;
+            # SQL-backed rows already arrive as ISO strings and pass through.
+            created_at=coerce_iso(r.get("created_at", "")),
+            updated_at=coerce_iso(r.get("updated_at", "")),
+            metadata=r.get("metadata", {}),
+            values={"title": r["display_name"]} if r.get("display_name") else {},
+            interrupts={},
+        )
+        for r in rows
+    ]
 
 
 @router.patch("/{thread_id}", response_model=ThreadResponse)
@@ -573,8 +342,8 @@ async def patch_thread(thread_id: str, body: ThreadPatchRequest, request: Reques
     return ThreadResponse(
         thread_id=thread_id,
         status=record.get("status", "idle"),
-        created_at=_to_iso_timestamp(record.get("created_at")),
-        updated_at=_to_iso_timestamp(record.get("updated_at")),
+        created_at=coerce_iso(record.get("created_at", "")),
+        updated_at=coerce_iso(record.get("updated_at", "")),
         metadata=record.get("metadata", {}),
     )
 
@@ -614,8 +383,8 @@ async def get_thread(thread_id: str, request: Request) -> ThreadResponse:
         record = {
             "thread_id": thread_id,
             "status": "idle",
-            "created_at": ckpt_meta.get("created_at", ""),
-            "updated_at": ckpt_meta.get("updated_at", ckpt_meta.get("created_at", "")),
+            "created_at": coerce_iso(ckpt_meta.get("created_at", "")),
+            "updated_at": coerce_iso(ckpt_meta.get("updated_at", ckpt_meta.get("created_at", ""))),
             "metadata": {k: v for k, v in ckpt_meta.items() if k not in ("created_at", "updated_at", "step", "source", "writes", "parents")},
         }
 
@@ -625,28 +394,14 @@ async def get_thread(thread_id: str, request: Request) -> ThreadResponse:
     status = _derive_thread_status(checkpoint_tuple) if checkpoint_tuple is not None else record.get("status", "idle")
     checkpoint = getattr(checkpoint_tuple, "checkpoint", {}) or {} if checkpoint_tuple is not None else {}
     channel_values = checkpoint.get("channel_values", {})
-    if not isinstance(channel_values, dict):
-        channel_values = {}
-    cleaned_channel_values, filtered_changed = _cleanup_expired_channel_values(thread_id, channel_values)
-    if filtered_changed and checkpoint_tuple is not None:
-        try:
-            await _persist_cleaned_draft_media_checkpoint(
-                checkpointer=checkpointer,
-                thread_id=thread_id,
-                checkpoint_tuple=checkpoint_tuple,
-                channel_values=cleaned_channel_values,
-                as_node="threads.get_thread.cleanup_expired_draft_media",
-            )
-        except Exception:
-            logger.debug("Failed to persist expired draft_media cleanup for thread %s", thread_id, exc_info=True)
 
     return ThreadResponse(
         thread_id=thread_id,
         status=status,
-        created_at=_to_iso_timestamp(record.get("created_at")),
-        updated_at=_to_iso_timestamp(record.get("updated_at")),
+        created_at=coerce_iso(record.get("created_at", "")),
+        updated_at=coerce_iso(record.get("updated_at", "")),
         metadata=record.get("metadata", {}),
-        values=serialize_channel_values(cleaned_channel_values),
+        values=serialize_channel_values(channel_values),
     )
 
 
@@ -679,20 +434,6 @@ async def get_thread_state(thread_id: str, request: Request) -> ThreadStateRespo
         checkpoint_id = ckpt_config.get("configurable", {}).get("checkpoint_id")
 
     channel_values = checkpoint.get("channel_values", {})
-    if not isinstance(channel_values, dict):
-        channel_values = {}
-    cleaned_channel_values, filtered_changed = _cleanup_expired_channel_values(thread_id, channel_values)
-    if filtered_changed:
-        try:
-            await _persist_cleaned_draft_media_checkpoint(
-                checkpointer=checkpointer,
-                thread_id=thread_id,
-                checkpoint_tuple=checkpoint_tuple,
-                channel_values=cleaned_channel_values,
-                as_node="threads.get_thread_state.cleanup_expired_draft_media",
-            )
-        except Exception:
-            logger.debug("Failed to persist expired draft_media cleanup for thread %s", thread_id, exc_info=True)
 
     parent_config = getattr(checkpoint_tuple, "parent_config", None)
     parent_checkpoint_id = None
@@ -703,14 +444,16 @@ async def get_thread_state(thread_id: str, request: Request) -> ThreadStateRespo
     next_tasks = [t.name for t in tasks_raw if hasattr(t, "name")]
     tasks = [{"id": getattr(t, "id", ""), "name": getattr(t, "name", "")} for t in tasks_raw]
 
+    values = serialize_channel_values(channel_values)
+
     return ThreadStateResponse(
-        values=serialize_channel_values(cleaned_channel_values),
+        values=values,
         next=next_tasks,
         metadata=metadata,
-        checkpoint={"id": checkpoint_id, "ts": _to_iso_timestamp(metadata.get("created_at"))},
+        checkpoint={"id": checkpoint_id, "ts": coerce_iso(metadata.get("created_at", ""))},
         checkpoint_id=checkpoint_id,
         parent_checkpoint_id=parent_checkpoint_id,
-        created_at=_to_iso_timestamp(metadata.get("created_at")),
+        created_at=coerce_iso(metadata.get("created_at", "")),
         tasks=tasks,
     )
 
@@ -760,7 +503,7 @@ async def update_thread_state(thread_id: str, body: ThreadStateUpdateRequest, re
         channel_values.update(body.values)
 
     checkpoint["channel_values"] = channel_values
-    metadata["updated_at"] = time.time()
+    metadata["updated_at"] = now_iso()
 
     if body.as_node:
         metadata["source"] = "update"
@@ -801,7 +544,7 @@ async def update_thread_state(thread_id: str, body: ThreadStateUpdateRequest, re
         next=[],
         metadata=metadata,
         checkpoint_id=new_checkpoint_id,
-        created_at=_to_iso_timestamp(metadata.get("created_at")),
+        created_at=coerce_iso(metadata.get("created_at", "")),
     )
 
 
@@ -866,9 +609,9 @@ async def get_thread_history(thread_id: str, body: ThreadHistoryRequest, request
                 HistoryEntry(
                     checkpoint_id=checkpoint_id,
                     parent_checkpoint_id=parent_id,
-                    metadata=metadata,
-                    values=serialize_channel_values(channel_values),
-                    created_at=_to_iso_timestamp(metadata.get("created_at")),
+                    metadata=user_meta,
+                    values=values,
+                    created_at=coerce_iso(metadata.get("created_at", "")),
                     next=next_tasks,
                 )
             )

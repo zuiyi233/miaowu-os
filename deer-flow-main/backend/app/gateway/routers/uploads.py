@@ -5,22 +5,24 @@ import os
 import stat
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.gateway.authz import require_permission
 from app.gateway.deps import get_config
-from deerflow.config.app_config import AppConfig, get_app_config
+from deerflow.config.app_config import AppConfig
 from deerflow.config.paths import get_paths
 from deerflow.runtime.user_context import get_effective_user_id
 from deerflow.sandbox.sandbox_provider import SandboxProvider, get_sandbox_provider
 from deerflow.uploads.manager import (
     PathTraversalError,
+    UnsafeUploadPathError,
     delete_file_safe,
     enrich_file_listing,
     ensure_uploads_dir,
     get_uploads_dir,
     list_files_in_dir,
     normalize_filename,
+    open_upload_file_no_symlink,
     upload_artifact_url,
     upload_virtual_path,
 )
@@ -42,6 +44,7 @@ class UploadResponse(BaseModel):
     success: bool
     files: list[dict[str, str]]
     message: str
+    skipped_files: list[str] = Field(default_factory=list)
 
 
 class UploadLimits(BaseModel):
@@ -74,23 +77,88 @@ def _uses_thread_data_mounts(sandbox_provider: SandboxProvider) -> bool:
     return bool(getattr(sandbox_provider, "uses_thread_data_mounts", False))
 
 
-def _get_uploads_config_value(key: str, default: object) -> object:
+def _get_uploads_config_value(app_config: AppConfig, key: str, default: object) -> object:
     """Read a value from the uploads config, supporting dict and attribute access."""
-    cfg = get_app_config()
-    uploads_cfg = getattr(cfg, "uploads", None)
+    uploads_cfg = getattr(app_config, "uploads", None)
     if isinstance(uploads_cfg, dict):
         return uploads_cfg.get(key, default)
     return getattr(uploads_cfg, key, default)
 
 
-def _auto_convert_documents_enabled() -> bool:
+def _get_upload_limit(app_config: AppConfig, key: str, default: int, *, legacy_key: str | None = None) -> int:
+    try:
+        value = _get_uploads_config_value(app_config, key, None)
+        if value is None and legacy_key is not None:
+            value = _get_uploads_config_value(app_config, legacy_key, None)
+        if value is None:
+            value = default
+        limit = int(value)
+        if limit <= 0:
+            raise ValueError
+        return limit
+    except Exception:
+        logger.warning("Invalid uploads.%s value; falling back to %d", key, default)
+        return default
+
+
+def _get_upload_limits(app_config: AppConfig) -> UploadLimits:
+    return UploadLimits(
+        max_files=_get_upload_limit(app_config, "max_files", DEFAULT_MAX_FILES, legacy_key="max_file_count"),
+        max_file_size=_get_upload_limit(app_config, "max_file_size", DEFAULT_MAX_FILE_SIZE, legacy_key="max_single_file_size"),
+        max_total_size=_get_upload_limit(app_config, "max_total_size", DEFAULT_MAX_TOTAL_SIZE),
+    )
+
+
+def _cleanup_uploaded_paths(paths: list[os.PathLike[str] | str]) -> None:
+    for path in reversed(paths):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            logger.warning("Failed to clean up upload path after rejected request: %s", path, exc_info=True)
+
+
+async def _write_upload_file_with_limits(
+    file: UploadFile,
+    *,
+    uploads_dir: os.PathLike[str] | str,
+    display_filename: str,
+    max_single_file_size: int,
+    max_total_size: int,
+    total_size: int,
+) -> tuple[os.PathLike[str] | str, int, int]:
+    file_size = 0
+    file_path, fh = open_upload_file_no_symlink(uploads_dir, display_filename)
+    try:
+        while chunk := await file.read(UPLOAD_CHUNK_SIZE):
+            file_size += len(chunk)
+            total_size += len(chunk)
+            if file_size > max_single_file_size:
+                raise HTTPException(status_code=413, detail=f"File too large: {display_filename}")
+            if total_size > max_total_size:
+                raise HTTPException(status_code=413, detail="Total upload size too large")
+            fh.write(chunk)
+    except Exception:
+        fh.close()
+        try:
+            os.unlink(file_path)
+        except FileNotFoundError:
+            pass
+        raise
+    else:
+        fh.close()
+    return file_path, file_size, total_size
+
+
+def _auto_convert_documents_enabled(app_config: AppConfig) -> bool:
     """Return whether automatic host-side document conversion is enabled.
 
     The secure default is disabled unless an operator explicitly opts in via
     uploads.auto_convert_documents in config.yaml.
     """
     try:
-        raw = _get_uploads_config_value("auto_convert_documents", False)
+        raw = _get_uploads_config_value(app_config, "auto_convert_documents", False)
         if isinstance(raw, str):
             return raw.strip().lower() in {"1", "true", "yes", "on"}
         return bool(raw)
@@ -122,6 +190,7 @@ async def upload_files(
     uploaded_files = []
     written_paths = []
     sandbox_sync_targets = []
+    skipped_files = []
     total_size = 0
 
     sandbox_provider = get_sandbox_provider()
@@ -130,7 +199,9 @@ async def upload_files(
     if sync_to_sandbox:
         sandbox_id = sandbox_provider.acquire(thread_id)
         sandbox = sandbox_provider.get(sandbox_id)
-    auto_convert_documents = _auto_convert_documents_enabled()
+        if sandbox is None:
+            raise HTTPException(status_code=500, detail="Failed to acquire sandbox")
+    auto_convert_documents = _auto_convert_documents_enabled(config)
 
     for file in files:
         if not file.filename:
@@ -143,16 +214,15 @@ async def upload_files(
             continue
 
         try:
-            file_path = uploads_dir / safe_filename
-            written_paths.append(file_path)
-            file_size, total_size = await _write_upload_file_streaming(
+            file_path, file_size, total_size = await _write_upload_file_with_limits(
                 file,
-                file_path,
+                uploads_dir=uploads_dir,
                 display_filename=safe_filename,
                 max_single_file_size=limits.max_file_size,
                 max_total_size=limits.max_total_size,
                 total_size=total_size,
             )
+            written_paths.append(file_path)
 
             virtual_path = upload_virtual_path(safe_filename)
 
@@ -189,6 +259,10 @@ async def upload_files(
         except HTTPException as e:
             _cleanup_uploaded_paths(written_paths)
             raise e
+        except UnsafeUploadPathError as e:
+            logger.warning("Skipping upload with unsafe destination %s: %s", file.filename, e)
+            skipped_files.append(safe_filename)
+            continue
         except Exception as e:
             logger.error(f"Failed to upload {file.filename}: {e}")
             _cleanup_uploaded_paths(written_paths)
@@ -199,10 +273,15 @@ async def upload_files(
             _make_file_sandbox_writable(file_path)
             sandbox.update_file(virtual_path, file_path.read_bytes())
 
+    message = f"Successfully uploaded {len(uploaded_files)} file(s)"
+    if skipped_files:
+        message += f"; skipped {len(skipped_files)} unsafe file(s)"
+
     return UploadResponse(
-        success=True,
+        success=not skipped_files,
         files=uploaded_files,
-        message=f"Successfully uploaded {len(uploaded_files)} file(s)",
+        message=message,
+        skipped_files=skipped_files,
     )
 
 
