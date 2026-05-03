@@ -13,6 +13,7 @@ matching the LangGraph Platform wire format expected by the
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from typing import Any
 
@@ -24,6 +25,7 @@ from app.gateway.authz import require_permission
 from app.gateway.deps import get_checkpointer
 from app.gateway.utils import sanitize_log_param
 from deerflow.config.paths import Paths, get_paths
+from deerflow.media import draft_media_store
 from deerflow.runtime import serialize_channel_values
 from deerflow.runtime.user_context import get_effective_user_id
 from deerflow.utils.time import coerce_iso, now_iso
@@ -182,6 +184,139 @@ def _derive_thread_status(checkpoint_tuple) -> str:
     return "idle"
 
 
+def _filter_expired_draft_media(values: dict[str, Any]) -> dict[str, Any]:
+    draft_media = values.get("draft_media")
+    if not isinstance(draft_media, dict) or not draft_media:
+        return values
+
+    now = time.time()
+    filtered_draft_media: dict[str, Any] = {}
+    changed = False
+
+    for draft_id, draft_value in draft_media.items():
+        if not isinstance(draft_value, dict):
+            filtered_draft_media[draft_id] = draft_value
+            continue
+
+        expires_at = draft_value.get("expires_at")
+        if isinstance(expires_at, str) and expires_at.strip():
+            try:
+                from datetime import UTC, datetime
+
+                parsed = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=UTC)
+                if parsed.timestamp() <= now:
+                    changed = True
+                    continue
+            except Exception:
+                pass
+
+        filtered_draft_media[draft_id] = draft_value
+
+    if not changed:
+        return values
+
+    filtered_values = dict(values)
+    if filtered_draft_media:
+        filtered_values["draft_media"] = filtered_draft_media
+    else:
+        filtered_values.pop("draft_media", None)
+    return filtered_values
+
+
+def _cleanup_expired_channel_values(thread_id: str, channel_values: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    try:
+        draft_media_store.cleanup_expired(thread_id=thread_id)
+    except Exception:
+        logger.debug("Failed to cleanup expired draft media for thread %s", sanitize_log_param(thread_id), exc_info=True)
+
+    filtered_values = _filter_expired_draft_media(channel_values)
+    return filtered_values, filtered_values != channel_values
+
+
+async def _persist_cleaned_draft_media_checkpoint(
+    *,
+    checkpointer: Any,
+    thread_id: str,
+    checkpoint_tuple: Any,
+    channel_values: dict[str, Any],
+    as_node: str,
+) -> None:
+    checkpoint: dict[str, Any] = dict(getattr(checkpoint_tuple, "checkpoint", {}) or {})
+    metadata: dict[str, Any] = dict(getattr(checkpoint_tuple, "metadata", {}) or {})
+    checkpoint["channel_values"] = channel_values
+    metadata["updated_at"] = now_iso()
+    metadata["source"] = "update"
+    metadata["step"] = metadata.get("step", 0) + 1
+    metadata["writes"] = {as_node: {"draft_media": {"_expired_removed": True}}}
+    config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+    await checkpointer.aput(config, checkpoint, metadata, {})
+
+
+def _get_request_user_id(request: Request) -> str | None:
+    user = getattr(request.state, "user", None)
+    user_id = getattr(user, "id", None)
+    if user_id is not None:
+        return str(user_id)
+    auth = getattr(request.state, "auth", None)
+    auth_user = getattr(auth, "user", None)
+    user_id = getattr(auth_user, "id", None)
+    return str(user_id) if user_id is not None else None
+
+
+async def _iter_thread_store_rows(thread_store, *, metadata: dict[str, Any] | None, status: str | None, page_size: int = 500):
+    offset = 0
+    while True:
+        rows = await thread_store.search(
+            metadata=metadata,
+            status=status,
+            limit=page_size,
+            offset=offset,
+        )
+        if not rows:
+            return
+        for row in rows:
+            yield row
+        if len(rows) < page_size:
+            return
+        offset += page_size
+
+
+def _thread_response_from_record(record: dict[str, Any]) -> ThreadResponse:
+    return ThreadResponse(
+        thread_id=record["thread_id"],
+        status=record.get("status", "idle"),
+        created_at=coerce_iso(record.get("created_at", "")),
+        updated_at=coerce_iso(record.get("updated_at", "")),
+        metadata=record.get("metadata", {}),
+        values={"title": record["display_name"]} if record.get("display_name") else {},
+        interrupts={},
+    )
+
+
+def _thread_response_from_checkpoint(checkpoint_tuple: Any, *, thread_id: str) -> ThreadResponse:
+    ckpt_meta = getattr(checkpoint_tuple, "metadata", {}) or {}
+    checkpoint = getattr(checkpoint_tuple, "checkpoint", {}) or {}
+    channel_values = checkpoint.get("channel_values", {})
+    if not isinstance(channel_values, dict):
+        channel_values = {}
+    user_meta = {
+        k: v
+        for k, v in ckpt_meta.items()
+        if k not in ("created_at", "updated_at", "step", "source", "writes", "parents", "user_id", "owner_id")
+    }
+    return ThreadResponse(
+        thread_id=thread_id,
+        status=_derive_thread_status(checkpoint_tuple),
+        created_at=coerce_iso(ckpt_meta.get("created_at", "")),
+        updated_at=coerce_iso(ckpt_meta.get("updated_at", ckpt_meta.get("created_at", ""))),
+        metadata=user_meta,
+        values={"title": channel_values["title"]} if channel_values.get("title") else {},
+        interrupts={},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -290,33 +425,48 @@ async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadRe
 async def search_threads(body: ThreadSearchRequest, request: Request) -> list[ThreadResponse]:
     """Search and list threads.
 
-    Delegates to the configured ThreadMetaStore implementation
-    (SQL-backed for sqlite/postgres, Store-backed for memory mode).
+    Primary source is the configured ThreadMetaStore. A checkpointer
+    fallback keeps legacy / checkpointer-only threads visible, while
+    preserving owner isolation and de-duplicating by thread_id.
     """
     from app.gateway.deps import get_thread_store
 
     repo = get_thread_store(request)
+    user_id = _get_request_user_id(request)
     rows = await repo.search(
         metadata=body.metadata or None,
         status=body.status,
         limit=body.limit,
         offset=body.offset,
     )
-    return [
-        ThreadResponse(
-            thread_id=r["thread_id"],
-            status=r.get("status", "idle"),
-            # ``coerce_iso`` heals legacy unix-second values that
-            # ``MemoryThreadMetaStore`` historically wrote with ``time.time()``;
-            # SQL-backed rows already arrive as ISO strings and pass through.
-            created_at=coerce_iso(r.get("created_at", "")),
-            updated_at=coerce_iso(r.get("updated_at", "")),
-            metadata=r.get("metadata", {}),
-            values={"title": r["display_name"]} if r.get("display_name") else {},
-            interrupts={},
-        )
-        for r in rows
-    ]
+    merged: dict[str, ThreadResponse] = {row["thread_id"]: _thread_response_from_record(row) for row in rows}
+
+    checkpointer = get_checkpointer(request)
+    try:
+        ckpt_filter: dict[str, Any] | None = None
+        if user_id is not None:
+            ckpt_filter = {"user_id": user_id}
+        async for checkpoint_tuple in checkpointer.alist(None, filter=ckpt_filter, limit=body.limit + body.offset):
+            cfg = getattr(checkpoint_tuple, "config", {}) or {}
+            configurable = cfg.get("configurable", {}) or {}
+            thread_id = configurable.get("thread_id")
+            if not thread_id or thread_id in merged:
+                continue
+            if configurable.get("checkpoint_ns", ""):
+                continue
+            thread_resp = _thread_response_from_checkpoint(checkpoint_tuple, thread_id=thread_id)
+            if body.metadata and any(thread_resp.metadata.get(k) != v for k, v in body.metadata.items()):
+                continue
+            if body.status and thread_resp.status != body.status:
+                continue
+            merged[thread_id] = thread_resp
+            if len(merged) >= body.limit + body.offset:
+                break
+    except Exception:
+        logger.debug("Checkpointer fallback search failed for %s", sanitize_log_param(user_id or "anonymous"), exc_info=True)
+
+    ordered = sorted(merged.values(), key=lambda item: coerce_iso(item.updated_at), reverse=True)
+    return ordered[body.offset : body.offset + body.limit]
 
 
 @router.patch("/{thread_id}", response_model=ThreadResponse)
@@ -394,6 +544,20 @@ async def get_thread(thread_id: str, request: Request) -> ThreadResponse:
     status = _derive_thread_status(checkpoint_tuple) if checkpoint_tuple is not None else record.get("status", "idle")
     checkpoint = getattr(checkpoint_tuple, "checkpoint", {}) or {} if checkpoint_tuple is not None else {}
     channel_values = checkpoint.get("channel_values", {})
+    if not isinstance(channel_values, dict):
+        channel_values = {}
+    cleaned_channel_values, cleaned_changed = _cleanup_expired_channel_values(thread_id, channel_values)
+    if cleaned_changed and checkpoint_tuple is not None:
+        try:
+            await _persist_cleaned_draft_media_checkpoint(
+                checkpointer=checkpointer,
+                thread_id=thread_id,
+                checkpoint_tuple=checkpoint_tuple,
+                channel_values=cleaned_channel_values,
+                as_node="threads.get_thread.cleanup_expired_draft_media",
+            )
+        except Exception:
+            logger.debug("Failed to persist expired draft_media cleanup for thread %s", sanitize_log_param(thread_id), exc_info=True)
 
     return ThreadResponse(
         thread_id=thread_id,
@@ -401,7 +565,7 @@ async def get_thread(thread_id: str, request: Request) -> ThreadResponse:
         created_at=coerce_iso(record.get("created_at", "")),
         updated_at=coerce_iso(record.get("updated_at", "")),
         metadata=record.get("metadata", {}),
-        values=serialize_channel_values(channel_values),
+        values=serialize_channel_values(cleaned_channel_values),
     )
 
 
@@ -434,6 +598,20 @@ async def get_thread_state(thread_id: str, request: Request) -> ThreadStateRespo
         checkpoint_id = ckpt_config.get("configurable", {}).get("checkpoint_id")
 
     channel_values = checkpoint.get("channel_values", {})
+    if not isinstance(channel_values, dict):
+        channel_values = {}
+    cleaned_channel_values, cleaned_changed = _cleanup_expired_channel_values(thread_id, channel_values)
+    if cleaned_changed:
+        try:
+            await _persist_cleaned_draft_media_checkpoint(
+                checkpointer=checkpointer,
+                thread_id=thread_id,
+                checkpoint_tuple=checkpoint_tuple,
+                channel_values=cleaned_channel_values,
+                as_node="threads.get_thread_state.cleanup_expired_draft_media",
+            )
+        except Exception:
+            logger.debug("Failed to persist expired draft_media cleanup for thread %s", sanitize_log_param(thread_id), exc_info=True)
 
     parent_config = getattr(checkpoint_tuple, "parent_config", None)
     parent_checkpoint_id = None
@@ -444,7 +622,7 @@ async def get_thread_state(thread_id: str, request: Request) -> ThreadStateRespo
     next_tasks = [t.name for t in tasks_raw if hasattr(t, "name")]
     tasks = [{"id": getattr(t, "id", ""), "name": getattr(t, "name", "")} for t in tasks_raw]
 
-    values = serialize_channel_values(channel_values)
+    values = serialize_channel_values(cleaned_channel_values)
 
     return ThreadStateResponse(
         values=values,

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"后端审计规则入口"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"检查异常处理与回退路径回归"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查异步/缓存/后台任务质量约束"}
+{"file":".trellis/spec/frontend/index.md","reason":"前端改动时的审计基线"}
