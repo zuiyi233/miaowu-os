@@ -9,6 +9,8 @@ from types import ModuleType
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.responses import JSONResponse
 
 from app.gateway.auth_middleware import AuthMiddleware
 from app.gateway.config import get_gateway_config
@@ -17,6 +19,42 @@ from app.gateway.novel_migrated.core.logger import setup_logging
 from app.gateway.observability.context import install_trace_log_filter
 
 _FILE_LOG_ENABLED_VALUES = {"1", "true", "yes", "on"}
+
+logger = logging.getLogger(__name__)
+
+
+class _ExceptionShieldMiddleware:
+    """Pure-ASGI middleware that catches unhandled exceptions.
+
+    Placed *inside* the CORSMiddleware layer so that error responses
+    it produces still receive CORS headers from the outer CORS middleware.
+    Without this, exceptions bubbling out of BaseHTTPMiddleware (AuthMiddleware,
+    PromptCacheMiddleware, etc.) propagate straight to uvicorn, which returns
+    a bare 500 with no CORS headers — causing the browser to block the
+    response.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "?")
+        try:
+            await self.app(scope, receive, send)
+        except Exception as exc:
+            with open("_shield_debug.log", "a") as f:
+                import traceback
+                f.write(f"CAUGHT: {type(exc).__name__}: {exc}\n")
+                traceback.print_exc(file=f)
+                f.write("\n")
+            response = JSONResponse(
+                status_code=500,
+                content={"detail": "Internal Server Error"},
+            )
+            await response(scope, receive, send)
 
 
 def _is_truthy_env(name: str) -> bool:
@@ -431,6 +469,14 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
             },
         ],
     )
+
+    # Exception shield sits inside the CORS layer so that any unhandled
+    # exception is converted to a proper JSONResponse *before* the CORS
+    # middleware adds Access-Control-Allow-Origin.  Without this shield,
+    # exceptions from BaseHTTPMiddleware (Auth, PromptCache, etc.) bypass
+    # the CORS send-hook and reach uvicorn directly, producing a bare 500
+    # with no CORS headers — the browser then blocks the response.
+    app.add_middleware(_ExceptionShieldMiddleware)
 
     # Auth stays inside the CORS layer so browser preflight requests can be
     # answered with the negotiated CORS headers before auth rejects the call.

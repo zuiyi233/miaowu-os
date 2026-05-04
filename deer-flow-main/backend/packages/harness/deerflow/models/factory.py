@@ -4,6 +4,7 @@ from typing import Optional
 from langchain.chat_models import BaseChatModel
 
 from deerflow.config import get_app_config
+from deerflow.config.app_config import AppConfig
 from deerflow.reflection import resolve_class
 from deerflow.tracing import build_tracing_callbacks
 
@@ -104,7 +105,13 @@ def _normalize_model_name(name: str | object | None) -> Optional[str]:
     return result
 
 
-def create_chat_model(name: str | object | None = None, thinking_enabled: bool = False, **kwargs) -> BaseChatModel:
+def create_chat_model(
+    name: str | object | None = None,
+    thinking_enabled: bool = False,
+    *,
+    app_config: AppConfig | None = None,
+    **kwargs,
+) -> BaseChatModel:
     """Create a chat model instance from the config.
 
     Args:
@@ -120,7 +127,7 @@ def create_chat_model(name: str | object | None = None, thinking_enabled: bool =
         logger.warning("create_chat_model(model_name=...) is deprecated; use name=... instead.")
         name = legacy_model_name
 
-    config = get_app_config()
+    config = app_config or get_app_config()
     normalized_name = _normalize_model_name(name)
     if normalized_name is None:
         normalized_name = config.models[0].name

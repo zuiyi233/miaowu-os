@@ -398,11 +398,10 @@ def make_lead_agent(config: RunnableConfig):
 
     agent_config = load_agent_config(agent_name) if not is_bootstrap else None
     custom_middlewares: list[AgentMiddleware] | None = None
-    # Custom agent model from agent config (if any), or None to let _resolve_model_name pick the default
     agent_model_name = agent_config.model if agent_config and agent_config.model else None
 
-    # Final model name resolution: request → agent config → global default, with fallback for unknown names
-    model_name = _resolve_model_name(requested_model_name or agent_model_name, app_config=resolved_app_config)
+    effective_requested = requested_model_name or agent_model_name
+    model_name = _resolve_model_name(effective_requested, app_config=resolved_app_config)
 
     app_config = resolved_app_config
     model_config = app_config.get_model_config(model_name)
@@ -420,6 +419,10 @@ def make_lead_agent(config: RunnableConfig):
             model_runtime_overrides["model"] = runtime_model_name
         if runtime_base_url:
             model_runtime_overrides["base_url"] = runtime_base_url
+        elif runtime_model_name and not runtime_base_url:
+            config_base_url = model_config.model_dump(exclude_none=True).get("base_url") or model_config.model_dump(exclude_none=True).get("api_base")
+            if config_base_url:
+                model_runtime_overrides["base_url"] = config_base_url
         if runtime_api_key:
             model_runtime_overrides["api_key"] = runtime_api_key
     elif any((runtime_model_name, runtime_base_url, runtime_api_key)):
@@ -429,13 +432,15 @@ def make_lead_agent(config: RunnableConfig):
         )
 
     logger.info(
-        "Create Agent(%s) -> thinking_enabled: %s, reasoning_effort: %s, model_name: %s, runtime_model: %s, runtime_provider: %s, is_plan_mode: %s, subagent_enabled: %s, max_concurrent_subagents: %s",
+        "Create Agent(%s) -> thinking_enabled: %s, reasoning_effort: %s, model_name: %s, runtime_model: %s, runtime_provider: %s, runtime_base_url: %s, runtime_api_key: %s, is_plan_mode: %s, subagent_enabled: %s, max_concurrent_subagents: %s",
         agent_name or "default",
         thinking_enabled,
         reasoning_effort,
         model_name,
         runtime_model_name,
         runtime_provider,
+        "set" if runtime_base_url else "missing",
+        "set" if runtime_api_key else "missing",
         is_plan_mode,
         subagent_enabled,
         max_concurrent_subagents,

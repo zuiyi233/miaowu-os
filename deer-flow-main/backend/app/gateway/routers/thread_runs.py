@@ -9,8 +9,6 @@ the ``useStream`` React hook from ``@langchain/langgraph-sdk/react``
 works without modification.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import Any, Literal

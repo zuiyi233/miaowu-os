@@ -38,6 +38,11 @@ _TTL_ENV = "PROMPT_CACHE_TTL"
 _MAX_ENTRIES_ENV = "PROMPT_CACHE_MAX_ENTRIES"
 _MAX_REQUEST_BYTES_ENV = "PROMPT_CACHE_MAX_REQUEST_BYTES"
 
+try:
+    from starlette.middleware.base import _CachedRequest as _StarletteCachedRequest  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover - compatibility guard for Starlette internals
+    _StarletteCachedRequest = None
+
 
 @dataclass
 class CacheEntry:
@@ -109,6 +114,27 @@ class PromptCacheMiddleware(BaseHTTPMiddleware):
 
         request._receive = _receive  # type: ignore[attr-defined]
 
+    @staticmethod
+    def _should_override_receive(request: Request) -> bool:
+        """Whether request._receive can be safely replaced.
+
+        Starlette's BaseHTTPMiddleware wraps inbound requests as a private
+        ``_CachedRequest`` object. Overriding ``_receive`` on that object breaks
+        its disconnect-handshake state machine and can cause streaming responses
+        to raise ``Unexpected message received: http.request``.
+        """
+        if _StarletteCachedRequest is not None and isinstance(request, _StarletteCachedRequest):
+            return False
+
+        request_type = type(request)
+        if request_type.__name__ == "_CachedRequest":
+            return False
+
+        if request_type.__module__ == "starlette.middleware.base" and hasattr(request, "wrapped_receive"):
+            return False
+
+        return True
+
     async def dispatch(self, request: Request, call_next) -> Response:
         """Intercept and cache AI chat requests.
 
@@ -130,12 +156,21 @@ class PromptCacheMiddleware(BaseHTTPMiddleware):
         body = b""
         try:
             body = await request.body()
-            self._restore_request_body(request, body)
+            should_override_receive = self._should_override_receive(request)
+            if should_override_receive:
+                self._restore_request_body(request, body)
 
             if not body:
                 return await call_next(request)
 
             request_data = json.loads(body)
+            # Streaming responses must bypass prompt cache entirely.
+            if bool(request_data.get("stream")):
+                self._stats["misses"] += 1
+                if should_override_receive:
+                    self._restore_request_body(request, body)
+                return await call_next(request)
+
             cache_key = self._compute_cache_key(request_data)
 
             cached_entry = self._get_cached_entry(cache_key)
@@ -147,7 +182,8 @@ class PromptCacheMiddleware(BaseHTTPMiddleware):
             logger.debug("Cache MISS for key %s", cache_key[:16])
             self._stats["misses"] += 1
 
-            self._restore_request_body(request, body)
+            if should_override_receive:
+                self._restore_request_body(request, body)
             response = await call_next(request)
 
             if response.status_code == 200:
@@ -166,11 +202,13 @@ class PromptCacheMiddleware(BaseHTTPMiddleware):
 
         except json.JSONDecodeError as exc:
             logger.warning("Failed to parse request body for caching: %s", exc)
-            self._restore_request_body(request, body)
+            if self._should_override_receive(request):
+                self._restore_request_body(request, body)
             return await call_next(request)
         except Exception as exc:
             logger.error("Prompt cache error, bypassing: %s", exc)
-            self._restore_request_body(request, body)
+            if self._should_override_receive(request):
+                self._restore_request_body(request, body)
             return await call_next(request)
 
     def _should_cache(self, request: Request) -> bool:

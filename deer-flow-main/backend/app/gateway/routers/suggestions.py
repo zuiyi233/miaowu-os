@@ -131,10 +131,40 @@ def _should_retry_without_module(exc: Exception) -> bool:
     if any(hint in message for hint in _NO_RETRY_ERROR_HINTS):
         return False
 
+    # Upstream model lifecycle/deprecation errors should fall back to explicit
+    # model_name when provided by caller (e.g. route points to EOL model).
+    if _is_model_unavailable_error(exc):
+        return True
+
     if isinstance(exc, (KeyError, ValueError, TypeError)):
         return any(hint in message for hint in _MODULE_ROUTING_FALLBACK_HINTS) if message else True
 
     return any(hint in message for hint in _MODULE_ROUTING_FALLBACK_HINTS)
+
+
+def _is_model_unavailable_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code is None:
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None)
+
+    message = str(exc).lower()
+    model_unavailable_hints = (
+        "end of life",
+        "no longer available",
+        "model_not_found",
+        "model unavailable",
+        "model has been deprecated",
+    )
+
+    has_model_hint = any(hint in message for hint in model_unavailable_hints)
+    # 404/410 can also come from non-model faults (resource/path gone).
+    # Treat them as model-unavailable only when payload/message contains
+    # explicit model lifecycle/not-found hints.
+    if status_code in {404, 410}:
+        return has_model_hint
+
+    return has_model_hint
 
 
 async def _run_suggestions_generation(
@@ -212,7 +242,7 @@ async def generate_suggestions(
             request=request,
             db=db,
             module_id=body.module_id,
-            ai_model=body.model_name if not body.module_id else None,
+            ai_model=body.model_name,
         )
 
         cleaned = await _run_suggestions_generation(
@@ -220,7 +250,7 @@ async def generate_suggestions(
             system_instruction=system_instruction,
             user_content=user_content,
             n=n,
-            model_name=None if body.module_id else body.model_name,
+            model_name=body.model_name,
         )
         logger.debug(
             "Suggestions generated: thread_id=%s module_id=%s count=%d cleaned=%s",

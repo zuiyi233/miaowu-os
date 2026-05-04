@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"检查阶段对照后端规范"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"验证错误恢复实现符合规范"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"验证异步与缓存契约未回归"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"验证8551 local-dev契约跨层一致"}

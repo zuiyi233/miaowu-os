@@ -76,8 +76,7 @@ def test_generate_suggestions_parses_and_limits(monkeypatch):
         )
 
     assert result.suggestions == ["Q1", "Q2", "Q3"]
-    fake_model.ainvoke.assert_awaited_once()
-    assert fake_model.ainvoke.await_args.kwargs["config"] == {"run_name": "suggest_agent"}
+    fake_ai_service.generate_text_with_messages.assert_awaited_once()
 
 
 def test_generate_suggestions_parses_list_block_content(monkeypatch):
@@ -97,8 +96,7 @@ def test_generate_suggestions_parses_list_block_content(monkeypatch):
         )
 
     assert result.suggestions == ["Q1", "Q2"]
-    fake_model.ainvoke.assert_awaited_once()
-    assert fake_model.ainvoke.await_args.kwargs["config"] == {"run_name": "suggest_agent"}
+    fake_ai_service.generate_text_with_messages.assert_awaited_once()
 
 
 def test_generate_suggestions_parses_output_text_block_content(monkeypatch):
@@ -118,8 +116,7 @@ def test_generate_suggestions_parses_output_text_block_content(monkeypatch):
         )
 
     assert result.suggestions == ["Q1", "Q2"]
-    fake_model.ainvoke.assert_awaited_once()
-    assert fake_model.ainvoke.await_args.kwargs["config"] == {"run_name": "suggest_agent"}
+    fake_ai_service.generate_text_with_messages.assert_awaited_once()
 
 
 def test_generate_suggestions_returns_empty_on_model_error(monkeypatch):
@@ -178,9 +175,51 @@ def test_generate_suggestions_does_not_fallback_on_terminal_auth_error(monkeypat
     assert mock_override.await_count == 1
 
 
+def test_generate_suggestions_fallbacks_on_model_eol_error(monkeypatch):
+    req = _build_req(model_name="gpt-5.4-mini", module_id="chat-suggestions")
+    primary_service = MagicMock()
+    primary_service.generate_text_with_messages = AsyncMock(
+        side_effect=RuntimeError("Error code: 410 - model has reached its end of life and is no longer available")
+    )
+    fallback_service = MagicMock()
+    fallback_service.generate_text_with_messages = AsyncMock(return_value={"content": '["Q1"]'})
+
+    with patch(
+        "app.gateway.routers.suggestions.get_user_ai_service_with_overrides",
+        new_callable=AsyncMock,
+        side_effect=[primary_service, fallback_service],
+    ) as mock_override:
+        result = asyncio.run(
+            suggestions.generate_suggestions("t1", req, request=_make_fake_request(), db=_make_fake_db())
+        )
+
+    assert result.suggestions == ["Q1"]
+    assert mock_override.await_count == 2
+
+
+def test_generate_suggestions_does_not_fallback_on_non_model_404(monkeypatch):
+    req = _build_req(model_name="gpt-5.4-mini", module_id="chat-suggestions")
+    primary_service = MagicMock()
+    primary_service.generate_text_with_messages = AsyncMock(
+        side_effect=RuntimeError("Error code: 404 - resource not found")
+    )
+
+    with patch(
+        "app.gateway.routers.suggestions.get_user_ai_service_with_overrides",
+        new_callable=AsyncMock,
+        return_value=primary_service,
+    ) as mock_override:
+        result = asyncio.run(
+            suggestions.generate_suggestions("t1", req, request=_make_fake_request(), db=_make_fake_db())
+        )
+
+    assert result.suggestions == []
+    assert mock_override.await_count == 1
+
+
 def test_generate_suggestions_passes_module_id_to_routing(monkeypatch):
     """Verify module_id='chat-suggestions' is forwarded to get_user_ai_service_with_overrides."""
-    req = _build_req(module_id="chat-suggestions")
+    req = _build_req(module_id="chat-suggestions", model_name="gpt-5.4-mini")
     fake_ai_service = MagicMock()
     fake_ai_service.generate_text_with_messages = AsyncMock(
         return_value={"content": '["Q1"]'}
@@ -198,6 +237,7 @@ def test_generate_suggestions_passes_module_id_to_routing(monkeypatch):
         mock_override.assert_called_once()
         call_kwargs = mock_override.call_args.kwargs
         assert call_kwargs.get("module_id") == "chat-suggestions"
+        assert call_kwargs.get("ai_model") == "gpt-5.4-mini"
         assert result.suggestions == ["Q1"]
 
 

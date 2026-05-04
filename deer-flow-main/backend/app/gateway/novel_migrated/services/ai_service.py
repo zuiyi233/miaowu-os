@@ -237,6 +237,20 @@ def _get_cached_model(
         overrides["base_url"] = base_url.strip()
     if api_key and api_key.strip():
         overrides["api_key"] = api_key.strip()
+
+    config = get_app_config()
+    if config.get_model_config(model_name) is None and overrides.get("base_url"):
+        fallback_name = config.models[0].name if config.models else None
+        if fallback_name and fallback_name != model_name:
+            logger.info(
+                "模型 %s 不在 config 中，使用 %s 的配置 + model=%s override",
+                model_name,
+                fallback_name,
+                model_name,
+            )
+            overrides["model"] = model_name
+            model_name = fallback_name
+
     model = create_chat_model(name=model_name, thinking_enabled=False, **overrides)
 
     with _model_cache_lock:
@@ -424,6 +438,11 @@ class AIService:
         wanted = model_name or self.default_model
         if wanted and config.get_model_config(wanted) is not None:
             return wanted
+        if wanted:
+            lowered = wanted.lower()
+            for m in config.models:
+                if m.name and m.name.lower() == lowered:
+                    return m.name
         if has_custom_endpoint and wanted:
             logger.info(
                 "模型 %s 未在 deerflow 配置中找到，但搭配自定义 base_url，直接使用。",
@@ -555,7 +574,9 @@ class AIService:
     ) -> dict[str, Any]:
         """非流式文本生成，返回与历史接口兼容的 dict。"""
         start_time = time.time()
-        model_name = self._resolve_model_name(model)
+        effective_base_url = base_url or self.api_base_url
+        has_custom_endpoint = bool(effective_base_url and effective_base_url.strip())
+        model_name = self._resolve_model_name(model, has_custom_endpoint=has_custom_endpoint)
 
         try:
             llm = await self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
@@ -831,7 +852,9 @@ class AIService:
         """
         model, temperature, max_tokens, system_prompt = await self._resolve_agent_params(agent_type, model, temperature, max_tokens, system_prompt)
 
-        model_name = self._resolve_model_name(model)
+        effective_base_url = base_url or self.api_base_url
+        has_custom_endpoint = bool(effective_base_url and effective_base_url.strip())
+        model_name = self._resolve_model_name(model, has_custom_endpoint=has_custom_endpoint)
         llm = await self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
         llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
@@ -876,7 +899,9 @@ class AIService:
     ) -> dict[str, Any]:
         """非流式文本生成（messages数组直传版本）。"""
         start_time = time.time()
-        model_name = self._resolve_model_name(model)
+        effective_base_url = base_url or self.api_base_url
+        has_custom_endpoint = bool(effective_base_url and effective_base_url.strip())
+        model_name = self._resolve_model_name(model, has_custom_endpoint=has_custom_endpoint)
         llm = await self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
         llm = self._apply_runtime_params(llm, temperature, max_tokens)
 
@@ -921,7 +946,9 @@ class AIService:
         **_: Any,
     ) -> AsyncGenerator[str, None]:
         """流式文本生成（messages数组直传版本）。"""
-        model_name = self._resolve_model_name(model)
+        effective_base_url = base_url or self.api_base_url
+        has_custom_endpoint = bool(effective_base_url and effective_base_url.strip())
+        model_name = self._resolve_model_name(model, has_custom_endpoint=has_custom_endpoint)
         llm = await self._get_model_instance(model_name, base_url=base_url, api_key=api_key)
         llm = self._apply_runtime_params(llm, temperature, max_tokens)
 

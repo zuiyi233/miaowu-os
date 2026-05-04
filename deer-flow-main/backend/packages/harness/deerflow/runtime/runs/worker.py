@@ -19,11 +19,16 @@ import asyncio
 import copy
 import inspect
 import logging
-from functools import partial
-from typing import Any, Literal
+from dataclasses import dataclass, field
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from langgraph.checkpoint.base import empty_checkpoint
 
+if TYPE_CHECKING:
+    from langchain_core.messages import HumanMessage
+
+from deerflow.config.app_config import AppConfig
 from deerflow.runtime.serialization import serialize
 from deerflow.runtime.stream_bridge import StreamBridge
 
@@ -36,39 +41,79 @@ logger = logging.getLogger(__name__)
 _VALID_LG_MODES = {"values", "updates", "checkpoints", "tasks", "debug", "messages", "custom"}
 
 
-def _log_fire_and_forget_failure(task: asyncio.Task[Any], *, label: str) -> None:
-    """Consume exceptions from fire-and-forget tasks and log them once."""
+def _build_runtime_context(
+    thread_id: str,
+    run_id: str,
+    caller_context: Any | None,
+    app_config: AppConfig | None = None,
+) -> dict[str, Any]:
+    """Build the dict that becomes ``ToolRuntime.context`` for the run.
 
-    if task.cancelled():
-        return
+    Always includes ``thread_id`` and ``run_id``. Additional keys from the caller's
+    ``config['context']`` (e.g. ``agent_name`` for the bootstrap flow — issue #2677)
+    are merged in but never override ``thread_id``/``run_id``. The resolved
+    ``AppConfig`` is added by the worker so tools can consume it without ambient
+    global lookups.
 
-    try:
-        exc = task.exception()
-    except asyncio.CancelledError:
-        return
-    except Exception:
-        logger.debug("%s finished but its exception could not be inspected", label, exc_info=True)
-        return
-
-    if exc is not None:
-        logger.debug("%s failed: %s", label, exc)
-
-
-def _build_runtime_context(thread_id: str, run_id: str, config: dict[str, Any], store: Any | None) -> dict[str, Any]:
-    """Build the ``context`` dict passed to ``langgraph.runtime.Runtime``.
-
-    Guarantees that ``thread_id`` and ``run_id`` are always present, and
-    merges in any caller-provided ``context`` (e.g. ``agent_name``,
-    ``is_bootstrap``) without allowing the caller to override the two
-    identity keys.
+    langgraph 1.1+ surfaces this as ``runtime.context`` via the parent runtime stored
+    under ``config['configurable']['__pregel_runtime']`` — see
+    ``langgraph.pregel.main`` where ``parent_runtime.merge(...)`` is invoked.
     """
-    base: dict[str, Any] = {"thread_id": thread_id, "run_id": run_id}
-    caller_context = config.get("context", {})
+    runtime_ctx: dict[str, Any] = {"thread_id": thread_id, "run_id": run_id}
     if isinstance(caller_context, dict):
         for key, value in caller_context.items():
-            if key not in base:
-                base[key] = value
-    return base
+            runtime_ctx.setdefault(key, value)
+    if app_config is not None:
+        runtime_ctx["app_config"] = app_config
+    return runtime_ctx
+
+
+@dataclass(frozen=True)
+class RunContext:
+    """Infrastructure dependencies for a single agent run.
+
+    Groups checkpointer, store, and persistence-related singletons so that
+    ``run_agent`` (and any future callers) receive one object instead of a
+    growing list of keyword arguments.
+    """
+
+    checkpointer: Any
+    store: Any | None = field(default=None)
+    event_store: Any | None = field(default=None)
+    run_events_config: Any | None = field(default=None)
+    thread_store: Any | None = field(default=None)
+    app_config: AppConfig | None = field(default=None)
+
+
+def _install_runtime_context(config: dict, runtime_context: dict[str, Any]) -> None:
+    existing_context = config.get("context")
+    if isinstance(existing_context, dict):
+        existing_context.setdefault("thread_id", runtime_context["thread_id"])
+        existing_context.setdefault("run_id", runtime_context["run_id"])
+        if "app_config" in runtime_context:
+            existing_context["app_config"] = runtime_context["app_config"]
+        return
+
+    config["context"] = dict(runtime_context)
+
+
+def _compute_agent_factory_supports_app_config(agent_factory: Any) -> bool:
+    try:
+        return "app_config" in inspect.signature(agent_factory).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+@lru_cache(maxsize=128)
+def _cached_agent_factory_supports_app_config(agent_factory: Any) -> bool:
+    return _compute_agent_factory_supports_app_config(agent_factory)
+
+
+def _agent_factory_supports_app_config(agent_factory: Any) -> bool:
+    try:
+        return _cached_agent_factory_supports_app_config(agent_factory)
+    except TypeError:
+        return _compute_agent_factory_supports_app_config(agent_factory)
 
 
 async def run_agent(
@@ -76,8 +121,7 @@ async def run_agent(
     run_manager: RunManager,
     record: RunRecord,
     *,
-    checkpointer: Any,
-    store: Any | None = None,
+    ctx: RunContext,
     agent_factory: Any,
     graph_input: dict,
     config: dict,
@@ -88,12 +132,21 @@ async def run_agent(
 ) -> None:
     """Execute an agent in the background, publishing events to *bridge*."""
 
+    # Unpack infrastructure dependencies from RunContext.
+    checkpointer = ctx.checkpointer
+    store = ctx.store
+    event_store = ctx.event_store
+    run_events_config = ctx.run_events_config
+    thread_store = ctx.thread_store
+
     run_id = record.run_id
     thread_id = record.thread_id
     requested_modes: set[str] = set(stream_modes or ["values"])
     pre_run_checkpoint_id: str | None = None
     pre_run_snapshot: dict[str, Any] | None = None
     snapshot_capture_failed = False
+
+    journal = None
 
     # Track whether "events" was requested but skipped
     if "events" in requested_modes:
@@ -103,6 +156,17 @@ async def run_agent(
         )
 
     try:
+        # Initialize RunJournal + write human_message event.
+        if event_store is not None:
+            from deerflow.runtime.journal import RunJournal
+
+            journal = RunJournal(
+                run_id=run_id,
+                thread_id=thread_id,
+                event_store=event_store,
+                track_token_usage=getattr(run_events_config, "track_token_usage", True),
+            )
+
         # 1. Mark running
         await run_manager.set_status(run_id, RunStatus.running)
 
@@ -138,20 +202,24 @@ async def run_agent(
         from langchain_core.runnables import RunnableConfig
         from langgraph.runtime import Runtime
 
-        # Inject runtime context so middlewares can access thread_id and run_id.
-        # This is what langgraph-cli does automatically; the compat layer must do it manually.
-        runtime_context = _build_runtime_context(thread_id, run_id, config, store)
-        runtime = Runtime(context=runtime_context, store=store)
-        # If the caller already set a ``context`` key (LangGraph >= 0.6.0
-        # prefers it over ``configurable`` for thread-level data), make
-        # sure ``thread_id`` and ``run_id`` are available there too.
-        if "context" in config and isinstance(config["context"], dict):
-            config["context"].setdefault("thread_id", thread_id)
-            config["context"].setdefault("run_id", run_id)
+        # Inject runtime context so middlewares and tools (via ToolRuntime.context) can
+        # access thread-level data. langgraph-cli does this automatically; we must do it
+        # manually here because we drive the graph through ``agent.astream(config=...)``
+        # without passing the official ``context=`` parameter.
+        runtime_ctx = _build_runtime_context(thread_id, run_id, config.get("context"), ctx.app_config)
+        _install_runtime_context(config, runtime_ctx)
+        runtime = Runtime(context=cast(Any, runtime_ctx), store=store)
         config.setdefault("configurable", {})["__pregel_runtime"] = runtime
 
+        # Inject RunJournal as a LangChain callback handler.
+        if journal is not None:
+            config.setdefault("callbacks", []).append(journal)
+
         runnable_config = RunnableConfig(**config)
-        agent = agent_factory(config=runnable_config)
+        if ctx.app_config is not None and _agent_factory_supports_app_config(agent_factory):
+            agent = agent_factory(config=runnable_config, app_config=ctx.app_config)
+        else:
+            agent = agent_factory(config=runnable_config)
 
         # 4. Attach checkpointer and store
         if checkpointer is not None:
@@ -173,7 +241,6 @@ async def run_agent(
             if m == "messages-tuple":
                 lg_modes.append("messages")
             elif m == "events":
-                # Skipped — see log above
                 continue
             elif m in _VALID_LG_MODES:
                 lg_modes.append(m)
@@ -193,7 +260,6 @@ async def run_agent(
 
         # 7. Stream using graph.astream
         if len(lg_modes) == 1 and not stream_subgraphs:
-            # Single mode, no subgraphs: astream yields raw chunks
             single_mode = lg_modes[0]
             async for chunk in agent.astream(graph_input, config=runnable_config, stream_mode=single_mode):
                 if record.abort_event.is_set():
@@ -202,7 +268,6 @@ async def run_agent(
                 sse_event = _lg_mode_to_sse_event(single_mode)
                 await bridge.publish(run_id, sse_event, serialize(chunk, mode=single_mode))
         else:
-            # Multiple modes or subgraphs: astream yields tuples
             async for item in agent.astream(
                 graph_input,
                 config=runnable_config,
@@ -276,17 +341,42 @@ async def run_agent(
         )
 
     finally:
+        # Flush any buffered journal events and persist completion data
+        if journal is not None:
+            try:
+                await journal.flush()
+            except Exception:
+                logger.warning("Failed to flush journal for run %s", run_id, exc_info=True)
+
+            try:
+                completion = journal.get_completion_data()
+                await run_manager.update_run_completion(run_id, status=record.status.value, **completion)
+            except Exception:
+                logger.warning("Failed to persist run completion for %s (non-fatal)", run_id, exc_info=True)
+
+        # Sync title from checkpoint to threads_meta.display_name
+        if checkpointer is not None and thread_store is not None:
+            try:
+                ckpt_config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+                ckpt_tuple = await checkpointer.aget_tuple(ckpt_config)
+                if ckpt_tuple is not None:
+                    ckpt = getattr(ckpt_tuple, "checkpoint", {}) or {}
+                    title = ckpt.get("channel_values", {}).get("title")
+                    if title:
+                        await thread_store.update_display_name(thread_id, title)
+            except Exception:
+                logger.debug("Failed to sync title for thread %s (non-fatal)", thread_id)
+
+        # Update threads_meta status based on run outcome
+        if thread_store is not None:
+            try:
+                final_status = "idle" if record.status == RunStatus.success else record.status.value
+                await thread_store.update_status(thread_id, final_status)
+            except Exception:
+                logger.debug("Failed to update thread_meta status for %s (non-fatal)", thread_id)
+
         await bridge.publish_end(run_id)
-        cleanup_task = asyncio.create_task(
-            bridge.cleanup(run_id, delay=60),
-            name=f"bridge-cleanup:{run_id}",
-        )
-        cleanup_task.add_done_callback(
-            partial(
-                _log_fire_and_forget_failure,
-                label=f"bridge cleanup for run {run_id}",
-            )
-        )
+        asyncio.create_task(bridge.cleanup(run_id, delay=60))
 
 
 # ---------------------------------------------------------------------------
@@ -411,8 +501,32 @@ def _lg_mode_to_sse_event(mode: str) -> str:
     client explicitly requests it, but the default SSE event name used
     by LangGraph Platform is simply ``"messages"``.
     """
-    # All LG modes map 1:1 to SSE event names — "messages" stays "messages"
     return mode
+
+
+def _extract_human_message(graph_input: dict) -> HumanMessage | None:
+    """Extract or construct a HumanMessage from graph_input for event recording.
+
+    Returns a LangChain HumanMessage so callers can use .model_dump() to get
+    the checkpoint-aligned serialization format.
+    """
+    from langchain_core.messages import HumanMessage
+
+    messages = graph_input.get("messages")
+    if not messages:
+        return None
+    last = messages[-1] if isinstance(messages, list) else messages
+    if isinstance(last, HumanMessage):
+        return last
+    if isinstance(last, str):
+        return HumanMessage(content=last) if last else None
+    if hasattr(last, "content"):
+        content = last.content
+        return HumanMessage(content=content)
+    if isinstance(last, dict):
+        content = last.get("content", "")
+        return HumanMessage(content=content) if content else None
+    return None
 
 
 def _unpack_stream_item(

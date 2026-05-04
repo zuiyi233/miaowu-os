@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"后端错误分类、恢复策略与质量约束的基础规范"}
+{"file":".trellis/spec/frontend/index.md","reason":"若调用链涉及前端请求契约，需要按前端规范核验"}

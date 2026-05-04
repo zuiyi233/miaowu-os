@@ -73,6 +73,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        path = request.url.path
         if _is_public(request.url.path):
             return await call_next(request)
 
@@ -122,5 +123,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
         token = set_current_user(user)
         try:
             return await call_next(request)
+        except Exception as exc:
+            with open("_auth_debug.log", "a") as f:
+                import traceback
+                f.write(f"CAUGHT in auth dispatch: {type(exc).__name__}: {exc}\n")
+                traceback.print_exc(file=f)
+                f.write("\n")
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Internal Server Error"},
+            )
         finally:
             reset_current_user(token)

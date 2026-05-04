@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"后端改动总入口与规则索引"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"AI调用失败分类与恢复策略约束"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"最小修复时的缓存/异步/后台任务质量约束"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"8551 本地契约跨层一致性检查"}

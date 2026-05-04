@@ -170,9 +170,6 @@ def require_auth[**P, T](func: Callable[P, T]) -> Callable[P, T]:
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         request = kwargs.get("request")
         if request is None:
-            # Unit tests may call decorated handlers directly without a
-            # FastAPI Request object. Inject a minimal request stub when
-            # the wrapped function declares `request`.
             if "request" in inspect.signature(func).parameters:
                 kwargs["request"] = _make_test_request_stub()
             else:
@@ -182,7 +179,6 @@ def require_auth[**P, T](func: Callable[P, T]) -> Callable[P, T]:
         if getattr(request, "_deerflow_test_bypass_auth", False):
             return await func(*args, **kwargs)
 
-        # Authenticate and set context
         auth_context = await _authenticate(request)
         request.state.auth = auth_context
 
@@ -190,6 +186,13 @@ def require_auth[**P, T](func: Callable[P, T]) -> Callable[P, T]:
             raise HTTPException(status_code=401, detail="Authentication required")
 
         return await func(*args, **kwargs)
+
+    try:
+        from typing import get_type_hints
+
+        wrapper.__annotations__ = get_type_hints(func)
+    except Exception:
+        wrapper.__annotations__ = getattr(func, "__annotations__", {})
 
     return wrapper
 
@@ -239,9 +242,6 @@ def require_permission(
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             request = kwargs.get("request")
             if request is None:
-                # Unit tests may call decorated route handlers directly without
-                # constructing a FastAPI Request object. Inject a minimal stub
-                # when the wrapped function declares `request`.
                 if "request" in inspect.signature(func).parameters:
                     kwargs["request"] = _make_test_request_stub()
                 else:
@@ -259,22 +259,12 @@ def require_permission(
             if not auth.is_authenticated:
                 raise HTTPException(status_code=401, detail="Authentication required")
 
-            # Check permission
             if not auth.has_permission(resource, action):
                 raise HTTPException(
                     status_code=403,
                     detail=f"Permission denied: {resource}:{action}",
                 )
 
-            # Owner check for thread-specific resources.
-            #
-            # 2.0-rc moved thread metadata into the SQL persistence layer
-            # (``threads_meta`` table). We verify ownership via
-            # ``ThreadMetaStore.check_access``: it returns True for
-            # missing rows (untracked legacy thread) and for rows whose
-            # ``user_id`` is NULL (shared / pre-auth data), so this is
-            # strict-deny rather than strict-allow — only an *existing*
-            # row with a *different* user_id triggers 404.
             if owner_check:
                 thread_id = kwargs.get("thread_id")
                 if thread_id is None:
@@ -295,6 +285,13 @@ def require_permission(
                     )
 
             return await func(*args, **kwargs)
+
+        try:
+            from typing import get_type_hints
+
+            wrapper.__annotations__ = get_type_hints(func)
+        except Exception:
+            wrapper.__annotations__ = getattr(func, "__annotations__", {})
 
         return wrapper
 

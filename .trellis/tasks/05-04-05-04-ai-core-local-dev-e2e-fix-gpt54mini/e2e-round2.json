@@ -1,0 +1,52 @@
+{
+  "register_status": 201,
+  "register_body": "{\"id\":\"e4a48fb6-470c-43e1-a5fd-a8acd7141221\",\"email\":\"codex.ai.e2e.round2.20260504225122@example.com\",\"system_role\":\"user\",\"needs_setup\":false}",
+  "register_req_id": [
+    "1ea16a8d6633415ea847551c926f9a07"
+  ],
+  "login_status": 200,
+  "login_body": "{\"expires_in\":604800,\"needs_setup\":false}",
+  "login_req_id": [
+    "be2fc71e818147fda69b4f45fbe385ab"
+  ],
+  "csrf_after_login": null,
+  "chat_nonstream_status": 200,
+  "chat_nonstream_body": "{\"content\":\"这是第二轮 gpt-5.4-mini 连通性测试。\"}",
+  "chat_nonstream_req_id": [
+    "9cea7da3971d4990aeff5bc88dfe8e08"
+  ],
+  "chat_stream_status": 200,
+  "chat_stream_req_id": [
+    "5899062a7d9f406ab9917c54d6290216"
+  ],
+  "chat_stream_content_type": [
+    "text/event-stream; charset=utf-8"
+  ],
+  "chat_stream_done_events": 1,
+  "chat_stream_data_events": 16,
+  "chat_stream_error_events": 0,
+  "chat_stream_preview": "data: {\"content\": \"这是\"}\n\ndata: {\"content\": \"第二\"}\n\ndata: {\"content\": \"轮\"}\n\ndata: {\"content\": \" g\"}\n\ndata: {\"content\": \"pt\"}\n\ndata: {\"content\": \"-\"}\n\ndata: {\"content\": \"5\"}\n\ndata: {\"content\": \".\"}\n",
+  "thread_create_status": 200,
+  "thread_create_req_id": [
+    "6dd49f0ef476418a998ea1139835154b"
+  ],
+  "thread_create_body": "{\"thread_id\":\"e624a5ae-f7a6-4a51-a09e-e25116155b96\",\"status\":\"idle\",\"created_at\":\"2026-05-04T14:51:29.632060+00:00\",\"updated_at\":\"2026-05-04T14:51:29.632060+00:00\",\"metadata\":{\"model\":\"gpt-5.4-mini\",\"request_id\":\"req-20260504225122-thread\",\"scenario\":\"ai-core-loop-round2\",\"source\":\"codex-e2e\"},\"values\":{},\"interrupts\":{}}",
+  "thread_id": "e624a5ae-f7a6-4a51-a09e-e25116155b96",
+  "run_stream_status": 200,
+  "run_stream_req_id": [
+    "94b21d0d2eae42c19d3992b417fb5a6e"
+  ],
+  "run_stream_content_location": [
+    "/api/threads/e624a5ae-f7a6-4a51-a09e-e25116155b96/runs/7212248f-5ed0-4ca0-94dd-f9e60c88cc02"
+  ],
+  "run_stream_event_count": 37,
+  "run_stream_data_count": 37,
+  "run_stream_end_count": 1,
+  "run_stream_error_count": 0,
+  "run_stream_preview": "event: metadata\ndata: {\"run_id\": \"7212248f-5ed0-4ca0-94dd-f9e60c88cc02\", \"thread_id\": \"e624a5ae-f7a6-4a51-a09e-e25116155b96\"}\nid: 1777906289701-0\n\nevent: values\ndata: {\"messages\": [{\"content\": \"请用一句话说明你正在使用 gpt-5.4-mini 进行第二轮运行测试。\", \"additional_kwargs\": {}, \"response_metadata\": {}, \"type\": \"human\", \"name\": null, \"id\": \"7f2aa3ba-a5f8-47a3-9c59-a6985733403c\"}], \"artifacts\": [], \"viewed_images\": {}, \"draft_media\": {}, \"execution_gate\": {}}\nid: 1777906290196-1\n\nevent: values\ndata: {\"messages\": [{\"content\": \"请用一句话说明你正在使用 gpt-5.4-mini 进行第二轮运行测试。\", \"additional_kwargs\": {}, \"response_metadata\": {}, \"type\": \"human\", \"name\": null, \"id\": \"7f2aa3ba-a5f8-47a3-9c59-a6985733403c\"}], \"thread_data\": {\"workspace_path\": \"D:\\\\miaowu-os\\\\deer-flow-main\\\\backend\\\\.deer-flow\\\\threads\\\\e624a5ae-f7a6-4a51-a09e-e25116155b96\\\\user-data\\\\workspace\", \"uploads_path\": \"D:\\\\miaowu-os\\\\deer-flow-main\\\\backend\\\\.deer-flow\\\\threads\\\\e624a5ae-f7a6-4a51-a09e-e25116155b96\\\\user-data\\\\uploads\", \"outputs_path\": \"D:\\\\miaowu-os\\\\deer-flow-main\\\\backend\\\\.deer-flow\\\\threads\\\\e624a5ae-f7a6-4a51-a09e-e25116155b96\\\\user-data\\\\outputs\"}, \"artifacts\": [], \"viewed_images\": {}, \"draft_media\": {}, \"execution_gate\": {}}\nid: 1777906290199-2\n\nevent: values\ndata: {\"messages\": [{\"content\": \"请用一句话说明你正在使用 gpt-5.4-mini 进行第二轮运行测试。\", \"additional_kwargs\": {}, \"response_metadata\": {}, \"type\": \"human\", \"name\": null, \"id\": \"7f2aa3ba-a5f8-47a3-9c59-a6985733403c\"}], \"thread_data\": {\"workspace_path\": \"D:\\\\miaowu-os\\\\deer-flow-main\\\\backend\\\\.deer-flow\\\\threads\\\\e624a5ae-f7a6-4a51-a09e-e25116155b96\\\\user-data\\\\workspace\", \"uploads_path\": \"D:\\\\miaowu-os\\\\deer-flow-main\\\\backend\\\\.deer-flow\\\\threads\\\\e624a5ae-f7a6-4a51-a09e-e25116155b96\\\\user-data\\\\uploads\", \"outputs_path\": \"D:\\\\miaowu-os\\\\deer-flow-main\\\\backend\\\\.deer-flow\\\\threads\\\\e624a5ae-f7a6-4a51-a09e-e25116155b96\\\\user-data\\\\outputs\"}, \"artifacts\": [], \"viewed_images\": {}, \"draft_media\": {}, \"execution_gate\": {\"status\": \"readonly\", \"execution_mode\": false, \"pending_action\": null, \"confirmation_required\": false, \"latest_decision\": null, \"ui_hints\": null, \"updated_at\": \"2026-05-04T14:51:30.206965+00:00\", \"replay_requested\": false, \"answer_only_turn\": false, \"planning_only_turn\": false, \"last_user_fingerprint\": \"72b6c57afccba760\"}}\nid: 1777906290210-3\n\nevent: messages\ndata: [{\"content\": \"\", \"additional_kwargs\": {}, \"response_metadata\": {\"model_provider\": \"openai\"}, \"type\": \"AIMessageChunk\", \"name\": null, \"id\": \"lc_run--019df379-0e90-79d3-a4f8-acba35350220\", \"tool_calls\": [], \"invalid_tool_calls\": [], \"usage_metadata\": null, \"tool_call_chunks\": [], \"chunk_position\": null}, {\"model\": \"gpt-5.4-mini\", \"scenario\": \"run-stream-round2\", \"source\": \"codex-e2e\", \"agent_name\": \"default\", \"model_name\": \"gpt-5.4-mini\", \"runtime_model_name\": \"gpt-5.4-mini\", \"runtime_provider\": \"openai\", \"thinking_enabled\": false, \"reasoning_effort\": null, \"is_plan_mode\": false, \"subagent_enabled\": false, \"tool_groups\": null, \"available_skills\": null, \"thread_id\": \"e624a5ae-f7a6-4a51-a09e-e25116155b96\", \"include_novel\": true, \"runtime_model\": \"gpt-5.4-mini\", \"runtime_base_url\": \"http://172.22.22.31:39999/v1\", \"title_runtime_model\": \"LongCat-Flash-Chat\", \"title_runtime_base_url\": \"http://172.22.22.31:39999/v1\", \"memory_runtime_model\": \"LongCat-Flash-Chat\", \"memory_runtime_base_url\": \"http://172.22.22.31:39999/v1\", \"summarization_runtime_model\": \"LongCat-Flash-Chat\", \"summarization_runtime_base_url\": \"http://172.22.22.31:39999/v1\", \"langgraph_step\": 8, \"langgraph_node\": \"model\", \"langgraph_triggers\": [\"branch:to:model\"], \"langgraph_path\": [\"__pregel_pull\", \"model\"], \"langgraph_checkpoint_ns\": \"model:91be138b-ed04-4732-7d41-088cdaf65eeb\", \"checkpoint_ns\": \"model:91be138b-ed04-4732-7d41-088cdaf65eeb\", \"ls_provider\": \"openai\", \"ls_model_name\": \"gpt-5.4-mini\", \"ls_model_type\": \"chat\", \"ls_temperature\": null, \"ls_integration\": \"langchain_chat_model\"}]\nid: 1777906292015-4\n\nevent: messages\ndata: [{\"content\": \"我\", \"additional_kwargs\": {}, \"response_metadata\": {\"model_provider\": \"openai\"}, \"type\": \"AIMessageChunk\", \"name\": null, \"id\": \"lc_run--019df379-0e90-79d3-a4f8-acba35350220\", \"tool_calls\": [], \"invalid_tool_calls\": [], \"usage_metadata\": null, \"tool_call_chunks\": [], \"chunk_position\": null}, {\"model\": \"gpt-5.4-mini\", \"scenario\": \"run-stream-round2\", \"source\": \"codex-e2e\", \"agent_name\": \"default\", \"model_name\": \"gpt-5.4-mini\", \"runtime_model_name\": \"gpt-5.4-mini\", \"runtime_provider\": \"openai\", \"thinking_enabled\": false, \"reasoning_effort\": null, \"is_plan_mode\": false, \"subagent_enabled\": false, \"tool_groups\": null, \"available_skills\": null, \"thread_id\": \"e624a5ae-f7a6-4a51-a09e-e25116155b96\", \"include_novel\": true, \"runtime_model\": \"gpt-5.4-mini\", \"runtime_base_url\": \"http://172.22.22.31:39999/v1\", \"title_runtime_model\": \"LongCat-Flash-Chat\", \"title_runtime_base_url\": \"http://172.22.22.31:39999/v1\", \"memory_runtime_model\": \"LongCat-Flash-Chat\", \"memory_runtime_base_url\": \"http://172.22.22.31:39999/v1\", \"summarization_runtime_model\": \"LongCat-Flash-Chat\", \"summarization_runtime_base_url\": \"http://172.22.22.31:39999/v1\", \"langgraph_step\": 8, \"langgraph_node\": \"model\", \"langgraph_triggers\": [\"branch:to:model\"], \"langgraph_path\": [\"__pregel_pull\", \"model\"], \"langgraph_checkpoint_ns\": \"model:91be138b-ed04-4732-7d41-088cdaf65eeb\", \"checkpoint_ns\": \"model:91be138b-ed04-4732-7d41-088cdaf65eeb\", \"ls_provider\": \"openai\", \"ls_model_name\": \"gpt-5.4-mini\", \"ls_model_type\": \"chat\", \"ls_temperature\": null, \"ls_integration\": \"langchain_chat_model\"}]",
+  "suggestions_status": 200,
+  "suggestions_req_id": [
+    "a4d8a8da5ba0472ca6abd2c59630a723"
+  ],
+  "suggestions_body": "{\"suggestions\":[\"最小可执行计划怎么开始？\",\"先做哪些核心功能？\",\"需要准备哪些资源？\"]}"
+}

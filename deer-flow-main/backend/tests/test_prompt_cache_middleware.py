@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import Request
@@ -226,17 +226,21 @@ class TestLRUEviction:
         """Recently accessed key should be retained when cache is full."""
         middleware = PromptCacheMiddleware(app=MagicMock(), ttl=300, max_entries=3)
 
-        middleware._store_cache_entry("key1", {"content": "1"})
-        time.sleep(0.01)
-        middleware._store_cache_entry("key2", {"content": "2"})
-        time.sleep(0.01)
-        middleware._store_cache_entry("key3", {"content": "3"})
+        # Use deterministic monotonic timestamps to avoid Windows clock
+        # granularity ties that can make this LRU assertion flaky.
+        with patch(
+            "app.gateway.middleware.prompt_cache.time.monotonic",
+            side_effect=[1.0, 2.0, 3.0, 4.0, 5.0],
+        ):
+            middleware._store_cache_entry("key1", {"content": "1"})
+            middleware._store_cache_entry("key2", {"content": "2"})
+            middleware._store_cache_entry("key3", {"content": "3"})
 
-        # Touch key1 to make it the most recently used entry.
-        hit = middleware._get_cached_entry("key1")
-        assert hit is not None
+            # Touch key1 to make it the most recently used entry.
+            hit = middleware._get_cached_entry("key1")
+            assert hit is not None
 
-        middleware._store_cache_entry("key4", {"content": "4"})
+            middleware._store_cache_entry("key4", {"content": "4"})
 
         assert len(middleware._cache) == 3
         assert "key1" in middleware._cache
@@ -494,6 +498,56 @@ class TestStreamingResponseBypass:
         assert middleware._stats["misses"] == 2
         assert len(middleware._cache) == 0
         assert call_next.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_stream_flag_short_circuits_before_cache_key(self):
+        """Requests with stream=true should bypass cache key generation entirely."""
+        middleware = PromptCacheMiddleware(app=MagicMock(), ttl=300, max_entries=1000)
+        request_data = {
+            "messages": [{"role": "user", "content": "Streaming test"}],
+            "stream": True,
+            "provider_config": {"model_name": "gpt-4o", "temperature": 0.7, "max_tokens": 2000},
+        }
+        request_body = json.dumps(request_data).encode()
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.method = "POST"
+        mock_request.url.path = "/api/ai/chat"
+        mock_request.body = AsyncMock(return_value=request_body)
+
+        call_next = AsyncMock(return_value=self._make_streaming_response(b'data: {"content":"ok"}\n\ndata: [DONE]\n\n'))
+
+        with patch.object(middleware, "_compute_cache_key", wraps=middleware._compute_cache_key) as mocked_key:
+            await middleware.dispatch(mock_request, call_next)
+
+        mocked_key.assert_not_called()
+        assert middleware._stats["hits"] == 0
+        assert middleware._stats["misses"] == 1
+        assert len(middleware._cache) == 0
+
+    def test_should_override_receive_skips_starlette_cached_request(self):
+        middleware = PromptCacheMiddleware(app=MagicMock(), ttl=300, max_entries=1000)
+
+        class _CachedRequest:
+            pass
+
+        fake_cached = _CachedRequest()
+        fake_normal = MagicMock()
+
+        assert middleware._should_override_receive(fake_cached) is False
+        assert middleware._should_override_receive(fake_normal) is True
+
+    def test_should_override_receive_skips_starlette_like_cached_request_shape(self):
+        middleware = PromptCacheMiddleware(app=MagicMock(), ttl=300, max_entries=1000)
+
+        StarletteLikeCachedRequest = type(
+            "StarletteLikeCachedRequest",
+            (),
+            {"__module__": "starlette.middleware.base", "wrapped_receive": object()},
+        )
+        fake_cached = StarletteLikeCachedRequest()
+
+        assert middleware._should_override_receive(fake_cached) is False
 
 
 class TestEnabledFlag:

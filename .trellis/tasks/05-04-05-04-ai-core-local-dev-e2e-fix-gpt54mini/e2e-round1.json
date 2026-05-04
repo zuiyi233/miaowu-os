@@ -1,0 +1,42 @@
+{
+  "register_status": 201,
+  "register_body": "{\"id\":\"bb8fe7b5-0b97-4fdb-aa0a-d7432a5b9da3\",\"email\":\"codex.ai.e2e.20260504222918@example.com\",\"system_role\":\"user\",\"needs_setup\":false}",
+  "register_set_cookie": "access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiYjhmZTdiNS0wYjk3LTRmZGItYWEwYS1kNzQzMmE1YjlkYTMiLCJleHAiOjE3Nzg1MDk3NTgsImlhdCI6MTc3NzkwNDk1OCwidmVyIjowfQ.b8vwoZNYv8io_ytE6hqOCs5NBfOX5qUuafeGt5rqgYI; HttpOnly; Path=/; SameSite=lax",
+  "csrf_present_after_register": false,
+  "login_status": 200,
+  "login_body": "{\"expires_in\":604800,\"needs_setup\":false}",
+  "csrf_after_login": null,
+  "chat_nonstream_status": 200,
+  "chat_nonstream_body": "{\"content\":\"这是 gpt-5.4-mini 连通性测试。\"}",
+  "chat_nonstream_req_id": [
+    "1dd3a7a987874fc1b9a0fedc4a395538"
+  ],
+  "chat_stream_status": 200,
+  "chat_stream_req_id": [
+    "055e56092945483c95c6f922738c8701"
+  ],
+  "chat_stream_done_events": 0,
+  "chat_stream_data_events": 0,
+  "chat_stream_error_events": 0,
+  "chat_stream_preview": "",
+  "thread_create_status": 200,
+  "thread_create_body": "{\"thread_id\":\"22d54ac7-d1b1-4749-8290-73548579b9d1\",\"status\":\"idle\",\"created_at\":\"2026-05-04T14:29:35.132695+00:00\",\"updated_at\":\"2026-05-04T14:29:35.132695+00:00\",\"metadata\":{\"scenario\":\"ai-core-loop\",\"request_id\":\"req-20260504222918-thread\",\"model\":\"gpt-5.4-mini\",\"source\":\"codex-e2e\"},\"values\":{},\"interrupts\":{}}",
+  "thread_id": "22d54ac7-d1b1-4749-8290-73548579b9d1",
+  "run_stream_status": 200,
+  "run_stream_req_id": [
+    "7456c2c16df04e188a0b94f9864eedd7"
+  ],
+  "run_stream_content_location": [
+    "/api/threads/22d54ac7-d1b1-4749-8290-73548579b9d1/runs/35eef173-c683-438b-9327-848534cfe675"
+  ],
+  "run_stream_event_count": 36,
+  "run_stream_data_count": 36,
+  "run_stream_end_count": 1,
+  "run_stream_error_count": 0,
+  "run_stream_preview": "event: metadata\ndata: {\"run_id\": \"35eef173-c683-438b-9327-848534cfe675\", \"thread_id\": \"22d54ac7-d1b1-4749-8290-73548579b9d1\"}\nid: 1777904975202-0\n\nevent: values\ndata: {\"messages\": [{\"content\": \"请用一句话说明你正在使用 gpt-5.4-mini 进行运行测试。\", \"additional_kwargs\": {}, \"response_metadata\": {}, \"type\": \"human\", \"name\": null, \"id\": \"feb88f22-cbba-4d61-8e8f-23f2f3cf1bd8\"}], \"artifacts\": [], \"viewed_images\": {}, \"draft_media\": {}, \"execution_gate\": {}}\nid: 1777904975682-1\n\nevent: values\ndata: {\"messages\": [{\"content\": \"请用一句话说明你正在使用 gpt-5.4-mini 进行运行测试。\", \"additional_kwargs\": {}, \"response_metadata\": {}, \"type\": \"human\", \"name\": null, \"id\": \"feb88f22-cbba-4d61-8e8f-23f2f3cf1bd8\"}], \"thread_data\": {\"workspace_path\": \"D:\\\\miaowu-os\\\\deer-flow-main\\\\backend\\\\.deer-flow\\\\threads\\\\22d54ac7-d1b1-4749-8290-73548579b9d1\\\\user-data\\\\workspace\", \"uploads_path\": \"D:\\\\miaowu-os\\\\deer-flow-main\\\\backend\\\\.deer-flow\\\\threads\\\\22d54ac7-d1b1-4749-8290-73548579b9d1\\\\user-data\\\\uploads\", \"outputs_path\": \"D:\\\\miaowu-os\\\\deer-flow-main\\\\backend\\\\.deer-flow\\\\threads\\\\22d54ac7-d1b1-4749-8290-73548579b9d1\\\\user-data\\\\outputs\"}, \"artifacts\": [], \"viewed_images\": {}, \"draft_media\": {}, \"execution_gate\": {}}\nid: 1777904975686-2\n\nevent: values\ndata: {\"messages\": [{\"content\": \"请用一句话说明你正在使用 gpt-5.4-mini 进行运行测试。\", \"additional_kwargs\": {}, \"response_metadata\": {}, \"type\": \"human\", \"name\": null, \"id\": \"feb88f22-cbba-4d61-8e8f-23f2f3cf1bd8\"}], \"thread_data\": {\"workspace_path\": \"D:\\\\miaowu-os\\\\deer-flow-main\\\\backend\\\\.deer-flow\\\\threads\\\\22d54ac7-d1b1-4749-8290-73548579b9d1\\\\user-data\\\\workspace\", \"uploads_path\": \"D:\\\\miaowu-os\\\\deer-flow-main\\\\backend\\\\.deer-flow\\\\threads\\\\22d54ac7-d1b1-4749-8290-73548579b9d1\\\\user-data\\\\uploads\", \"outputs_path\": \"D:\\\\miaowu-os\\\\deer-flow-main\\\\backend\\\\.deer-flow\\\\threads\\\\22d54ac7-d1b1-4749-8290-73548579b9d1\\\\user-data\\\\outputs\"}, \"artifacts\": [], \"viewed_images\": {}, \"draft_media\": {}, \"execution_gate\": {\"status\": \"readonly\", \"execution_mode\": false, \"pending_action\": null, \"confirmation_required\": false, \"latest_decision\": null, \"ui_hints\": null, \"updated_at\": \"2026-05-04T14:29:35.695907+00:00\", \"replay_requested\": false, \"answer_only_turn\": false, \"planning_only_turn\": false, \"last_user_fingerprint\": \"8faee21bb464a9c7\"}}\nid: 1777904975695-3\n\nevent: messages\ndata: [{\"content\": \"\", \"additional_kwargs\": {}, \"response_metadata\": {\"model_provider\": \"openai\"}, \"type\": \"AIMessageChunk\", \"name\": null, \"id\": \"lc_run--019df364-ffac-7c03-8a9c-ced83bfe68ac\", \"tool_calls\": [], \"invalid_tool_calls\": [], \"usage_metadata\": null, \"tool_call_chunks\": [], \"chunk_position\": null}, {\"scenario\": \"run-stream\", \"model\": \"gpt-5.4-mini\", \"source\": \"codex-e2e\", \"agent_name\": \"default\", \"model_name\": \"gpt-5.4-mini\", \"runtime_model_name\": \"gpt-5.4-mini\", \"runtime_provider\": \"openai\", \"thinking_enabled\": false, \"reasoning_effort\": null, \"is_plan_mode\": false, \"subagent_enabled\": false, \"tool_groups\": null, \"available_skills\": null, \"thread_id\": \"22d54ac7-d1b1-4749-8290-73548579b9d1\", \"include_novel\": true, \"runtime_model\": \"gpt-5.4-mini\", \"runtime_base_url\": \"http://172.22.22.31:39999/v1\", \"title_runtime_model\": \"LongCat-Flash-Chat\", \"title_runtime_base_url\": \"http://172.22.22.31:39999/v1\", \"memory_runtime_model\": \"LongCat-Flash-Chat\", \"memory_runtime_base_url\": \"http://172.22.22.31:39999/v1\", \"summarization_runtime_model\": \"LongCat-Flash-Chat\", \"summarization_runtime_base_url\": \"http://172.22.22.31:39999/v1\", \"langgraph_step\": 8, \"langgraph_node\": \"model\", \"langgraph_triggers\": [\"branch:to:model\"], \"langgraph_path\": [\"__pregel_pull\", \"model\"], \"langgraph_checkpoint_ns\": \"model:f897fc42-455b-7c34-4d97-a34c108ad23a\", \"checkpoint_ns\": \"model:f897fc42-455b-7c34-4d97-a34c108ad23a\", \"ls_provider\": \"openai\", \"ls_model_name\": \"gpt-5.4-mini\", \"ls_model_type\": \"chat\", \"ls_temperature\": null, \"ls_integration\": \"langchain_chat_model\"}]\nid: 1777904977221-4\n",
+  "suggestions_status": 200,
+  "suggestions_req_id": [
+    "968e00cc83ef48f4bb04fc22bbf1d007"
+  ],
+  "suggestions_body": "{\"suggestions\":[]}"
+}
