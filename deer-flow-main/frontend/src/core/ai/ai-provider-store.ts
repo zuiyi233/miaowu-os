@@ -521,6 +521,10 @@ export const useAiProviderStore = create<AiSettingsState>()((set, get) => ({
       hydrationError: null,
       hydrated: true,
     });
+    try {
+      const { queryClient } = await import("../../components/query-client-provider");
+      await queryClient.invalidateQueries({ queryKey: ["models"] });
+    } catch {}
   },
 
   saveFeatureRoutingToServer: async (featureRoutingSettings) => {

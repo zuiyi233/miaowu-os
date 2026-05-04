@@ -96,8 +96,8 @@ def _build_user_model_response(model_name: str, mapped_config_model: object | No
             model=model_name,
             display_name=model_name,
             description=None,
-            supports_thinking=False,
-            supports_reasoning_effort=False,
+            supports_thinking=True,
+            supports_reasoning_effort=True,
         )
 
     return ModelResponse(

@@ -768,9 +768,8 @@ export function AiProviderSettingsPage() {
         setFetchModelsError("未获取到任何模型，请检查接口地址和 API Key");
         return;
       }
-      const existingModels = formData.models ?? [];
-      const merged = Array.from(new Set([...existingModels, ...models])).sort();
-      setFormData((prev) => ({ ...prev, models: merged }));
+      const fetched = [...models].sort();
+      setFormData((prev) => ({ ...prev, models: fetched }));
     } catch (err) {
       setFetchModelsError(err instanceof Error ? err.message : "获取模型列表失败");
     } finally {
