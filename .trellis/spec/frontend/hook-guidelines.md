@@ -32,7 +32,7 @@ Questions to answer:
 
 <!-- How data fetching is handled (React Query, SWR, etc.) -->
 
-(To be filled by the team)
+质量报告查询必须通过共享 hook `useQualityReportQuery` 统一管理 `queryKey` 和 `queryFn`，禁止在页面布局或其他组件中重复定义同一份 `useQuery`。
 
 ---
 

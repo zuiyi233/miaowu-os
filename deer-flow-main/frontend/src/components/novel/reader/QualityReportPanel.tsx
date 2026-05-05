@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { AlertCircle, CheckCircle, Info, Loader2, Shield, Users, FileText, Calendar } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
@@ -11,34 +11,21 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { novelApiService } from '@/core/novel/novel-api';
+import {
+  QUALITY_REPORT_DEFAULT_REFETCH_INTERVAL_MS,
+  QUALITY_REPORT_PAGE_REFETCH_INTERVAL_MS,
+  useQualityReportQuery,
+  type NovelQualityReport,
+  type NovelQualityIssue,
+} from '@/core/novel/queries';
 import type { Chapter, Character, TimelineEvent } from '@/core/novel/schemas';
-
-interface QualityIssue {
-  type: string;
-  severity: 'warning' | 'error' | 'info' | 'success';
-  message: string;
-  details?: Record<string, any>;
-  relatedIds?: string[];
-}
-
-interface QualityReport {
-  novelId: string;
-  score: number;
-  metrics: {
-    wordCount: number;
-    chapterCount: number;
-    characterCount: number;
-    timelineEventCount: number;
-  };
-  issues: QualityIssue[];
-  generatedAt: string;
-}
 
 interface QualityReportPanelProps {
   novelId: string;
   chapters: Chapter[];
   characters: Character[];
   timelineEvents: TimelineEvent[];
+  queryMode?: 'default' | 'quality-page';
 }
 
 interface GateCheckIssue {
@@ -134,22 +121,6 @@ export function applyFinalizeSuccessTransition(
   previous: FinalizeGateFeedbackState,
 ): FinalizeGateFeedbackState {
   return reduceFinalizeGateFeedbackState(previous, { type: 'finalize_success' });
-}
-
-async function fetchQualityReport(novelId: string): Promise<QualityReport> {
-  const remote = await novelApiService.getQualityReport(novelId) as Partial<QualityReport>;
-  return {
-    novelId,
-    score: typeof remote.score === 'number' ? remote.score : 0,
-    metrics: {
-      wordCount: remote.metrics?.wordCount ?? 0,
-      chapterCount: remote.metrics?.chapterCount ?? 0,
-      characterCount: remote.metrics?.characterCount ?? 0,
-      timelineEventCount: remote.metrics?.timelineEventCount ?? 0,
-    },
-    issues: Array.isArray(remote.issues) ? remote.issues : [],
-    generatedAt: typeof remote.generatedAt === 'string' ? remote.generatedAt : new Date().toISOString(),
-  };
 }
 
 function parseGateReportFromError(error: unknown): FinalizeGateReport | null {
@@ -255,7 +226,13 @@ const severityLabels: Record<string, string> = {
   success: '通过',
 };
 
-export function QualityReportPanel({ novelId, chapters, characters, timelineEvents }: QualityReportPanelProps) {
+export function QualityReportPanel({
+  novelId,
+  chapters,
+  characters,
+  timelineEvents,
+  queryMode = 'default',
+}: QualityReportPanelProps) {
   const [activeTab, setActiveTab] = useState('overview');
   const [feedbackState, setFeedbackState] = useState<FinalizeGateFeedbackState>({
     gateReport: null,
@@ -272,9 +249,15 @@ export function QualityReportPanel({ novelId, chapters, characters, timelineEven
     setFeedbackState((previous) => reduceFinalizeGateFeedbackState(previous, event));
   };
 
-  const { data: report, isLoading, refetch } = useQuery({
-    queryKey: ['quality-report', novelId],
-    queryFn: () => fetchQualityReport(novelId),
+  const refetchInterval =
+    queryMode === 'quality-page'
+      ? QUALITY_REPORT_PAGE_REFETCH_INTERVAL_MS
+      : QUALITY_REPORT_DEFAULT_REFETCH_INTERVAL_MS;
+
+  const { data: report, isLoading, refetch } = useQualityReportQuery(novelId, {
+    enabled: Boolean(novelId),
+    retry: false,
+    refetchInterval,
   });
 
   const gateMutation = useMutation({
@@ -303,13 +286,13 @@ export function QualityReportPanel({ novelId, chapters, characters, timelineEven
     },
   });
 
-  const localReport = useMemo((): QualityReport => {
+  const localReport = useMemo((): NovelQualityReport => {
     const totalWords = chapters.reduce((acc, ch) => {
       const text = ch.content?.replace(/<[^>]*>/g, '') || '';
       return acc + text.length;
     }, 0);
 
-    const issues: QualityIssue[] = [];
+    const issues: NovelQualityIssue[] = [];
 
     if (totalWords < 1000) {
       issues.push({
@@ -374,7 +357,7 @@ export function QualityReportPanel({ novelId, chapters, characters, timelineEven
     };
   }, [chapters, characters, timelineEvents, novelId]);
 
-  const displayReport = report || localReport;
+  const displayReport: NovelQualityReport = report || localReport;
 
   const issueCounts = useMemo(() => ({
     error: displayReport.issues.filter((i) => i.severity === 'error').length,

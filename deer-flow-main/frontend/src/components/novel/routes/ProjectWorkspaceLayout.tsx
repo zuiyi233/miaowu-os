@@ -1,6 +1,5 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
 import { BookOpen, Building2, Compass, Flag, GitBranch, PencilLine, Settings, Sparkles, Users } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -9,8 +8,11 @@ import type { ReactNode } from 'react';
 
 import { Phase2StatusBar } from '@/components/novel/Phase2StatusBar';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { novelApiService } from '@/core/novel/novel-api';
 import { buildPhase2SnapshotFromQualityReport } from '@/core/novel/phase2-status';
+import {
+  QUALITY_REPORT_DEFAULT_REFETCH_INTERVAL_MS,
+  useQualityReportQuery,
+} from '@/core/novel/queries';
 import { cn } from '@/lib/utils';
 
 type MatchMode = 'exact' | 'prefix';
@@ -43,20 +45,24 @@ export function ProjectWorkspaceLayout({ novelId, children }: ProjectWorkspaceLa
   const pathname = usePathname();
   const basePath = `/workspace/novel/${encodeURIComponent(novelId)}`;
   const reportHref = `${basePath}/quality`;
+  const shouldLoadQualityReport = isActive(pathname, reportHref, 'prefix');
 
   const {
     data: qualityReport,
     isLoading: isQualityReportLoading,
     error: qualityReportError,
-  } = useQuery({
-    queryKey: ['quality-report', novelId],
-    queryFn: () => novelApiService.getQualityReport(novelId),
-    enabled: Boolean(novelId),
+  } = useQualityReportQuery(novelId, {
+    enabled: Boolean(novelId) && shouldLoadQualityReport,
     retry: false,
-    refetchInterval: 15000,
+    refetchInterval: shouldLoadQualityReport
+      ? QUALITY_REPORT_DEFAULT_REFETCH_INTERVAL_MS
+      : false,
   });
 
   const phase2Snapshot = useMemo(() => {
+    if (!shouldLoadQualityReport) {
+      return null;
+    }
     if (qualityReportError) {
       const message =
         qualityReportError instanceof Error
@@ -82,7 +88,11 @@ export function ProjectWorkspaceLayout({ novelId, children }: ProjectWorkspaceLa
       return null;
     }
     return buildPhase2SnapshotFromQualityReport(qualityReport, novelId);
-  }, [novelId, qualityReport, qualityReportError]);
+  }, [novelId, qualityReport, qualityReportError, shouldLoadQualityReport]);
+
+  const phase2EmptyText = shouldLoadQualityReport
+    ? (isQualityReportLoading ? '正在同步阶段二状态…' : '暂无阶段二状态数据')
+    : '阶段二状态按需加载，进入一致性报告可查看';
 
   const navGroups: NavGroup[] = [
     {
@@ -160,7 +170,7 @@ export function ProjectWorkspaceLayout({ novelId, children }: ProjectWorkspaceLa
             snapshot={phase2Snapshot}
             reportHref={reportHref}
             compact
-            emptyText={isQualityReportLoading ? '正在同步阶段二状态…' : '暂无阶段二状态数据'}
+            emptyText={phase2EmptyText}
           />
         </div>
         <div className="min-h-0 h-full overflow-hidden">{children}</div>

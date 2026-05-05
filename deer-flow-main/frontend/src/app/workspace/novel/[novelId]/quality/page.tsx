@@ -43,6 +43,7 @@ export default function NovelQualityReportPage() {
         chapters={novel.chapters ?? []}
         characters={novel.characters ?? []}
         timelineEvents={timelineEvents}
+        queryMode="quality-page"
       />
     </div>
   );

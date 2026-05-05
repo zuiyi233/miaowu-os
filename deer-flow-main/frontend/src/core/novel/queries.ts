@@ -27,6 +27,87 @@ function stableSerialize(value: unknown): string {
   return JSON.stringify(sortRecursively(value));
 }
 
+export interface NovelQualityIssue {
+  type: string;
+  severity: 'warning' | 'error' | 'info' | 'success';
+  message: string;
+  details?: Record<string, unknown>;
+  relatedIds?: string[];
+}
+
+export interface NovelQualityReport {
+  novelId: string;
+  score: number;
+  metrics: {
+    wordCount: number;
+    chapterCount: number;
+    characterCount: number;
+    timelineEventCount: number;
+  };
+  issues: NovelQualityIssue[];
+  generatedAt: string;
+}
+
+export const QUALITY_REPORT_DEFAULT_REFETCH_INTERVAL_MS = 15000;
+export const QUALITY_REPORT_PAGE_REFETCH_INTERVAL_MS = 5000;
+
+function normalizeQualityReport(
+  novelId: string,
+  remote: Partial<NovelQualityReport>,
+): NovelQualityReport {
+  return {
+    novelId,
+    score: typeof remote.score === 'number' ? remote.score : 0,
+    metrics: {
+      wordCount: remote.metrics?.wordCount ?? 0,
+      chapterCount: remote.metrics?.chapterCount ?? 0,
+      characterCount: remote.metrics?.characterCount ?? 0,
+      timelineEventCount: remote.metrics?.timelineEventCount ?? 0,
+    },
+    issues: Array.isArray(remote.issues) ? remote.issues : [],
+    generatedAt:
+      typeof remote.generatedAt === 'string'
+        ? remote.generatedAt
+        : new Date().toISOString(),
+  };
+}
+
+async function fetchQualityReport(novelId: string): Promise<NovelQualityReport> {
+  const remote = (await novelApiService.getQualityReport(
+    novelId,
+  )) as Partial<NovelQualityReport>;
+  return normalizeQualityReport(novelId, remote);
+}
+
+function getQualityReportQueryKey(novelId: string) {
+  return ['quality-report', novelId] as const;
+}
+
+interface UseQualityReportQueryOptions {
+  enabled?: boolean;
+  retry?: boolean;
+  refetchInterval?: number | false;
+}
+
+export function useQualityReportQuery(
+  novelId: string,
+  options: UseQualityReportQueryOptions = {},
+) {
+  const {
+    enabled = Boolean(novelId),
+    retry = false,
+    refetchInterval = false,
+  } = options;
+
+  return useQuery({
+    queryKey: getQualityReportQueryKey(novelId),
+    queryFn: () => fetchQualityReport(novelId),
+    enabled,
+    retry,
+    refetchInterval,
+  });
+}
+
 export function useNovelQuery(novelTitle?: string) {
   return useQuery({
     queryKey: ['novel', novelTitle],

@@ -40,7 +40,8 @@ Questions to answer:
 
 <!-- How server data is cached and synchronized -->
 
-(To be filled by the team)
+质量报告的刷新策略按路由区分：默认轮询间隔为 `15000ms`，`quality` 页面使用 `5000ms`。
+非 `quality` 路由应按需加载质量报告查询逻辑，避免布局层对所有路由进行无差别轮询。
 
 ---
 
