@@ -18,7 +18,7 @@ interface AssistantClarificationGroup extends GenericMessageGroup<"assistant:cla
 
 interface AssistantSubagentGroup extends GenericMessageGroup<"assistant:subagent"> {}
 
-type MessageGroup =
+export type MessageGroup =
   | HumanMessageGroup
   | AssistantProcessingGroup
   | AssistantMessageGroup
@@ -26,173 +26,12 @@ type MessageGroup =
   | AssistantClarificationGroup
   | AssistantSubagentGroup;
 
-export interface NormalizedToolCall {
-  id?: string;
-  name: string;
-  args: Record<string, unknown>;
-}
-
-function parseToolCallCollection(raw: unknown): unknown[] {
-  if (Array.isArray(raw)) {
-    return raw;
-  }
-
-  if (raw && typeof raw === "object") {
-    return [raw];
-  }
-
-  if (typeof raw === "string") {
-    const trimmed = raw.trim();
-    if (!trimmed) {
-      return [];
-    }
-    try {
-      const parsed = JSON.parse(trimmed);
-      return parseToolCallCollection(parsed);
-    } catch {
-      return [];
-    }
-  }
-
-  return [];
-}
-
-function parseToolCallArgs(raw: unknown): Record<string, unknown> {
-  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-    return raw as Record<string, unknown>;
-  }
-
-  if (typeof raw === "string") {
-    const trimmed = raw.trim();
-    if (!trimmed) {
-      return {};
-    }
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      return { raw: trimmed };
-    }
-  }
-
-  return {};
-}
-
-function normalizeToolCall(raw: unknown): NormalizedToolCall | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return null;
-  }
-
-  const record = raw as Record<string, unknown>;
-  const id = typeof record.id === "string" ? record.id : undefined;
-
-  let name = "";
-  let argsSource: unknown = record.args;
-
-  if (typeof record.name === "string" && record.name.trim()) {
-    name = record.name.trim();
-  }
-
-  if (!name) {
-    const functionCall = record.function;
-    if (
-      functionCall &&
-      typeof functionCall === "object" &&
-      !Array.isArray(functionCall)
-    ) {
-      const fn = functionCall as Record<string, unknown>;
-      if (typeof fn.name === "string" && fn.name.trim()) {
-        name = fn.name.trim();
-        argsSource = fn.arguments;
-      }
-    }
-  }
-
-  if (!name) {
-    const fallbackName = record.tool_name;
-    if (typeof fallbackName === "string" && fallbackName.trim()) {
-      name = fallbackName.trim();
-    }
-  }
-
-  if (argsSource === undefined && "arguments" in record) {
-    argsSource = record.arguments;
-  }
-  if (argsSource === undefined && "input" in record) {
-    argsSource = record.input;
-  }
-
-  if (!name) {
-    return null;
-  }
-
-  return {
-    id,
-    name,
-    args: parseToolCallArgs(argsSource),
-  };
-}
-
-function extractAdditionalKwargsToolCalls(message: Message): NormalizedToolCall[] {
-  if (message.type !== "ai") {
-    return [];
-  }
-
-  const additionalKwargs =
-    message.additional_kwargs &&
-    typeof message.additional_kwargs === "object" &&
-    !Array.isArray(message.additional_kwargs)
-      ? (message.additional_kwargs as Record<string, unknown>)
-      : null;
-
-  if (!additionalKwargs) {
-    return [];
-  }
-
-  const rawToolCalls = [
-    additionalKwargs.tool_calls,
-    additionalKwargs.raw_tool_calls,
-    additionalKwargs.openai_tool_calls,
-    additionalKwargs.function_calls,
-  ];
-
-  const normalized = rawToolCalls
-    .flatMap((candidate) => parseToolCallCollection(candidate))
-    .map((item) => normalizeToolCall(item))
-    .filter((item): item is NormalizedToolCall => item !== null);
-
-  return normalized;
-}
-
-export function getToolCalls(message: Message): NormalizedToolCall[] {
-  if (message.type !== "ai") {
-    return [];
-  }
-
-  const direct = parseToolCallCollection(message.tool_calls)
-    .map((item) => normalizeToolCall(item))
-    .filter((item): item is NormalizedToolCall => item !== null);
-
-  if (direct.length > 0) {
-    return direct;
-  }
-
-  return extractAdditionalKwargsToolCalls(message);
-}
-
-export function groupMessages<T>(
-  messages: Message[],
-  mapper: (group: MessageGroup) => T,
-): T[] {
+export function getMessageGroups(messages: Message[]): MessageGroup[] {
   if (messages.length === 0) {
     return [];
   }
 
   const groups: MessageGroup[] = [];
-  const pendingToolMessagesByCallId = new Map<string, Message[]>();
-  const orphanToolMessagesWithoutCallId: Message[] = [];
 
   // Returns the last group if it can still accept tool messages
   // (i.e. it's an in-flight processing group, not a terminal human/assistant group).
@@ -238,17 +77,10 @@ export function groupMessages<T>(
         if (open) {
           open.messages.push(message);
         } else {
-          const callId =
-            typeof message.tool_call_id === "string"
-              ? message.tool_call_id
-              : undefined;
-          if (callId) {
-            const queued = pendingToolMessagesByCallId.get(callId) ?? [];
-            queued.push(message);
-            pendingToolMessagesByCallId.set(callId, queued);
-          } else {
-            orphanToolMessagesWithoutCallId.push(message);
-          }
+          console.error(
+            "Unexpected tool message outside a processing group",
+            message,
+          );
         }
       }
       continue;
@@ -270,26 +102,14 @@ export function groupMessages<T>(
       } else if (hasReasoning(message) || hasToolCalls(message)) {
         const lastGroup = groups[groups.length - 1];
         // Accumulate consecutive intermediate AI messages into one processing group.
-        let processingGroup: AssistantProcessingGroup;
         if (lastGroup?.type !== "assistant:processing") {
-          processingGroup = {
+          groups.push({
             id: message.id,
             type: "assistant:processing",
             messages: [message],
-          };
-          groups.push(processingGroup);
+          });
         } else {
           lastGroup.messages.push(message);
-          processingGroup = lastGroup;
-        }
-
-        const toolCalls = getToolCalls(message);
-        for (const toolCall of toolCalls) {
-          if (!toolCall.id) continue;
-          const queued = pendingToolMessagesByCallId.get(toolCall.id);
-          if (!queued || queued.length === 0) continue;
-          processingGroup.messages.push(...queued);
-          pendingToolMessagesByCallId.delete(toolCall.id);
         }
       }
 
@@ -301,26 +121,50 @@ export function groupMessages<T>(
     }
   }
 
-  // Flush unmatched tool messages so they remain visible instead of being dropped.
-  for (const queuedMessages of pendingToolMessagesByCallId.values()) {
-    if (queuedMessages.length === 0) continue;
-    groups.push({
-      id: queuedMessages[0]?.id,
-      type: "assistant",
-      messages: queuedMessages,
-    });
-  }
-  for (const toolMessage of orphanToolMessagesWithoutCallId) {
-    groups.push({
-      id: toolMessage.id,
-      type: "assistant",
-      messages: [toolMessage],
-    });
-  }
+  return groups;
+}
 
-  return groups
+export function groupMessages<T>(
+  messages: Message[],
+  mapper: (group: MessageGroup) => T,
+): T[] {
+  return getMessageGroups(messages)
     .map(mapper)
     .filter((result) => result !== undefined && result !== null) as T[];
+}
+
+export function getAssistantTurnUsageMessages(groups: MessageGroup[]) {
+  const usageMessagesByGroupIndex: Array<Message[] | null> = Array.from(
+    { length: groups.length },
+    () => null,
+  );
+
+  let turnStartIndex: number | null = null;
+
+  for (const [index, group] of groups.entries()) {
+    if (group.type === "human") {
+      turnStartIndex = null;
+      continue;
+    }
+
+    turnStartIndex ??= index;
+
+    const nextGroup = groups[index + 1];
+    const isTurnEnd = !nextGroup || nextGroup.type === "human";
+
+    if (!isTurnEnd) {
+      continue;
+    }
+
+    usageMessagesByGroupIndex[index] = groups
+      .slice(turnStartIndex, index + 1)
+      .flatMap((currentGroup) => currentGroup.messages)
+      .filter((message) => message.type === "ai");
+
+    turnStartIndex = null;
+  }
+
+  return usageMessagesByGroupIndex;
 }
 
 export function extractTextFromMessage(message: Message) {
@@ -468,13 +312,15 @@ export function hasReasoning(message: Message) {
 }
 
 export function hasToolCalls(message: Message) {
-  return message.type === "ai" && getToolCalls(message).length > 0;
+  return (
+    message.type === "ai" && message.tool_calls && message.tool_calls.length > 0
+  );
 }
 
 export function hasPresentFiles(message: Message) {
   return (
     message.type === "ai" &&
-    getToolCalls(message).some((toolCall) => toolCall.name === "present_files")
+    message.tool_calls?.some((toolCall) => toolCall.name === "present_files")
   );
 }
 
@@ -487,7 +333,7 @@ export function extractPresentFilesFromMessage(message: Message) {
     return [];
   }
   const files: string[] = [];
-  for (const toolCall of getToolCalls(message)) {
+  for (const toolCall of message.tool_calls ?? []) {
     if (
       toolCall.name === "present_files" &&
       Array.isArray(toolCall.args.filepaths)
@@ -499,7 +345,7 @@ export function extractPresentFilesFromMessage(message: Message) {
 }
 
 export function hasSubagent(message: AIMessage) {
-  for (const toolCall of getToolCalls(message)) {
+  for (const toolCall of message.tool_calls ?? []) {
     if (toolCall.name === "task") {
       return true;
     }

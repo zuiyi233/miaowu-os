@@ -1,84 +1,65 @@
 import type { Message } from "@langchain/langgraph-sdk";
-import { expect, test, vi } from "vitest";
+import { expect, test } from "vitest";
 
-import { groupMessages } from "@/core/messages/utils";
+import {
+  getAssistantTurnUsageMessages,
+  getMessageGroups,
+} from "@/core/messages/utils";
 
-function asMessage(message: Partial<Message>): Message {
-  return message as Message;
-}
-
-test("groupMessages links tool-first message to later AI processing group", () => {
-  const toolFirst = asMessage({
-    id: "tool-1",
-    type: "tool",
-    name: "build_world",
-    tool_call_id: "call-build-world-1",
-    content: "blocked",
-  });
-  const aiLater = asMessage({
-    id: "ai-1",
-    type: "ai",
-    content: "",
-    tool_calls: [
-      {
-        id: "call-build-world-1",
-        name: "build_world",
-        args: { project_id: "proj-1" },
-      },
-    ],
-  });
-
-  const groups = groupMessages([toolFirst, aiLater], (group) => group);
-  expect(groups).toHaveLength(1);
-  expect(groups[0]?.type).toBe("assistant:processing");
-  expect(groups[0]?.messages).toHaveLength(2);
-  expect(groups[0]?.messages[0]?.id).toBe("ai-1");
-  expect(groups[0]?.messages[1]?.id).toBe("tool-1");
-});
-
-test("groupMessages keeps ai-first + tool-later in one processing group", () => {
-  const aiFirst = asMessage({
-    id: "ai-2",
-    type: "ai",
-    content: "",
-    tool_calls: [
-      {
-        id: "call-build-world-2",
-        name: "build_world",
-        args: { project_id: "proj-2" },
-      },
-    ],
-  });
-  const toolLater = asMessage({
-    id: "tool-2",
-    type: "tool",
-    name: "build_world",
-    tool_call_id: "call-build-world-2",
-    content: "ok",
-  });
-
-  const groups = groupMessages([aiFirst, toolLater], (group) => group);
-  expect(groups).toHaveLength(1);
-  expect(groups[0]?.type).toBe("assistant:processing");
-  expect(groups[0]?.messages).toHaveLength(2);
-});
-
-test("groupMessages keeps unmatched tool message visible without console error", () => {
-  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-  try {
-    const orphanTool = asMessage({
-      id: "tool-orphan",
+test("aggregates token usage messages once per assistant turn", () => {
+  const messages = [
+    {
+      id: "human-1",
+      type: "human",
+      content: "Plan a trip",
+    },
+    {
+      id: "ai-1",
+      type: "ai",
+      content: "",
+      tool_calls: [{ id: "tool-1", name: "web_search", args: {} }],
+      usage_metadata: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+    },
+    {
+      id: "tool-1-result",
       type: "tool",
-      name: "build_world",
-      tool_call_id: "call-missing",
-      content: "需要确认执行",
-    });
-    const groups = groupMessages([orphanTool], (group) => group);
-    expect(groups).toHaveLength(1);
-    expect(groups[0]?.type).toBe("assistant");
-    expect(groups[0]?.messages[0]?.id).toBe("tool-orphan");
-    expect(errorSpy).not.toHaveBeenCalled();
-  } finally {
-    errorSpy.mockRestore();
-  }
+      name: "web_search",
+      tool_call_id: "tool-1",
+      content: "[]",
+    },
+    {
+      id: "ai-2",
+      type: "ai",
+      content: "Here is the itinerary",
+      usage_metadata: { input_tokens: 2, output_tokens: 8, total_tokens: 10 },
+    },
+    {
+      id: "human-2",
+      type: "human",
+      content: "Make it shorter",
+    },
+    {
+      id: "ai-3",
+      type: "ai",
+      content: "Short version",
+      usage_metadata: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    },
+  ] as Message[];
+
+  const groups = getMessageGroups(messages);
+  const usageMessagesByGroupIndex = getAssistantTurnUsageMessages(groups);
+
+  expect(groups.map((group) => group.type)).toEqual([
+    "human",
+    "assistant:processing",
+    "assistant",
+    "human",
+    "assistant",
+  ]);
+
+  expect(
+    usageMessagesByGroupIndex.map(
+      (groupMessages) => groupMessages?.map((message) => message.id) ?? null,
+    ),
+  ).toEqual([null, null, ["ai-1", "ai-2"], null, ["ai-3"]]);
 });

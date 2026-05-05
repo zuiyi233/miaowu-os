@@ -2,7 +2,7 @@
 
 import { BotIcon, PlusSquare } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Button } from "@/components/ui/button";
@@ -25,9 +25,8 @@ import { useAgent } from "@/core/agents";
 import { useI18n } from "@/core/i18n/hooks";
 import { useModels } from "@/core/models/hooks";
 import { useNotification } from "@/core/notification/hooks";
-import { useThreadSettings } from "@/core/settings";
+import { useLocalSettings, useThreadSettings } from "@/core/settings";
 import { useThreadStream } from "@/core/threads/hooks";
-import { isAbortLikeError } from "@/core/threads/submit-retry";
 import { textOfMessage } from "@/core/threads/utils";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
@@ -46,6 +45,7 @@ export default function AgentChatPage() {
   const { threadId, setThreadId, isNewThread, setIsNewThread } =
     useThreadChat();
   const [settings, setSettings] = useThreadSettings(threadId);
+  const [localSettings, setLocalSettings] = useLocalSettings();
   const { tokenUsageEnabled } = useModels();
 
   const { showNotification } = useNotification();
@@ -57,12 +57,7 @@ export default function AgentChatPage() {
     loadMoreHistory,
   } = useThreadStream({
     threadId: isNewThread ? undefined : threadId,
-    context: {
-      ...settings.context,
-      agent_name: agent_name,
-      moduleId: "agent-chat",
-      module_id: "agent-chat",
-    },
+    context: { ...settings.context, agent_name: agent_name },
     onStart: (createdThreadId) => {
       setThreadId(createdThreadId);
       setIsNewThread(false);
@@ -91,64 +86,24 @@ export default function AgentChatPage() {
     },
   });
 
-  useEffect(() => {
-    // Fallback: if onCreated is not emitted but messages already exist, exit
-    // the centered "new thread" layout so messages are not covered by composer.
-    if (!isNewThread || thread.messages.length === 0) {
-      return;
-    }
-
-    setIsNewThread(false);
-    history.replaceState(
-      null,
-      "",
-      `/workspace/agents/${agent_name}/chats/${threadId}`,
-    );
-  }, [
-    agent_name,
-    isNewThread,
-    setIsNewThread,
-    thread.messages.length,
-    threadId,
-  ]);
-
-  const reportSendMessageRejection = useCallback((error: unknown) => {
-    if (isAbortLikeError(error)) {
-      console.debug("[agent-chat] message submission aborted by user");
-      return;
-    }
-    console.warn("[agent-chat] message submission failed:", error);
-  }, []);
-
   const handleSubmit = useCallback(
     (message: PromptInputMessage) => {
-      void sendMessage(
-        threadId,
-        message,
-        {
-          agent_name,
-          moduleId: "agent-chat",
-          module_id: "agent-chat",
-        },
-      ).catch(reportSendMessageRejection);
+      void sendMessage(threadId, message, { agent_name });
     },
-    [agent_name, reportSendMessageRejection, sendMessage, threadId],
+    [sendMessage, threadId, agent_name],
   );
 
-  const handleStop = useCallback(() => {
-    void thread.stop().catch((error: unknown) => {
-      if (isAbortLikeError(error)) {
-        console.debug("[agent-chat] stop request aborted");
-        return;
-      }
-      console.warn("[agent-chat] stop request failed:", error);
-    });
+  const handleStop = useCallback(async () => {
+    await thread.stop();
   }, [thread]);
 
   const messageListPaddingBottom = showFollowups
     ? MESSAGE_LIST_DEFAULT_PADDING_BOTTOM +
       MESSAGE_LIST_FOLLOWUPS_EXTRA_PADDING_BOTTOM
     : undefined;
+  const tokenUsageInlineMode = tokenUsageEnabled
+    ? localSettings.tokenUsage.inlineMode
+    : "off";
 
   return (
     <ThreadContext.Provider value={{ thread }}>
@@ -188,6 +143,10 @@ export default function AgentChatPage() {
               <TokenUsageIndicator
                 enabled={tokenUsageEnabled}
                 messages={thread.messages}
+                preferences={localSettings.tokenUsage}
+                onPreferencesChange={(preferences) =>
+                  setLocalSettings("tokenUsage", preferences)
+                }
               />
               <ExportTrigger threadId={threadId} />
               <ArtifactTrigger />
@@ -201,10 +160,10 @@ export default function AgentChatPage() {
                 threadId={threadId}
                 thread={thread}
                 paddingBottom={messageListPaddingBottom}
-                tokenUsageEnabled={tokenUsageEnabled}
                 hasMoreHistory={hasMoreHistory}
                 loadMoreHistory={loadMoreHistory}
                 isHistoryLoading={isHistoryLoading}
+                tokenUsageInlineMode={tokenUsageInlineMode}
               />
             </div>
 
@@ -222,10 +181,9 @@ export default function AgentChatPage() {
                   <div className="absolute right-0 bottom-0 left-0">
                     <TodoList
                       className="bg-background/5"
-                      todos={thread.values?.todos ?? []}
+                      todos={thread.values.todos ?? []}
                       hidden={
-                        !thread.values?.todos ||
-                        thread.values.todos.length === 0
+                        !thread.values.todos || thread.values.todos.length === 0
                       }
                     />
                   </div>

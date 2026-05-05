@@ -3,7 +3,6 @@ import type { Message } from "@langchain/langgraph-sdk";
 import {
   extractContentFromMessage,
   extractReasoningContentFromMessage,
-  getToolCalls,
   hasContent,
   hasToolCalls,
   stripUploadedFilesTag,
@@ -21,7 +20,7 @@ function formatMessageContent(message: Message): string {
 
 function formatToolCalls(message: Message): string {
   if (message.type !== "ai" || !hasToolCalls(message)) return "";
-  const calls = getToolCalls(message);
+  const calls = message.tool_calls ?? [];
   return calls.map((call) => `- **Tool:** \`${call.name}\``).join("\n");
 }
 
@@ -96,8 +95,8 @@ export function formatThreadAsJSON(
       type: msg.type,
       id: msg.id,
       content: typeof msg.content === "string" ? msg.content : msg.content,
-      ...(msg.type === "ai" && getToolCalls(msg).length
-        ? { tool_calls: getToolCalls(msg) }
+      ...(msg.type === "ai" && (msg.tool_calls ?? []).length
+        ? { tool_calls: msg.tool_calls }
         : {}),
     })),
   };
