@@ -6,46 +6,27 @@
 
 ## Overview
 
-<!--
-Document your project's hook conventions here.
-
-Questions to answer:
-- What custom hooks do you have?
-- How do you handle data fetching?
-- What are the naming conventions?
-- How do you share stateful logic?
--->
-
-(To be filled by the team)
-
----
-
-## Custom Hook Patterns
-
-<!-- How to create and structure custom hooks -->
-
-(To be filled by the team)
+This project expects data-fetching hooks to normalize backend failures into explicit, typed states before they reach the page layer.
 
 ---
 
 ## Data Fetching
 
-<!-- How data fetching is handled (React Query, SWR, etc.) -->
+### Quality Report Queries
 
-质量报告查询必须通过共享 hook `useQualityReportQuery` 统一管理 `queryKey` 和 `queryFn`，禁止在页面布局或其他组件中重复定义同一份 `useQuery`。
+`useQualityReportQuery` must own the shared `queryKey` and `queryFn` for quality report fetching.
 
----
+Pages and layouts must not define duplicate `useQuery` logic for the same quality report data.
 
-## Naming Conventions
+### Agents Management API
 
-<!-- Hook naming rules (use*, etc.) -->
+Agents-related hooks must detect the management-API disabled case explicitly and surface it as `AgentsApiDisabledError` rather than a generic network failure.
 
-(To be filled by the team)
+When a disabled response is identified, the hook layer must stop retrying immediately. Only non-disabled network failures may continue with limited retry behavior.
 
 ---
 
 ## Common Mistakes
 
-<!-- Hook-related mistakes your team has made -->
-
-(To be filled by the team)
+- Treating `403 disabled` as a transient fetch error and letting retry logic continue.
+- Returning only a loading state for disabled management APIs instead of a terminal disabled state.

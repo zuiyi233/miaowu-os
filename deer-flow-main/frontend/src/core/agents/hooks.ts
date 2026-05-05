@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  AgentsApiDisabledError,
   createAgent,
   deleteAgent,
   getAgent,
@@ -13,8 +14,15 @@ export function useAgents() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["agents"],
     queryFn: () => listAgents(),
+    retry: (failureCount, err) => {
+      if (err instanceof AgentsApiDisabledError) {
+        return false;
+      }
+      return failureCount < 3;
+    },
   });
-  return { agents: data ?? [], isLoading, error };
+  const isAgentsApiDisabled = error instanceof AgentsApiDisabledError;
+  return { agents: data ?? [], isLoading, error, isAgentsApiDisabled };
 }
 
 export function useAgent(name: string | null | undefined) {

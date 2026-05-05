@@ -11,8 +11,12 @@ import { AgentCard } from "./agent-card";
 
 export function AgentGallery() {
   const { t } = useI18n();
-  const { agents, isLoading } = useAgents();
+  const { agents, isLoading, error, isAgentsApiDisabled } = useAgents();
   const router = useRouter();
+  const disabledReason =
+    error instanceof Error && error.message
+      ? error.message
+      : "智能体管理功能当前未启用，请在后端配置中开启 agents_api.enabled=true。";
 
   const handleNewAgent = () => {
     router.push("/workspace/agents/new");
@@ -28,7 +32,7 @@ export function AgentGallery() {
             {t.agents.description}
           </p>
         </div>
-        <Button onClick={handleNewAgent}>
+        <Button onClick={handleNewAgent} disabled={isAgentsApiDisabled}>
           <PlusIcon className="mr-1.5 h-4 w-4" />
           {t.agents.newAgent}
         </Button>
@@ -36,7 +40,19 @@ export function AgentGallery() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
-        {isLoading ? (
+        {isAgentsApiDisabled ? (
+          <div className="flex h-64 flex-col items-center justify-center gap-3 text-center">
+            <div className="bg-muted flex h-14 w-14 items-center justify-center rounded-full">
+              <BotIcon className="text-muted-foreground h-7 w-7" />
+            </div>
+            <div>
+              <p className="font-medium">智能体管理功能未启用</p>
+              <p className="text-muted-foreground mt-1 text-sm">
+                {disabledReason}
+              </p>
+            </div>
+          </div>
+        ) : isLoading ? (
           <div className="text-muted-foreground flex h-40 items-center justify-center text-sm">
             {t.common.loading}
           </div>
@@ -51,7 +67,12 @@ export function AgentGallery() {
                 {t.agents.emptyDescription}
               </p>
             </div>
-            <Button variant="outline" className="mt-2" onClick={handleNewAgent}>
+            <Button
+              variant="outline"
+              className="mt-2"
+              onClick={handleNewAgent}
+              disabled={isAgentsApiDisabled}
+            >
               <PlusIcon className="mr-1.5 h-4 w-4" />
               {t.agents.newAgent}
             </Button>
