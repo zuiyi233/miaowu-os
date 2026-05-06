@@ -1,7 +1,7 @@
 # 上游同步操作手册
 
 > 基于 2026-05-01 首次成功同步 bytedance/deer-flow 上游的实战经验总结。
-> 最后更新：2026-05-05（第三次增量同步完成）
+> 最后更新：2026-05-07（第四次增量同步文档收口）
 
 ---
 
@@ -10,13 +10,13 @@
 | 项目 | 值 |
 |------|-----|
 | 同步分支 | `merge/upstream-main` |
-| 上游最新 commit | `8e48b7e8` |
-| 上游同步基线 | `44ab21fc`（上次同步终点） |
-| 本次同步 commit 数 | 7 个（`44ab21fc..8e48b7e8`） |
-| 同步完整度 | **7/7 已全部对齐** |
-| 前端 tsc | **零错误** |
-| 后端 py_compile | **全部通过** |
-| 小说自定义代码 | **hooks.ts 6 处完整保留** |
+| 上游最新 commit | `1336872b` |
+| 上游同步基线 | `8e48b7e8`（上次同步终点） |
+| 本次同步 commit 数 | 7 个（`8e48b7e8..1336872b`） |
+| 同步完整度 | **7/7 文件触达范围已对齐（本轮为轻量审计收口）** |
+| 前端 tsc | **本轮未执行（按轻量任务要求跳过重测试）** |
+| 后端 py_compile | **本轮未执行（按轻量任务要求跳过重测试）** |
+| 端口裁决 | **local-dev 默认 `127.0.0.1:8551`；docker/nginx 内部 upstream 保持 `gateway:8001`** |
 
 ### 上游已同步的全部 commit
 
@@ -52,6 +52,23 @@
 | `b10eb7ba` | feat(github): Added container push workflow | ✅ 已合并 |
 | `af6e48cc` | fix(i18n): add Chinese translations for account settings page | ✅ 已合并 |
 | `8e48b7e8` | fix(channels): preserve clarification conversation history across follow-up turns | ✅ 已合并 |
+
+#### 第四批（2026-05-06 同步，8e48b7e8 → 1336872b）
+
+| 上游 commit | 描述 | 状态 |
+|-------------|------|------|
+| `028493bf` | fix(docker): request-time 解析 upstream，避免容器重启后 DNS 缓存陈旧 | ✅ 已合并 |
+| `aded753d` | fix(frontend): prod 模式恢复 `getGatewayConfig` 的 localhost fallback | ✅ 已合并 |
+| `680187dd` | fix: 补齐 `RemoteSandboxBackend.list_running` | ✅ 已合并 |
+| `e8675f26` | fix(loop-detection): warn 注入时保持 tool-call 成对关系 | ✅ 已合并 |
+| `59c4a3f0` | feat(agent): 自定义 agent 自更新（按用户隔离） | ✅ 已合并 |
+| `4ead2c6b` | fix(config): 热重载时重置 config singleton | ✅ 已合并 |
+| `1336872b` | fix(channels): 网关命令请求鉴权 | ✅ 已合并 |
+
+第四批本地裁决要点（固定）：
+
+1. `local-dev` 默认后端基址保持 `http://127.0.0.1:8551`（前端 `4560`），不被上游通用文案覆盖。
+2. `docker/nginx` 容器内 upstream 仍保持 `gateway:8001`，用于容器内服务发现与代理。
 
 ### 已验证的依赖版本组合（与上游完全一致）
 

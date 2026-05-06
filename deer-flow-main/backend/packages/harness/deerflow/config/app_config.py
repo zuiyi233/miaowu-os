@@ -1,5 +1,6 @@
 import logging
 import os
+from collections.abc import Mapping
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Self
@@ -11,11 +12,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from deerflow.config.acp_config import ACPAgentConfig, load_acp_config_from_dict
 from deerflow.config.agents_api_config import AgentsApiConfig, load_agents_api_config_from_dict
 from deerflow.config.checkpointer_config import CheckpointerConfig, load_checkpointer_config_from_dict
+from deerflow.config.database_config import DatabaseConfig
 from deerflow.config.extensions_config import ExtensionsConfig
 from deerflow.config.guardrails_config import GuardrailsConfig, load_guardrails_config_from_dict
-from deerflow.config.runtime_paths import existing_project_file
 from deerflow.config.memory_config import MemoryConfig, load_memory_config_from_dict
 from deerflow.config.model_config import ModelConfig
+from deerflow.config.run_events_config import RunEventsConfig
+from deerflow.config.runtime_paths import existing_project_file
 from deerflow.config.sandbox_config import SandboxConfig
 from deerflow.config.skill_evolution_config import SkillEvolutionConfig
 from deerflow.config.skills_config import SkillsConfig
@@ -37,6 +40,11 @@ _LOG_LEVEL_MAP: dict[str, int] = {
     "warning": logging.WARNING,
     "error": logging.ERROR,
     "critical": logging.CRITICAL,
+}
+
+CONFIG_FILE_DATABASE_DEFAULTS = {
+    "backend": "sqlite",
+    "sqlite_dir": ".deer-flow/data",
 }
 
 
@@ -91,6 +99,8 @@ class AppConfig(BaseModel):
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig, description="Guardrail middleware configuration")
     circuit_breaker: CircuitBreakerConfig = Field(default_factory=CircuitBreakerConfig, description="LLM circuit breaker configuration")
     model_config = ConfigDict(extra="allow", frozen=False)
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig, description="Unified database backend configuration")
+    run_events: RunEventsConfig = Field(default_factory=RunEventsConfig, description="Run event storage configuration")
     checkpointer: CheckpointerConfig | None = Field(default=None, description="Checkpointer configuration")
     stream_bridge: StreamBridgeConfig | None = Field(default=None, description="Stream bridge configuration")
 
@@ -144,56 +154,67 @@ class AppConfig(BaseModel):
         cls._check_config_version(config_data, resolved_path)
 
         config_data = cls.resolve_env_variables(config_data)
-
-        # Load title config if present
-        if "title" in config_data:
-            load_title_config_from_dict(config_data["title"])
-
-        # Load summarization config if present
-        if "summarization" in config_data:
-            load_summarization_config_from_dict(config_data["summarization"])
-
-        # Load memory config if present
-        if "memory" in config_data:
-            load_memory_config_from_dict(config_data["memory"])
-
-        # Always refresh agents API config so removed config sections reset
-        # singleton-backed state to its default/disabled values on reload.
-        load_agents_api_config_from_dict(config_data.get("agents_api") or {})
-
-        # Load subagents config if present
-        if "subagents" in config_data:
-            load_subagents_config_from_dict(config_data["subagents"])
-
-        # Load tool_search config if present
-        if "tool_search" in config_data:
-            load_tool_search_config_from_dict(config_data["tool_search"])
-
-        # Load guardrails config if present
-        if "guardrails" in config_data:
-            load_guardrails_config_from_dict(config_data["guardrails"])
+        cls._apply_database_defaults(config_data)
 
         # Load circuit_breaker config if present
         if "circuit_breaker" in config_data:
             config_data["circuit_breaker"] = config_data["circuit_breaker"]
-
-        # Load checkpointer config if present
-        if "checkpointer" in config_data:
-            load_checkpointer_config_from_dict(config_data["checkpointer"])
-
-        # Load stream bridge config if present
-        if "stream_bridge" in config_data:
-            load_stream_bridge_config_from_dict(config_data["stream_bridge"])
-
-        # Always refresh ACP agent config so removed entries do not linger across reloads.
-        load_acp_config_from_dict(config_data.get("acp_agents", {}))
 
         # Load extensions config separately (it's in a different file)
         extensions_config = ExtensionsConfig.from_file()
         config_data["extensions"] = extensions_config.model_dump()
 
         result = cls.model_validate(config_data)
+        acp_agents = cls._validate_acp_agents(config_data.get("acp_agents", {}))
+        cls._apply_singleton_configs(result, acp_agents)
         return result
+
+    @classmethod
+    def _validate_acp_agents(
+        cls,
+        config_data: Mapping[str, Mapping[str, object]] | None,
+    ) -> dict[str, ACPAgentConfig]:
+        if config_data is None:
+            config_data = {}
+        return {name: ACPAgentConfig(**cfg) for name, cfg in config_data.items()}
+
+    @classmethod
+    def _apply_singleton_configs(cls, config: Self, acp_agents: dict[str, ACPAgentConfig]) -> None:
+        from deerflow.config.checkpointer_config import get_checkpointer_config
+
+        previous_checkpointer_config = get_checkpointer_config()
+
+        load_title_config_from_dict(config.title.model_dump())
+        load_summarization_config_from_dict(config.summarization.model_dump())
+        load_memory_config_from_dict(config.memory.model_dump())
+        load_agents_api_config_from_dict(config.agents_api.model_dump())
+        load_subagents_config_from_dict(config.subagents.model_dump())
+        load_tool_search_config_from_dict(config.tool_search.model_dump())
+        load_guardrails_config_from_dict(config.guardrails.model_dump())
+        load_checkpointer_config_from_dict(config.checkpointer.model_dump() if config.checkpointer is not None else None)
+        load_stream_bridge_config_from_dict(config.stream_bridge.model_dump() if config.stream_bridge is not None else None)
+        load_acp_config_from_dict({name: agent.model_dump() for name, agent in acp_agents.items()})
+
+        if previous_checkpointer_config != config.checkpointer:
+            # These runtime singletons derive their backend from checkpointer config.
+            # Keep imports local to avoid cycles: both providers import get_app_config.
+            from deerflow.runtime.checkpointer import reset_checkpointer
+            from deerflow.runtime.store import reset_store
+
+            reset_checkpointer()
+            reset_store()
+
+    @classmethod
+    def _apply_database_defaults(cls, config_data: dict[str, Any]) -> None:
+        """Apply config.yaml defaults for persistence when the section is absent."""
+        database_config = config_data.get("database")
+        if database_config is None:
+            database_config = {}
+            config_data["database"] = database_config
+        if not isinstance(database_config, dict):
+            return
+        for key, value in CONFIG_FILE_DATABASE_DEFAULTS.items():
+            database_config.setdefault(key, value)
 
     @classmethod
     def _check_config_version(cls, config_data: dict, config_path: Path) -> None:

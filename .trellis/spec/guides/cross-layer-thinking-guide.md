@@ -86,6 +86,12 @@ When changing base URLs or ports, always trace all layers in one pass:
 - gateway/internal call sites
 - tests that assert runtime wiring
 
+For DeerFlow upstream sync tasks in this repo, run a concrete profile check before closing:
+- `backend/app/channels/manager.py` default URLs must keep local-dev `127.0.0.1:8551` unless the task explicitly changes local runtime contract
+- `frontend/src/core/auth/gateway-config.ts` fallback URL must stay aligned with local-dev contract
+- `.env.example` and `frontend/.env.example` examples for local-dev should not drift from `8551`
+- `docker/nginx/nginx.conf` may keep `gateway:8001` because it is container-internal routing, not Windows local-dev direct access
+
 ---
 
 ## Checklist for Cross-Layer Features

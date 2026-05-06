@@ -376,7 +376,7 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None, agent_nam
 def make_lead_agent(config: RunnableConfig):
     # Lazy import to avoid circular dependency
     from deerflow.tools import get_available_tools
-    from deerflow.tools.builtins import setup_agent
+    from deerflow.tools.builtins import setup_agent, update_agent
 
     cfg = _get_runtime_config(config)
     runtime_app_config = cfg.get("app_config")
@@ -432,7 +432,12 @@ def make_lead_agent(config: RunnableConfig):
         )
 
     logger.info(
-        "Create Agent(%s) -> thinking_enabled: %s, reasoning_effort: %s, model_name: %s, runtime_model: %s, runtime_provider: %s, runtime_base_url: %s, runtime_api_key: %s, is_plan_mode: %s, subagent_enabled: %s, max_concurrent_subagents: %s",
+        (
+            "Create Agent(%s) -> thinking_enabled: %s, reasoning_effort: %s, "
+            "model_name: %s, runtime_model: %s, runtime_provider: %s, "
+            "runtime_base_url: %s, runtime_api_key: %s, is_plan_mode: %s, "
+            "subagent_enabled: %s, max_concurrent_subagents: %s"
+        ),
         agent_name or "default",
         thinking_enabled,
         reasoning_effort,
@@ -475,6 +480,9 @@ def make_lead_agent(config: RunnableConfig):
             state_schema=ThreadState,
         )
 
+    # Custom agents can update their own SOUL.md / config via update_agent.
+    # The default agent (no agent_name) does not see this tool.
+    extra_tools = [update_agent] if agent_name else []
     # Default lead agent (unchanged behavior)
     return create_agent(
         model=create_chat_model(
@@ -484,8 +492,20 @@ def make_lead_agent(config: RunnableConfig):
             app_config=app_config,
             **model_runtime_overrides,
         ),
-        tools=get_available_tools(model_name=model_name, groups=agent_config.tool_groups if agent_config else None, subagent_enabled=subagent_enabled, include_novel=include_novel),
-        middleware=_build_middlewares(config, model_name=model_name, agent_name=agent_name, custom_middlewares=custom_middlewares, app_config=app_config),
+        tools=get_available_tools(
+            model_name=model_name,
+            groups=agent_config.tool_groups if agent_config else None,
+            subagent_enabled=subagent_enabled,
+            include_novel=include_novel,
+        )
+        + extra_tools,
+        middleware=_build_middlewares(
+            config,
+            model_name=model_name,
+            agent_name=agent_name,
+            custom_middlewares=custom_middlewares,
+            app_config=app_config,
+        ),
         system_prompt=apply_prompt_template(
             subagent_enabled=subagent_enabled,
             max_concurrent_subagents=max_concurrent_subagents,
