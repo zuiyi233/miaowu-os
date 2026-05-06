@@ -1,0 +1,5 @@
+{"file":"docs/DEERFLOW_UPSTREAM_SYNC_RUNBOOK.md","reason":"同步执行主规范，定义子树三方合并、本地优先裁决与最小验证命令"}
+{"file":"docs/upstream-sync-guide.md","reason":"最新增量同步经验与常见冲突位点清单，作为本轮冲突裁决参考"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"冲突裁决涉及 gateway/runtime 时遵循既有错误处理与恢复契约"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"同步后后端最小质量验证与异步运行时约束对齐"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"处理 upstream 与本地 8551/8001 契约差异时的跨层一致性约束"}
