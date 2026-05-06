@@ -7,7 +7,6 @@ import ChapterAnalysis from '@/components/novel/ChapterAnalysis';
 export default function ChapterAnalysisPage() {
   const params = useParams();
   const router = useRouter();
-
   const novelId = decodeURIComponent((params.novelId as string) ?? '');
   const chapterId = decodeURIComponent((params.chapterId as string) ?? '');
 

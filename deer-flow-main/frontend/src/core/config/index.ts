@@ -62,9 +62,27 @@ function normalizeLoopbackBaseURL(baseURL: string): string {
 }
 
 let _cachedBackendBaseURL: string | undefined;
+let _cachedBackendSourceURL: string | undefined;
+let _cachedDesktopBuild: boolean | undefined;
+let _cachedWindowHostname: string | undefined;
+
+function getWindowHostname(): string | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+  return normalizeHostname(window.location.hostname);
+}
 
 export function getBackendBaseURL() {
-  if (_cachedBackendBaseURL !== undefined) {
+  const sourceURL = env.NEXT_PUBLIC_BACKEND_BASE_URL;
+  const windowHostname = getWindowHostname();
+  const canReuseCache =
+    _cachedBackendBaseURL !== undefined &&
+    _cachedBackendSourceURL === sourceURL &&
+    _cachedDesktopBuild === isDesktopBuild &&
+    _cachedWindowHostname === windowHostname;
+
+  if (canReuseCache) {
     return _cachedBackendBaseURL;
   }
   let result: string;
@@ -78,12 +96,19 @@ export function getBackendBaseURL() {
   } else {
     result = "";
   }
+
   _cachedBackendBaseURL = result;
+  _cachedBackendSourceURL = sourceURL;
+  _cachedDesktopBuild = isDesktopBuild;
+  _cachedWindowHostname = windowHostname;
   return result;
 }
 
 export function resetBackendBaseURLCache() {
   _cachedBackendBaseURL = undefined;
+  _cachedBackendSourceURL = undefined;
+  _cachedDesktopBuild = undefined;
+  _cachedWindowHostname = undefined;
 }
 
 export function getLangGraphBaseURL(isMock?: boolean) {

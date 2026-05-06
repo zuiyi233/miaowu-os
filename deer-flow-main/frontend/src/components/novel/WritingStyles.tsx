@@ -17,9 +17,9 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { fetch as authFetch } from '@/core/api/fetcher';
 import { getBackendBaseURL } from '@/core/config';
 import { cn } from '@/lib/utils';
 
@@ -44,7 +44,7 @@ export function WritingStyles({ projectId }: WritingStylesProps) {
   const loadStyles = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${backendBase}/api/writing-styles?project_id=${projectId}`, { credentials: 'include' });
+      const res = await authFetch(`${backendBase}/api/writing-styles?project_id=${projectId}`);
       if (!res.ok) return;
       const data = await res.json();
       setStyles(Array.isArray(data) ? data : data.styles || []);
@@ -57,8 +57,8 @@ export function WritingStyles({ projectId }: WritingStylesProps) {
     try {
       const url = isEdit ? `/api/writing-styles/${editing?.id}` : '/api/writing-styles';
       const method = isEdit ? 'PUT' : 'POST';
-      const res = await fetch(`${backendBase}${url}`, {
-        method, headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+      const res = await authFetch(`${backendBase}${url}`, {
+        method, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, project_id: projectId }),
       });
       if (!res.ok) throw new Error(isEdit ? '更新失败' : '创建失败');
@@ -70,7 +70,7 @@ export function WritingStyles({ projectId }: WritingStylesProps) {
 
   const handleToggleActive = async (style: WritingStyle) => {
     try {
-      const res = await fetch(`${backendBase}/api/writing-styles/${style.id}/toggle`, { method: 'POST', credentials: 'include' });
+      const res = await authFetch(`${backendBase}/api/writing-styles/${style.id}/toggle`, { method: 'POST' });
       if (!res.ok) return;
       loadStyles();
     } catch {}
@@ -79,7 +79,7 @@ export function WritingStyles({ projectId }: WritingStylesProps) {
   const handleDelete = async (id: string) => {
     if (!window.confirm('确定删除该写作风格吗？')) return;
     try {
-      const res = await fetch(`${backendBase}/api/writing-styles/${id}`, { method: 'DELETE', credentials: 'include' });
+      const res = await authFetch(`${backendBase}/api/writing-styles/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('删除失败');
       toast.success('已删除'); loadStyles();
     } catch (err) { toast.error(err instanceof Error ? err.message : '删除失败'); }

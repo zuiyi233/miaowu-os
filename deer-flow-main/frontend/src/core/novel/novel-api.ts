@@ -1,3 +1,4 @@
+import { fetch as authFetch } from '@/core/api/fetcher';
 import { getBackendBaseURL } from '@/core/config';
 import { buildUrlWithPrefix, parseJsonOrText, type QueryValue } from '@/core/request-utils';
 
@@ -210,7 +211,7 @@ function withModelRoutingBody<T extends Record<string, unknown>>(
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const response = await fetch(buildUrlWithPrefix(getNovelApiPrefix(), path, options.query), {
+  const response = await authFetch(buildUrlWithPrefix(getNovelApiPrefix(), path, options.query), {
     method: options.method ?? 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -237,7 +238,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 }
 
 async function requestBookImport<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const response = await fetch(buildUrlWithPrefix(getBookImportApiPrefix(), path, options.query), {
+  const response = await authFetch(buildUrlWithPrefix(getBookImportApiPrefix(), path, options.query), {
     method: options.method ?? 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -264,7 +265,7 @@ async function requestStreamResponse(path: string, options: StreamRequestOptions
     headers['Content-Type'] = 'application/json';
   }
 
-  const response = await fetch(buildUrlWithPrefix(getNovelApiPrefix(), path, options.query), {
+  const response = await authFetch(buildUrlWithPrefix(getNovelApiPrefix(), path, options.query), {
     method: options.method ?? 'POST',
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
@@ -1594,7 +1595,7 @@ export class NovelApiService {
       formData.append('ai_model', modelRouting.ai_model);
     }
 
-    const response = await fetch(buildUrlWithPrefix(getBookImportApiPrefix(), '/tasks'), {
+    const response = await authFetch(buildUrlWithPrefix(getBookImportApiPrefix(), '/tasks'), {
       method: 'POST',
       body: formData,
     });
@@ -1642,7 +1643,7 @@ export class NovelApiService {
     payload: Record<string, unknown>,
     modelRouting?: AiModelRoutingPayload,
   ): Promise<Response> {
-    const response = await fetch(buildUrlWithPrefix(getBookImportApiPrefix(), `/tasks/${encodeURIComponent(taskId)}/apply-stream`), {
+    const response = await authFetch(buildUrlWithPrefix(getBookImportApiPrefix(), `/tasks/${encodeURIComponent(taskId)}/apply-stream`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(withModelRoutingBody(payload, modelRouting)),
@@ -1669,7 +1670,7 @@ export class NovelApiService {
     steps: string[],
     modelRouting?: AiModelRoutingPayload,
   ): Promise<Response> {
-    const response = await fetch(buildUrlWithPrefix(getBookImportApiPrefix(), `/tasks/${encodeURIComponent(taskId)}/retry-stream`), {
+    const response = await authFetch(buildUrlWithPrefix(getBookImportApiPrefix(), `/tasks/${encodeURIComponent(taskId)}/retry-stream`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(withModelRoutingBody({ steps }, modelRouting)),

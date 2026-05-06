@@ -1,7 +1,7 @@
 # 上游同步操作手册
 
 > 基于 2026-05-01 首次成功同步 bytedance/deer-flow 上游的实战经验总结。
-> 最后更新：2026-05-02（验证通过、全部差距修复）
+> 最后更新：2026-05-05（第三次增量同步完成）
 
 ---
 
@@ -10,14 +10,17 @@
 | 项目 | 值 |
 |------|-----|
 | 同步分支 | `merge/upstream-main` |
-| 上游最新 commit | `189b8240` |
-| 上游 commit 总数 | 8 个（从 squash 基点之后） |
-| 同步完整度 | **8/8 已全部对齐**（含 2 个手动补全） |
-| 后端测试 | **11 passed, 0 skipped** |
+| 上游最新 commit | `8e48b7e8` |
+| 上游同步基线 | `44ab21fc`（上次同步终点） |
+| 本次同步 commit 数 | 7 个（`44ab21fc..8e48b7e8`） |
+| 同步完整度 | **7/7 已全部对齐** |
 | 前端 tsc | **零错误** |
-| dev-local.bat | **启动成功**（后端 8551 + 前端 4560） |
+| 后端 py_compile | **全部通过** |
+| 小说自定义代码 | **hooks.ts 6 处完整保留** |
 
-### 上游已同步的 8 个 commit
+### 上游已同步的全部 commit
+
+#### 第一批（2026-05-01/02 同步，基线 → 189b8240）
 
 | 上游 commit | 描述 | 状态 |
 |-------------|------|------|
@@ -30,7 +33,25 @@
 | `8b61c94e` | fix: keep lead agent graph factory signature compatible | ✅ 已合并 |
 | `1ad1420e` | refactor(skills): Unified skill storage capability | ✅ 已合并 |
 
-> 注：`83938cf3` 的 `_submit_to_isolated_loop_in_context` 无需引入——miaowu-os 使用 `ThreadPoolExecutor.submit()` 架构，contextvars 已自动保留。
+#### 第二批（2026-05-02 同步，189b8240 → 44ab21fc）
+
+| 上游 commit | 描述 | 状态 |
+|-------------|------|------|
+| `44ab21fc` | feat(community): add Serper web search provider | ✅ 已合并 |
+| `e543bbf5` | [security] fix(upload): reject symlinked upload destinations | ✅ 已合并 |
+| `ca3332f8` | fix(gateway): return ISO 8601 timestamps from threads endpoints | ✅ 已合并 |
+
+#### 第三批（2026-05-05 同步，44ab21fc → 8e48b7e8）
+
+| 上游 commit | 描述 | 状态 |
+|-------------|------|------|
+| `f80ac961` | fix(harness): restore legacy skills path fallback | ✅ 已合并 |
+| `222a7773` | fix(frontend): avoid misleading error message when agent api is disable | ✅ 已合并 |
+| `82e7936d` | fix(docker): set UTF-8 locale to prevent ASCII encoding errors | ✅ 已合并 |
+| `d02f762a` | feat: refine token usage display modes | ✅ 已合并 |
+| `b10eb7ba` | feat(github): Added container push workflow | ✅ 已合并 |
+| `af6e48cc` | fix(i18n): add Chinese translations for account settings page | ✅ 已合并 |
+| `8e48b7e8` | fix(channels): preserve clarification conversation history across follow-up turns | ✅ 已合并 |
 
 ### 已验证的依赖版本组合（与上游完全一致）
 
@@ -477,3 +498,91 @@ createNovelProgressRef.current.clear();
 ```typescript
 createNovelProgressRef.current.clear();
 ```
+
+---
+
+## 8. 第三次增量同步实战记录（2026-05-05）
+
+> 同步上游 `44ab21fc..8e48b7e8` 共 7 个提交，涉及 30 个文件，新增约 2762 行，删除约 241 行。
+
+### 8.1 同步策略
+
+本次采用**逐提交手动应用**策略，而非 squash 合并。原因：
+
+1. 上游变更量大（token usage 重构涉及 20 个文件），直接 squash 容易遗漏
+2. 需要逐提交验证二开兼容性，特别是 API 变更的影响
+3. 部分文件（如 `client.py`、`token_usage_middleware.py`）直接从上游复制更安全
+
+**核心流程**：
+1. 在 `D:\deer-flow-main`（原版项目）用 `git show` / `git diff` 获取每个提交的完整 diff
+2. 对无二开修改的文件，直接 `git show 8e48b7e8:path > miaowu-os/path` 复制
+3. 对有二开修改的文件（i18n、page.tsx 等），手动编辑合并上游新增内容
+4. 验证编译通过后检查二开关键文件完整性
+
+### 8.2 发现并修复的兼容性问题
+
+| # | 问题 | 根因 | 涉及文件 | 修复方式 |
+|---|------|------|----------|----------|
+| 1 | `TS2305: Module '"../messages/utils"' has no exported member 'getToolCalls'` | 上游 `utils.ts` 重构移除了 `getToolCalls` 和 `NormalizedToolCall` 导出 | `core/tools/utils.ts`、`core/artifacts/loader.ts`、`core/threads/export.ts` | 改为直接使用 `message.tool_calls` 和 `ToolCall` 类型（与上游一致） |
+| 2 | `TS2322: Type '{}' is not assignable to type 'string'` | `AgentThreadContext extends Record<string, unknown>` 导致 `Omit` 后 `media_draft_retention` 类型丢失 | `core/settings/local.ts` | 在 `LocalSettings.context` 交叉类型中显式添加 `media_draft_retention` 字段 |
+
+### 8.3 上游 API 变更适配要点
+
+#### 8.3.1 `getToolCalls` / `NormalizedToolCall` 移除
+
+上游在 `d02f762a` 中重构了 `messages/utils.ts`，移除了自定义的 `getToolCalls()` 函数和 `NormalizedToolCall` 类型，改为直接使用 LangChain SDK 的 `ToolCall` 类型和 `message.tool_calls` 属性。
+
+**迁移模式**：
+```typescript
+// 旧写法（已移除）
+import { getToolCalls, NormalizedToolCall } from "../messages/utils";
+const calls = getToolCalls(message);
+
+// 新写法
+import type { ToolCall } from "@langchain/core/messages";
+const calls = message.tool_calls ?? [];
+```
+
+**受影响的二开文件**：
+- `core/tools/utils.ts` — 直接替换为上游版本
+- `core/artifacts/loader.ts` — 移除 `getToolCalls` 导入，改用 `message.tool_calls`
+- `core/threads/export.ts` — 同上
+
+#### 8.3.2 Token Usage 显示模式重构
+
+上游 `d02f762a` 是本次最大的提交（+2346/-222），引入了完整的 token 用量归因系统：
+
+- **后端**：`token_usage_middleware.py` 从简单日志记录重构为结构化归因标注（`token_usage_attribution`），支持 `final_answer`、`tool_batch`、`todo_update` 等 kind
+- **后端**：`client.py` 新增 `additional_kwargs` 序列化和增量发送机制
+- **前端**：新增 `usage-model.ts`（440 行）定义 `TokenUsageInlineMode` 和归因模型
+- **前端**：`message-token-usage.tsx`、`token-usage-indicator.tsx`、`message-group.tsx`、`message-list.tsx` 全面重写
+- **i18n**：新增 `presets`、`presetDescriptions`、`finalAnswer`、`stepTotal` 等翻译键
+
+**二开适配**：这些文件无二开自定义代码，直接从上游复制即可。
+
+#### 8.3.3 Skills 路径回退
+
+上游 `f80ac961` 在 `skills_config.py` 中新增 `_legacy_skills_candidates()` 函数，当项目根目录下无 `skills/` 目录时，回退到仓库根目录的 `skills/`。
+
+**二开影响**：miaowu-os 的目录结构与上游不同（代码在 `deer-flow-main/` 子目录下），但 `parents[4]` 的计算路径仍然适用，因为 `skills_config.py` 的相对位置不变。
+
+### 8.4 同步后验证清单
+
+- [x] 前端 TypeScript 编译零错误
+- [x] 后端 Python 编译零错误（manager.py、app.py、client.py、token_usage_middleware.py、skills_config.py）
+- [x] 小说模块文件完整（novel.py、novel_migrated.py、novel_tools.py、core/novel/、components/novel/）
+- [x] hooks.ts 中 6 处小说自定义代码完整（9 处引用确认）
+- [x] 所有变更都在 `deer-flow-main/` 下，无根目录级别文件混入
+- [x] 新增文件 4 个（container.yaml、test_client_message_serialization.py、usage-model.ts、usage-model.test.ts）
+- [x] 修改文件 29 个
+- [ ] dev-local.bat 启动验证
+- [ ] 后端 /health 健康检查
+
+### 8.5 高效同步技巧总结
+
+1. **直接复制优于手动合并**：对于无二开修改的文件（如 `client.py`、`token_usage_middleware.py`、`message-group.tsx`），使用 `git show 8e48b7e8:path > miaowu-os/path` 直接复制上游版本，避免手动编辑遗漏
+2. **先检查上游 diff 再决定策略**：用 `git diff 44ab21fc..8e48b7e8 --stat` 查看变更范围，按文件大小和复杂度决定复制还是编辑
+3. **API 变更需全局搜索**：上游移除导出（如 `getToolCalls`）时，必须全局搜索二开代码中的引用，逐一适配
+4. **TypeScript 编译是最好的验证**：`npx tsc --noEmit` 能立即发现类型不兼容问题
+5. **i18n 合并需注意类型定义**：`types.ts` 必须与 `en-US.ts`、`zh-CN.ts` 保持同步，否则编译报错
+6. **`Record<string, unknown>` 的 Omit 陷阱**：当上游接口继承 `Record<string, unknown>` 时，`Omit` 后自定义字段可能丢失类型，需在交叉类型中显式声明

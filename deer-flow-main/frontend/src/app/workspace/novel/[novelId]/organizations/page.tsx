@@ -1,12 +1,12 @@
-'use client';
-
-import { useParams } from 'next/navigation';
-
 import { Organizations } from '@/components/novel/Organizations';
 
-export default function OrganizationsPage() {
-  const params = useParams();
-  const novelId = decodeURIComponent((params.novelId as string) ?? '');
+interface OrganizationsPageProps {
+  params: Promise<{ novelId: string }>;
+}
+
+export default async function OrganizationsPage({ params }: OrganizationsPageProps) {
+  const { novelId: encodedNovelId } = await params;
+  const novelId = decodeURIComponent(encodedNovelId ?? '');
 
   if (!novelId) {
     return <div className="flex h-full items-center justify-center text-muted-foreground">Loading...</div>;

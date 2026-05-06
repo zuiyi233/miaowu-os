@@ -4,9 +4,8 @@ import { Globe, Edit3, RefreshCw, Eye, Save } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -20,6 +19,7 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
+import { fetch as authFetch } from '@/core/api/fetcher';
 import { getBackendBaseURL } from '@/core/config';
 import { cn } from '@/lib/utils';
 
@@ -53,7 +53,7 @@ export function WorldSetting({ projectId }: WorldSettingProps) {
   const loadWorld = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${backendBase}/api/projects/${projectId}`, { credentials: 'include' });
+      const res = await authFetch(`${backendBase}/api/projects/${projectId}`);
       if (!res.ok) return;
       const project = await res.json();
       setWorldData({
@@ -71,11 +71,10 @@ export function WorldSetting({ projectId }: WorldSettingProps) {
   const handleSave = async () => {
     try {
       setSaving(true);
-      const res = await fetch(`${backendBase}/api/projects/${projectId}/world-building`, {
+      const res = await authFetch(`${backendBase}/api/projects/${projectId}/world-building`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editForm),
-        credentials: 'include',
       });
       if (!res.ok) throw new Error('保存失败');
       toast.success('世界观已保存');
@@ -91,11 +90,10 @@ export function WorldSetting({ projectId }: WorldSettingProps) {
     setIsRegenerating(true); setRegenProgress(0); setRegenMessage('准备重新生成世界观...');
 
     try {
-      const res = await fetch(`${backendBase}/api/wizard/regenerate-world-building`, {
+      const res = await authFetch(`${backendBase}/api/wizard/regenerate-world-building`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project_id: projectId }),
-        credentials: 'include',
       });
 
       if (!res.ok || !res.body) throw new Error('请求失败');
@@ -112,7 +110,10 @@ export function WorldSetting({ projectId }: WorldSettingProps) {
           if (!trimmed.startsWith('data:')) continue;
           try {
             const data = JSON.parse(trimmed.slice(5).trim());
-            if (data.type === 'progress') { setRegenProgress(data.progress || 0); setRegenProgress(data.message || ''); }
+            if (data.type === 'progress') {
+              setRegenProgress(data.progress || 0);
+              setRegenMessage(data.message || '');
+            }
             else if (data.type === 'result') { setPreviewData(data.data || data); }
             else if (data.type === 'error') throw new Error(data.message || '生成失败');
           } catch {}
@@ -129,9 +130,9 @@ export function WorldSetting({ projectId }: WorldSettingProps) {
     if (!previewData) return;
     try {
       setSaving(true);
-      const res = await fetch(`${backendBase}/api/projects/${projectId}/world-building`, {
+      const res = await authFetch(`${backendBase}/api/projects/${projectId}/world-building`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(previewData), credentials: 'include',
+        body: JSON.stringify(previewData),
       });
       if (!res.ok) throw new Error('应用失败');
       setWorldData(previewData);

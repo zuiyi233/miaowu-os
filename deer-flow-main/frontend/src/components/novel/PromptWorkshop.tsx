@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { fetch as authFetch } from '@/core/api/fetcher';
 import { getBackendBaseURL } from '@/core/config';
 import { cn } from '@/lib/utils';
 
@@ -59,7 +60,7 @@ function pickString(source: Record<string, unknown>, ...keys: string[]): string 
 }
 
 export function PromptWorkshop({ projectId }: PromptWorkshopProps) {
-  const backendBase = getBackendBaseURL();
+  const backendBase = getBackendBaseURL() || '';
   const [items, setItems] = useState<PromptTemplate[]>([]);
   const [myItems, setMyItems] = useState<PromptTemplate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -74,9 +75,8 @@ export function PromptWorkshop({ projectId }: PromptWorkshopProps) {
   const loadCommunity = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(
+      const res = await authFetch(
         buildPromptWorkshopItemsUrl(backendBase, { searchTerm, categoryFilter }),
-        { credentials: 'include' },
       );
       if (res.ok) {
         const payload = await res.json();
@@ -87,7 +87,7 @@ export function PromptWorkshop({ projectId }: PromptWorkshopProps) {
 
   const loadMyPrompts = useCallback(async () => {
     try {
-      const res = await fetch(buildPromptTemplatesUrl(backendBase), { credentials: 'include' });
+      const res = await authFetch(buildPromptTemplatesUrl(backendBase));
       if (res.ok) {
         const payload = await res.json();
         setMyItems(extractPromptTemplates(payload).map(normalize));
@@ -109,8 +109,8 @@ export function PromptWorkshop({ projectId }: PromptWorkshopProps) {
 
   const handleCreate = async () => {
     try {
-      const res = await fetch(buildPromptTemplatesUrl(backendBase), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+      const res = await authFetch(buildPromptTemplatesUrl(backendBase), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(buildPromptTemplateCreatePayload(form, projectId)),
       });
       if (!res.ok) throw new Error('创建失败');
@@ -121,7 +121,7 @@ export function PromptWorkshop({ projectId }: PromptWorkshopProps) {
 
   const handleToggleFavorite = async (id: string) => {
     try {
-      await fetch(buildPromptWorkshopLikeUrl(backendBase, id), { method: 'POST', credentials: 'include' });
+      await authFetch(buildPromptWorkshopLikeUrl(backendBase, id), { method: 'POST' });
       loadCommunity();
     } catch {}
   };
@@ -130,9 +130,8 @@ export function PromptWorkshop({ projectId }: PromptWorkshopProps) {
     if (!window.confirm('确定删除该模板吗？')) return;
     try {
       const template = myItems.find((item) => item.id === id);
-      const res = await fetch(buildPromptTemplateDeleteUrl(backendBase, template?.id || id), {
+      const res = await authFetch(buildPromptTemplateDeleteUrl(backendBase, template?.id || id), {
         method: 'DELETE',
-        credentials: 'include',
       });
       if (!res.ok) throw new Error('删除失败'); toast.success('已删除'); loadMyPrompts();
     } catch (err) { toast.error(err instanceof Error ? err.message : '删除失败'); }

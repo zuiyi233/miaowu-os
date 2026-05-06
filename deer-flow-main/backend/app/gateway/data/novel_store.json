@@ -1,41 +1,5 @@
 {
-  "novels": {
-    "a5d0bd1c-24e5-4411-ab4e-2238c8f5d8d5": {
-      "id": "a5d0bd1c-24e5-4411-ab4e-2238c8f5d8d5",
-      "title": "没钱修什么仙",
-      "outline": "",
-      "coverImage": null,
-      "metadata": {
-        "genre": "仙侠",
-        "description": "反传统修仙小说，主角因资源匮乏而另辟蹊径，通过商业手段积累修炼资源的故事",
-        "created_by": "deerflow_create_novel_tool_dual_write",
-        "modern_project_id": "a5d0bd1c-24e5-4411-ab4e-2238c8f5d8d5"
-      },
-      "syncStatus": "local",
-      "version": 1,
-      "createdAt": "2026-04-27T16:27:43.498847+00:00",
-      "updatedAt": "2026-04-27T16:27:43.498847+00:00"
-    },
-    "novel-123": {
-      "id": "novel-123",
-      "title": "星海回声",
-      "outline": "",
-      "coverImage": null,
-      "metadata": {
-        "genre": "科幻",
-        "theme": "文明冲突",
-        "audience": "青少年",
-        "target_words": 180000,
-        "description": "主题: 文明冲突\n目标受众: 青少年",
-        "created_by": "intent_recognition_dual_write",
-        "modern_project_id": "novel-123"
-      },
-      "syncStatus": "local",
-      "version": 1,
-      "createdAt": "2026-04-30T09:50:04.174668+00:00",
-      "updatedAt": "2026-04-30T09:50:04.174668+00:00"
-    }
-  },
+  "novels": {},
   "chapters": {},
   "characters": {},
   "entities": {},
@@ -43,29 +7,7 @@
   "graphs": {},
   "recommendations": {},
   "interactions": {},
-  "quality_reports": {
-    "a5d0bd1c-24e5-4411-ab4e-2238c8f5d8d5": {
-      "novelId": "a5d0bd1c-24e5-4411-ab4e-2238c8f5d8d5",
-      "score": 60,
-      "metrics": {
-        "wordCount": 0,
-        "chapterCount": 0,
-        "characterCount": 0,
-        "timelineEventCount": 0
-      },
-      "issues": [
-        {
-          "type": "low_word_count",
-          "severity": "warning",
-          "message": "小说总字数较少，建议继续完善内容。",
-          "details": {
-            "wordCount": 0
-          }
-        }
-      ],
-      "generatedAt": "2026-04-27T16:44:59.165005+00:00"
-    }
-  },
+  "quality_reports": {},
   "audits": {
     "novel-1483b1229933": [
       {
@@ -111,75 +53,6 @@
           }
         },
         "createdAt": "2026-04-24T20:43:28.346504+00:00"
-      }
-    ],
-    "a5d0bd1c-24e5-4411-ab4e-2238c8f5d8d5": [
-      {
-        "id": "audit-df3928321d2a",
-        "novelId": "a5d0bd1c-24e5-4411-ab4e-2238c8f5d8d5",
-        "action": "novel.create",
-        "entityType": "novel",
-        "entityId": "a5d0bd1c-24e5-4411-ab4e-2238c8f5d8d5",
-        "author": "system",
-        "details": {
-          "title": "没钱修什么仙",
-          "version": 1
-        },
-        "createdAt": "2026-04-27T16:27:43.498847+00:00"
-      }
-    ],
-    "novel-123": [
-      {
-        "id": "audit-b97a6b062b1b",
-        "novelId": "novel-123",
-        "action": "novel.create",
-        "entityType": "novel",
-        "entityId": "novel-123",
-        "author": "system",
-        "details": {
-          "title": "星海回声",
-          "version": 1
-        },
-        "createdAt": "2026-04-30T09:36:51.818754+00:00"
-      },
-      {
-        "id": "audit-533a51bed85b",
-        "novelId": "novel-123",
-        "action": "novel.create",
-        "entityType": "novel",
-        "entityId": "novel-123",
-        "author": "system",
-        "details": {
-          "title": "星海回声",
-          "version": 1
-        },
-        "createdAt": "2026-04-30T09:41:56.391796+00:00"
-      },
-      {
-        "id": "audit-cb5e28bfc8b0",
-        "novelId": "novel-123",
-        "action": "novel.create",
-        "entityType": "novel",
-        "entityId": "novel-123",
-        "author": "system",
-        "details": {
-          "title": "星海回声",
-          "version": 1
-        },
-        "createdAt": "2026-04-30T09:46:47.238720+00:00"
-      },
-      {
-        "id": "audit-f3f8b69fc959",
-        "novelId": "novel-123",
-        "action": "novel.create",
-        "entityType": "novel",
-        "entityId": "novel-123",
-        "author": "system",
-        "details": {
-          "title": "星海回声",
-          "version": 1
-        },
-        "createdAt": "2026-04-30T09:50:04.174668+00:00"
       }
     ]
   }

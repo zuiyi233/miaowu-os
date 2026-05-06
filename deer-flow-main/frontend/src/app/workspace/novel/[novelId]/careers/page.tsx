@@ -1,12 +1,12 @@
-'use client';
-
-import { useParams } from 'next/navigation';
-
 import { CareersView } from '@/components/novel/CareersView';
 
-export default function CareersPage() {
-  const params = useParams();
-  const novelId = decodeURIComponent((params.novelId as string) ?? '');
+interface CareersPageProps {
+  params: Promise<{ novelId: string }>;
+}
+
+export default async function CareersPage({ params }: CareersPageProps) {
+  const { novelId: encodedNovelId } = await params;
+  const novelId = decodeURIComponent(encodedNovelId ?? '');
 
   if (!novelId) {
     return <div className="flex h-full items-center justify-center text-muted-foreground">Loading...</div>;

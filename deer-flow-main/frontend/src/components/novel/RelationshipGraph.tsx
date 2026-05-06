@@ -32,6 +32,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
+import { fetch as authFetch } from '@/core/api/fetcher';
 import { getBackendBaseURL } from '@/core/config';
 import { cn } from '@/lib/utils';
 
@@ -187,8 +188,8 @@ export function RelationshipGraph({ projectId }: RelationshipGraphProps) {
       setHasSavedLayout(!!savedLayout);
 
       const [graphRes, careerRes] = await Promise.all([
-        fetch(`${backendBase}/api/relationships/graph?project_id=${projectId}`, { credentials: 'include' }),
-        fetch(`${backendBase}/api/careers?project_id=${projectId}`, { headers: getAuthHeaders() }).catch(() => null),
+        authFetch(`${backendBase}/api/relationships/graph?project_id=${projectId}`),
+        authFetch(`${backendBase}/api/careers?project_id=${projectId}`).catch(() => null),
       ]);
 
       if (!graphRes.ok) return;
@@ -207,11 +208,6 @@ export function RelationshipGraph({ projectId }: RelationshipGraphProps) {
       setLoading(false);
     }
   }, [projectId, backendBase]);
-
-  function getAuthHeaders(): Record<string, string> {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  }
 
   function loadSavedLayout(): Record<string, { x: number; y: number }> | null {
     try {
@@ -374,7 +370,7 @@ export function RelationshipGraph({ projectId }: RelationshipGraphProps) {
     if (cached) { setSelectedDetail(cached); return; }
     setDetailLoading(true);
     try {
-      const res = await fetch(`${backendBase}/api/characters/${nodeId}`, { ...getAuthHeaders() });
+      const res = await authFetch(`${backendBase}/api/characters/${nodeId}`);
       if (res.ok) {
         const detail: CharacterDetail = await res.json();
         setCharacterDetailMap((prev) => ({ ...prev, [nodeId]: detail }));
@@ -518,7 +514,7 @@ export function RelationshipGraph({ projectId }: RelationshipGraphProps) {
   );
 }
 
-function DetailPanel({ detail, connectedEdges, graphData, careers }: {
+function DetailPanel({ detail, connectedEdges, graphData, careers: _careers }: {
   detail: CharacterDetail; connectedEdges: GraphEdge[]; graphData: GraphData | null; careers: CareerListResponse;
 }) {
   const isOrg = detail.is_organization;

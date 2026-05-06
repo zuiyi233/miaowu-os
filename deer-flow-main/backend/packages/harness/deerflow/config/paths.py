@@ -147,6 +147,14 @@ class Paths:
         """Directory for a specific user: `{base_dir}/users/{user_id}/`."""
         return self.base_dir / "users" / _validate_user_id(user_id)
 
+    def user_memory_file(self, user_id: str) -> Path:
+        """Per-user memory file: `{base_dir}/users/{user_id}/memory.json`."""
+        return self.user_dir(user_id) / "memory.json"
+
+    def user_agent_memory_file(self, user_id: str, agent_name: str) -> Path:
+        """Per-user per-agent memory: `{base_dir}/users/{user_id}/agents/{name}/memory.json`."""
+        return self.user_dir(user_id) / "agents" / agent_name.lower() / "memory.json"
+
     def thread_dir(self, thread_id: str, *, user_id: str | None = None) -> Path:
         """
         Host path for a thread's data.
@@ -191,7 +199,7 @@ class Paths:
         """
         return self.thread_dir(thread_id, user_id=user_id) / "user-data" / "outputs"
 
-    def acp_workspace_dir(self, thread_id: str) -> Path:
+    def acp_workspace_dir(self, thread_id: str, *, user_id: str | None = None) -> Path:
         """
         Host path for the ACP workspace of a specific thread.
         Host: `{base_dir}/threads/{thread_id}/acp-workspace/`
@@ -200,7 +208,7 @@ class Paths:
         Each thread gets its own isolated ACP workspace so that concurrent
         sessions cannot read each other's ACP agent outputs.
         """
-        return self.thread_dir(thread_id) / "acp-workspace"
+        return self.thread_dir(thread_id, user_id=user_id) / "acp-workspace"
 
     def sandbox_user_data_dir(self, thread_id: str, *, user_id: str | None = None) -> Path:
         """
@@ -232,11 +240,11 @@ class Paths:
         """Host path for the outputs mount source."""
         return _join_host_path(self.host_sandbox_user_data_dir(thread_id, user_id=user_id), "outputs")
 
-    def host_acp_workspace_dir(self, thread_id: str) -> str:
+    def host_acp_workspace_dir(self, thread_id: str, *, user_id: str | None = None) -> str:
         """Host path for the ACP workspace mount source."""
-        return _join_host_path(self.host_thread_dir(thread_id), "acp-workspace")
+        return _join_host_path(self.host_thread_dir(thread_id, user_id=user_id), "acp-workspace")
 
-    def ensure_thread_dirs(self, thread_id: str) -> None:
+    def ensure_thread_dirs(self, thread_id: str, *, user_id: str | None = None) -> None:
         """Create all standard sandbox directories for a thread.
 
         Directories are created with mode 0o777 so that sandbox containers
@@ -250,10 +258,10 @@ class Paths:
         ACP agent invocation.
         """
         for d in [
-            self.sandbox_work_dir(thread_id),
-            self.sandbox_uploads_dir(thread_id),
-            self.sandbox_outputs_dir(thread_id),
-            self.acp_workspace_dir(thread_id),
+            self.sandbox_work_dir(thread_id, user_id=user_id),
+            self.sandbox_uploads_dir(thread_id, user_id=user_id),
+            self.sandbox_outputs_dir(thread_id, user_id=user_id),
+            self.acp_workspace_dir(thread_id, user_id=user_id),
         ]:
             d.mkdir(parents=True, exist_ok=True)
             d.chmod(0o777)

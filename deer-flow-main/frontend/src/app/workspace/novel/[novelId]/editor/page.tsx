@@ -1,12 +1,12 @@
-'use client';
-
-import { useParams } from 'next/navigation';
-
 import { NovelEditor } from '@/components/novel/Editor';
 
-export default function NovelEditorRoute() {
-  const params = useParams();
-  const novelId = params.novelId as string;
+interface NovelEditorRouteProps {
+  params: Promise<{ novelId: string }>;
+}
+
+export default async function NovelEditorRoute({ params }: NovelEditorRouteProps) {
+  const { novelId: encodedNovelId } = await params;
+  const novelId = decodeURIComponent(encodedNovelId ?? '');
 
   if (!novelId) {
     return (
@@ -16,5 +16,5 @@ export default function NovelEditorRoute() {
     );
   }
 
-  return <NovelEditor novelId={decodeURIComponent(novelId)} />;
+  return <NovelEditor novelId={novelId} />;
 }

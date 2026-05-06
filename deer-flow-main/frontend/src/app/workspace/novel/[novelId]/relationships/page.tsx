@@ -1,15 +1,16 @@
-'use client';
-
 import { GitBranch } from 'lucide-react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
-export default function RelationshipsPage() {
-  const params = useParams();
-  const novelId = decodeURIComponent((params.novelId as string) ?? '');
+interface RelationshipsPageProps {
+  params: Promise<{ novelId: string }>;
+}
+
+export default async function RelationshipsPage({ params }: RelationshipsPageProps) {
+  const { novelId: encodedNovelId } = await params;
+  const novelId = decodeURIComponent(encodedNovelId ?? '');
 
   if (!novelId) {
     return <div className="flex h-full items-center justify-center text-muted-foreground">Loading...</div>;

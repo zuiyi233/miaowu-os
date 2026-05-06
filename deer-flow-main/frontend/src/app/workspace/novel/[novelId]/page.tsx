@@ -1,18 +1,16 @@
-'use client';
+import { redirect } from 'next/navigation';
 
-import { useParams, useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+interface NovelDetailRouteProps {
+  params: Promise<{ novelId: string }>;
+}
 
-export default function NovelDetailRoute() {
-  const params = useParams();
-  const router = useRouter();
-  const novelId = decodeURIComponent((params.novelId as string) ?? '');
+export default async function NovelDetailRoute({ params }: NovelDetailRouteProps) {
+  const { novelId: encodedNovelId } = await params;
+  const novelId = decodeURIComponent(encodedNovelId ?? '');
 
-  useEffect(() => {
-    if (novelId) {
-      router.replace(`/workspace/novel/${encodeURIComponent(novelId)}/chapters`);
-    }
-  }, [novelId, router]);
+  if (!novelId) {
+    return <div className="flex h-full items-center justify-center text-muted-foreground">Loading...</div>;
+  }
 
-  return <div className="flex h-full items-center justify-center text-muted-foreground">Loading...</div>;
+  redirect(`/workspace/novel/${encodeURIComponent(novelId)}/chapters`);
 }

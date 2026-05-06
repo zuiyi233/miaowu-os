@@ -8,9 +8,9 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FlickeringGrid } from "@/components/ui/flickering-grid";
 import { Input } from "@/components/ui/input";
+import { resolveApiUrl } from "@/core/api/fetcher";
 import { useAuth } from "@/core/auth/AuthProvider";
 import { parseAuthError } from "@/core/auth/types";
-import { resolveApiUrl } from "@/core/api/fetcher";
 
 /**
  * Validate next parameter

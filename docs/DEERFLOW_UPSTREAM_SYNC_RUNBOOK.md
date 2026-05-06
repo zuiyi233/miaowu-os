@@ -28,12 +28,36 @@
 - 安全备份分支：`backup-before-upstream-sync-20260420-013110`
 - 冲突报告文件：`docs/upstream-sync-conflicts-20260420-014233.txt`
 
-### 2026-04-28 增量同步快照（最新）
+### 2026-04-28 增量同步快照
 
 - 同步前本地基准：`320ebf2b33e6f28b3bf5385218e9ece6c8d2791c`
 - 上游目标提交：`395c14357b60926a63af2142ac96bbb670ecb768`
 - 安全备份分支：`backup-before-upstream-sync-20260428-213029`
 - 冲突报告文件：`docs/upstream-sync-conflicts-20260428-222512.txt`
+
+### 2026-05-05 增量同步快照（最新）
+
+- 同步前本地基准：`44ab21fc`（上次同步终点）
+- 上游目标提交：`8e48b7e8`
+- 同步 commit 数：7 个
+- 同步策略：逐提交手动应用（非 squash 合并）
+- 验证结果：前端 tsc 零错误、后端 py_compile 全部通过、小说自定义代码完整保留
+- 详细记录：`docs/upstream-sync-guide.md` 第 8 节
+
+本轮同步核心变更：
+
+1. Token usage 显示模式重构（20 个文件，+2346/-222）
+2. Skills 路径回退机制
+3. Agent API 禁用时的友好错误提示
+4. Dockerfile UTF-8 locale 设置
+5. 容器推送 GitHub Actions 工作流
+6. 账户设置页面中文翻译
+7. 澄清对话历史跨轮次保留
+
+发现的兼容性问题：
+
+1. 上游移除 `getToolCalls`/`NormalizedToolCall` 导出 → 二开文件需改用 `message.tool_calls`
+2. `AgentThreadContext extends Record<string, unknown>` 导致 `Omit` 后类型丢失 → 需显式声明
 
 本轮冲突核心在 gateway/runtime 与前端 settings 组件：
 
