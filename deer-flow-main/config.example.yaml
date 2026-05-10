@@ -30,7 +30,7 @@ log_level: info
 # When enabled, DeerFlow records input/output/total tokens per model call
 # and shows usage metadata in the workspace UI when providers return it.
 token_usage:
-  enabled: false
+  enabled: true
 
 # ============================================================================
 # Models Configuration
@@ -118,30 +118,7 @@ models:
   # For Docker deployments, use host.docker.internal instead of localhost:
   #   base_url: http://host.docker.internal:11434
 
-  # Example: Anthropic Claude model with Prompt Caching enabled
-  # IMPORTANT: Use deerflow.models.claude_provider:ClaudeChatModel to enable
-  # automatic prompt caching (90% cost reduction on cached tokens).
-  # The provider automatically adds cache_control: {type: "ephemeral"} markers.
-  #
-  # - name: claude-sonnet-4
-  #   display_name: Claude Sonnet 4 (with Prompt Cache)
-  #   use: deerflow.models.claude_provider:ClaudeChatModel  # Built-in caching provider
-  #   model: claude-sonnet-4-20250514
-  #   api_key: $ANTHROPIC_API_KEY
-  #   default_request_timeout: 600.0
-  #   max_retries: 2
-  #   max_tokens: 8192
-  #   enable_prompt_caching: true       # Enable automatic cache_control markers
-  #   prompt_cache_size: 3              # Cache last 3 messages + system prompt
-  #   supports_vision: true
-  #   when_thinking_enabled:
-  #     thinking:
-  #       type: enabled
-  #   when_thinking_disabled:
-  #     thinking:
-  #       type: disabled
-
-  # Example: Anthropic Claude model (standard, no caching)
+  # Example: Anthropic Claude model
   # - name: claude-3-5-sonnet
   #   display_name: Claude 3.5 Sonnet
   #   use: langchain_anthropic:ChatAnthropic
@@ -894,9 +871,25 @@ skill_evolution:
 #
 # Postgres mode: put your connection URL in .env as DATABASE_URL,
 # then reference it here with $DATABASE_URL.
-# Install the driver first:
-#   Local:  uv sync --extra postgres
-#   Docker: UV_EXTRAS=postgres docker compose build
+#
+# Install the driver — Issue #2754 fix lands `UV_EXTRAS` in every code path:
+#   Local      `make dev` auto-detects from `database.backend: postgres` below
+#              and passes `--extra postgres` to `uv sync` on every restart, so
+#              the extra is no longer wiped. To opt in explicitly (or layer
+#              extras like `postgres,ollama`), set in project-root .env:
+#                  UV_EXTRAS=postgres
+#   Docker dev `make docker-start` reads `UV_EXTRAS` from project-root .env via
+#              `env_file`. Set:
+#                  UV_EXTRAS=postgres
+#              Multiple extras (`postgres,ollama`) supported here too — see
+#              docker/dev-entrypoint.sh.
+#   Docker img build-arg `UV_EXTRAS=postgres docker compose build` — single
+#              extra only at build time (backend/Dockerfile passes the value
+#              as one token to `--extra`).
+#
+# First-time bootstrap (before `make dev`):
+#   cd backend && uv sync --all-packages --extra postgres
+#   (--all-packages propagates the extra into workspace members — see PR #2584)
 #
 # NOTE: When both `checkpointer` and `database` are configured,
 # `checkpointer` takes precedence for LangGraph state persistence.

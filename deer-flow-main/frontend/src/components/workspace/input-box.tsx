@@ -80,42 +80,11 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 
-import { shouldShowFollowups } from "./input-box-logic";
 import { useThread } from "./messages/context";
 import { ModeHoverGuide } from "./mode-hover-guide";
 import { Tooltip } from "./tooltip";
 
 type InputMode = "flash" | "thinking" | "pro" | "ultra";
-
-type PendingClarificationAction = {
-  label: string;
-  value: string;
-  variant?: ComponentProps<typeof Button>["variant"];
-};
-
-type PendingClarificationPanel = {
-  title?: string;
-  question: string;
-  actions: PendingClarificationAction[];
-};
-
-function buildClarificationSummary(question: string): string {
-  const normalized = question.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return "";
-  }
-
-  const firstSentence =
-    normalized
-      .split(/[。！？!?]/)
-      .map((segment) => segment.trim())
-      .find((segment) => segment.length > 0) ?? normalized;
-
-  if (firstSentence.length <= 38) {
-    return firstSentence;
-  }
-  return `${firstSentence.slice(0, 38)}…`;
-}
 
 function getResolvedMode(
   mode: InputMode | undefined,
@@ -141,9 +110,6 @@ export function InputBox({
   threadId,
   initialValue,
   onContextChange,
-  onFollowupsVisibilityChange,
-  pendingClarification,
-  onPendingClarificationAction,
   onSubmit,
   onStop,
   ...props
@@ -176,9 +142,6 @@ export function InputBox({
       reasoning_effort?: "minimal" | "low" | "medium" | "high";
     },
   ) => void;
-  onFollowupsVisibilityChange?: (visible: boolean) => void;
-  pendingClarification?: PendingClarificationPanel | null;
-  onPendingClarificationAction?: (value: string) => void;
   onSubmit?: (message: PromptInputMessage) => void;
   onStop?: () => void;
 }) {
@@ -333,17 +296,9 @@ export function InputBox({
     form?.requestSubmit();
   }, []);
 
-  const hasPendingClarification =
-    !!pendingClarification &&
-    pendingClarification.actions.length > 0 &&
-    pendingClarification.question.trim().length > 0;
-
   const handleFollowupClick = useCallback(
     (suggestion: string) => {
       if (status === "streaming") {
-        return;
-      }
-      if (hasPendingClarification) {
         return;
       }
       const current = (textInput.value ?? "").trim();
@@ -356,7 +311,7 @@ export function InputBox({
       setFollowupsHidden(true);
       setTimeout(() => requestFormSubmit(), 0);
     },
-    [hasPendingClarification, requestFormSubmit, status, textInput],
+    [requestFormSubmit, status, textInput],
   );
 
   const confirmReplaceAndSend = useCallback(() => {
@@ -387,55 +342,15 @@ export function InputBox({
     setTimeout(() => requestFormSubmit(), 0);
   }, [pendingSuggestion, requestFormSubmit, textInput]);
 
-  const showFollowups = shouldShowFollowups({
-    disabled,
-    isNewThread: isWelcomeMode,
-    hasPendingClarification,
-    followupsHidden,
-    followupsLoading,
-    followupsCount: followups.length,
-  });
-  const clarificationQuestion = pendingClarification?.question.trim() ?? "";
-  const clarificationSummary = useMemo(
-    () => buildClarificationSummary(clarificationQuestion),
-    [clarificationQuestion],
-  );
-  const clarificationActions = pendingClarification?.actions ?? [];
-  const clarificationActionGridClass =
-    clarificationActions.length >= 3
-      ? "sm:grid-cols-3"
-      : clarificationActions.length === 2
-        ? "sm:grid-cols-2"
-        : "sm:grid-cols-1";
-
-  const followupsVisibilityChangeRef = useRef(onFollowupsVisibilityChange);
-
-  useEffect(() => {
-    followupsVisibilityChangeRef.current = onFollowupsVisibilityChange;
-  }, [onFollowupsVisibilityChange]);
-
-  useEffect(() => {
-    followupsVisibilityChangeRef.current?.(showFollowups);
-  }, [showFollowups]);
+  const showFollowups =
+    !disabled &&
+    !isWelcomeMode &&
+    !followupsHidden &&
+    (followupsLoading || followups.length > 0);
 
   useEffect(() => {
     messagesRef.current = thread.messages;
   }, [thread.messages]);
-
-  useEffect(() => {
-    return () => followupsVisibilityChangeRef.current?.(false);
-  }, []);
-
-  useEffect(() => {
-    if (!hasPendingClarification) {
-      return;
-    }
-    setFollowups([]);
-    setFollowupsLoading(false);
-    setFollowupsHidden(true);
-    setConfirmOpen(false);
-    setPendingSuggestion(null);
-  }, [hasPendingClarification]);
 
   useEffect(() => {
     const streaming = status === "streaming";
@@ -446,11 +361,6 @@ export function InputBox({
     }
 
     if (disabled || isMock) {
-      console.debug("[followup] skipped: disabled=%s isMock=%s", disabled, isMock);
-      return;
-    }
-    if (hasPendingClarification) {
-      console.debug("[followup] skipped: pending clarification exists");
       return;
     }
 
@@ -459,7 +369,6 @@ export function InputBox({
       .find((m) => m.type === "ai");
     const lastAiId = lastAi?.id ?? null;
     if (!lastAiId || lastAiId === lastGeneratedForAiIdRef.current) {
-      console.debug("[followup] skipped: lastAiId=%s alreadyGenerated=%s", lastAiId, lastGeneratedForAiIdRef.current);
       return;
     }
     lastGeneratedForAiIdRef.current = lastAiId;
@@ -475,7 +384,6 @@ export function InputBox({
       .slice(-6);
 
     if (recent.length === 0) {
-      console.debug("[followup] skipped: no recent messages with content (total messages=%d)", thread.messages.length);
       return;
     }
 
@@ -484,24 +392,18 @@ export function InputBox({
     setFollowupsLoading(true);
     setFollowups([]);
 
-    const requestPayload = {
-      messages: recent,
-      n: 3,
-      model_name: context.model_name ?? undefined,
-      module_id: "chat-suggestions",
-    };
-    console.debug("[followup] requesting suggestions: threadId=%s model=%s messages=%d", threadId, context.model_name, recent.length);
-
     fetch(`${getBackendBaseURL()}/api/threads/${threadId}/suggestions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestPayload),
+      body: JSON.stringify({
+        messages: recent,
+        n: 3,
+        model_name: context.model_name ?? undefined,
+      }),
       signal: controller.signal,
     })
       .then(async (res) => {
         if (!res.ok) {
-          const errorText = await res.text().catch(() => "");
-          console.warn("[followup] API returned non-OK: status=%d body=%s", res.status, errorText.slice(0, 200));
           return { suggestions: [] as string[] };
         }
         return (await res.json()) as { suggestions?: string[] };
@@ -511,19 +413,9 @@ export function InputBox({
           .map((s) => (typeof s === "string" ? s.trim() : ""))
           .filter((s) => s.length > 0)
           .slice(0, 5);
-        if (suggestions.length === 0) {
-          console.debug("[followup] API returned empty suggestions (raw count=%d)", (data.suggestions ?? []).length);
-        } else {
-          console.debug("[followup] received %d suggestions: %o", suggestions.length, suggestions);
-        }
         setFollowups(suggestions);
       })
-      .catch((error) => {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          console.debug("[followup] request aborted (thread switch or re-render)");
-        } else {
-          console.warn("[followup] fetch failed:", error);
-        }
+      .catch(() => {
         setFollowups([]);
       })
       .finally(() => {
@@ -531,37 +423,36 @@ export function InputBox({
       });
 
     return () => controller.abort();
-  }, [
-    context.model_name,
-    disabled,
-    hasPendingClarification,
-    isMock,
-    status,
-    thread.messages,
-    threadId,
-  ]);
+  }, [context.model_name, disabled, isMock, status, threadId]);
 
   return (
-    <div ref={promptRootRef} className="relative flex flex-col gap-4">
+    <div
+      ref={promptRootRef}
+      className={cn(
+        "relative flex flex-col",
+        isWelcomeMode ? "gap-4" : "gap-2",
+      )}
+    >
       {showFollowups && (
-        <div className="flex items-center justify-center pb-2">
+        <div className="flex items-center justify-center pb-1">
           <div className="flex items-center gap-2">
             {followupsLoading ? (
-              <div className="text-muted-foreground bg-background/80 rounded-full border px-4 py-2 text-xs backdrop-blur-sm">
+              <div className="text-muted-foreground bg-background/80 rounded-full border px-4 py-1.5 text-xs backdrop-blur-sm">
                 {t.inputBox.followupLoading}
               </div>
             ) : (
-              <Suggestions className="min-h-16 w-fit items-start">
+              <Suggestions className="w-fit items-center">
                 {followups.map((s) => (
                   <Suggestion
                     key={s}
+                    className="py-1.5"
                     suggestion={s}
                     onClick={() => handleFollowupClick(s)}
                   />
                 ))}
                 <Button
                   aria-label={t.common.close}
-                  className="text-muted-foreground cursor-pointer rounded-full px-3 text-xs font-normal"
+                  className="text-muted-foreground h-auto cursor-pointer rounded-full px-2.5 py-1.5 text-xs font-normal"
                   variant="outline"
                   size="sm"
                   type="button"
@@ -574,75 +465,17 @@ export function InputBox({
           </div>
         </div>
       )}
-      <div
+      <PromptInput
         className={cn(
-          hasPendingClarification &&
-            "bg-background/85 border-input/50 relative rounded-2xl border shadow-xs backdrop-blur-sm",
+          "bg-background/85 rounded-2xl backdrop-blur-sm transition-all duration-300 ease-out *:data-[slot='input-group']:rounded-2xl",
+          className,
         )}
+        disabled={disabled}
+        globalDrop
+        multiple
+        onSubmit={handleSubmit}
+        {...props}
       >
-        {hasPendingClarification ? (
-          <div className="border-input/45 bg-background/65 relative z-10 border-b px-3 py-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="text-muted-foreground bg-muted/45 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium tracking-wide">
-                {pendingClarification?.title?.trim() ?? "待确认操作"}
-              </span>
-              <Tooltip
-                content={
-                  <div className="max-w-[min(72vw,46rem)] text-xs leading-relaxed whitespace-normal">
-                    {clarificationQuestion}
-                  </div>
-                }
-              >
-                <div className="text-foreground/88 hover:text-foreground min-w-0 flex-1 cursor-help truncate text-xs sm:text-sm">
-                  {clarificationSummary}
-                </div>
-              </Tooltip>
-            </div>
-            <div
-              className={cn(
-                "mt-2 grid grid-cols-1 gap-1.5",
-                clarificationActionGridClass,
-              )}
-            >
-              {clarificationActions.map((action, index) => {
-                const actionVariant = action.variant ?? "outline";
-                return (
-                  <Button
-                    key={`pending-clarification-${action.label}-${action.value}`}
-                    size="sm"
-                    variant="outline"
-                    className={cn(
-                      "h-8 w-full justify-center rounded-full border-border/55 bg-background/45 px-4 text-xs font-medium shadow-none",
-                      "hover:bg-accent/60 hover:text-accent-foreground",
-                      actionVariant === "default" && index === 0 &&
-                        "border-primary/35 bg-primary/12 text-primary hover:bg-primary/18 hover:text-primary",
-                      actionVariant === "destructive" &&
-                        "border-destructive/35 bg-destructive/10 text-destructive hover:bg-destructive/15 hover:text-destructive",
-                    )}
-                    disabled={(disabled ?? false) || status === "streaming"}
-                    type="button"
-                    onClick={() => onPendingClarificationAction?.(action.value)}
-                  >
-                    {action.label}
-                  </Button>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-        <PromptInput
-          className={cn(
-            hasPendingClarification
-              ? "bg-transparent rounded-none border-0 p-0 shadow-none backdrop-blur-0 transition-all duration-300 ease-out *:data-[slot='input-group']:rounded-none *:data-[slot='input-group']:border-0 *:data-[slot='input-group']:bg-transparent *:data-[slot='input-group']:shadow-none"
-              : "bg-background/85 rounded-2xl backdrop-blur-sm transition-all duration-300 ease-out *:data-[slot='input-group']:rounded-2xl",
-            className,
-          )}
-          disabled={disabled}
-          globalDrop
-          multiple
-          onSubmit={handleSubmit}
-          {...props}
-        >
         {extraHeader && (
           <div className="absolute top-0 right-0 left-0 z-10">
             <div className="absolute right-0 bottom-0 left-0 flex items-center justify-center">
@@ -1013,7 +846,6 @@ export function InputBox({
           <div className="bg-background absolute right-0 -bottom-[17px] left-0 z-0 h-4"></div>
         )}
       </PromptInput>
-      </div>
 
       {isWelcomeMode && searchParams.get("mode") !== "skill" && (
         <div className="flex items-center justify-center pt-2">
@@ -1021,10 +853,7 @@ export function InputBox({
         </div>
       )}
 
-      <Dialog
-        open={confirmOpen && !hasPendingClarification}
-        onOpenChange={setConfirmOpen}
-      >
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t.inputBox.followupConfirmTitle}</DialogTitle>

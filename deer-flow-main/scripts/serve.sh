@@ -157,9 +157,41 @@ fi
 
 # ── Install dependencies ────────────────────────────────────────────────────
 
+# Pick a Python for the extras detector. Falls back to plain `python` for
+# Windows/Git Bash where only `python` is on PATH.
+if command -v python3 >/dev/null 2>&1; then
+    DETECT_PYTHON="python3"
+elif command -v python >/dev/null 2>&1; then
+    DETECT_PYTHON="python"
+else
+    DETECT_PYTHON=""
+fi
+
+# Resolve uv extras (postgres, etc.) from UV_EXTRAS or config.yaml so that
+# `uv sync` does not wipe out optional dependencies on every restart. See
+# scripts/detect_uv_extras.py and Issue #2754 for context. The detector
+# whitelists extra names against `^[A-Za-z][A-Za-z0-9_-]*$`, so the unquoted
+# splat below only sees valid uv argument tokens.
+#
+# Stderr is intentionally NOT redirected so the user sees:
+#   - whitelist warnings (e.g. "ignoring invalid UV_EXTRAS entry ';'");
+#   - detector crashes (e.g. unexpected Python error).
+# `|| true` keeps `set -e` from killing dev startup on a detector failure;
+# the result is just an empty UV_EXTRAS_FLAGS, which means "no extras".
+UV_EXTRAS_FLAGS=""
+if [ -n "$DETECT_PYTHON" ]; then
+    UV_EXTRAS_FLAGS=$("$DETECT_PYTHON" "$REPO_ROOT/scripts/detect_uv_extras.py" || { echo "[serve.sh] detect_uv_extras.py failed (exit $?) — proceeding without extras" >&2; echo ""; })
+fi
+
 if ! $SKIP_INSTALL; then
     echo "Syncing dependencies..."
-    (cd backend && uv sync --quiet) || { echo "✗ Backend dependency install failed"; exit 1; }
+    if [ -n "$UV_EXTRAS_FLAGS" ]; then
+        echo "  • uv extras: $UV_EXTRAS_FLAGS"
+    fi
+    # `--all-packages` propagates extras into workspace members (deerflow-harness
+    # in particular). Required for postgres extras — see PR #2584.
+    # Intentionally unquoted to splat multiple `--extra X` pairs.
+    (cd backend && uv sync --quiet --all-packages $UV_EXTRAS_FLAGS) || { echo "✗ Backend dependency install failed"; exit 1; }
     (cd frontend && pnpm install --silent) || { echo "✗ Frontend dependency install failed"; exit 1; }
     echo "✓ Dependencies synced"
 else
@@ -220,26 +252,7 @@ run_service() {
 mkdir -p logs
 mkdir -p temp/client_body_temp temp/proxy_temp temp/fastcgi_temp temp/uwsgi_temp temp/scgi_temp
 
-# 1. LangGraph (skip in gateway mode)
-if ! $GATEWAY_MODE; then
-    CONFIG_LOG_LEVEL=$(grep -m1 '^log_level:' config.yaml 2>/dev/null | awk '{print $2}' | tr -d ' ')
-    LANGGRAPH_LOG_LEVEL="${LANGGRAPH_LOG_LEVEL:-${CONFIG_LOG_LEVEL:-info}}"
-    LANGGRAPH_JOBS_PER_WORKER="${LANGGRAPH_JOBS_PER_WORKER:-10}"
-    LANGGRAPH_ALLOW_BLOCKING="${LANGGRAPH_ALLOW_BLOCKING:-0}"
-    LANGGRAPH_CMD_BIN="langgraph"
-    LANGGRAPH_CMD_MODE="dev"
-    LANGGRAPH_ALLOW_BLOCKING_FLAG=""
-    if [ "$LANGGRAPH_ALLOW_BLOCKING" = "1" ]; then
-        LANGGRAPH_ALLOW_BLOCKING_FLAG="--allow-blocking"
-    fi
-    run_service "LangGraph" \
-        "cd backend && NO_COLOR=1 CLICOLOR=0 CLICOLOR_FORCE=0 PY_COLORS=0 TERM=dumb uv run $LANGGRAPH_CMD_BIN $LANGGRAPH_CMD_MODE --no-browser $LANGGRAPH_ALLOW_BLOCKING_FLAG --n-jobs-per-worker $LANGGRAPH_JOBS_PER_WORKER --server-log-level $LANGGRAPH_LOG_LEVEL $LANGGRAPH_EXTRA_FLAGS 2>&1 | LC_ALL=C LC_CTYPE=C LANG=C perl -pe 's/\e\[[0-9;]*[[:alpha:]]//g' > ../logs/langgraph.log" \
-        2024 60
-else
-    echo "⏩ Skipping LangGraph (Gateway mode — runtime embedded in Gateway)"
-fi
-
-# 2. Gateway API
+# 1. Gateway API
 run_service "Gateway" \
     "cd backend && PYTHONPATH=. uv run uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001 $GATEWAY_EXTRA_FLAGS > ../logs/gateway.log 2>&1" \
     8001 30

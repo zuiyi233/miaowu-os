@@ -142,6 +142,18 @@ def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, An
                 runtime_context.setdefault(key, context[key])
 
 
+def inject_authenticated_user_context(config: dict[str, Any], request: Request) -> None:
+    """Stamp authenticated user_id into runtime context for async/background tools."""
+    user = getattr(request.state, "user", None)
+    user_id = getattr(user, "id", None)
+    if user_id is None:
+        return
+
+    runtime_context = config.setdefault("context", {})
+    if isinstance(runtime_context, dict):
+        runtime_context["user_id"] = str(user_id)
+
+
 def _as_non_empty_str(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -549,6 +561,7 @@ async def start_run(
     context = getattr(body, "context", None)
     module_id = _extract_module_id(context)
     merge_run_context_overrides(config, context)
+    inject_authenticated_user_context(config, request)
 
     configurable = config.setdefault("configurable", {})
     requested_model_name = _as_non_empty_str(configurable.get("model_name") or configurable.get("model"))

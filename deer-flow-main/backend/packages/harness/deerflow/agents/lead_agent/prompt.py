@@ -3,13 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from datetime import datetime
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from deerflow.config.agents_config import load_agent_soul
 from deerflow.skills.storage import get_or_new_skill_storage
-from deerflow.skills.types import Skill
+from deerflow.skills.types import Skill, SkillCategory
 from deerflow.subagents import get_available_subagent_names
 
 if TYPE_CHECKING:
@@ -152,8 +151,9 @@ def get_enabled_skills_for_config(app_config: AppConfig | None = None) -> list[S
         _enabled_skills_by_config_cache[cache_key] = (app_config, skills)
     return list(skills)
 
-def _skill_mutability_label(category: str) -> str:
-    return "[custom, editable]" if category == "custom" else "[built-in]"
+
+def _skill_mutability_label(category: SkillCategory | str) -> str:
+    return "[custom, editable]" if category == SkillCategory.CUSTOM else "[built-in]"
 
 
 def clear_skills_system_prompt_cache() -> None:
@@ -162,31 +162,6 @@ def clear_skills_system_prompt_cache() -> None:
 
 async def refresh_skills_system_prompt_cache_async() -> None:
     await asyncio.to_thread(_invalidate_enabled_skills_cache().wait)
-
-
-def _reset_skills_system_prompt_cache_state() -> None:
-    global _enabled_skills_cache, _enabled_skills_refresh_active, _enabled_skills_refresh_version
-
-    _get_cached_skills_prompt_section.cache_clear()
-    with _enabled_skills_lock:
-        _enabled_skills_cache = None
-        _enabled_skills_refresh_active = False
-        _enabled_skills_refresh_version = 0
-        _enabled_skills_refresh_event.clear()
-
-
-def _refresh_enabled_skills_cache() -> None:
-    """Backward-compatible test helper for direct synchronous reload."""
-    try:
-        skills = _load_enabled_skills_sync()
-    except Exception:
-        logger.exception("Failed to load enabled skills for prompt injection")
-        skills = []
-
-    with _enabled_skills_lock:
-        _enabled_skills_cache = skills
-        _enabled_skills_refresh_active = False
-        _enabled_skills_refresh_event.set()
 
 
 def _build_skill_evolution_section(skill_evolution_enabled: bool) -> str:
@@ -211,6 +186,7 @@ def _build_available_subagents_description(available_names: list[str], bash_avai
     Mirrors Codex's pattern where agent_type_description is dynamically generated
     from all registered roles, so the LLM knows about every available type.
     """
+    # Built-in descriptions (kept for backward compatibility with existing prompt quality)
     builtin_descriptions = {
         "general-purpose": "For ANY non-trivial task - web research, code exploration, file operations, analysis, etc.",
         "bash": (
@@ -218,6 +194,7 @@ def _build_available_subagents_description(available_names: list[str], bash_avai
         ),
     }
 
+    # Lazy import moved outside loop to avoid repeated import overhead
     from deerflow.subagents.registry import get_subagent_config
 
     lines = []
@@ -227,7 +204,7 @@ def _build_available_subagents_description(available_names: list[str], bash_avai
         else:
             config = get_subagent_config(name, app_config=app_config)
             if config is not None:
-                desc = config.description.split("\n")[0].strip()
+                desc = config.description.split("\n")[0].strip()  # First line only for brevity
                 lines.append(f"- **{name}**: {desc}")
 
     return "\n".join(lines)
@@ -238,7 +215,6 @@ def _build_subagent_section(max_concurrent: int, *, app_config: AppConfig | None
 
     Args:
         max_concurrent: Maximum number of concurrent subagent calls allowed per response.
-        app_config: Resolved AppConfig. When None, falls back to get_app_config().
 
     Returns:
         Formatted subagent section string.
@@ -247,6 +223,8 @@ def _build_subagent_section(max_concurrent: int, *, app_config: AppConfig | None
     available_names = get_available_subagent_names(app_config=app_config) if app_config is not None else get_available_subagent_names()
     bash_available = "bash" in available_names
 
+    # Dynamically build subagent type descriptions from registry (aligned with Codex's
+    # agent_type_description pattern where all registered roles are listed in the tool spec).
     available_subagents = _build_available_subagents_description(available_names, bash_available, app_config=app_config)
     direct_tool_examples = "bash, ls, read_file, web_search, etc." if bash_available else "ls, read_file, web_search, etc."
     direct_execution_example = (
@@ -389,8 +367,6 @@ You are {agent_name}, an open-source super agent.
 
 {soul}
 {self_update_section}
-{memory_context}
-
 <thinking_style>
 - Think concisely and strategically about the user's request BEFORE taking action
 - Break down the task: What is clear? What is ambiguous? What is missing?
@@ -563,9 +539,6 @@ combined with a FastAPI gateway for REST API access [citation:FastAPI](https://f
 
 <critical_reminders>
 - **Clarification First**: ALWAYS clarify unclear/missing/ambiguous requirements BEFORE starting work - never assume or guess
-- **Novel Creation Session Gate**: If `create_novel` returns `{{success:false, source:'session_gate', error:'active_creation_session'}}`, DO NOT call `create_novel` again in the same active session.
-- **Novel Creation Session Recovery**: Guide the user back to the `/api/ai/chat` session flow to continue filling required fields, or ask them to reply with "确认" or "取消".
-- **Novel Creation Restart Condition**: Retry `create_novel` only when the user explicitly asks to restart and the current creation session has already been cancelled.
 {subagent_reminder}- Skill First: Always load the relevant skill before starting **complex** tasks.
 - Progressive Loading: Load resources incrementally as referenced in skills
 - Output Files: Final deliverables must be in `/mnt/user-data/outputs`
@@ -583,7 +556,8 @@ def _get_memory_context(agent_name: str | None = None, *, app_config: AppConfig 
 
     Args:
         agent_name: If provided, loads per-agent memory. If None, loads global memory.
-        app_config: Resolved AppConfig. When None, falls back to get_memory_config().
+        app_config: Explicit application config. When provided, memory options
+            are read from this value instead of the global config singleton.
 
     Returns:
         Formatted memory context string wrapped in XML tags, or empty string if disabled.
@@ -592,11 +566,13 @@ def _get_memory_context(agent_name: str | None = None, *, app_config: AppConfig 
         from deerflow.agents.memory import format_memory_for_injection, get_memory_data
         from deerflow.runtime.user_context import get_effective_user_id
 
-        if app_config is not None:
-            config = app_config.memory
-        else:
+        if app_config is None:
             from deerflow.config.memory_config import get_memory_config
+
             config = get_memory_config()
+        else:
+            config = app_config.memory
+
         if not config.enabled or not config.injection_enabled:
             return ""
 
@@ -651,17 +627,20 @@ def get_skills_prompt_section(available_skills: set[str] | None = None, *, app_c
     """Generate the skills prompt section with available skills list."""
     skills = get_enabled_skills_for_config(app_config)
 
-    try:
-        if app_config is not None:
-            config = app_config
-        else:
+    if app_config is None:
+        try:
             from deerflow.config import get_app_config
+
             config = get_app_config()
+            container_base_path = config.skills.container_path
+            skill_evolution_enabled = config.skill_evolution.enabled
+        except Exception:
+            container_base_path = "/mnt/skills"
+            skill_evolution_enabled = False
+    else:
+        config = app_config
         container_base_path = config.skills.container_path
         skill_evolution_enabled = config.skill_evolution.enabled
-    except Exception:
-        container_base_path = "/mnt/skills"
-        skill_evolution_enabled = False
 
     if not skills and not skill_evolution_enabled:
         return ""
@@ -714,15 +693,17 @@ def get_deferred_tools_prompt_section(*, app_config: AppConfig | None = None) ->
     """
     from deerflow.tools.builtins.tool_search import get_deferred_registry
 
-    try:
-        if app_config is not None:
-            if not app_config.tool_search.enabled:
-                return ""
-        else:
+    if app_config is None:
+        try:
             from deerflow.config import get_app_config
-            if not get_app_config().tool_search.enabled:
-                return ""
-    except Exception:
+
+            config = get_app_config()
+        except Exception:
+            return ""
+    else:
+        config = app_config
+
+    if not config.tool_search.enabled:
         return ""
 
     registry = get_deferred_registry()
@@ -738,6 +719,7 @@ def _build_acp_section(*, app_config: AppConfig | None = None) -> str:
     if app_config is None:
         try:
             from deerflow.config.acp_config import get_acp_agents
+
             agents = get_acp_agents()
         except Exception:
             return ""
@@ -758,15 +740,18 @@ def _build_acp_section(*, app_config: AppConfig | None = None) -> str:
 
 def _build_custom_mounts_section(*, app_config: AppConfig | None = None) -> str:
     """Build a prompt section for explicitly configured sandbox mounts."""
-    try:
-        if app_config is not None:
-            mounts = app_config.sandbox.mounts or []
-        else:
+    if app_config is None:
+        try:
             from deerflow.config import get_app_config
-            mounts = get_app_config().sandbox.mounts or []
-    except Exception:
-        logger.exception("Failed to load configured sandbox mounts for the lead-agent prompt")
-        return ""
+
+            config = get_app_config()
+        except Exception:
+            logger.exception("Failed to load configured sandbox mounts for the lead-agent prompt")
+            return ""
+    else:
+        config = app_config
+
+    mounts = config.sandbox.mounts or []
 
     if not mounts:
         return ""
@@ -780,10 +765,14 @@ def _build_custom_mounts_section(*, app_config: AppConfig | None = None) -> str:
     return f"\n**Custom Mounted Directories:**\n{mounts_list}\n- If the user needs files outside `/mnt/user-data`, use these absolute container paths directly when they match the requested directory"
 
 
-def apply_prompt_template(subagent_enabled: bool = False, max_concurrent_subagents: int = 3, *, agent_name: str | None = None, available_skills: set[str] | None = None, app_config: AppConfig | None = None) -> str:
-    # Get memory context
-    memory_context = _get_memory_context(agent_name, app_config=app_config)
-
+def apply_prompt_template(
+    subagent_enabled: bool = False,
+    max_concurrent_subagents: int = 3,
+    *,
+    agent_name: str | None = None,
+    available_skills: set[str] | None = None,
+    app_config: AppConfig | None = None,
+) -> str:
     # Include subagent section only if enabled (from runtime parameter)
     n = max_concurrent_subagents
     subagent_section = _build_subagent_section(n, app_config=app_config) if subagent_enabled else ""
@@ -817,18 +806,18 @@ def apply_prompt_template(subagent_enabled: bool = False, max_concurrent_subagen
     custom_mounts_section = _build_custom_mounts_section(app_config=app_config)
     acp_and_mounts_section = "\n".join(section for section in (acp_section, custom_mounts_section) if section)
 
-    # Format the prompt with dynamic skills and memory
-    prompt = SYSTEM_PROMPT_TEMPLATE.format(
+    # Build and return the fully static system prompt.
+    # Memory and current date are injected per-turn via DynamicContextMiddleware
+    # as a <system-reminder> in the first HumanMessage, keeping this prompt
+    # identical across users and sessions for maximum prefix-cache reuse.
+    return SYSTEM_PROMPT_TEMPLATE.format(
         agent_name=agent_name or "DeerFlow 2.0",
         soul=get_agent_soul(agent_name),
         self_update_section=_build_self_update_section(agent_name),
         skills_section=skills_section,
         deferred_tools_section=deferred_tools_section,
-        memory_context=memory_context,
         subagent_section=subagent_section,
         subagent_reminder=subagent_reminder,
         subagent_thinking=subagent_thinking,
         acp_section=acp_and_mounts_section,
     )
-
-    return prompt + f"\n<current_date>{datetime.now().strftime('%Y-%m-%d, %A')}</current_date>"
