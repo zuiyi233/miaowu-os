@@ -47,15 +47,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _log_fire_and_forget_failure(task: asyncio.Task[Any], *, label: str) -> None:
-    """Consume and log exceptions from background fire-and-forget tasks."""
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        logger.debug("%s failed: %s", label, exc)
-
-
 def format_sse(event: str, data: Any, *, event_id: str | None = None) -> str:
     """Format a single SSE frame.
 
@@ -149,18 +140,6 @@ def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, An
                 configurable.setdefault(key, context[key])
             if isinstance(runtime_context, dict):
                 runtime_context.setdefault(key, context[key])
-
-
-def inject_authenticated_user_context(config: dict[str, Any], request: Request) -> None:
-    """Stamp authenticated user_id into runtime context for async/background tools."""
-    user = getattr(request.state, "user", None)
-    user_id = getattr(user, "id", None)
-    if user_id is None:
-        return
-
-    runtime_context = config.setdefault("context", {})
-    if isinstance(runtime_context, dict):
-        runtime_context["user_id"] = str(user_id)
 
 
 def _as_non_empty_str(value: Any) -> str | None:
@@ -570,7 +549,6 @@ async def start_run(
     context = getattr(body, "context", None)
     module_id = _extract_module_id(context)
     merge_run_context_overrides(config, context)
-    inject_authenticated_user_context(config, request)
 
     configurable = config.setdefault("configurable", {})
     requested_model_name = _as_non_empty_str(configurable.get("model_name") or configurable.get("model"))

@@ -1,0 +1,799 @@
+From 94da8f67d7d6c9bde8f6ec0e7b72a66d90b12efa Mon Sep 17 00:00:00 2001
+From: Xinmin Zeng <135568692+fancyboi999@users.noreply.github.com>
+Date: Sun, 10 May 2026 22:28:29 +0800
+Subject: [PATCH] fix(scripts): preserve uv extras across `make dev` restarts
+ (#2754) (#2767)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`make dev` ran `uv sync` unconditionally on every restart, wiping any
+optional extras the user had installed manually with
+`uv sync --all-packages --extra postgres`. The Docker image-build path
+already solved this via the `UV_EXTRAS` build-arg in backend/Dockerfile;
+the local serve.sh path and the docker-compose-dev startup command
+were the remaining outliers.
+
+`scripts/serve.sh` now resolves extras before `uv sync`:
+  1. honors `UV_EXTRAS` (parity with backend/Dockerfile and
+     docker/docker-compose.yaml — no new convention introduced);
+  2. falls back to parsing config.yaml — `database.backend: postgres`
+     or legacy `checkpointer.type: postgres` auto-pins
+     `--extra postgres`, so the common case needs zero extra config.
+  3. detector stderr is no longer suppressed, so whitelist warnings or
+     crashes surface to the dev terminal (review feedback).
+
+Detection lives in `scripts/detect_uv_extras.py` (stdlib-only — has to
+run before the venv exists). Extra names are validated against
+`^[A-Za-z][A-Za-z0-9_-]*$` so a stray shell metacharacter in `.env`
+cannot reach `uv sync` downstream (defense in depth).
+
+`docker/docker-compose-dev.yaml`'s startup command is now extracted to
+`docker/dev-entrypoint.sh` (review feedback — the inline command had
+grown to a ~350-char one-liner). The script:
+  - parses comma/whitespace-separated UV_EXTRAS, applying the same
+    `^[A-Za-z][A-Za-z0-9_-]*$` whitelist as the local detector;
+  - emits one `--extra X` flag per token, so `UV_EXTRAS=postgres,ollama`
+    works in Docker dev too (harmonized with local — review feedback);
+  - calls `uv sync --all-packages` (PR #2584) so workspace member
+    extras (deerflow-harness's postgres extra) are installed;
+  - keeps the existing self-heal `(uv sync || (recreate venv && retry))`
+    branch;
+  - exposes `--print-extras` for dry-run testing.
+
+The compose file mounts the script read-only at runtime, so script
+edits take effect on `make docker-restart` without an image rebuild.
+
+The `--no-sync` alternative (a separate suggestion in the issue thread)
+was considered but rejected for dev paths because it would drop the
+self-heal branch and the auto-pickup of new pyproject deps. `--no-sync`
+is already in use for the production CMD (`backend/Dockerfile:101`)
+where it's appropriate.
+
+Updates the asyncpg-missing error message to include the
+`--all-packages` flag (matching #2584) plus the persistent install flow,
+and expands `config.example.yaml` so all three install paths
+(local / docker dev / docker image build) are documented with their
+multi-extra capabilities.
+
+Tests:
+  - `tests/test_detect_uv_extras.py` (21 tests) — local-path env parsing,
+    YAML edge cases, env-vs-config precedence, whitelist rejection of
+    shell metacharacters.
+  - `tests/test_dev_entrypoint.py` (15 tests) — docker-path validation
+    via `--print-extras`, multi-extra parsing, metacharacter abort.
+  - `tests/test_persistence_scaffold.py` (22 tests, unchanged) — passes
+    with the merged `--all-packages --extra postgres` error message.
+
+Co-authored-by: Willem Jiang <willem.jiang@gmail.com>
+---
+ .../harness/deerflow/persistence/engine.py    |   9 +-
+ backend/tests/test_detect_uv_extras.py        | 201 ++++++++++++++++++
+ backend/tests/test_dev_entrypoint.py          | 102 +++++++++
+ config.example.yaml                           |  22 +-
+ docker/dev-entrypoint.sh                      |  85 ++++++++
+ docker/docker-compose-dev.yaml                |   9 +-
+ scripts/detect_uv_extras.py                   | 180 ++++++++++++++++
+ scripts/serve.sh                              |  34 ++-
+ 8 files changed, 636 insertions(+), 6 deletions(-)
+ create mode 100644 backend/tests/test_detect_uv_extras.py
+ create mode 100644 backend/tests/test_dev_entrypoint.py
+ create mode 100755 docker/dev-entrypoint.sh
+ create mode 100755 scripts/detect_uv_extras.py
+
+diff --git a/backend/packages/harness/deerflow/persistence/engine.py b/backend/packages/harness/deerflow/persistence/engine.py
+index 5ed647d0..127ee73f 100644
+--- a/backend/packages/harness/deerflow/persistence/engine.py
++++ b/backend/packages/harness/deerflow/persistence/engine.py
+@@ -82,7 +82,14 @@ async def init_engine(
+             import asyncpg  # noqa: F401
+         except ImportError:
+             raise ImportError(
+-                "database.backend is set to 'postgres' but asyncpg is not installed.\nInstall it with:\n    uv sync --all-packages --extra postgres\nOr switch to backend: sqlite in config.yaml for single-node deployment."
++                "database.backend is set to 'postgres' but asyncpg is not installed.\n"
++                "Install it with:\n"
++                "    cd backend && uv sync --all-packages --extra postgres\n"
++                "On the next `make dev` the postgres extra is auto-detected from\n"
++                "config.yaml (database.backend: postgres) and reinstalled, so it\n"
++                "will not be wiped again. Set UV_EXTRAS=postgres in .env to opt in\n"
++                "explicitly. Or switch to backend: sqlite in config.yaml for\n"
++                "single-node deployment."
+             ) from None
+ 
+     if backend == "sqlite":
+diff --git a/backend/tests/test_detect_uv_extras.py b/backend/tests/test_detect_uv_extras.py
+new file mode 100644
+index 00000000..a202f6b8
+--- /dev/null
++++ b/backend/tests/test_detect_uv_extras.py
+@@ -0,0 +1,201 @@
++"""Unit tests for scripts/detect_uv_extras.py.
++
++The detector resolves uv extras for `make dev` so that postgres (and any
++future opt-in extras) are not wiped on every restart — see Issue #2754.
++"""
++
++from __future__ import annotations
++
++import importlib.util
++from pathlib import Path
++
++import pytest
++
++REPO_ROOT = Path(__file__).resolve().parents[2]
++DETECT_SCRIPT_PATH = REPO_ROOT / "scripts" / "detect_uv_extras.py"
++
++
++spec = importlib.util.spec_from_file_location("deerflow_detect_uv_extras", DETECT_SCRIPT_PATH)
++assert spec is not None and spec.loader is not None
++detect = importlib.util.module_from_spec(spec)
++spec.loader.exec_module(detect)
++
++
++@pytest.fixture
++def isolated_cwd(tmp_path, monkeypatch):
++    """Isolate `find_config_file()` from the real repo by chdir + clearing env."""
++    monkeypatch.chdir(tmp_path)
++    monkeypatch.delenv("UV_EXTRAS", raising=False)
++    monkeypatch.delenv("DEER_FLOW_CONFIG_PATH", raising=False)
++    return tmp_path
++
++
++def test_parse_env_extras_supports_comma_and_whitespace():
++    assert detect.parse_env_extras("postgres") == ["postgres"]
++    assert detect.parse_env_extras("postgres,ollama") == ["postgres", "ollama"]
++    assert detect.parse_env_extras("postgres ollama") == ["postgres", "ollama"]
++    assert detect.parse_env_extras(" postgres ,  ollama ,") == ["postgres", "ollama"]
++    assert detect.parse_env_extras("") == []
++
++
++def test_parse_env_extras_drops_shell_metacharacters(capsys):
++    """A `.env` value containing shell injection bait must not pass through.
++
++    The whitelist guarantees the *bytes* that reach `uv sync` cannot include
++    shell metacharacters. Any name that looks identifier-like still survives
++    (uv itself will reject unknown extras with its own error), but `;`, `&`,
++    backticks, parentheses, slashes, etc. are stripped.
++    """
++    # Pure-metacharacter inputs collapse to empty.
++    assert detect.parse_env_extras(";") == []
++    assert detect.parse_env_extras("$(whoami)") == []
++    assert detect.parse_env_extras("`echo bad`") == []
++    assert detect.parse_env_extras("postgres;evil") == []  # single token, contains `;`
++    # Splitting on whitespace yields ['rm'] which is identifier-shaped, but the
++    # destructive bits (`;`, `-rf`, `/`) are dropped.
++    assert detect.parse_env_extras("; rm -rf /") == ["rm"]
++    err = capsys.readouterr().err
++    assert "ignoring invalid UV_EXTRAS entry" in err
++    assert "';'" in err  # confirms the dangerous token was reported and dropped
++
++
++def test_parse_env_extras_rejects_leading_digits_and_punctuation():
++    """Names must start with a letter — pyproject extras follow this shape."""
++    assert detect.parse_env_extras("1postgres") == []
++    assert detect.parse_env_extras("-postgres") == []
++    # Hyphens and underscores inside the name are fine.
++    assert detect.parse_env_extras("post_gres") == ["post_gres"]
++    assert detect.parse_env_extras("post-gres") == ["post-gres"]
++
++
++def test_format_flags_emits_one_flag_per_extra():
++    assert detect.format_flags([]) == ""
++    assert detect.format_flags(["postgres"]) == "--extra postgres"
++    assert detect.format_flags(["postgres", "ollama"]) == "--extra postgres --extra ollama"
++
++
++def test_strip_comment_preserves_quoted_hash():
++    assert detect._strip_comment("backend: postgres  # trailing") == "backend: postgres"
++    assert detect._strip_comment('name: "value#with-hash"') == 'name: "value#with-hash"'
++    assert detect._strip_comment("# whole line comment") == ""
++
++
++def test_section_value_finds_nested_key():
++    yaml_lines = [
++        "database:",
++        "  backend: postgres",
++        "  postgres_url: $DATABASE_URL",
++        "",
++        "checkpointer:",
++        "  type: sqlite",
++    ]
++    assert detect.section_value(yaml_lines, "database", "backend") == "postgres"
++    assert detect.section_value(yaml_lines, "checkpointer", "type") == "sqlite"
++    assert detect.section_value(yaml_lines, "database", "missing") is None
++    assert detect.section_value(yaml_lines, "absent_section", "anything") is None
++
++
++def test_section_value_ignores_commented_lines():
++    yaml_lines = [
++        "# database:",
++        "#   backend: postgres",
++        "database:",
++        "  backend: sqlite",
++    ]
++    assert detect.section_value(yaml_lines, "database", "backend") == "sqlite"
++
++
++def test_section_value_strips_quotes():
++    yaml_lines = [
++        "database:",
++        '  backend: "postgres"',
++    ]
++    assert detect.section_value(yaml_lines, "database", "backend") == "postgres"
++
++
++def test_section_value_does_not_descend_into_grandchildren():
++    yaml_lines = [
++        "database:",
++        "  backend: sqlite",
++        "  nested:",
++        "    backend: postgres",
++    ]
++    # Only the immediate child level counts — keeps the parser predictable.
++    assert detect.section_value(yaml_lines, "database", "backend") == "sqlite"
++
++
++def test_detect_from_config_postgres_via_database(tmp_path):
++    cfg = tmp_path / "config.yaml"
++    cfg.write_text("database:\n  backend: postgres\n  postgres_url: $DATABASE_URL\n")
++    assert detect.detect_from_config(cfg) == ["postgres"]
++
++
++def test_detect_from_config_postgres_via_checkpointer(tmp_path):
++    cfg = tmp_path / "config.yaml"
++    cfg.write_text("checkpointer:\n  type: postgres\n  connection_string: postgresql://localhost/db\n")
++    assert detect.detect_from_config(cfg) == ["postgres"]
++
++
++def test_detect_from_config_sqlite_returns_no_extras(tmp_path):
++    cfg = tmp_path / "config.yaml"
++    cfg.write_text("database:\n  backend: sqlite\n  sqlite_dir: .deer-flow/data\n")
++    assert detect.detect_from_config(cfg) == []
++
++
++def test_detect_from_config_dedupes_when_both_present(tmp_path):
++    cfg = tmp_path / "config.yaml"
++    cfg.write_text("checkpointer:\n  type: postgres\ndatabase:\n  backend: postgres\n")
++    # Sorted unique extras, no double-counting.
++    assert detect.detect_from_config(cfg) == ["postgres"]
++
++
++def test_detect_from_config_missing_file_returns_empty(tmp_path):
++    assert detect.detect_from_config(tmp_path / "does-not-exist.yaml") == []
++
++
++def test_resolve_extras_env_overrides_config(isolated_cwd, monkeypatch):
++    cfg = isolated_cwd / "config.yaml"
++    cfg.write_text("database:\n  backend: sqlite\n")
++    monkeypatch.setenv("UV_EXTRAS", "postgres")
++
++    assert detect.resolve_extras() == ["postgres"]
++
++
++def test_resolve_extras_env_supports_multiple(isolated_cwd, monkeypatch):
++    monkeypatch.setenv("UV_EXTRAS", "postgres,ollama")
++    assert detect.resolve_extras() == ["postgres", "ollama"]
++
++
++def test_resolve_extras_falls_back_to_config(isolated_cwd):
++    (isolated_cwd / "config.yaml").write_text("database:\n  backend: postgres\n")
++    assert detect.resolve_extras() == ["postgres"]
++
++
++def test_resolve_extras_respects_explicit_config_path(tmp_path, monkeypatch):
++    monkeypatch.delenv("UV_EXTRAS", raising=False)
++    elsewhere = tmp_path / "elsewhere.yaml"
++    elsewhere.write_text("database:\n  backend: postgres\n")
++    monkeypatch.chdir(tmp_path)
++    monkeypatch.setenv("DEER_FLOW_CONFIG_PATH", str(elsewhere))
++
++    assert detect.resolve_extras() == ["postgres"]
++
++
++def test_resolve_extras_no_config_no_env(isolated_cwd):
++    assert detect.resolve_extras() == []
++
++
++def test_resolve_extras_finds_backend_subdir_config(isolated_cwd):
++    sub = isolated_cwd / "backend"
++    sub.mkdir()
++    (sub / "config.yaml").write_text("database:\n  backend: postgres\n")
++    assert detect.resolve_extras() == ["postgres"]
++
++
++def test_resolve_extras_root_config_takes_precedence(isolated_cwd):
++    (isolated_cwd / "config.yaml").write_text("database:\n  backend: sqlite\n")
++    sub = isolated_cwd / "backend"
++    sub.mkdir()
++    (sub / "config.yaml").write_text("database:\n  backend: postgres\n")
++    # Root config.yaml is checked first, matching the precedence in serve.sh.
++    assert detect.resolve_extras() == []
+diff --git a/backend/tests/test_dev_entrypoint.py b/backend/tests/test_dev_entrypoint.py
+new file mode 100644
+index 00000000..b587e0df
+--- /dev/null
++++ b/backend/tests/test_dev_entrypoint.py
+@@ -0,0 +1,102 @@
++"""Unit tests for docker/dev-entrypoint.sh (UV_EXTRAS validation + parsing).
++
++Exercises the script via its `--print-extras` dry-run hook so we don't actually
++launch uvicorn or hit /app/logs. Together with test_detect_uv_extras.py these
++cover both the local make-dev path and the docker-compose-dev path with the
++same shape — see PR #2767 / Issue #2754.
++"""
++
++from __future__ import annotations
++
++import os
++import subprocess
++from pathlib import Path
++
++import pytest
++
++REPO_ROOT = Path(__file__).resolve().parents[2]
++ENTRYPOINT = REPO_ROOT / "docker" / "dev-entrypoint.sh"
++
++
++def _run(uv_extras: str | None) -> subprocess.CompletedProcess[str]:
++    """Invoke `dev-entrypoint.sh --print-extras` with UV_EXTRAS set."""
++    env = os.environ.copy()
++    env.pop("UV_EXTRAS", None)
++    if uv_extras is not None:
++        env["UV_EXTRAS"] = uv_extras
++    return subprocess.run(
++        ["sh", str(ENTRYPOINT), "--print-extras"],
++        env=env,
++        capture_output=True,
++        text=True,
++        check=False,
++    )
++
++
++def test_entrypoint_script_exists_and_is_posix_sh():
++    assert ENTRYPOINT.is_file()
++    # Catch syntax errors before runtime — `sh -n` is a parse-only check.
++    proc = subprocess.run(["sh", "-n", str(ENTRYPOINT)], capture_output=True, text=True, check=False)
++    assert proc.returncode == 0, proc.stderr
++
++
++def test_no_uv_extras_yields_empty_flags():
++    proc = _run(None)
++    assert proc.returncode == 0
++    assert proc.stdout.strip() == ""
++
++
++def test_single_extra():
++    proc = _run("postgres")
++    assert proc.returncode == 0
++    assert proc.stdout.strip() == "--extra postgres"
++
++
++def test_multi_extra_comma_separated():
++    proc = _run("postgres,ollama")
++    assert proc.returncode == 0
++    assert proc.stdout.strip() == "--extra postgres --extra ollama"
++
++
++def test_multi_extra_whitespace_separated():
++    proc = _run("postgres ollama")
++    assert proc.returncode == 0
++    assert proc.stdout.strip() == "--extra postgres --extra ollama"
++
++
++def test_multi_extra_mixed_separators():
++    proc = _run(" postgres ,  ollama ,")
++    assert proc.returncode == 0
++    assert proc.stdout.strip() == "--extra postgres --extra ollama"
++
++
++def test_empty_string_yields_empty_flags():
++    proc = _run("")
++    assert proc.returncode == 0
++    assert proc.stdout.strip() == ""
++
++
++@pytest.mark.parametrize(
++    "bad_value",
++    [
++        "; rm -rf /",  # the canonical injection attempt
++        "$(whoami)",  # command substitution
++        "`echo bad`",  # backticks
++        "postgres;evil",  # mixed legal+illegal in a single token
++        "1postgres",  # leading digit
++        "-postgres",  # leading hyphen
++        "post gres extra/path",  # contains slash
++    ],
++)
++def test_metacharacters_abort_with_nonzero_exit(bad_value):
++    proc = _run(bad_value)
++    assert proc.returncode != 0, f"expected abort for {bad_value!r}, got 0"
++    assert "is invalid" in proc.stderr
++    assert proc.stdout.strip() == ""
++
++
++def test_underscores_and_hyphens_in_name_are_allowed():
++    """Mirrors uv's accepted shape for `[project.optional-dependencies]` keys."""
++    proc = _run("post_gres,post-gres")
++    assert proc.returncode == 0
++    assert proc.stdout.strip() == "--extra post_gres --extra post-gres"
+diff --git a/config.example.yaml b/config.example.yaml
+index 96c13da9..9a8d07bf 100644
+--- a/config.example.yaml
++++ b/config.example.yaml
+@@ -871,9 +871,25 @@ skill_evolution:
+ #
+ # Postgres mode: put your connection URL in .env as DATABASE_URL,
+ # then reference it here with $DATABASE_URL.
+-# Install the driver first:
+-#   Local:  uv sync --extra postgres
+-#   Docker: UV_EXTRAS=postgres docker compose build
++#
++# Install the driver — Issue #2754 fix lands `UV_EXTRAS` in every code path:
++#   Local      `make dev` auto-detects from `database.backend: postgres` below
++#              and passes `--extra postgres` to `uv sync` on every restart, so
++#              the extra is no longer wiped. To opt in explicitly (or layer
++#              extras like `postgres,ollama`), set in project-root .env:
++#                  UV_EXTRAS=postgres
++#   Docker dev `make docker-start` reads `UV_EXTRAS` from project-root .env via
++#              `env_file`. Set:
++#                  UV_EXTRAS=postgres
++#              Multiple extras (`postgres,ollama`) supported here too — see
++#              docker/dev-entrypoint.sh.
++#   Docker img build-arg `UV_EXTRAS=postgres docker compose build` — single
++#              extra only at build time (backend/Dockerfile passes the value
++#              as one token to `--extra`).
++#
++# First-time bootstrap (before `make dev`):
++#   cd backend && uv sync --all-packages --extra postgres
++#   (--all-packages propagates the extra into workspace members — see PR #2584)
+ #
+ # NOTE: When both `checkpointer` and `database` are configured,
+ # `checkpointer` takes precedence for LangGraph state persistence.
+diff --git a/docker/dev-entrypoint.sh b/docker/dev-entrypoint.sh
+new file mode 100755
+index 00000000..872e1602
+--- /dev/null
++++ b/docker/dev-entrypoint.sh
+@@ -0,0 +1,85 @@
++#!/usr/bin/env sh
++#
++# DeerFlow gateway dev entrypoint — runs inside the docker-compose-dev gateway
++# container. Extracted from docker/docker-compose-dev.yaml's inline `command:`
++# (PR #2767, addressing review on Issue #2754).
++#
++# Responsibilities:
++#   1. Resolve `--extra X` flags from UV_EXTRAS (comma- or whitespace-separated,
++#      mirroring scripts/detect_uv_extras.py for parity with local `make dev`).
++#   2. Validate each extra against [A-Za-z][A-Za-z0-9_-]* so a stray shell
++#      metacharacter in `.env` cannot reach `uv sync`.
++#   3. `uv sync --all-packages` so workspace member extras (deerflow-harness's
++#      postgres extra in particular) are installed — see PR #2584.
++#   4. Self-heal: if the first sync fails, recreate .venv and retry once.
++#   5. Hand off to uvicorn with reload, replacing this shell so uvicorn becomes
++#      PID 1 inside the container.
++#
++# Anchored at /bin/sh (not bash) since alpine-based base images may not ship
++# bash. Uses POSIX-only constructs throughout.
++
++set -e
++
++# `--print-extras` is a dry-run hook: parse + validate UV_EXTRAS, print the
++# resulting `--extra X` flags to stdout, and exit. Used by the unit test in
++# backend/tests/test_dev_entrypoint.py and useful for ad-hoc debugging.
++PRINT_EXTRAS_ONLY=0
++if [ "${1:-}" = "--print-extras" ]; then
++    PRINT_EXTRAS_ONLY=1
++fi
++
++# Mirror the legacy command's behavior: redirect both stdout and stderr to the
++# host-mounted log file (../logs/gateway.log → /app/logs/gateway.log). Skip
++# the redirect under --print-extras so the test runner can capture stdout.
++if [ "$PRINT_EXTRAS_ONLY" = "0" ]; then
++    exec >/app/logs/gateway.log 2>&1
++fi
++
++# ── Resolve extras ──────────────────────────────────────────────────────────
++
++EXTRAS_FLAGS=""
++if [ -n "${UV_EXTRAS:-}" ]; then
++    # Normalize comma → space, then split on whitespace via the unquoted `for`.
++    for raw in $(printf '%s' "$UV_EXTRAS" | tr ',' ' '); do
++        [ -z "$raw" ] && continue
++        # Reject anything that does not look like an identifier.
++        # Two patterns: leading non-letter, or any non-[A-Za-z0-9_-] character.
++        case "$raw" in
++            [!A-Za-z]* | *[!A-Za-z0-9_-]*)
++                echo "[startup] UV_EXTRAS entry '$raw' is invalid (must match [A-Za-z][A-Za-z0-9_-]*) — aborting" >&2
++                exit 1
++                ;;
++        esac
++        EXTRAS_FLAGS="$EXTRAS_FLAGS --extra $raw"
++    done
++fi
++
++if [ "$PRINT_EXTRAS_ONLY" = "1" ]; then
++    # Trim leading space for tidier output, then exit.
++    printf '%s\n' "${EXTRAS_FLAGS# }"
++    exit 0
++fi
++
++if [ -n "$EXTRAS_FLAGS" ]; then
++    echo "[startup] uv extras:$EXTRAS_FLAGS"
++fi
++
++# ── Sync dependencies (with self-heal) ──────────────────────────────────────
++
++cd /app/backend
++
++# `--all-packages` propagates extras into workspace members (PR #2584).
++# `$EXTRAS_FLAGS` intentionally unquoted so each `--extra X` becomes its own arg.
++# shellcheck disable=SC2086 # word-splitting is intentional here
++if ! uv sync --all-packages $EXTRAS_FLAGS; then
++    echo "[startup] uv sync failed; recreating .venv and retrying once"
++    uv venv --allow-existing .venv
++    # shellcheck disable=SC2086
++    uv sync --all-packages $EXTRAS_FLAGS
++fi
++
++# ── Hand off to uvicorn ─────────────────────────────────────────────────────
++
++PYTHONPATH=. exec uv run uvicorn app.gateway.app:app \
++    --host 0.0.0.0 --port 8001 \
++    --reload --reload-include='*.yaml .env'
+diff --git a/docker/docker-compose-dev.yaml b/docker/docker-compose-dev.yaml
+index 6d00d71f..db608f59 100644
+--- a/docker/docker-compose-dev.yaml
++++ b/docker/docker-compose-dev.yaml
+@@ -125,8 +125,15 @@ services:
+         UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:0.7.20}
+         UV_INDEX_URL: ${UV_INDEX_URL:-https://pypi.org/simple}
+     container_name: deer-flow-gateway
+-    command: sh -c "{ cd backend && (uv sync || (echo '[startup] uv sync failed; recreating .venv and retrying once' && uv venv --allow-existing .venv && uv sync)) && PYTHONPATH=. uv run uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001 --reload --reload-include='*.yaml .env'; } > /app/logs/gateway.log 2>&1"
++    # Startup logic lives in docker/dev-entrypoint.sh — UV_EXTRAS validation,
++    # `uv sync --all-packages`, .venv self-heal, and uvicorn handoff. Keeps
++    # this file readable and lets the script be linted (shellcheck-clean).
++    # See PR #2767 / Issue #2754.
++    command: ["sh", "/usr/local/bin/dev-entrypoint.sh"]
+     volumes:
++      # Mount the dev entrypoint as a read-only file so edits to the script
++      # take effect on `make docker-restart` without requiring an image rebuild.
++      - ./dev-entrypoint.sh:/usr/local/bin/dev-entrypoint.sh:ro
+       - ../backend/:/app/backend/
+       # Preserve the .venv built during Docker image build — mounting the full backend/
+       # directory above would otherwise shadow it with the (empty) host directory.
+diff --git a/scripts/detect_uv_extras.py b/scripts/detect_uv_extras.py
+new file mode 100755
+index 00000000..91a9bd0a
+--- /dev/null
++++ b/scripts/detect_uv_extras.py
+@@ -0,0 +1,180 @@
++#!/usr/bin/env python3
++"""Resolve uv extras for local `uv sync` based on environment + config.yaml.
++
++Order of resolution:
++1. `UV_EXTRAS` env var. Comma- or whitespace-separated names so multiple
++   extras can be layered (e.g. ``UV_EXTRAS=postgres,ollama``). The same
++   parsing semantics apply in the Docker dev container via
++   ``docker/dev-entrypoint.sh``. The Docker image-build path
++   (``backend/Dockerfile``) still treats `UV_EXTRAS` as a single token, so
++   ``UV_EXTRAS=postgres,ollama`` would only install ``postgres,ollama`` as
++   one (invalid) extra at build time — author build-time values as a
++   single name.
++2. Auto-detection from config.yaml — currently maps:
++   - database.backend == postgres        -> postgres
++   - checkpointer.type == postgres       -> postgres
++
++Each extra name is validated against ``^[A-Za-z][A-Za-z0-9_-]*$`` (the same
++shape uv enforces for `[project.optional-dependencies]` keys). Anything else
++is dropped with a stderr warning so a stray shell metacharacter in `.env`
++cannot reach the `uv sync` invocation downstream.
++
++Output: space-separated `--extra <name>` flags ready for splat into
++`uv sync`, e.g. `--extra postgres`. Empty output means "no extras".
++
++Intentionally implemented with the standard library only: this script must run
++*before* `uv sync` has populated the venv, so it cannot depend on PyYAML.
++"""
++
++from __future__ import annotations
++
++import os
++import re
++import sys
++from pathlib import Path
++
++# Mirrors uv's accepted shape for extra names — keeps the eventual
++# `uv sync --extra <name>` invocation free of shell metacharacters even when
++# `UV_EXTRAS` comes from `.env` or another semi-trusted source.
++_EXTRA_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
++
++
++def _validate_extras(names: list[str]) -> list[str]:
++    valid: list[str] = []
++    for name in names:
++        if _EXTRA_NAME_RE.match(name):
++            valid.append(name)
++        else:
++            print(
++                f"detect_uv_extras: ignoring invalid UV_EXTRAS entry {name!r} (must match [A-Za-z][A-Za-z0-9_-]*)",
++                file=sys.stderr,
++            )
++    return valid
++
++
++def parse_env_extras(value: str) -> list[str]:
++    """Split UV_EXTRAS into a list, accepting comma or whitespace separators."""
++    parts = re.split(r"[\s,]+", value.strip())
++    return _validate_extras([p for p in parts if p])
++
++
++def find_config_file() -> Path | None:
++    """Locate config.yaml using the same precedence as serve.sh."""
++    explicit = os.environ.get("DEER_FLOW_CONFIG_PATH")
++    if explicit:
++        candidate = Path(explicit)
++        if candidate.is_file():
++            return candidate
++    for path in (Path("config.yaml"), Path("backend/config.yaml")):
++        if path.is_file():
++            return path
++    return None
++
++
++_SECTION_RE = re.compile(r"^([A-Za-z_][\w-]*)\s*:\s*$")
++_KEY_RE = re.compile(r"^\s+([A-Za-z_][\w-]*)\s*:\s*(\S.*?)\s*$")
++
++
++def _strip_comment(line: str) -> str:
++    """Drop trailing `#` comments while preserving `#` inside quoted strings."""
++    in_quote: str | None = None
++    out: list[str] = []
++    for ch in line:
++        if in_quote is not None:
++            out.append(ch)
++            if ch == in_quote:
++                in_quote = None
++            continue
++        if ch in ("'", '"'):
++            in_quote = ch
++            out.append(ch)
++        elif ch == "#":
++            break
++        else:
++            out.append(ch)
++    return "".join(out).rstrip()
++
++
++def _unquote(value: str) -> str:
++    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
++        return value[1:-1]
++    return value
++
++
++def section_value(lines: list[str], section: str, key: str) -> str | None:
++    """Return the value of `section.key` from a flat-ish YAML, or None.
++
++    Only handles the shallow shape DeerFlow uses for these settings:
++        database:
++          backend: postgres
++    Nested mappings deeper than the immediate child level are ignored on
++    purpose — that keeps this parser predictable without a full YAML stack.
++    """
++    inside = False
++    child_indent: int | None = None
++    for raw in lines:
++        line = _strip_comment(raw)
++        if not line.strip():
++            continue
++        sect_match = _SECTION_RE.match(line)
++        if sect_match:
++            inside = sect_match.group(1) == section
++            child_indent = None
++            continue
++        if not inside:
++            continue
++        stripped = line.lstrip()
++        indent = len(line) - len(stripped)
++        if indent == 0:
++            inside = False
++            continue
++        if child_indent is None:
++            child_indent = indent
++        if indent < child_indent:
++            inside = False
++            continue
++        if indent != child_indent:
++            continue
++        key_match = _KEY_RE.match(line)
++        if key_match and key_match.group(1) == key:
++            return _unquote(key_match.group(2).strip())
++    return None
++
++
++def detect_from_config(path: Path) -> list[str]:
++    try:
++        text = path.read_text(encoding="utf-8", errors="replace")
++    except OSError:
++        return []
++    lines = text.splitlines()
++    extras: set[str] = set()
++    if (section_value(lines, "database", "backend") or "").lower() == "postgres":
++        extras.add("postgres")
++    if (section_value(lines, "checkpointer", "type") or "").lower() == "postgres":
++        extras.add("postgres")
++    return sorted(extras)
++
++
++def resolve_extras() -> list[str]:
++    env = os.environ.get("UV_EXTRAS", "")
++    if env.strip():
++        return parse_env_extras(env)
++    config = find_config_file()
++    if config is None:
++        return []
++    return detect_from_config(config)
++
++
++def format_flags(extras: list[str]) -> str:
++    return " ".join(f"--extra {e}" for e in extras)
++
++
++def main() -> int:
++    extras = resolve_extras()
++    if extras:
++        sys.stdout.write(format_flags(extras))
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/scripts/serve.sh b/scripts/serve.sh
+index 17d46eed..a45ff1af 100755
+--- a/scripts/serve.sh
++++ b/scripts/serve.sh
+@@ -157,9 +157,41 @@ fi
+ 
+ # ── Install dependencies ────────────────────────────────────────────────────
+ 
++# Pick a Python for the extras detector. Falls back to plain `python` for
++# Windows/Git Bash where only `python` is on PATH.
++if command -v python3 >/dev/null 2>&1; then
++    DETECT_PYTHON="python3"
++elif command -v python >/dev/null 2>&1; then
++    DETECT_PYTHON="python"
++else
++    DETECT_PYTHON=""
++fi
++
++# Resolve uv extras (postgres, etc.) from UV_EXTRAS or config.yaml so that
++# `uv sync` does not wipe out optional dependencies on every restart. See
++# scripts/detect_uv_extras.py and Issue #2754 for context. The detector
++# whitelists extra names against `^[A-Za-z][A-Za-z0-9_-]*$`, so the unquoted
++# splat below only sees valid uv argument tokens.
++#
++# Stderr is intentionally NOT redirected so the user sees:
++#   - whitelist warnings (e.g. "ignoring invalid UV_EXTRAS entry ';'");
++#   - detector crashes (e.g. unexpected Python error).
++# `|| true` keeps `set -e` from killing dev startup on a detector failure;
++# the result is just an empty UV_EXTRAS_FLAGS, which means "no extras".
++UV_EXTRAS_FLAGS=""
++if [ -n "$DETECT_PYTHON" ]; then
++    UV_EXTRAS_FLAGS=$("$DETECT_PYTHON" "$REPO_ROOT/scripts/detect_uv_extras.py" || { echo "[serve.sh] detect_uv_extras.py failed (exit $?) — proceeding without extras" >&2; echo ""; })
++fi
++
+ if ! $SKIP_INSTALL; then
+     echo "Syncing dependencies..."
+-    (cd backend && uv sync --quiet) || { echo "✗ Backend dependency install failed"; exit 1; }
++    if [ -n "$UV_EXTRAS_FLAGS" ]; then
++        echo "  • uv extras: $UV_EXTRAS_FLAGS"
++    fi
++    # `--all-packages` propagates extras into workspace members (deerflow-harness
++    # in particular). Required for postgres extras — see PR #2584.
++    # Intentionally unquoted to splat multiple `--extra X` pairs.
++    (cd backend && uv sync --quiet --all-packages $UV_EXTRAS_FLAGS) || { echo "✗ Backend dependency install failed"; exit 1; }
+     (cd frontend && pnpm install --silent) || { echo "✗ Frontend dependency install failed"; exit 1; }
+     echo "✓ Dependencies synced"
+ else
+-- 
+2.53.0.windows.2
+

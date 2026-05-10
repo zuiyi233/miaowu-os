@@ -1,7 +1,7 @@
 # 上游同步操作手册
 
 > 基于 2026-05-01 首次成功同步 bytedance/deer-flow 上游的实战经验总结。
-> 最后更新：2026-05-07（第四次增量同步文档收口）
+> 最后更新：2026-05-10（第七次增量同步文档收口）
 
 ---
 
@@ -10,12 +10,12 @@
 | 项目 | 值 |
 |------|-----|
 | 同步分支 | `merge/upstream-main` |
-| 上游最新 commit | `1336872b` |
-| 上游同步基线 | `8e48b7e8`（上次同步终点） |
-| 本次同步 commit 数 | 7 个（`8e48b7e8..1336872b`） |
-| 同步完整度 | **7/7 文件触达范围已对齐（本轮为轻量审计收口）** |
-| 前端 tsc | **本轮未执行（按轻量任务要求跳过重测试）** |
-| 后端 py_compile | **本轮未执行（按轻量任务要求跳过重测试）** |
+| 上游最新 commit | `94da8f67` |
+| 上游同步基线 | `5127f08e`（上次同步终点） |
+| 本次同步 commit 数 | 1 个（`5127f08e..94da8f67`） |
+| 同步完整度 | **1/1 commit 已收口到 `deer-flow-main/` 子树** |
+| 前端 tsc | **本步仅做同步收口文档回写，完整测试由人工后续执行** |
+| 后端 py_compile | **本步仅做同步收口文档回写，完整测试由人工后续执行** |
 | 端口裁决 | **local-dev 默认 `127.0.0.1:8551`；docker/nginx 内部 upstream 保持 `gateway:8001`** |
 
 ### 上游已同步的全部 commit
@@ -64,6 +64,51 @@
 | `59c4a3f0` | feat(agent): 自定义 agent 自更新（按用户隔离） | ✅ 已合并 |
 | `4ead2c6b` | fix(config): 热重载时重置 config singleton | ✅ 已合并 |
 | `1336872b` | fix(channels): 网关命令请求鉴权 | ✅ 已合并 |
+
+#### 第五批（2026-05-08 同步，1336872b → 2b1fcb3e）
+
+| 上游 commit | 描述 | 状态 |
+|-------------|------|------|
+| `2b0e62f6` | [security] fix(auth): 拒绝跨站 auth POST 请求 | ✅ 已合并 |
+| `cef42243` | fix(skills): 强制执行 skills 的 allowed-tools 元数据 | ✅ 已合并 |
+| `27559f36` | fix(frontend): 新对话首发时延后 thread id 绑定，避免 404 | ✅ 已合并 |
+| `daa3ffc2` | feat(loop-detection): 循环检测支持配置化与按工具频率覆盖 | ✅ 已合并 |
+| `6c220a9a` | fix(chat): 修复新会话首条用户消息被吞问题 | ✅ 已合并 |
+| `530bda71` | fix: 按 message id 去重 token usage 聚合 | ✅ 已合并 |
+| `5fd0e6ac` | fix(middleware): 同步原始 tool call 元数据 | ✅ 已合并 |
+| `bd45cb28` | fix(sandbox): 禁用 MSYS 路径自动转换 | ✅ 已合并 |
+| `37db6893` | fix(events): 结构化 DB 事件内容序列化修复 | ✅ 已合并 |
+| `7de9b582` | fix(tools): 引入 Runtime 类型别名，消除 Pydantic 序列化告警 | ✅ 已合并 |
+| `2b1fcb3e` | fix(task): 移除 task 工具接口中的 max_turns 参数 | ✅ 已合并 |
+
+
+#### 第六批（2026-05-09 同步，2b1fcb3e → 5127f08e）
+
+| 上游 commit | 描述 | 状态 |
+|-------------|------|------|
+| `70737af7` | fix(nginx): 修复非常规端口下 CSRF 鉴权失败 | ✅ 已合并 |
+| `14c0a32e` | chore(deps): backend `mako` 版本升级 | ✅ 已合并 |
+| `109490da` | chore(deps): backend `python-multipart` 版本升级 | ✅ 已合并 |
+| `c1b7f1d1` | feat: 静态 system prompt + DynamicContextMiddleware 前缀缓存优化 | ✅ 已合并 |
+| `41b04a55` | chore(deps): frontend `uuid` 版本升级 | ✅ 已合并 |
+| `7caf03e9` | fix(packaging): 补充 postgres extra 的安装与引导 | ✅ 已合并 |
+| `1edc9d9f` | chore(deps): backend `langchain-core` 升级到 1.3.3 | ✅ 已合并 |
+| `7a3c58a7` | fix: 修复网关上传重复文件名 | ✅ 已合并 |
+| `4063dd71` | feat(debug): 输出 presented file 的物理路径解析 | ✅ 已合并 |
+| `0d1053ca` | fix(uploads): Windows 安全上传路径兼容 | ✅ 已合并 |
+| `f76e4e35` | fix: 动态上下文提醒下 title 生成修复 | ✅ 已合并 |
+| `881ff712` | fix(harness): summarization 保留动态上下文 | ✅ 已合并 |
+| `41741608` | fix: 标题栏 total token 改用后端 thread token usage | ✅ 已合并 |
+| `1c96a6af` | fix: 新建 agent 初始化保持 user scope | ✅ 已合并 |
+| `08ee7ade` | fix(lint): 去除重复 `is_dynamic_context_reminder` 定义 | ✅ 已合并 |
+| `dfa4eb0c` | [codex] fix: follow-up suggestions 布局修复 | ✅ 已合并 |
+| `5127f08e` | feat: 默认启用 token usage | ✅ 已合并 |
+
+#### 第七批（2026-05-10 同步，5127f08e → 94da8f67）
+
+| 上游 commit | 描述 | 状态 |
+|-------------|------|------|
+| `94da8f67` | fix(scripts): 保留 `make dev` 重启后的 uv extras | ✅ 已合并 |
 
 第四批本地裁决要点（固定）：
 
@@ -603,3 +648,95 @@ const calls = message.tool_calls ?? [];
 4. **TypeScript 编译是最好的验证**：`npx tsc --noEmit` 能立即发现类型不兼容问题
 5. **i18n 合并需注意类型定义**：`types.ts` 必须与 `en-US.ts`、`zh-CN.ts` 保持同步，否则编译报错
 6. **`Record<string, unknown>` 的 Omit 陷阱**：当上游接口继承 `Record<string, unknown>` 时，`Omit` 后自定义字段可能丢失类型，需在交叉类型中显式声明
+
+## 9. 第五次增量同步实战记录（2026-05-08）
+
+> 同步上游 `1336872b..2b1fcb3e` 共 11 个提交，采用“子树补丁应用 + 本地优先裁决”流程收口。
+
+### 9.1 同步输入与结果
+
+- 工作分支：`merge/upstream-main`
+- 上游目标：`2b1fcb3e`
+- 同步范围：`1336872b..2b1fcb3e`（11 commits）
+- 子树补丁文件：`D:\miaowu-os\.tmp-upstream-1336872b-2b1fcb3e.patch`
+- 落地提交：`643389b9`
+- 变更规模（提交统计）：54 files changed，+2287 / -334
+
+### 9.2 本步完成内容
+
+1. 完成上游 11 个提交在 `deer-flow-main/` 子树的同步落地，覆盖 backend/frontend 与相关测试文件。
+2. 完成冲突文件人工裁决并收口，重点包括：
+   - `backend/packages/harness/deerflow/agents/lead_agent/agent.py`
+   - `backend/packages/harness/deerflow/agents/lead_agent/prompt.py`
+   - `backend/packages/harness/deerflow/config/app_config.py`
+   - `backend/packages/harness/deerflow/subagents/executor.py`
+   - `backend/packages/harness/deerflow/tools/builtins/present_file_tool.py`
+   - `frontend/src/components/workspace/input-box.tsx`
+   - `frontend/src/core/threads/hooks.ts`
+3. 保留本地二开契约不回退：
+   - `local-dev` 后端默认基址继续固定 `127.0.0.1:8551`（前端 `4560`）
+   - 二开小说链路与 `include_novel` 相关能力保持可用路径
+   - 上游新增的 allowed-tools、loop-detection 配置化、Runtime 类型修复一并吸收
+
+### 9.3 本步验证边界（按本次交接约定）
+
+- 本步文档回写仅记录“同步与裁决已完成”的事实，不作为最终全量测试结论。
+- lint / typecheck / e2e / 全量 pytest 由后续人工在清理后的工作区执行。
+
+
+## 10. 第六次增量同步实战记录（2026-05-09）
+
+> 同步上游 `2b1fcb3e..5127f08e` 共 17 个提交，采用“子树补丁应用 + 冲突裁决 + 定向验证”流程收口。
+
+### 10.1 同步输入与结果
+
+- 工作分支：`merge/upstream-main`
+- 上游目标：`5127f08e`
+- 同步范围：`2b1fcb3e..5127f08e`（17 commits）
+- 子树补丁文件：`D:\miaowu-os\.tmp-upstream-2b1fcb3e-5127f08e.patch`
+- 关键冲突文件：7 个（`services.py`、`prompt.py`、`summarization_middleware.py`、`pyproject.toml`、`nginx.conf`、`input-box.tsx`、`hooks.ts`）
+
+### 10.2 本步完成内容
+
+1. 采用上游更优实现的文件：
+   - `backend/packages/harness/deerflow/agents/lead_agent/prompt.py`
+   - `backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py`
+   - `frontend/src/components/workspace/input-box.tsx`
+2. 本地二开保留并回补的关键行为：
+   - `backend/app/gateway/services.py` 保留本地 runtime/provider/novel 路径，并补入上游认证上下文注入
+   - `frontend/src/core/threads/hooks.ts` 以上游实现为基底，补回 `create_novel_progress` toast/去重逻辑
+3. local-dev 端口契约保持不变：`127.0.0.1:8551`（前端 `4560`）
+
+### 10.3 本步验证摘要
+
+- 后端定向 `pytest`：84 passed（gateway/summarization/title/setup_agent 相关）
+- 后端 `compileall`：`services.py`、`prompt.py`、`summarization_middleware.py` 通过
+- 前端 `pnpm tsc --noEmit`：通过
+
+## 11. 第七次增量同步实战记录（2026-05-10）
+
+> 同步上游 `5127f08e..94da8f67` 共 1 个提交，重点是 dev 启动脚本与 `UV_EXTRAS` 保留机制。
+
+### 11.1 同步输入与结果
+
+- 工作分支：`merge/upstream-main`
+- 上游目标：`94da8f67`
+- 同步范围：`5127f08e..94da8f67`（1 commit）
+- 子树补丁文件：`D:\miaowu-os\.tmp-upstream-5127f08e-94da8f67.patch`
+- 触达文件：8 个（`engine.py`、`config.example.yaml`、`scripts/serve.sh`、`docker/docker-compose-dev.yaml`、`docker/dev-entrypoint.sh`、`scripts/detect_uv_extras.py`、2 个 backend 测试）
+
+### 11.2 本步完成内容
+
+1. 吸收上游 `UV_EXTRAS` 保留机制：
+   - 本地 `make dev` 路径：`scripts/detect_uv_extras.py` + `scripts/serve.sh`
+   - Docker dev 路径：`docker/dev-entrypoint.sh` + `docker/docker-compose-dev.yaml`
+2. 吸收上游配套测试：
+   - `backend/tests/test_detect_uv_extras.py`
+   - `backend/tests/test_dev_entrypoint.py`
+3. 保留本地二开契约：
+   - 未回退小说链路二开逻辑
+   - 未改变 local-dev `8551` 约束（`config.example.yaml` 中关于 `8001` 仍仅是通用注释语境）
+
+### 11.3 本步验证边界
+
+- 本步按你的要求，先完成同步与文档回写；全量运行验证由你后续人工执行。

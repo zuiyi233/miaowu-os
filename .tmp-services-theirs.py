@@ -11,21 +11,14 @@ import asyncio
 import json
 import logging
 import re
-import time
 from collections.abc import Mapping
 from typing import Any
 
 from fastapi import HTTPException, Request
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from sqlalchemy import select
+from langchain_core.messages import HumanMessage
 
 from app.gateway.deps import get_run_context, get_run_manager, get_stream_bridge
 from app.gateway.utils import sanitize_log_param
-from app.gateway.novel_migrated.core.crypto import safe_decrypt
-from app.gateway.novel_migrated.core.database import AsyncSessionLocal
-from app.gateway.novel_migrated.core.user_context import get_request_user_id
-from app.gateway.novel_migrated.models.settings import Settings
-from app.gateway.novel_migrated.services.ai_settings_service import resolve_user_ai_runtime_config
 from deerflow.runtime import (
     END_SENTINEL,
     HEARTBEAT_SENTINEL,
@@ -45,15 +38,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # SSE formatting
 # ---------------------------------------------------------------------------
-
-
-def _log_fire_and_forget_failure(task: asyncio.Task[Any], *, label: str) -> None:
-    """Consume and log exceptions from background fire-and-forget tasks."""
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        logger.debug("%s failed: %s", label, exc)
 
 
 def format_sse(event: str, data: Any, *, event_id: str | None = None) -> str:
@@ -102,15 +86,8 @@ def normalize_input(raw_input: dict[str, Any] | None) -> dict[str, Any]:
                 content = msg.get("content", "")
                 if role in ("user", "human"):
                     converted.append(HumanMessage(content=content))
-                elif role in ("system",):
-                    converted.append(SystemMessage(content=content))
-                elif role in ("ai", "assistant"):
-                    converted.append(AIMessage(content=content))
-                elif role in ("tool",):
-                    tool_call_id = msg.get("tool_call_id", "")
-                    name = msg.get("name", "")
-                    converted.append(ToolMessage(content=content, tool_call_id=tool_call_id, name=name))
                 else:
+                    # TODO: handle other message types (system, ai, tool)
                     converted.append(HumanMessage(content=content))
             else:
                 converted.append(msg)
@@ -121,6 +98,12 @@ def normalize_input(raw_input: dict[str, Any] | None) -> dict[str, Any]:
 _DEFAULT_ASSISTANT_ID = "lead_agent"
 
 
+# Whitelist of run-context keys that the langgraph-compat layer forwards from
+# ``body.context`` into the run config. ``config["context"]`` exists in
+# LangGraph >=0.6, but these values must be written to both ``configurable``
+# (for legacy ``_get_runtime_config`` consumers) and ``context`` because
+# LangGraph >=1.1.9 no longer makes ``ToolRuntime.context`` fall back to
+# ``configurable`` for consumers like ``setup_agent``.
 _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
     {
         "model_name",
@@ -132,13 +115,15 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
         "max_concurrent_subagents",
         "agent_name",
         "is_bootstrap",
-        "media_draft_retention",
-        "provider_id",
     }
 )
 
 
 def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, Any] | None) -> None:
+    """Merge whitelisted keys from ``body.context`` into both ``config['configurable']``
+    and ``config['context']`` so they are visible to legacy configurable readers and
+    to LangGraph ``ToolRuntime.context`` consumers (e.g. the ``setup_agent`` tool —
+    see issue #2677)."""
     if not context:
         return
     configurable = config.setdefault("configurable", {})
@@ -152,7 +137,13 @@ def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, An
 
 
 def inject_authenticated_user_context(config: dict[str, Any], request: Request) -> None:
-    """Stamp authenticated user_id into runtime context for async/background tools."""
+    """Stamp the authenticated user into the run context for background tools.
+
+    Tool execution may happen after the request handler has returned, so tools
+    that persist user-scoped files should not rely only on ambient ContextVars.
+    The value comes from server-side auth state, never from client context.
+    """
+
     user = getattr(request.state, "user", None)
     user_id = getattr(user, "id", None)
     if user_id is None:
@@ -161,255 +152,6 @@ def inject_authenticated_user_context(config: dict[str, Any], request: Request) 
     runtime_context = config.setdefault("context", {})
     if isinstance(runtime_context, dict):
         runtime_context["user_id"] = str(user_id)
-
-
-def _as_non_empty_str(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    return normalized or None
-
-
-def _extract_module_id(context: dict[str, Any] | None) -> str | None:
-    if not isinstance(context, dict):
-        return None
-
-    for key in ("module_id", "moduleId", "module"):
-        value = context.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
-def _apply_runtime_provider_overrides(
-    configurable: dict[str, Any],
-    *,
-    runtime_model: str | None,
-    runtime_provider: str | None,
-    runtime_base_url: str | None,
-    runtime_api_key: str | None,
-) -> bool:
-    """Inject runtime provider/model overrides into run configurable.
-
-    Returns True when at least one override field is written.
-    """
-    changed = False
-    if runtime_model:
-        configurable["runtime_model"] = runtime_model
-        changed = True
-    if runtime_provider:
-        configurable["runtime_provider"] = runtime_provider
-        changed = True
-    if runtime_base_url:
-        configurable["runtime_base_url"] = runtime_base_url
-        changed = True
-    if runtime_api_key:
-        configurable["runtime_api_key"] = runtime_api_key
-        changed = True
-    return changed
-
-
-async def _resolve_runtime_provider_overrides_for_thread(
-    request: Request,
-    *,
-    requested_model_name: str | None,
-    module_id: str | None = None,
-) -> dict[str, str] | None:
-    """Resolve per-user provider credentials for LangGraph runtime calls.
-
-    Source of truth is `Settings` / `ai_provider_settings` persistence layer.
-    We intentionally do NOT read `.env`/`config.yaml` here so frontend-saved
-    user settings can take effect immediately for thread runs.
-    """
-    user_id = get_request_user_id(request)
-    try:
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(select(Settings).where(Settings.user_id == user_id))
-            settings = result.scalar_one_or_none()
-    except Exception:
-        logger.warning(
-            "Failed to load user settings for runtime provider overrides: user=%s",
-            user_id,
-            exc_info=True,
-        )
-        return None
-
-    if settings is None:
-        return None
-
-    runtime, _ = resolve_user_ai_runtime_config(
-        settings,
-        ai_model=requested_model_name,
-        module_id=module_id,
-    )
-
-    resolved: dict[str, str] = {"runtime_model": runtime["model_name"]}
-    if runtime["api_provider"]:
-        resolved["runtime_provider"] = runtime["api_provider"]
-    if runtime["api_base_url"]:
-        resolved["runtime_base_url"] = runtime["api_base_url"]
-    if runtime["api_key"]:
-        resolved["runtime_api_key"] = runtime["api_key"]
-    return resolved
-
-
-def _resolve_feature_model_from_routing(
-    feature_module_id: str,
-    ai_settings: dict[str, Any],
-) -> dict[str, str] | None:
-    """Resolve model overrides for a feature from ai-settings feature routing.
-
-    Returns runtime override fields:
-    - runtime_model: provider-side model id (may not exist in config.yaml)
-    - runtime_base_url / runtime_api_key: provider credential overrides
-    """
-    feature_routing = ai_settings.get("feature_routing_settings")
-    if not isinstance(feature_routing, dict):
-        return None
-
-    modules = feature_routing.get("modules")
-    if not isinstance(modules, list):
-        return None
-
-    target_module = None
-    for mod in modules:
-        if isinstance(mod, dict) and mod.get("moduleId") == feature_module_id:
-            target_module = mod
-            break
-
-    if target_module is None:
-        return None
-
-    active_mode = target_module.get("currentMode", "primary")
-    if active_mode == "backup":
-        target = target_module.get("backupTarget")
-    else:
-        target = target_module.get("primaryTarget")
-
-    if not isinstance(target, dict) or not target.get("model"):
-        target = target_module.get("primaryTarget")
-        if not isinstance(target, dict) or not target.get("model"):
-            return None
-
-    model_name = _as_non_empty_str(target.get("model"))
-    provider_id = _as_non_empty_str(target.get("providerId"))
-    if not model_name:
-        return None
-
-    providers = ai_settings.get("providers")
-    if not isinstance(providers, list):
-        return {"runtime_model": model_name}
-
-    provider_record = None
-    if provider_id:
-        for p in providers:
-            if isinstance(p, dict) and p.get("id") == provider_id:
-                provider_record = p
-                break
-
-    result: dict[str, str] = {"runtime_model": model_name}
-    if provider_record:
-        base_url = _as_non_empty_str(provider_record.get("base_url"))
-        api_key_encrypted = _as_non_empty_str(provider_record.get("api_key_encrypted"))
-        if not api_key_encrypted:
-            api_key_encrypted = _as_non_empty_str(provider_record.get("api_key"))
-        api_key = _as_non_empty_str(safe_decrypt(api_key_encrypted)) if api_key_encrypted else None
-        if base_url:
-            result["runtime_base_url"] = base_url
-        if api_key:
-            result["runtime_api_key"] = api_key
-
-    return result
-
-
-async def _resolve_feature_model_overrides_for_thread(
-    request: Request,
-    *,
-    active_provider_overrides: dict[str, str] | None,
-) -> dict[str, str]:
-    """Resolve per-feature model overrides from user ai-settings feature routing.
-
-    For each feature (title, memory, summarization), checks if the user has
-    configured a specific model in feature_routing_settings. If not, falls back
-    to the active provider's model (same as main chat).
-
-    Returns a flat dict with keys like:
-      title_runtime_model, title_runtime_base_url, title_runtime_api_key,
-      memory_runtime_model, memory_runtime_base_url, memory_runtime_api_key,
-      summarization_runtime_model, summarization_runtime_base_url, summarization_runtime_api_key
-    """
-    user_id = get_request_user_id(request)
-    ai_settings: dict[str, Any] = {}
-
-    try:
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(select(Settings).where(Settings.user_id == user_id))
-            settings = result.scalar_one_or_none()
-            if settings is None:
-                return {}
-
-            preferences_raw = settings.preferences or "{}"
-            if isinstance(preferences_raw, str):
-                try:
-                    preferences = json.loads(preferences_raw)
-                except Exception:
-                    preferences = {}
-            else:
-                preferences = preferences_raw
-
-            if not isinstance(preferences, dict):
-                preferences = {}
-
-            ai_provider_settings = preferences.get("ai_provider_settings", {})
-            if isinstance(ai_provider_settings, dict):
-                providers_raw = ai_provider_settings.get("providers", [])
-                public_providers = []
-                if isinstance(providers_raw, list):
-                    for p in providers_raw:
-                        if isinstance(p, dict):
-                            public_providers.append(p)
-
-                ai_settings = {
-                    "providers": public_providers,
-                    "feature_routing_settings": ai_provider_settings.get("feature_routing_settings"),
-                }
-    except Exception:
-        logger.debug("Failed to load feature routing settings for user %s", user_id, exc_info=True)
-        return {}
-
-    fallback_runtime_model = active_provider_overrides.get("runtime_model") if active_provider_overrides else None
-    fallback_base_url = active_provider_overrides.get("runtime_base_url") if active_provider_overrides else None
-    fallback_api_key = active_provider_overrides.get("runtime_api_key") if active_provider_overrides else None
-
-    result: dict[str, str] = {}
-
-    for feature_id, prefix in [
-        ("title-ai", "title"),
-        ("memory-ai", "memory"),
-        ("summarization-ai", "summarization"),
-    ]:
-        feature_overrides = _resolve_feature_model_from_routing(feature_id, ai_settings)
-
-        if feature_overrides:
-            runtime_model = feature_overrides.get("runtime_model")
-            base_url = feature_overrides.get("runtime_base_url")
-            api_key = feature_overrides.get("runtime_api_key")
-        else:
-            runtime_model = fallback_runtime_model
-            base_url = fallback_base_url
-            api_key = fallback_api_key
-
-        if not any((runtime_model, base_url, api_key)):
-            continue
-
-        if runtime_model:
-            result[f"{prefix}_runtime_model"] = runtime_model
-        if base_url:
-            result[f"{prefix}_runtime_base_url"] = base_url
-        if api_key:
-            result[f"{prefix}_runtime_api_key"] = api_key
-
-    return result
 
 
 def resolve_agent_factory(assistant_id: str | None):
@@ -492,10 +234,6 @@ def build_run_config(
             target = config.setdefault("configurable", {})
         if target is not None and "agent_name" not in target:
             target["agent_name"] = normalized
-    if "configurable" in config and "include_novel" not in config["configurable"]:
-        config["configurable"]["include_novel"] = True
-    elif "context" in config and "include_novel" not in config["context"]:
-        config["context"]["include_novel"] = True
     if metadata:
         config.setdefault("metadata", {}).update(metadata)
     return config
@@ -563,44 +301,12 @@ async def start_run(
     graph_input = normalize_input(body.input)
     config = build_run_config(thread_id, body.config, body.metadata, assistant_id=body.assistant_id)
 
-    # Merge DeerFlow-specific context overrides into both configurable and context.
+    # Merge DeerFlow-specific context overrides into both ``configurable`` and ``context``.
     # The ``context`` field is a custom extension for the langgraph-compat layer
     # that carries agent configuration (model_name, thinking_enabled, etc.).
     # Only agent-relevant keys are forwarded; unknown keys (e.g. thread_id) are ignored.
-    context = getattr(body, "context", None)
-    module_id = _extract_module_id(context)
-    merge_run_context_overrides(config, context)
+    merge_run_context_overrides(config, getattr(body, "context", None))
     inject_authenticated_user_context(config, request)
-
-    configurable = config.setdefault("configurable", {})
-    requested_model_name = _as_non_empty_str(configurable.get("model_name") or configurable.get("model"))
-    runtime_overrides = await _resolve_runtime_provider_overrides_for_thread(
-        request,
-        requested_model_name=requested_model_name,
-        module_id=module_id,
-    )
-    if runtime_overrides:
-        logger.info(
-            "Runtime provider overrides for thread: model=%s provider=%s base_url=%s api_key=%s",
-            runtime_overrides.get("runtime_model"),
-            runtime_overrides.get("runtime_provider"),
-            "set" if runtime_overrides.get("runtime_base_url") else "missing",
-            "set" if runtime_overrides.get("runtime_api_key") else "missing",
-        )
-        _apply_runtime_provider_overrides(
-            configurable,
-            runtime_model=runtime_overrides.get("runtime_model"),
-            runtime_provider=runtime_overrides.get("runtime_provider"),
-            runtime_base_url=runtime_overrides.get("runtime_base_url"),
-            runtime_api_key=runtime_overrides.get("runtime_api_key"),
-        )
-
-    feature_overrides = await _resolve_feature_model_overrides_for_thread(
-        request,
-        active_provider_overrides=runtime_overrides,
-    )
-    if feature_overrides:
-        configurable.update(feature_overrides)
 
     stream_modes = normalize_stream_modes(body.stream_mode)
 
@@ -621,7 +327,9 @@ async def start_run(
     )
     record.task = task
 
-    # Title sync is handled by runtime/runs/worker.py in its completion path.
+    # Title sync is handled by worker.py's finally block which reads the
+    # title from the checkpoint and calls thread_store.update_display_name
+    # after the run completes.
 
     return record
 
