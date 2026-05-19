@@ -184,8 +184,75 @@ async def delete_project(
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    from app.gateway.novel_migrated.models.document_index import DocumentIndex
+    from app.gateway.novel_migrated.models.foreshadow import Foreshadow
+    from app.gateway.novel_migrated.models.memory import Memory
+    from app.gateway.novel_migrated.models.relationship import CharacterRelationship, Organization, OrganizationMember
+    from app.gateway.novel_migrated.services.memory_service import memory_service
+    from app.gateway.novel_migrated.services.workspace_document_service import workspace_document_service
+
+    await db.execute(
+        CharacterRelationship.__table__.delete().where(
+            CharacterRelationship.project_id == project_id
+        )
+    )
+
+    org_result = await db.execute(
+        select(Organization).where(Organization.project_id == project_id)
+    )
+    for org in org_result.scalars().all():
+        await db.execute(
+            OrganizationMember.__table__.delete().where(
+                OrganizationMember.organization_id == org.id
+            )
+        )
+        await db.delete(org)
+
+    await db.execute(
+        Foreshadow.__table__.delete().where(Foreshadow.project_id == project_id)
+    )
+    await db.execute(
+        Career.__table__.delete().where(Career.project_id == project_id)
+    )
+    await db.execute(
+        DocumentIndex.__table__.delete().where(DocumentIndex.project_id == project_id)
+    )
+
+    try:
+        from app.gateway.novel_migrated.models.chapter import Chapter as ChapterModel
+        from app.gateway.novel_migrated.models.character import Character as CharacterModel
+        from app.gateway.novel_migrated.models.outline import Outline as OutlineModel
+        await db.execute(ChapterModel.__table__.delete().where(ChapterModel.project_id == project_id))
+        await db.execute(CharacterModel.__table__.delete().where(CharacterModel.project_id == project_id))
+        await db.execute(OutlineModel.__table__.delete().where(OutlineModel.project_id == project_id))
+    except Exception:
+        logger.warning("Failed to explicitly delete chapters/characters/outlines for project_id=%s", project_id, exc_info=True)
+
+    try:
+        from app.gateway.novel_migrated.models.task import AnalysisTask, BatchGenerationTask, RegenerationTask
+        await db.execute(AnalysisTask.__table__.delete().where(AnalysisTask.project_id == project_id))
+        await db.execute(BatchGenerationTask.__table__.delete().where(BatchGenerationTask.project_id == project_id))
+        await db.execute(RegenerationTask.__table__.delete().where(RegenerationTask.project_id == project_id))
+    except Exception:
+        logger.warning("Failed to delete task records for project_id=%s", project_id, exc_info=True)
+
     await db.delete(project)
     await db.commit()
+
+    try:
+        await memory_service.delete_project_memories(user_id, project_id)
+    except Exception:
+        logger.warning("Failed to delete project memories for project_id=%s", project_id, exc_info=True)
+
+    try:
+        await workspace_document_service.delete_project_workspace(
+            user_id=user_id,
+            project_id=project_id,
+        )
+    except Exception:
+        logger.warning("Failed to delete project workspace for project_id=%s", project_id, exc_info=True)
+
     return {"message": "Project deleted"}
 
 
@@ -241,9 +308,12 @@ async def world_build(
 
         return _serialize_project(project)
 
-    except (json.JSONDecodeError, Exception) as e:
+    except json.JSONDecodeError as e:
         logger.error(f"Parse world build response failed: {e}")
-        raise HTTPException(status_code=500, detail=f"AI response parse error: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"AI response parse error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Parse world build response failed: {e}")
+        raise HTTPException(status_code=502, detail=f"AI service error: {str(e)}")
 
 
 @router.get("/{project_id}/stats")

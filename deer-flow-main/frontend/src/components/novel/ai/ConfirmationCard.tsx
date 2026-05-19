@@ -50,7 +50,8 @@ function formatSlotValue(value: unknown): string {
   if (typeof value === 'object') {
     try {
       return JSON.stringify(value);
-    } catch {
+    } catch (error) {
+      console.warn('Failed to stringify value:', error);
       return '—';
     }
   }

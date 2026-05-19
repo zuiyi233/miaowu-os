@@ -631,6 +631,51 @@ class WorkspaceDocumentService:
 
         return {"synced": synced, "stale_marked": stale_marked}
 
+    async def delete_document(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        entity_type: str,
+        entity_id: str,
+    ) -> bool:
+        workspace = self.workspace_dir(user_id, project_id)
+        relative_path = self._resolve_entity_relative_path(entity_type, entity_id)
+        absolute_path = (workspace / relative_path).resolve()
+        self._assert_within_workspace_root(absolute_path)
+
+        deleted_file = False
+        if await asyncio.to_thread(absolute_path.exists):
+            await asyncio.to_thread(absolute_path.unlink, True)
+            deleted_file = True
+
+        manifest_lock = await self._get_manifest_lock(workspace)
+        async with manifest_lock:
+            manifest = await self._load_manifest(workspace, user_id=user_id, project_id=project_id)
+            docs = manifest.get("documents", [])
+            canonical_type = self._coerce_entity_type(entity_type)
+            validated_id = self._validate_segment(entity_id, "entity_id")
+            manifest["documents"] = [
+                d for d in docs
+                if not (isinstance(d, dict) and d.get("entity_type") == canonical_type and d.get("entity_id") == validated_id)
+            ]
+            await self._save_manifest(workspace, manifest)
+
+        return deleted_file
+
+    async def delete_project_workspace(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+    ) -> bool:
+        workspace = self.workspace_dir(user_id, project_id)
+        if not await asyncio.to_thread(workspace.exists):
+            return False
+        import shutil
+        await asyncio.to_thread(shutil.rmtree, workspace, ignore_errors=True)
+        return True
+
     async def list_index_records(
         self,
         *,

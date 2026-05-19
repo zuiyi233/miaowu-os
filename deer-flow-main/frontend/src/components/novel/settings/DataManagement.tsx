@@ -104,7 +104,8 @@ export function DataManagement() {
       });
       downloadBlob(blob, `novel-full-backup-${timestamp}.json`);
       toast.success(t.novel.exportSuccess);
-    } catch {
+    } catch (error) {
+      console.error('Export failed:', error);
       toast.error(t.novel.exportFailed);
     }
   };

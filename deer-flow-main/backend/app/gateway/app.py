@@ -380,7 +380,9 @@ def create_app() -> FastAPI:
         Configured FastAPI application instance.
     """
     config = get_gateway_config()
-    docs_kwargs = {"docs_url": "/docs", "redoc_url": "/redoc", "openapi_url": "/openapi.json"} if config.enable_docs else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    docs_url = "/docs" if config.enable_docs else None
+    redoc_url = "/redoc" if config.enable_docs else None
+    openapi_url = "/openapi.json" if config.enable_docs else None
 
     app = FastAPI(
         title="DeerFlow API Gateway",
@@ -400,12 +402,14 @@ API Gateway for DeerFlow - A LangGraph-based AI agent backend with sandbox execu
 
 ### Architecture
 
-LangGraph requests are handled by nginx reverse proxy.
-This gateway provides custom endpoints for models, MCP configuration, skills, and artifacts.
+LangGraph-compatible requests are routed through nginx to this gateway.
+This gateway provides runtime endpoints for agent runs plus custom endpoints for models, MCP configuration, skills, and artifacts.
         """,
         version="0.1.0",
         lifespan=lifespan,
-        **docs_kwargs,
+        docs_url=docs_url,
+        redoc_url=redoc_url,
+        openapi_url=openapi_url,
         openapi_tags=[
             {
                 "name": "models",
@@ -547,7 +551,7 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
     app.add_middleware(RequestTraceMiddleware)
 
     @app.get("/health", tags=["health"])
-    async def health_check() -> dict:
+    async def health_check() -> dict[str, str]:
         """Health check endpoint.
 
         Returns:

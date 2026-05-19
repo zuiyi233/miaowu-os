@@ -1,6 +1,6 @@
 'use client';
 
-import { BookOpen, Building2, Compass, Flag, GitBranch, PencilLine, Settings, Sparkles, Users } from 'lucide-react';
+import { BookOpen, Building2, Compass, FileInput, Flag, GitBranch, PencilLine, Settings, Sparkles, Users } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useMemo } from 'react';
@@ -8,6 +8,7 @@ import type { ReactNode } from 'react';
 
 import { Phase2StatusBar } from '@/components/novel/Phase2StatusBar';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { useI18n } from '@/core/i18n/hooks';
 import { buildPhase2SnapshotFromQualityReport } from '@/core/novel/phase2-status';
 import {
   QUALITY_REPORT_DEFAULT_REFETCH_INTERVAL_MS,
@@ -43,6 +44,7 @@ function isActive(pathname: string, href: string, matchMode: MatchMode = 'exact'
 
 export function ProjectWorkspaceLayout({ novelId, children }: ProjectWorkspaceLayoutProps) {
   const pathname = usePathname();
+  const { t } = useI18n();
   const basePath = `/workspace/novel/${encodeURIComponent(novelId)}`;
   const reportHref = `${basePath}/quality`;
   const shouldLoadQualityReport = isActive(pathname, reportHref, 'prefix');
@@ -67,10 +69,10 @@ export function ProjectWorkspaceLayout({ novelId, children }: ProjectWorkspaceLa
       const message =
         qualityReportError instanceof Error
           ? qualityReportError.message
-          : '获取阶段二状态失败';
+          : t.novel.phase2StatusFetchFailed;
       return {
         status: 'failed' as const,
-        message: '阶段二状态同步失败',
+        message: t.novel.phase2StatusSyncFailed,
         novelId,
         reportUrl: undefined,
         blockers: [],
@@ -91,36 +93,37 @@ export function ProjectWorkspaceLayout({ novelId, children }: ProjectWorkspaceLa
   }, [novelId, qualityReport, qualityReportError, shouldLoadQualityReport]);
 
   const phase2EmptyText = shouldLoadQualityReport
-    ? (isQualityReportLoading ? '正在同步阶段二状态…' : '暂无阶段二状态数据')
-    : '阶段二状态按需加载，进入一致性报告可查看';
+    ? (isQualityReportLoading ? t.novel.phase2StatusSyncing : t.novel.phase2StatusNoData)
+    : t.novel.phase2StatusOnDemand;
 
   const navGroups: NavGroup[] = [
     {
-      title: '核心内容',
+      title: t.novel.coreContent,
       items: [
-        { title: '章节管理', href: `${basePath}/chapters`, icon: <BookOpen className="h-4 w-4" />, matchMode: 'prefix' },
-        { title: '世界观', href: `${basePath}/world-setting`, icon: <Compass className="h-4 w-4" /> },
-        { title: '角色', href: `${basePath}/characters`, icon: <Users className="h-4 w-4" /> },
-        { title: '大纲', href: `${basePath}/outline`, icon: <PencilLine className="h-4 w-4" /> },
+        { title: t.novel.chapterManagement, href: `${basePath}/chapters`, icon: <BookOpen className="h-4 w-4" />, matchMode: 'prefix' },
+        { title: t.novel.worldSetting, href: `${basePath}/world-setting`, icon: <Compass className="h-4 w-4" /> },
+        { title: t.novel.characters, href: `${basePath}/characters`, icon: <Users className="h-4 w-4" /> },
+        { title: t.novel.outline, href: `${basePath}/outline`, icon: <PencilLine className="h-4 w-4" /> },
       ],
     },
     {
-      title: '关系与组织',
+      title: t.novel.relationshipsAndOrgs,
       items: [
-        { title: '关系概览', href: `${basePath}/relationships`, icon: <GitBranch className="h-4 w-4" /> },
-        { title: '关系图谱', href: `${basePath}/relationships/graph`, icon: <GitBranch className="h-4 w-4" /> },
-        { title: '组织', href: `${basePath}/organizations`, icon: <Building2 className="h-4 w-4" /> },
-        { title: '职业体系', href: `${basePath}/careers`, icon: <Users className="h-4 w-4" /> },
+        { title: t.novel.relationshipOverview, href: `${basePath}/relationships`, icon: <GitBranch className="h-4 w-4" /> },
+        { title: t.novel.relationshipGraph, href: `${basePath}/relationships/graph`, icon: <GitBranch className="h-4 w-4" /> },
+        { title: t.novel.organizations, href: `${basePath}/organizations`, icon: <Building2 className="h-4 w-4" /> },
+        { title: t.novel.careerSystem, href: `${basePath}/careers`, icon: <Users className="h-4 w-4" /> },
       ],
     },
     {
-      title: '增强能力',
+      title: t.novel.enhancedAbilities,
       items: [
-        { title: '一致性报告', href: reportHref, icon: <GitBranch className="h-4 w-4" /> },
-        { title: '伏笔', href: `${basePath}/foreshadows`, icon: <Flag className="h-4 w-4" /> },
-        { title: '写作风格', href: `${basePath}/writing-styles`, icon: <Sparkles className="h-4 w-4" /> },
-        { title: 'Prompt 工坊', href: `${basePath}/prompt-workshop`, icon: <Sparkles className="h-4 w-4" /> },
-        { title: '设置', href: `${basePath}/settings`, icon: <Settings className="h-4 w-4" /> },
+        { title: t.novel.consistencyReport, href: reportHref, icon: <GitBranch className="h-4 w-4" /> },
+        { title: t.novel.foreshadows, href: `${basePath}/foreshadows`, icon: <Flag className="h-4 w-4" /> },
+        { title: t.novel.importMaterials, href: `${basePath}/book-import`, icon: <FileInput className="h-4 w-4" /> },
+        { title: t.novel.writingStyles, href: `${basePath}/writing-styles`, icon: <Sparkles className="h-4 w-4" /> },
+        { title: t.novel.promptWorkshop, href: `${basePath}/prompt-workshop`, icon: <Sparkles className="h-4 w-4" /> },
+        { title: t.novel.settings, href: `${basePath}/settings`, icon: <Settings className="h-4 w-4" /> },
       ],
     },
   ];
@@ -131,7 +134,7 @@ export function ProjectWorkspaceLayout({ novelId, children }: ProjectWorkspaceLa
         <ScrollArea className="max-h-64 md:h-full md:max-h-none">
           <div className="space-y-5 p-3 md:p-4">
             <div className="rounded-lg border bg-background px-3 py-2">
-              <p className="text-xs text-muted-foreground">小说工作区</p>
+              <p className="text-xs text-muted-foreground">{t.novel.novelWorkspace}</p>
               <p className="truncate text-sm font-medium" title={novelId}>{novelId}</p>
             </div>
 

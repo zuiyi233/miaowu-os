@@ -131,7 +131,26 @@ async def init_db_schema() -> None:
         async with engine.begin() as conn:
             await _ensure_wal_and_pragma(conn)
             await conn.run_sync(Base.metadata.create_all)
+            await _ensure_version_columns(conn)
         _schema_initialized.set()
+
+
+async def _ensure_version_columns(conn) -> None:
+    from sqlalchemy import inspect as sa_inspect
+
+    version_tables = ["characters", "outlines", "careers"]
+    for table_name in version_tables:
+        try:
+            col_names = [c["name"] for c in await conn.run_sync(
+                lambda sync_conn, tn=table_name: sa_inspect(sync_conn).get_columns(tn)
+            )]
+            if "version" not in col_names:
+                await conn.execute(
+                    text(f"ALTER TABLE {table_name} ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
+                )
+                logger.info("Added version column to table %s", table_name)
+        except Exception:
+            logger.warning("Failed to ensure version column for table %s", table_name, exc_info=True)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

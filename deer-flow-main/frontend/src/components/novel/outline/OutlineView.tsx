@@ -75,13 +75,13 @@ export function OutlineView({ novelId }: OutlineViewProps) {
 
   const handleDeleteVolume = async (volumeId: string) => {
     if (confirm(t.novel.deleteVolumeConfirm)) {
-      await deleteVolumeMutation.mutateAsync(volumeId);
+      await deleteVolumeMutation.mutateAsync({ novelId, volumeId });
     }
   };
 
   const handleDeleteChapter = async (chapterId: string) => {
     if (confirm(t.novel.deleteChapterConfirm)) {
-      await deleteChapterMutation.mutateAsync(chapterId);
+      await deleteChapterMutation.mutateAsync({ novelId, chapterId });
     }
   };
 

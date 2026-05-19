@@ -28,6 +28,7 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { getBackendBaseURL, getAuthHeaders } from '@/core/config';
+import { useI18n } from '@/core/i18n/hooks';
 import type { Career, CharacterCareer } from '@/core/novel/schemas';
 import { cn } from '@/lib/utils';
 
@@ -57,6 +58,7 @@ export function CharacterCareerCard({ characterId, projectId, editable = false, 
   const [subForm, setSubForm] = useState({ career_id: '', current_stage: 1, started_at: '' });
   const [progressForm, setProgressForm] = useState({ current_stage: 1, stage_progress: 0, reached_current_stage_at: '', notes: '' });
 
+  const { t } = useI18n();
   const backendBase = getBackendBaseURL();
 
   const fetchCharacterCareers = useCallback(async () => {
@@ -65,12 +67,12 @@ export function CharacterCareerCard({ characterId, projectId, editable = false, 
       const response = await fetch(`${backendBase}/api/careers/character/${characterId}/careers`, {
         headers: { ...getAuthHeaders() },
       });
-      if (!response.ok) throw new Error('获取职业信息失败');
+      if (!response.ok) throw new Error(t.novel.getCareerInfoFailed);
       const data = await response.json();
       setMainCareer(data.main_career || null);
       setSubCareers(data.sub_careers || []);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '获取职业信息失败');
+      toast.error(error instanceof Error ? error.message : t.novel.getCareerInfoFailed);
     } finally {
       setLoading(false);
     }
@@ -87,7 +89,7 @@ export function CharacterCareerCard({ characterId, projectId, editable = false, 
       const sub = data.sub_careers || [];
       setAllCareers([...main, ...sub]);
     } catch (error) {
-      console.error('获取职业列表失败:', error);
+      console.error(t.novel.getCareerListFailed, error);
     }
   }, [projectId, backendBase]);
 
@@ -106,15 +108,15 @@ export function CharacterCareerCard({ characterId, projectId, editable = false, 
       });
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.detail || '设置主职业失败');
+        throw new Error(errData.detail || t.novel.setMainCareerFailed);
       }
-      toast.success('主职业设置成功');
+      toast.success(t.novel.mainCareerSetSuccess);
       setIsMainModalOpen(false);
       setMainForm({ career_id: '', current_stage: 1, started_at: '' });
       fetchCharacterCareers();
       onUpdate?.();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '设置主职业失败');
+      toast.error(error instanceof Error ? error.message : t.novel.setMainCareerFailed);
     }
   };
 
@@ -128,15 +130,15 @@ export function CharacterCareerCard({ characterId, projectId, editable = false, 
       });
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.detail || '添加副职业失败');
+        throw new Error(errData.detail || t.novel.addSubCareerFailed);
       }
-      toast.success('副职业添加成功');
+      toast.success(t.novel.subCareerAddedSuccess);
       setIsSubModalOpen(false);
       setSubForm({ career_id: '', current_stage: 1, started_at: '' });
       fetchCharacterCareers();
       onUpdate?.();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '添加副职业失败');
+      toast.error(error instanceof Error ? error.message : t.novel.addSubCareerFailed);
     }
   };
 
@@ -166,7 +168,7 @@ export function CharacterCareerCard({ characterId, projectId, editable = false, 
   };
 
   const handleRemoveSubCareer = async (careerId: string) => {
-    if (!window.confirm('确定要移除这个副职业吗？')) return;
+    if (!window.confirm(t.novel.confirmRemoveSubCareer)) return;
 
     try {
       const response = await fetch(`${backendBase}/api/careers/character/${characterId}/careers/${careerId}`, {

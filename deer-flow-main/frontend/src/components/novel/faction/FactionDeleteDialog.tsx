@@ -7,14 +7,16 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
 } from '@/components/ui/dialog';
+import { useI18n } from '@/core/i18n/hooks';
 import { useDeleteFactionMutation } from '@/core/novel/queries';
 
 interface FactionDeleteDialogProps {
+  novelId: string;
   factionId: string;
   factionName: string;
   open: boolean;
@@ -23,16 +25,18 @@ interface FactionDeleteDialogProps {
 }
 
 export const FactionDeleteDialog: React.FC<FactionDeleteDialogProps> = ({
+  novelId,
   factionId,
-  factionName,
+  factionName: _factionName,
   open,
   onOpenChange,
   onDeleted,
 }) => {
+  const { t } = useI18n();
   const deleteFaction = useDeleteFactionMutation();
 
   const handleDelete = () => {
-    deleteFaction.mutate(factionId, {
+    deleteFaction.mutate({ novelId, factionId }, {
       onSuccess: () => {
         onOpenChange(false);
         onDeleted?.();
@@ -46,16 +50,16 @@ export const FactionDeleteDialog: React.FC<FactionDeleteDialogProps> = ({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-red-500" />
-            删除势力
+            {t.novel.deleteFaction}
           </DialogTitle>
           <DialogDescription>
-            确定要删除势力"{factionName}"吗？此操作不可撤销。
+            {t.novel.confirmDeleteFaction}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{t.novel.cancel}</Button>
           <Button variant="destructive" onClick={handleDelete} disabled={deleteFaction.isPending}>
-            {deleteFaction.isPending ? '删除中...' : '删除'}
+            {deleteFaction.isPending ? t.novel.deleting : t.common.delete}
           </Button>
         </DialogFooter>
       </DialogContent>

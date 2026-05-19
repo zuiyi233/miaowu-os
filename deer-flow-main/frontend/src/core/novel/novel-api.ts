@@ -23,6 +23,8 @@ import type {
   Outline,
   Setting,
   TimelineEvent,
+  Volume,
+  EntityRelationship,
 } from './schemas';
 import { parseSseStream } from './utils';
 
@@ -808,11 +810,24 @@ function isNotFoundError(error: unknown) {
   return error instanceof ApiError && error.status === 404;
 }
 
+export type FallbackMode = 'read' | 'write';
+
+export function isNetworkError(error: unknown): boolean {
+  if (error instanceof ApiError) {
+    return error.status === 0;
+  }
+  if (error instanceof TypeError) {
+    return true;
+  }
+  return false;
+}
+
 export async function executeRemoteFirst<T>(
   remote: () => Promise<T>,
   fallback: () => Promise<T>,
   context: string,
   onRemoteSuccess?: (value: T) => Promise<void> | void,
+  mode: FallbackMode = 'read',
 ): Promise<T> {
   try {
     const value = await remote();
@@ -825,7 +840,11 @@ export async function executeRemoteFirst<T>(
     }
     return value;
   } catch (error) {
-    console.warn(`[novel] remote failed in ${context}, fallback to local cache`, error);
+    if (mode === 'write') {
+      console.error(`[novel] remote write failed in ${context}, refusing silent fallback`, error);
+      throw error;
+    }
+    console.warn(`[novel] remote read failed in ${context}, fallback to local cache`, error);
     return fallback();
   }
 }
@@ -1174,6 +1193,13 @@ export class NovelApiService {
     );
   }
 
+  async deleteSetting(novelId: string, settingId: string): Promise<void> {
+    await request(
+      `/novels/${encodeURIComponent(novelId)}/entities/${encodeURIComponent(settingId)}`,
+      { method: 'DELETE' },
+    );
+  }
+
   async createFaction(novelId: string, faction: Faction): Promise<Faction> {
     return request<Faction>(`/novels/${encodeURIComponent(novelId)}/entities`, {
       method: 'POST',
@@ -1191,6 +1217,13 @@ export class NovelApiService {
     );
   }
 
+  async deleteFaction(novelId: string, factionId: string): Promise<void> {
+    await request(
+      `/novels/${encodeURIComponent(novelId)}/entities/${encodeURIComponent(factionId)}`,
+      { method: 'DELETE' },
+    );
+  }
+
   async createItem(novelId: string, item: Item): Promise<Item> {
     return request<Item>(`/novels/${encodeURIComponent(novelId)}/entities`, {
       method: 'POST',
@@ -1205,6 +1238,13 @@ export class NovelApiService {
         method: 'PUT',
         body: toEntityPayload(item, 'item'),
       },
+    );
+  }
+
+  async deleteItem(novelId: string, itemId: string): Promise<void> {
+    await request(
+      `/novels/${encodeURIComponent(novelId)}/entities/${encodeURIComponent(itemId)}`,
+      { method: 'DELETE' },
     );
   }
 
@@ -1686,6 +1726,67 @@ export class NovelApiService {
     }
 
     return response;
+  }
+
+  async getRelationships(novelId: string): Promise<EntityRelationship[]> {
+    const result = await request<{ relationships: unknown[] }>(`/relationships/project/${encodeURIComponent(novelId)}`);
+    return (result.relationships || []) as EntityRelationship[];
+  }
+
+  async createRelationship(novelId: string, data: Omit<EntityRelationship, 'id'>): Promise<EntityRelationship> {
+    const result = await request<unknown>('/relationships', {
+      method: 'POST',
+      body: {
+        project_id: novelId,
+        character_from_id: data.sourceId,
+        character_to_id: data.targetId,
+        relationship_name: data.type,
+        description: data.description,
+      },
+    });
+    return result as EntityRelationship;
+  }
+
+  async updateRelationship(relationshipId: string, data: Partial<EntityRelationship>): Promise<EntityRelationship> {
+    const result = await request<unknown>(`/relationships/${encodeURIComponent(relationshipId)}`, {
+      method: 'PUT',
+      body: data,
+    });
+    return result as EntityRelationship;
+  }
+
+  async deleteRelationship(relationshipId: string): Promise<void> {
+    await request(`/relationships/${encodeURIComponent(relationshipId)}`, { method: 'DELETE' });
+  }
+
+  async getVolumes(novelId: string): Promise<Volume[]> {
+    const result = await request<{ volumes: unknown[] }>(`/volumes/project/${encodeURIComponent(novelId)}`);
+    return (result.volumes || []) as Volume[];
+  }
+
+  async createVolume(novelId: string, data: { title: string; description?: string; order?: number }): Promise<Volume> {
+    const result = await request<unknown>('/volumes', {
+      method: 'POST',
+      body: {
+        project_id: novelId,
+        title: data.title,
+        description: data.description,
+        order: data.order,
+      },
+    });
+    return result as Volume;
+  }
+
+  async updateVolume(volumeId: string, data: Partial<Volume>): Promise<Volume> {
+    const result = await request<unknown>(`/volumes/${encodeURIComponent(volumeId)}`, {
+      method: 'PUT',
+      body: data,
+    });
+    return result as Volume;
+  }
+
+  async deleteVolume(volumeId: string): Promise<void> {
+    await request(`/volumes/${encodeURIComponent(volumeId)}`, { method: 'DELETE' });
   }
 }
 

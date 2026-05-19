@@ -2,16 +2,15 @@
 
 import {
   Eye, Pencil, Trash2, CheckCircle, XCircle,
-  AlertTriangle, Flag, Plus, RefreshCw, MoreHorizontal,
-  Search, Filter, Info
+  AlertTriangle, Flag, Plus, RefreshCw
 } from 'lucide-react';
-import { useState, useCallback, useRef } from 'react';
+import { useState } from 'react';
 import { toast } from 'sonner';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -52,7 +51,7 @@ import {
   useAbandonForeshadowMutation,
   useSyncForeshadowsMutation,
 } from '@/core/novel/queries';
-import type { Foreshadow, ForeshadowStats, ForeshadowStatus } from '@/core/novel/schemas';
+import type { Foreshadow, ForeshadowStatus } from '@/core/novel/schemas';
 import { cn } from '@/lib/utils';
 
 const STATUS_CONFIG: Record<ForeshadowStatus, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive'; colorClass: string }> = {
@@ -71,10 +70,6 @@ const CATEGORY_CONFIG: Record<string, { label: string; color: string }> = {
   event: { label: '事件', color: 'bg-blue-100 text-blue-700 border-blue-300' },
   ability: { label: '能力', color: 'bg-green-100 text-green-700 border-green-300' },
   prophecy: { label: '预言', color: 'bg-orange-100 text-orange-700 border-orange-300' },
-};
-
-const statusOrder: Record<ForeshadowStatus, number> = {
-  planted: 1, pending: 2, partially_resolved: 3, resolved: 4, abandoned: 5,
 };
 
 interface ForeshadowsViewProps {
@@ -109,7 +104,12 @@ export function ForeshadowsView({ novelId }: ForeshadowsViewProps) {
   const [fResolutionText, setFResolutionText] = useState('');
   const [fIsPartial, setIsPartial] = useState(false);
 
-  const { data: foreshadowsData, refetch: refetchForeshadows } = useForeshadowsQuery(novelId, {
+  const {
+    data: foreshadowsData,
+    refetch: refetchForeshadows,
+    isError: isForeshadowsError,
+    error: foreshadowsError,
+  } = useForeshadowsQuery(novelId, {
     status: statusFilter !== 'all' ? statusFilter : undefined,
     category: categoryFilter !== 'all' ? categoryFilter : undefined,
     source_type: sourceFilter !== 'all' ? sourceFilter : undefined,
@@ -276,6 +276,25 @@ export function ForeshadowsView({ novelId }: ForeshadowsViewProps) {
 
       {/* Table */}
       <ScrollArea className="flex-1 p-4">
+        {isForeshadowsError ? (
+          <Card className="p-6">
+            <div className="flex flex-col items-center gap-3 text-center">
+              <p className="text-sm font-medium text-destructive">加载失败</p>
+              <p className="text-xs text-muted-foreground">
+                {foreshadowsError instanceof Error ? foreshadowsError.message : '伏笔列表加载失败，请稍后重试'}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  void refetchForeshadows();
+                }}
+              >
+                重试
+              </Button>
+            </div>
+          </Card>
+        ) : (
         <Card>
           <Table>
             <TableHeader><TableRow>
@@ -324,9 +343,10 @@ export function ForeshadowsView({ novelId }: ForeshadowsViewProps) {
             </TableBody>
           </Table>
         </Card>
+        )}
 
         {/* Pagination */}
-        {totalPages > 1 && (
+        {!isForeshadowsError && totalPages > 1 && (
           <div className="flex items-center justify-center gap-2 py-3 border-t mt-4">
             <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => p - 1)}>上一页</Button>
             <span className="text-sm text-muted-foreground">{currentPage}/{totalPages} 共{total}条</span>

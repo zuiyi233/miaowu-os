@@ -7,14 +7,16 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
 } from '@/components/ui/dialog';
+import { useI18n } from '@/core/i18n/hooks';
 import { useDeleteSettingMutation } from '@/core/novel/queries';
 
 interface SettingDeleteDialogProps {
+  novelId: string;
   settingId: string;
   settingName: string;
   open: boolean;
@@ -23,16 +25,18 @@ interface SettingDeleteDialogProps {
 }
 
 export const SettingDeleteDialog: React.FC<SettingDeleteDialogProps> = ({
+  novelId,
   settingId,
-  settingName,
+  settingName: _settingName,
   open,
   onOpenChange,
   onDeleted,
 }) => {
+  const { t } = useI18n();
   const deleteSetting = useDeleteSettingMutation();
 
   const handleDelete = () => {
-    deleteSetting.mutate(settingId, {
+    deleteSetting.mutate({ novelId, settingId }, {
       onSuccess: () => {
         onOpenChange(false);
         onDeleted?.();
@@ -46,16 +50,16 @@ export const SettingDeleteDialog: React.FC<SettingDeleteDialogProps> = ({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-red-500" />
-            删除场景
+            {t.novel.deleteSetting}
           </DialogTitle>
           <DialogDescription>
-            确定要删除场景"{settingName}"吗？此操作不可撤销。
+            {t.novel.confirmDeleteSetting}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{t.novel.cancel}</Button>
           <Button variant="destructive" onClick={handleDelete} disabled={deleteSetting.isPending}>
-            {deleteSetting.isPending ? '删除中...' : '删除'}
+            {deleteSetting.isPending ? t.novel.deleting : t.common.delete}
           </Button>
         </DialogFooter>
       </DialogContent>

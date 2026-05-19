@@ -16,13 +16,16 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { useI18n } from '@/core/i18n/hooks';
 import { useUpdateItemMutation, useDeleteItemMutation } from '@/core/novel/queries';
 import type { Item } from '@/core/novel/schemas';
 
+const ITEM_TYPE_VALUES = ['关键物品', '武器', '科技装置', '普通物品', '其他'] as const;
+
 const itemEditSchema = z.object({
-  name: z.string().min(1, '物品名不能为空'),
+  name: z.string().min(1),
   description: z.string().optional(),
-  type: z.enum(['关键物品', '武器', '科技装置', '普通物品', '其他']).default('其他'),
+  type: z.enum(ITEM_TYPE_VALUES).default('其他'),
   appearance: z.string().optional(),
   history: z.string().optional(),
   abilities: z.string().optional(),
@@ -33,12 +36,22 @@ type ItemEditInput = z.input<typeof itemEditSchema>;
 type ItemEditOutput = z.output<typeof itemEditSchema>;
 
 interface ItemEditFormProps {
+  novelId: string;
   item: Item;
   onSubmitSuccess?: () => void;
   onDelete?: () => void;
 }
 
-export const ItemEditForm: React.FC<ItemEditFormProps> = ({ item, onSubmitSuccess, onDelete }) => {
+const ITEM_TYPE_LABEL_KEYS: Record<string, string> = {
+  '关键物品': 'itemTypeKeyItem',
+  '武器': 'itemTypeWeapon',
+  '科技装置': 'itemTypeTechDevice',
+  '普通物品': 'itemTypeCommonItem',
+  '其他': 'itemTypeOther',
+};
+
+export const ItemEditForm: React.FC<ItemEditFormProps> = ({ novelId, item, onSubmitSuccess, onDelete }) => {
+  const { t } = useI18n();
   const updateItem = useUpdateItemMutation();
   const deleteItem = useDeleteItemMutation();
   const form = useForm<ItemEditInput, unknown, ItemEditOutput>({
@@ -59,59 +72,57 @@ export const ItemEditForm: React.FC<ItemEditFormProps> = ({ item, onSubmitSucces
   };
 
   const handleDelete = () => {
-    deleteItem.mutate(item.id, { onSuccess: () => onDelete?.() });
+    deleteItem.mutate({ novelId, itemId: item.id }, { onSuccess: () => onDelete?.() });
   };
 
   return (
     <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
       <div>
-        <Label htmlFor="name">物品名</Label>
+        <Label htmlFor="name">{t.novel.itemName}</Label>
         <Input id="name" {...form.register('name')} />
         {form.formState.errors.name && (
-          <p className="text-sm text-red-500">{form.formState.errors.name.message}</p>
+          <p className="text-sm text-red-500">{t.novel.itemNameRequired}</p>
         )}
       </div>
 
       <div>
-        <Label htmlFor="type">类型</Label>
+        <Label htmlFor="type">{t.novel.type}</Label>
         <Select onValueChange={(v) => form.setValue('type', v as any)} defaultValue={item.type}>
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="关键物品">关键物品</SelectItem>
-            <SelectItem value="武器">武器</SelectItem>
-            <SelectItem value="科技装置">科技装置</SelectItem>
-            <SelectItem value="普通物品">普通物品</SelectItem>
-            <SelectItem value="其他">其他</SelectItem>
+            {ITEM_TYPE_VALUES.map((v) => (
+              <SelectItem key={v} value={v}>{(t.novel as any)[ITEM_TYPE_LABEL_KEYS[v]!]}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
 
       <div>
-        <Label htmlFor="description">描述</Label>
+        <Label htmlFor="description">{t.novel.entityDescription}</Label>
         <Textarea id="description" className="resize-none" rows={2} {...form.register('description')} />
       </div>
 
       <div>
-        <Label htmlFor="appearance">外观描述</Label>
+        <Label htmlFor="appearance">{t.novel.itemAppearance}</Label>
         <Textarea id="appearance" className="resize-none" rows={2} {...form.register('appearance')} />
       </div>
 
       <div>
-        <Label htmlFor="history">历史来源</Label>
+        <Label htmlFor="history">{t.novel.itemHistory}</Label>
         <Textarea id="history" className="resize-none" rows={2} {...form.register('history')} />
       </div>
 
       <div>
-        <Label htmlFor="abilities">功能或能力</Label>
+        <Label htmlFor="abilities">{t.novel.itemAbilities}</Label>
         <Textarea id="abilities" className="resize-none" rows={2} {...form.register('abilities')} />
       </div>
 
       <div className="flex gap-2">
         <Button type="submit" className="flex-1" disabled={updateItem.isPending}>
-          {updateItem.isPending ? '保存中...' : '保存'}
+          {updateItem.isPending ? t.novel.saving : t.common.save}
         </Button>
         <Button type="button" variant="destructive" onClick={handleDelete} disabled={deleteItem.isPending}>
-          删除
+          {t.common.delete}
         </Button>
       </div>
     </form>

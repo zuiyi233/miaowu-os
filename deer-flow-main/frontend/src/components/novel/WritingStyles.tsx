@@ -21,6 +21,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { fetch as authFetch } from '@/core/api/fetcher';
 import { getBackendBaseURL } from '@/core/config';
+import { useI18n } from '@/core/i18n/hooks';
 import { cn } from '@/lib/utils';
 
 interface WritingStyle {
@@ -34,6 +35,7 @@ interface WritingStylesProps {
 
 export function WritingStyles({ projectId }: WritingStylesProps) {
   const backendBase = getBackendBaseURL();
+  const { t } = useI18n();
   const [styles, setStyles] = useState<WritingStyle[]>([]);
   const [loading, setLoading] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -48,8 +50,11 @@ export function WritingStyles({ projectId }: WritingStylesProps) {
       if (!res.ok) return;
       const data = await res.json();
       setStyles(Array.isArray(data) ? data : data.styles || []);
-    } catch {} finally { setLoading(false); }
-  }, [projectId, backendBase]);
+    } catch (error) {
+      console.error('Failed to load styles:', error);
+      toast.error(t.novel.loadFailed);
+    } finally { setLoading(false); }
+  }, [projectId, backendBase, t]);
 
   useEffect(() => { loadStyles(); }, [loadStyles]);
 
@@ -61,11 +66,11 @@ export function WritingStyles({ projectId }: WritingStylesProps) {
         method, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, project_id: projectId }),
       });
-      if (!res.ok) throw new Error(isEdit ? '更新失败' : '创建失败');
-      toast(isEdit ? '风格已更新' : '风格已创建');
+      if (!res.ok) throw new Error(isEdit ? t.novel.updateFailed : t.novel.createFailed);
+      toast(isEdit ? t.novel.styleUpdated : t.novel.styleCreated);
       setIsCreateOpen(false); setIsEditOpen(false); setEditing(null);
       setForm({ name: '', description: '', style_params: '{}' }); loadStyles();
-    } catch (err) { toast.error(err instanceof Error ? err.message : '操作失败'); }
+    } catch (err) { toast.error(err instanceof Error ? err.message : t.novel.operationFailed); }
   };
 
   const handleToggleActive = async (style: WritingStyle) => {
@@ -73,29 +78,32 @@ export function WritingStyles({ projectId }: WritingStylesProps) {
       const res = await authFetch(`${backendBase}/api/writing-styles/${style.id}/toggle`, { method: 'POST' });
       if (!res.ok) return;
       loadStyles();
-    } catch {}
+    } catch (error) {
+      console.error('Failed to toggle style:', error);
+      toast.error(t.novel.operationFailed);
+    }
   };
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm('确定删除该写作风格吗？')) return;
+    if (!window.confirm(t.novel.confirmDeleteStyle)) return;
     try {
       const res = await authFetch(`${backendBase}/api/writing-styles/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('删除失败');
-      toast.success('已删除'); loadStyles();
-    } catch (err) { toast.error(err instanceof Error ? err.message : '删除失败'); }
+      if (!res.ok) throw new Error(t.novel.deleteFailed);
+      toast.success(t.novel.deleted); loadStyles();
+    } catch (err) { toast.error(err instanceof Error ? err.message : t.novel.deleteFailed); }
   };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold flex items-center gap-2"><Star className="w-5 h-5" /> 写作风格配置</h2>
+        <h2 className="text-lg font-semibold flex items-center gap-2"><Star className="w-5 h-5" /> {t.novel.writingStyleConfig}</h2>
         <Button size="sm" onClick={() => { setForm({ name: '', description: '', style_params: '{}' }); setIsCreateOpen(true); }}>
-          <Plus className="w-4 h-4 mr-1" />新建风格
+          <Plus className="w-4 h-4 mr-1" />{t.novel.newStyle}
         </Button>
       </div>
 
       {loading ? (
-        <p className="text-sm text-muted-foreground py-8">加载中...</p>
+        <p className="text-sm text-muted-foreground py-8">{t.novel.loading}</p>
       ) : styles.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {styles.map((style) => (
@@ -104,18 +112,18 @@ export function WritingStyles({ projectId }: WritingStylesProps) {
                 <div className="flex items-start justify-between mb-2">
                   <h3 className="font-medium text-sm">{style.name}</h3>
                   <div className="flex items-center gap-1.5">
-                    {style.is_default && <Badge variant="default" className="text-[10px]">默认</Badge>}
+                    {style.is_default && <Badge variant="default" className="text-[10px]">{t.novel.defaultStyle}</Badge>}
                     <Switch checked={style.is_active} onCheckedChange={() => handleToggleActive(style)} />
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground mb-3 line-clamp-2">{style.description || '暂无描述'}</p>
+                <p className="text-xs text-muted-foreground mb-3 line-clamp-2">{style.description || t.novel.noDescription}</p>
                 <div className="flex gap-1">
                   <Button size="sm" variant="ghost" className="h-7 text-xs"
                     onClick={() => { setEditing(style); setForm({ name: style.name, description: style.description || '', style_params: style.style_params || '{}' }); setIsEditOpen(true); }}>
-                    <Edit className="w-3 h-3 mr-1" />编辑
+                    <Edit className="w-3 h-3 mr-1" />{t.novel.edit}
                   </Button>
                   <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive hover:text-destructive" onClick={() => handleDelete(style.id)}>
-                    <Trash2 className="w-3 h-3 mr-1" />删除
+                    <Trash2 className="w-3 h-3 mr-1" />{t.novel.confirmDelete}
                   </Button>
                 </div>
               </CardContent>
@@ -123,24 +131,24 @@ export function WritingStyles({ projectId }: WritingStylesProps) {
           ))}
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground text-center py-8">暂无写作风格配置</p>
+        <p className="text-sm text-muted-foreground text-center py-8">{t.novel.noWritingStyles}</p>
       )}
 
       {/* Create/Edit Dialog */}
       <Dialog open={isCreateOpen || isEditOpen} onOpenChange={(v) => { if (!v) { setIsCreateOpen(false); setIsEditOpen(false); setEditing(null); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{isEditOpen ? '编辑' : '新建'}写作风格</DialogTitle>
-            <DialogDescription>配置AI生成文本时的写作风格参数</DialogDescription>
+            <DialogTitle>{isEditOpen ? t.novel.editWritingStyle : t.novel.createWritingStyle}</DialogTitle>
+            <DialogDescription>{t.novel.styleParams}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
-            <div><Label>风格名称</Label><Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="如：古风典雅、现代都市、热血玄幻..." /></div>
-            <div><Label>描述</Label><Textarea rows={2} value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="简要描述该风格的特点..." /></div>
-            <div><Label>风格参数（JSON）</Label><Textarea rows={4} className="font-mono text-xs" value={form.style_params} onChange={(e) => setForm((f) => ({ ...f, style_params: e.target.value }))} placeholder='{"tone": "formal", "vocabulary": "classical"}' /></div>
+            <div><Label>{t.novel.styleName}</Label><Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder={t.novel.styleNamePlaceholder} /></div>
+            <div><Label>{t.novel.styleDescription}</Label><Textarea rows={2} value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder={t.novel.styleDescriptionPlaceholder} /></div>
+            <div><Label>{t.novel.styleParams}</Label><Textarea rows={4} className="font-mono text-xs" value={form.style_params} onChange={(e) => setForm((f) => ({ ...f, style_params: e.target.value }))} placeholder='{"tone": "formal", "vocabulary": "classical"}' /></div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setIsCreateOpen(false); setIsEditOpen(false); setEditing(null); }}>取消</Button>
-            <Button onClick={() => handleSave(!!isEditOpen)}>{isEditOpen ? '更新' : '创建'}</Button>
+            <Button variant="outline" onClick={() => { setIsCreateOpen(false); setIsEditOpen(false); setEditing(null); }}>{t.novel.cancel}</Button>
+            <Button onClick={() => handleSave(!!isEditOpen)}>{isEditOpen ? t.novel.update : t.novel.create}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

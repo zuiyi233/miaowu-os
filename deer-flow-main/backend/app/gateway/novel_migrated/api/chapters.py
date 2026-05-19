@@ -42,7 +42,7 @@ class _WriteRequestBase(BaseModel):
 
 
 class ChapterCreateRequest(_WriteRequestBase):
-    title: str = ""
+    title: str = Field(default="", min_length=0, max_length=500)
     summary: str = ""
     content: str = ""
     outline_id: str | None = None
@@ -52,7 +52,7 @@ class ChapterCreateRequest(_WriteRequestBase):
 
 
 class ChapterUpdateRequest(_WriteRequestBase):
-    title: str | None = None
+    title: str | None = Field(default=None, max_length=500)
     summary: str | None = None
     content: str | None = None
     expansion_plan: str | None = None
@@ -60,11 +60,11 @@ class ChapterUpdateRequest(_WriteRequestBase):
 
 class BatchGenerateRequest(_WriteRequestBase):
     project_id: str
-    start_chapter_number: int | None = 1
-    chapter_count: int = 1
+    start_chapter_number: int | None = Field(default=1, ge=1)
+    chapter_count: int = Field(default=1, ge=1, le=100)
     chapter_ids: list[str] | None = None
     outline_ids: list[str] | None = None
-    target_word_count: int = 3000
+    target_word_count: int = Field(default=3000, ge=100, le=50000)
     style_id: int | None = None
     enable_analysis: bool = False
 
@@ -453,15 +453,60 @@ async def delete_chapter(
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
     await verify_project_access(chapter.project_id, user_id, db)
+
+    from app.gateway.novel_migrated.models.document_index import DocumentIndex
+    from app.gateway.novel_migrated.models.foreshadow import Foreshadow
+    from app.gateway.novel_migrated.services.memory_service import memory_service
+
+    await db.execute(
+        update(Foreshadow)
+        .where(Foreshadow.plant_chapter_id == chapter_id)
+        .values(plant_chapter_id=None)
+    )
+    await db.execute(
+        update(Foreshadow)
+        .where(Foreshadow.target_resolve_chapter_id == chapter_id)
+        .values(target_resolve_chapter_id=None)
+    )
+    await db.execute(
+        update(Foreshadow)
+        .where(Foreshadow.actual_resolve_chapter_id == chapter_id)
+        .values(actual_resolve_chapter_id=None)
+    )
+
+    await db.execute(
+        DocumentIndex.__table__.delete().where(
+            DocumentIndex.entity_type == "chapter",
+            DocumentIndex.entity_id == chapter_id,
+        )
+    )
+
+    project_id = chapter.project_id
     await db.delete(chapter)
     await db.commit()
+
+    try:
+        await memory_service.delete_chapter_memories(user_id, project_id, chapter_id)
+    except Exception:
+        logger.warning("Failed to delete chapter memories for chapter_id=%s", chapter_id, exc_info=True)
+
+    try:
+        await workspace_document_service.delete_document(
+            user_id=user_id,
+            project_id=project_id,
+            entity_type="chapter",
+            entity_id=chapter_id,
+        )
+    except Exception:
+        logger.warning("Failed to delete workspace document for chapter_id=%s", chapter_id, exc_info=True)
+
     return {"message": "Chapter deleted"}
 
 
 @router.post("/batch-generate")
 async def batch_generate_chapters(
     req: BatchGenerateRequest,
-    request: Request,
+    request: Request = None,
     user_id: str | None = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
     ai_service: AIService = Depends(get_user_ai_service),

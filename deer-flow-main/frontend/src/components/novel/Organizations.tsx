@@ -36,6 +36,7 @@ import {
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { getBackendBaseURL } from '@/core/config';
+import { useI18n } from '@/core/i18n/hooks';
 import { cn } from '@/lib/utils';
 
 interface Organization {
@@ -53,6 +54,7 @@ interface OrganizationsProps {
 
 export function Organizations({ projectId }: OrganizationsProps) {
   const backendBase = getBackendBaseURL();
+  const { t } = useI18n();
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
   const [members, setMembers] = useState<OrgMember[]>([]);
@@ -78,7 +80,9 @@ export function Organizations({ projectId }: OrganizationsProps) {
     try {
       const res = await fetch(`${backendBase}/api/organizations/${orgId}/members`, { credentials: 'include' });
       if (res.ok) setMembers(await res.json());
-    } catch {}
+    } catch (error) {
+      console.error('Failed to load members:', error);
+    }
   };
 
   useEffect(() => { loadOrgs(); }, [loadOrgs]);
@@ -98,7 +102,7 @@ export function Organizations({ projectId }: OrganizationsProps) {
   };
 
   const handleDelete = async () => {
-    if (!selectedOrgId || !window.confirm('确定删除该组织吗？')) return;
+    if (!selectedOrgId || !window.confirm(t.novel.confirmDeleteOrg)) return;
     try {
       const res = await fetch(`${backendBase}/api/organizations/${selectedOrgId}`, { method: 'DELETE', credentials: 'include' });
       if (!res.ok) throw new Error('删除失败');

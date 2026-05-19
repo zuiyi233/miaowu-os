@@ -9,13 +9,15 @@ import {
   X,
   AlignVerticalSpaceAround,
 } from 'lucide-react';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { getBackendBaseURL } from '@/core/config';
 import { cn } from '@/lib/utils';
+
+import { TtsPlayer } from './TtsPlayer';
 
 interface ReaderSettings {
   fontSize: number;
@@ -52,11 +54,11 @@ function loadSettings(): ReaderSettings {
   try {
     const saved = localStorage.getItem(SETTINGS_KEY);
     return saved ? JSON.parse(saved) : defaultSettings;
-  } catch { return defaultSettings; }
+  } catch (error) { console.warn('Failed to load reading settings:', error); return defaultSettings; }
 }
 
 function saveSettings(s: ReaderSettings) {
-  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch {}
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch (error) { console.warn('Failed to save reading settings:', error); }
 }
 
 const themeStyles = {
@@ -105,6 +107,13 @@ export function ChapterReader({ open, onOpenChange, chapter, onChapterChange }: 
 
   const t = themeStyles[settings.theme];
 
+  const ttsText = useMemo(() => {
+    const content = chapter.content ? chapter.content.replace(/<[^>]*>/g, '').trim() : '';
+    const title = `第${chapter.chapter_number}章：${chapter.title}`;
+    if (!content) return title;
+    return `${title}\n\n${content}`;
+  }, [chapter.content, chapter.chapter_number, chapter.title]);
+
   if (!open) return null;
 
   return (
@@ -121,9 +130,12 @@ export function ChapterReader({ open, onOpenChange, chapter, onChapterChange }: 
         <h2 className={cn("text-sm sm:text-base font-semibold truncate max-w-[60%] sm:max-w-[70%]", `text-[${t.text}]`)} style={{ color: t.text }}>
           第{chapter.chapter_number}章：{chapter.title}
         </h2>
-        <Button variant={showSettings ? 'default' : 'ghost'} size="sm" onClick={() => setShowSettings(!showSettings)}>
-          <Settings className="w-4 h-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <TtsPlayer text={ttsText} theme={{ text: t.text, border: t.border, headerBg: t.headerBg }} />
+          <Button variant={showSettings ? 'default' : 'ghost'} size="sm" onClick={() => setShowSettings(!showSettings)}>
+            <Settings className="w-4 h-4" />
+          </Button>
+        </div>
       </header>
 
       {/* Settings Panel */}

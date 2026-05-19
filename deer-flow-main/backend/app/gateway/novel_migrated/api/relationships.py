@@ -28,15 +28,15 @@ class RelationshipCreateRequest(BaseModel):
     project_id: str
     character_from_id: str
     character_to_id: str
-    relationship_name: str
-    intimacy_level: int = 50
+    relationship_name: str = Field(min_length=1, max_length=100)
+    intimacy_level: int = Field(default=50, ge=0, le=100)
     description: str = ""
     status: str = "active"
 
 
 class RelationshipUpdateRequest(BaseModel):
-    relationship_name: str | None = None
-    intimacy_level: int | None = None
+    relationship_name: str | None = Field(default=None, min_length=1, max_length=100)
+    intimacy_level: int | None = Field(default=None, ge=0, le=100)
     description: str | None = None
     status: str | None = None
 
@@ -211,6 +211,7 @@ async def _save_relationship_store(
     user_id: str,
     db: AsyncSession,
     store: dict[str, Any],
+    auto_commit: bool = True,
 ) -> dict[str, Any]:
     try:
         record = await workspace_document_service.write_document(
@@ -229,7 +230,10 @@ async def _save_relationship_store(
             record=record,
             status="indexed",
         )
-        await db.commit()
+        if auto_commit:
+            await db.commit()
+        else:
+            await db.flush()
         _refresh_relationship_index(project_id, store)
     except WorkspaceSecurityError as exc:
         await db.rollback()

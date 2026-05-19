@@ -13,6 +13,7 @@ import type { Character } from '@/core/novel/schemas';
 import { CharacterEditForm } from '../forms/CharacterEditForm';
 
 interface CharacterEditDialogProps {
+  novelId: string;
   character: Character;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -20,6 +21,7 @@ interface CharacterEditDialogProps {
 }
 
 export const CharacterEditDialog: React.FC<CharacterEditDialogProps> = ({
+  novelId,
   character,
   open,
   onOpenChange,
@@ -32,6 +34,7 @@ export const CharacterEditDialog: React.FC<CharacterEditDialogProps> = ({
           <DialogTitle>编辑角色：{character.name}</DialogTitle>
         </DialogHeader>
         <CharacterEditForm
+          novelId={novelId}
           character={character}
           onSubmitSuccess={() => {
             onEdited?.();

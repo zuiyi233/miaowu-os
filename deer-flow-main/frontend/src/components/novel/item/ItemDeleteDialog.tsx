@@ -7,14 +7,16 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
 } from '@/components/ui/dialog';
+import { useI18n } from '@/core/i18n/hooks';
 import { useDeleteItemMutation } from '@/core/novel/queries';
 
 interface ItemDeleteDialogProps {
+  novelId: string;
   itemId: string;
   itemName: string;
   open: boolean;
@@ -23,16 +25,18 @@ interface ItemDeleteDialogProps {
 }
 
 export const ItemDeleteDialog: React.FC<ItemDeleteDialogProps> = ({
+  novelId,
   itemId,
-  itemName,
+  itemName: _itemName,
   open,
   onOpenChange,
   onDeleted,
 }) => {
+  const { t } = useI18n();
   const deleteItem = useDeleteItemMutation();
 
   const handleDelete = () => {
-    deleteItem.mutate(itemId, {
+    deleteItem.mutate({ novelId, itemId }, {
       onSuccess: () => {
         onOpenChange(false);
         onDeleted?.();
@@ -46,16 +50,16 @@ export const ItemDeleteDialog: React.FC<ItemDeleteDialogProps> = ({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-red-500" />
-            删除物品
+            {t.novel.deleteItem}
           </DialogTitle>
           <DialogDescription>
-            确定要删除物品"{itemName}"吗？此操作不可撤销。
+            {t.novel.confirmDeleteItem}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{t.novel.cancel}</Button>
           <Button variant="destructive" onClick={handleDelete} disabled={deleteItem.isPending}>
-            {deleteItem.isPending ? '删除中...' : '删除'}
+            {deleteItem.isPending ? t.novel.deleting : t.common.delete}
           </Button>
         </DialogFooter>
       </DialogContent>

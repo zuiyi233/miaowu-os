@@ -1,7 +1,12 @@
+import { DEFAULT_ITEM_TYPE, DEFAULT_SETTING_TYPE, type ItemType, type SettingType } from './constants';
 import { databaseService } from './database';
-import { executeRemoteFirst, novelApiService } from './novel-api';
+import { executeRemoteFirst, isNetworkError, novelApiService } from './novel-api';
+import type { FallbackMode } from './novel-api';
 import type { Novel, Chapter, Character, Setting, Faction, Item, EntityRelationship, TimelineEvent, GraphLayout, Volume } from './schemas';
 import { generateUniqueId, generateChapterId, generateCharacterId, generateSettingId } from './utils';
+
+const WRITE: FallbackMode = 'write';
+const READ: FallbackMode = 'read';
 
 export class NovelDomainService {
   async loadNovel(title: string): Promise<Novel | null> {
@@ -14,6 +19,7 @@ export class NovelDomainService {
           await databaseService.saveNovel(novel);
         }
       },
+      READ,
     );
   }
 
@@ -22,6 +28,8 @@ export class NovelDomainService {
       () => novelApiService.getNovels() as Promise<Array<{ id: number; title: string; outline?: string; coverImage?: string; volumesCount: number; chaptersCount: number; wordCount: number }>>,
       () => databaseService.getAllNovels(),
       'NovelDomainService.getAllNovels',
+      undefined,
+      READ,
     );
   }
 
@@ -31,7 +39,23 @@ export class NovelDomainService {
       () => databaseService.saveNovel(novel),
       'NovelDomainService.saveNovel',
       () => databaseService.saveNovel(novel),
+      WRITE,
     );
+  }
+
+  async saveNovelWithOfflineFallback(novel: Novel): Promise<{ synced: boolean }> {
+    try {
+      await novelApiService.createNovel(novel);
+      await databaseService.saveNovel(novel);
+      return { synced: true };
+    } catch (error) {
+      if (isNetworkError(error)) {
+        console.warn('[novel] remote create failed (network error), saving as offline draft', error);
+        await databaseService.saveNovel(novel);
+        return { synced: false };
+      }
+      throw error;
+    }
   }
 
   async updateNovel(novelId: string | number, updates: Partial<Novel>): Promise<void> {
@@ -40,6 +64,7 @@ export class NovelDomainService {
       () => databaseService.updateNovel(novelId, updates),
       'NovelDomainService.updateNovel',
       () => databaseService.updateNovel(novelId, updates),
+      WRITE,
     );
   }
 
@@ -49,6 +74,7 @@ export class NovelDomainService {
       () => databaseService.deleteNovel(title),
       'NovelDomainService.deleteNovel',
       async () => { await databaseService.deleteNovel(title); },
+      WRITE,
     );
   }
 
@@ -66,6 +92,7 @@ export class NovelDomainService {
       () => databaseService.addChapter(chapter, novelId, data.volumeId),
       'NovelDomainService.createChapter',
       () => databaseService.addChapter(chapter, novelId, data.volumeId),
+      WRITE,
     );
     return chapter;
   }
@@ -76,15 +103,28 @@ export class NovelDomainService {
       () => databaseService.updateChapter(chapter),
       'NovelDomainService.updateChapter',
       () => databaseService.updateChapter(chapter),
+      WRITE,
     );
   }
 
-  async updateChapterContent(chapterId: string, content: string): Promise<void> {
-    return databaseService.updateChapterContent(chapterId, content);
+  async updateChapterContent(novelId: string, chapterId: string, content: string): Promise<void> {
+    return executeRemoteFirst(
+      () => novelApiService.updateChapter(novelId, chapterId, { content }).then(() => undefined),
+      () => databaseService.updateChapterContent(chapterId, content),
+      'NovelDomainService.updateChapterContent',
+      () => databaseService.updateChapterContent(chapterId, content),
+      WRITE,
+    );
   }
 
-  async deleteChapter(chapterId: string): Promise<void> {
-    return databaseService.deleteChapter(chapterId);
+  async deleteChapter(novelId: string, chapterId: string): Promise<void> {
+    return executeRemoteFirst(
+      () => novelApiService.deleteChapter(novelId, chapterId),
+      () => databaseService.deleteChapter(chapterId),
+      'NovelDomainService.deleteChapter',
+      () => databaseService.deleteChapter(chapterId),
+      WRITE,
+    );
   }
 
   async createCharacter(novelId: string, data: { name: string; description?: string; factionId?: string }): Promise<Character> {
@@ -100,6 +140,7 @@ export class NovelDomainService {
       () => databaseService.addCharacter(character, novelId),
       'NovelDomainService.createCharacter',
       () => databaseService.addCharacter(character, novelId),
+      WRITE,
     );
     return character;
   }
@@ -110,19 +151,26 @@ export class NovelDomainService {
       () => databaseService.updateCharacter(character),
       'NovelDomainService.updateCharacter',
       () => databaseService.updateCharacter(character),
+      WRITE,
     );
   }
 
-  async deleteCharacter(characterId: string): Promise<void> {
-    return databaseService.deleteCharacter(characterId);
+  async deleteCharacter(novelId: string, characterId: string): Promise<void> {
+    return executeRemoteFirst(
+      () => novelApiService.deleteCharacter(novelId, characterId),
+      () => databaseService.deleteCharacter(characterId),
+      'NovelDomainService.deleteCharacter',
+      () => databaseService.deleteCharacter(characterId),
+      WRITE,
+    );
   }
 
-  async createSetting(novelId: string, data: { name: string; description?: string; type?: '城市' | '建筑' | '自然景观' | '地区' | '其他' }): Promise<Setting> {
+  async createSetting(novelId: string, data: { name: string; description?: string; type?: SettingType }): Promise<Setting> {
     const setting: Setting = {
       id: generateSettingId(),
       name: data.name,
       description: data.description,
-      type: data.type ?? '其他',
+      type: data.type ?? DEFAULT_SETTING_TYPE,
       novelId,
     };
     await executeRemoteFirst(
@@ -130,6 +178,7 @@ export class NovelDomainService {
       () => databaseService.addSetting(setting, novelId),
       'NovelDomainService.createSetting',
       () => databaseService.addSetting(setting, novelId),
+      WRITE,
     );
     return setting;
   }
@@ -140,11 +189,18 @@ export class NovelDomainService {
       () => databaseService.updateSetting(setting),
       'NovelDomainService.updateSetting',
       () => databaseService.updateSetting(setting),
+      WRITE,
     );
   }
 
-  async deleteSetting(settingId: string): Promise<void> {
-    return databaseService.deleteSetting(settingId);
+  async deleteSetting(novelId: string, settingId: string): Promise<void> {
+    return executeRemoteFirst(
+      () => novelApiService.deleteSetting(novelId, settingId),
+      () => databaseService.deleteSetting(settingId),
+      'NovelDomainService.deleteSetting',
+      () => databaseService.deleteSetting(settingId),
+      WRITE,
+    );
   }
 
   async createFaction(novelId: string, data: { name: string; description?: string; leaderId?: string }): Promise<Faction> {
@@ -160,6 +216,7 @@ export class NovelDomainService {
       () => databaseService.addFaction(faction, novelId),
       'NovelDomainService.createFaction',
       () => databaseService.addFaction(faction, novelId),
+      WRITE,
     );
     return faction;
   }
@@ -170,19 +227,26 @@ export class NovelDomainService {
       () => databaseService.updateFaction(faction),
       'NovelDomainService.updateFaction',
       () => databaseService.updateFaction(faction),
+      WRITE,
     );
   }
 
-  async deleteFaction(factionId: string): Promise<void> {
-    return databaseService.deleteFaction(factionId);
+  async deleteFaction(novelId: string, factionId: string): Promise<void> {
+    return executeRemoteFirst(
+      () => novelApiService.deleteFaction(novelId, factionId),
+      () => databaseService.deleteFaction(factionId),
+      'NovelDomainService.deleteFaction',
+      () => databaseService.deleteFaction(factionId),
+      WRITE,
+    );
   }
 
-  async createItem(novelId: string, data: { name: string; description?: string; type?: '关键物品' | '武器' | '科技装置' | '普通物品' | '其他'; ownerId?: string }): Promise<Item> {
+  async createItem(novelId: string, data: { name: string; description?: string; type?: ItemType; ownerId?: string }): Promise<Item> {
     const item: Item = {
       id: generateUniqueId('item'),
       name: data.name,
       description: data.description,
-      type: data.type ?? '其他',
+      type: data.type ?? DEFAULT_ITEM_TYPE,
       ownerId: data.ownerId,
       novelId,
     };
@@ -191,6 +255,7 @@ export class NovelDomainService {
       () => databaseService.addItem(item, novelId),
       'NovelDomainService.createItem',
       () => databaseService.addItem(item, novelId),
+      WRITE,
     );
     return item;
   }
@@ -201,11 +266,18 @@ export class NovelDomainService {
       () => databaseService.updateItem(item),
       'NovelDomainService.updateItem',
       () => databaseService.updateItem(item),
+      WRITE,
     );
   }
 
-  async deleteItem(itemId: string): Promise<void> {
-    return databaseService.deleteItem(itemId);
+  async deleteItem(novelId: string, itemId: string): Promise<void> {
+    return executeRemoteFirst(
+      () => novelApiService.deleteItem(novelId, itemId),
+      () => databaseService.deleteItem(itemId),
+      'NovelDomainService.deleteItem',
+      () => databaseService.deleteItem(itemId),
+      WRITE,
+    );
   }
 
   async createVolume(novelId: string, data: { title: string; description?: string; order?: number }): Promise<Volume> {
@@ -216,16 +288,33 @@ export class NovelDomainService {
       novelId,
       order: data.order ?? 0,
     };
-    await databaseService.addVolume(volume, novelId);
-    return volume;
+    return executeRemoteFirst(
+      () => novelApiService.createVolume(novelId, data).then((v) => ({ ...volume, ...v })),
+      () => databaseService.addVolume(volume, novelId).then(() => volume),
+      'NovelDomainService.createVolume',
+      () => databaseService.addVolume(volume, novelId),
+      WRITE,
+    );
   }
 
   async updateVolume(volume: Volume): Promise<void> {
-    return databaseService.updateVolume(volume);
+    return executeRemoteFirst(
+      () => novelApiService.updateVolume(volume.id, volume).then(() => undefined),
+      () => databaseService.updateVolume(volume),
+      'NovelDomainService.updateVolume',
+      () => databaseService.updateVolume(volume),
+      WRITE,
+    );
   }
 
-  async deleteVolume(volumeId: string): Promise<void> {
-    return databaseService.deleteVolume(volumeId);
+  async deleteVolume(novelId: string, volumeId: string): Promise<void> {
+    return executeRemoteFirst(
+      () => novelApiService.deleteVolume(volumeId),
+      () => databaseService.deleteVolume(volumeId),
+      'NovelDomainService.deleteVolume',
+      () => databaseService.deleteVolume(volumeId),
+      WRITE,
+    );
   }
 
   async getTimelineEvents(novelId: string): Promise<TimelineEvent[]> {
@@ -236,6 +325,7 @@ export class NovelDomainService {
       async (events) => {
         await Promise.all(events.map((event) => databaseService.updateTimelineEvent(event)));
       },
+      READ,
     );
   }
 
@@ -246,6 +336,7 @@ export class NovelDomainService {
       () => databaseService.addTimelineEvent(timelineEvent, novelId),
       'NovelDomainService.addTimelineEvent',
       () => databaseService.addTimelineEvent(timelineEvent, novelId),
+      WRITE,
     );
   }
 
@@ -255,23 +346,53 @@ export class NovelDomainService {
       () => databaseService.updateTimelineEvent(event),
       'NovelDomainService.updateTimelineEvent',
       () => databaseService.updateTimelineEvent(event),
+      WRITE,
     );
   }
 
-  async deleteTimelineEvent(eventId: string): Promise<void> {
-    return databaseService.deleteTimelineEvent(eventId);
+  async deleteTimelineEvent(novelId: string, eventId: string): Promise<void> {
+    return executeRemoteFirst(
+      () => novelApiService.deleteTimelineEvent(novelId, eventId),
+      () => databaseService.deleteTimelineEvent(eventId),
+      'NovelDomainService.deleteTimelineEvent',
+      () => databaseService.deleteTimelineEvent(eventId),
+      WRITE,
+    );
   }
 
   async getRelationships(novelId?: string): Promise<EntityRelationship[]> {
-    return databaseService.getAllRelationships(novelId);
+    return executeRemoteFirst(
+      () => novelApiService.getRelationships(novelId || ''),
+      () => databaseService.getAllRelationships(novelId),
+      'NovelDomainService.getRelationships',
+      async (relationships) => {
+        for (const rel of relationships) {
+          await databaseService.addRelationship(rel, novelId || rel.novelId || '');
+        }
+      },
+      READ,
+    );
   }
 
   async addRelationship(novelId: string, relationship: Omit<EntityRelationship, 'id'>): Promise<void> {
-    return databaseService.addRelationship({ ...relationship, id: generateUniqueId('rel') } as EntityRelationship, novelId);
+    const rel = { ...relationship, id: generateUniqueId('rel') } as EntityRelationship;
+    return executeRemoteFirst(
+      () => novelApiService.createRelationship(novelId, relationship).then(() => undefined),
+      () => databaseService.addRelationship(rel, novelId),
+      'NovelDomainService.addRelationship',
+      () => databaseService.addRelationship(rel, novelId),
+      WRITE,
+    );
   }
 
-  async deleteRelationship(relationshipId: string): Promise<void> {
-    return databaseService.deleteRelationship(relationshipId);
+  async deleteRelationship(novelId: string, relationshipId: string): Promise<void> {
+    return executeRemoteFirst(
+      () => novelApiService.deleteRelationship(relationshipId),
+      () => databaseService.deleteRelationship(relationshipId),
+      'NovelDomainService.deleteRelationship',
+      () => databaseService.deleteRelationship(relationshipId),
+      WRITE,
+    );
   }
 
   async getGraphLayout(novelId: string): Promise<GraphLayout | null> {
@@ -284,6 +405,7 @@ export class NovelDomainService {
           return databaseService.saveGraphLayout(layout);
         }
       },
+      READ,
     );
   }
 
@@ -293,6 +415,7 @@ export class NovelDomainService {
       () => databaseService.saveGraphLayout(layout),
       'NovelDomainService.saveGraphLayout',
       () => databaseService.saveGraphLayout(layout),
+      WRITE,
     );
   }
 
@@ -302,6 +425,7 @@ export class NovelDomainService {
       () => databaseService.updateNodePositions(novelId, positions),
       'NovelDomainService.updateNodePositions',
       () => databaseService.updateNodePositions(novelId, positions),
+      WRITE,
     );
   }
 

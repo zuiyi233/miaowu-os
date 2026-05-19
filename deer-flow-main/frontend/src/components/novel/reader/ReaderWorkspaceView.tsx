@@ -226,6 +226,7 @@ export function ReaderWorkspaceView({ novelId }: { novelId: string }) {
               updateChapterMutation.mutate({
                 chapterId: selectedChapter.id,
                 content,
+                novelId,
               });
             }}
           />

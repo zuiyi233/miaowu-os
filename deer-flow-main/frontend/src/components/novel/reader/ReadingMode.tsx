@@ -6,8 +6,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
+import { useI18n } from '@/core/i18n/hooks';
 import { useSettingsStore } from '@/core/novel';
 import { useNovelStore } from '@/core/novel';
+import { useTts } from '@/core/tts';
+
+import { TtsPlayer } from './TtsPlayer';
 
 const READING_THEMES = {
   light: { bg: '#ffffff', text: '#1a1a1a', accent: '#3b82f6', secondary: '#6b7280' },
@@ -26,6 +30,7 @@ interface ReadingModeProps {
 }
 
 export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex = 0, onExit }: ReadingModeProps) {
+  const { t } = useI18n();
   const [currentChapterIndex, setCurrentChapterIndex] = useState(initialChapterIndex);
   const [showSettings, setShowSettings] = useState(false);
   const isImmersive = useNovelStore((state) => state.isImmersive);
@@ -39,7 +44,6 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
   const [lineHeight, setLineHeight] = useState((settingsCompat.readingLineHeight as number) || 1.8);
   const [paragraphSpacing, setParagraphSpacing] = useState((settingsCompat.readingParagraphSpacing as number) || 16);
   const [focusMode, setFocusMode] = useState(false);
-  const [isPinned] = useState(false);
 
   const themeColors = READING_THEMES[theme];
   const currentChapter = chapters[currentChapterIndex];
@@ -49,6 +53,16 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
     const html = currentChapter.content.replace(/<[^>]*>/g, '').trim();
     return html.split(/\n+/).filter((p) => p.trim());
   }, [currentChapter?.content]);
+
+  const ttsText = useMemo(() => {
+    const title = currentChapter?.title;
+    const content = paragraphs.join('\n');
+    if (!title || !content) return content || '';
+    return `${title}\n\n${content}`;
+  }, [currentChapter?.title, paragraphs]);
+
+  const tts = useTts();
+  const ttsTheme = { text: themeColors.text, border: themeColors.accent, headerBg: themeColors.bg };
 
   const goToChapter = useCallback(
     (index: number) => {
@@ -78,7 +92,7 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
           e.preventDefault();
           break;
         case 'Escape':
-          if (!isPinned) onExit?.();
+          onExit?.();
           break;
         case 'f':
           setFocusMode((prev) => !prev);
@@ -87,7 +101,7 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [goToPrev, goToNext, onExit, isPinned]);
+  }, [goToPrev, goToNext, onExit]);
 
   const applyTheme = useCallback(() => {
     updateSettings({
@@ -136,11 +150,12 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
           </div>
 
           <div className="flex items-center gap-1">
+            <TtsPlayer text={ttsText} theme={ttsTheme} tts={tts} />
             <Button
               variant="ghost"
               size="icon"
               onClick={() => setFocusMode(!focusMode)}
-              title="焦点模式 (F)"
+              title={t.novel.readingFocusMode}
               style={focusMode ? { backgroundColor: `${themeColors.accent}20` } : undefined}
             >
               <Eye className="h-4 w-4" />
@@ -162,7 +177,7 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
             <div className="space-y-6">
               <div>
                 <label className="flex items-center gap-2 text-sm font-medium mb-2">
-                  <Sun className="h-4 w-4" /> 主题
+                  <Sun className="h-4 w-4" /> {t.novel.readingTheme}
                 </label>
                 <div className="grid grid-cols-4 gap-2">
                   {(Object.keys(READING_THEMES) as ReadingTheme[]).map((t) => (
@@ -182,7 +197,7 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
 
               <div>
                 <label className="flex items-center gap-2 text-sm font-medium mb-2">
-                  <Type className="h-4 w-4" /> 字号
+                  <Type className="h-4 w-4" /> {t.novel.readingFontSize}
                 </label>
                 <div className="flex items-center gap-2">
                   <Button variant="ghost" size="icon" onClick={() => setFontSize((v) => Math.max(12, v - 1))}>
@@ -208,7 +223,7 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
               </div>
 
               <div>
-                <label className="text-sm font-medium mb-2 block">行高</label>
+                <label className="text-sm font-medium mb-2 block">{t.novel.readingLineHeight}</label>
                 <Slider
                   value={[lineHeight]}
                   onValueChange={([v]) => {
@@ -224,7 +239,7 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
               </div>
 
               <div>
-                <label className="text-sm font-medium mb-2 block">段落间距</label>
+                <label className="text-sm font-medium mb-2 block">{t.novel.readingParagraphSpacing}</label>
                 <Slider
                   value={[paragraphSpacing]}
                   onValueChange={([v]) => {
@@ -240,7 +255,7 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
               </div>
 
               <Button className="w-full" onClick={applyTheme} style={{ backgroundColor: themeColors.accent }}>
-                应用设置
+                {t.novel.readingApplySettings}
               </Button>
             </div>
           </aside>
@@ -290,7 +305,7 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
                   </p>
                 ))
               ) : (
-                <p style={{ color: themeColors.secondary }}>暂无内容</p>
+                <p style={{ color: themeColors.secondary }}>{t.novel.readingNoContent}</p>
               )}
             </div>
           </article>
@@ -304,7 +319,7 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
           >
             <div className="p-3">
               <h3 className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: themeColors.secondary }}>
-                目录
+                {t.novel.readingTableOfContents}
               </h3>
               <div className="space-y-1">
                 {chapters.map((ch, i) => (
@@ -329,16 +344,16 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
       </div>
 
       {/* Bottom navigation */}
-      {!isImmersive && (
+      {!isImmersive ? (
         <footer
           className="flex items-center justify-between border-t px-4 py-2"
           style={{ borderColor: `${themeColors.accent}30` }}
         >
           <Button variant="ghost" size="sm" onClick={goToPrev} disabled={currentChapterIndex === 0}>
-            <ArrowLeft className="mr-1 h-3 w-3" /> 上一章
+            <ArrowLeft className="mr-1 h-3 w-3" /> {t.novel.readingPreviousChapter}
           </Button>
           <span className="text-xs" style={{ color: themeColors.secondary }}>
-            {Math.round(progress)}% 已完成
+            {t.novel.readingProgress(Math.round(progress))}
           </span>
           <Button
             variant="ghost"
@@ -346,9 +361,16 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
             onClick={goToNext}
             disabled={currentChapterIndex >= chapters.length - 1}
           >
-            下一章 <ArrowRight className="ml-1 h-3 w-3" />
+            {t.novel.readingNextChapter} <ArrowRight className="ml-1 h-3 w-3" />
           </Button>
         </footer>
+      ) : (
+        <div
+          className="fixed bottom-4 right-4 z-50 flex items-center gap-1 rounded-full border px-2 py-1 shadow-lg backdrop-blur-sm"
+          style={{ borderColor: `${themeColors.accent}40`, backgroundColor: `${themeColors.bg}dd` }}
+        >
+          <TtsPlayer text={ttsText} theme={ttsTheme} compact tts={tts} />
+        </div>
       )}
     </div>
   );

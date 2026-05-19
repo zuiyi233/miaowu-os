@@ -32,6 +32,7 @@ _OPTIONAL_ROUTER_MODULES = (
     "app.gateway.novel_migrated.api.mcp_plugins",
     "app.gateway.novel_migrated.api.relationships",
     "app.gateway.novel_migrated.api.organizations",
+    "app.gateway.novel_migrated.api.volumes",
     "app.gateway.novel_migrated.api.polish",
     "app.gateway.novel_migrated.api.writing_styles",
     # ========== 新增模块（P2 补齐） ==========

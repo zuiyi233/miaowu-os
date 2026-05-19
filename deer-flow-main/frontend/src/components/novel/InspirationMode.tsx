@@ -114,7 +114,9 @@ export function InspirationMode() {
           }
         }
       }
-    } catch {}
+    } catch (error) {
+      console.warn('Failed to load cached state:', error);
+    }
   }, []);
 
   useEffect(() => {
@@ -134,8 +136,8 @@ export function InspirationMode() {
             timestamp: Date.now(),
           }),
         );
-      } catch {
-        // ignore cache persistence failures
+      } catch (error) {
+        console.warn('Failed to save cached state:', error);
       }
     }, 300);
 

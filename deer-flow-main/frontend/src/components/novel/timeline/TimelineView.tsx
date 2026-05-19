@@ -51,7 +51,7 @@ export function TimelineView({ novelId }: TimelineViewProps) {
 
   const handleDelete = async (eventId: string) => {
     if (confirm('Delete this timeline event?')) {
-      await deleteMutation.mutateAsync(eventId);
+      await deleteMutation.mutateAsync({ novelId, eventId });
     }
   };
 

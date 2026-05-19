@@ -21,6 +21,7 @@ import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { fetch as authFetch } from '@/core/api/fetcher';
 import { getBackendBaseURL } from '@/core/config';
+import { useI18n } from '@/core/i18n/hooks';
 import { cn } from '@/lib/utils';
 
 import { SSELoadingOverlay } from './SSELoadingOverlay';
@@ -37,6 +38,7 @@ interface WorldSettingProps {
 }
 
 export function WorldSetting({ projectId }: WorldSettingProps) {
+  const { t } = useI18n();
   const [worldData, setWorldData] = useState<WorldData>({});
   const [loading, setLoading] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
@@ -62,9 +64,9 @@ export function WorldSetting({ projectId }: WorldSettingProps) {
         atmosphere: project.world_atmosphere || '',
         rules: project.world_rules || '',
       });
-    } catch (err) { console.error('加载世界观失败:', err); }
+    } catch (err) { console.error(t.novel.loadGraphFailed, err); }
     finally { setLoading(false); }
-  }, [projectId, backendBase]);
+  }, [projectId, backendBase, t]);
 
   useEffect(() => { loadWorld(); }, [loadWorld]);
 
@@ -76,18 +78,18 @@ export function WorldSetting({ projectId }: WorldSettingProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editForm),
       });
-      if (!res.ok) throw new Error('保存失败');
-      toast.success('世界观已保存');
+      if (!res.ok) throw new Error(t.novel.saveFailed);
+      toast.success(t.novel.worldviewSaved);
       setWorldData(editForm);
       setIsEditOpen(false);
-    } catch (err) { toast.error(err instanceof Error ? err.message : '保存失败'); }
+    } catch (err) { toast.error(err instanceof Error ? err.message : t.novel.saveFailed); }
     finally { setSaving(false); }
   };
 
   const handleRegenerate = async () => {
-    if (!window.confirm('确定要使用AI重新生成世界观设定吗？这将替换当前的世界观内容。')) return;
+    if (!window.confirm(t.novel.confirmRegenerateWorldview)) return;
 
-    setIsRegenerating(true); setRegenProgress(0); setRegenMessage('准备重新生成世界观...');
+    setIsRegenerating(true); setRegenProgress(0); setRegenMessage(t.novel.preparingRegenerate);
 
     try {
       const res = await authFetch(`${backendBase}/api/wizard/regenerate-world-building`, {
@@ -96,7 +98,7 @@ export function WorldSetting({ projectId }: WorldSettingProps) {
         body: JSON.stringify({ project_id: projectId }),
       });
 
-      if (!res.ok || !res.body) throw new Error('请求失败');
+      if (!res.ok || !res.body) throw new Error(t.novel.requestFailed);
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -115,14 +117,18 @@ export function WorldSetting({ projectId }: WorldSettingProps) {
               setRegenMessage(data.message || '');
             }
             else if (data.type === 'result') { setPreviewData(data.data || data); }
-            else if (data.type === 'error') throw new Error(data.message || '生成失败');
-          } catch {}
+            else if (data.type === 'error') throw new Error(data.message || t.novel.regenerateFailed);
+          } catch (parseErr) {
+            if (parseErr instanceof Error && parseErr.message !== t.novel.regenerateFailed) {
+              console.warn('SSE parse skip:', parseErr);
+            } else throw parseErr;
+          }
         }
       }
 
-      toast.success('世界观重新生成完成！');
+      toast.success(t.novel.regenerateComplete);
       setIsPreviewOpen(true);
-    } catch (err) { toast.error(err instanceof Error ? err.message : '重新生成失败'); }
+    } catch (err) { toast.error(err instanceof Error ? err.message : t.novel.regenerateFailed); }
     finally { setIsRegenerating(false); }
   };
 
@@ -134,16 +140,16 @@ export function WorldSetting({ projectId }: WorldSettingProps) {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(previewData),
       });
-      if (!res.ok) throw new Error('应用失败');
+      if (!res.ok) throw new Error(t.novel.applyFailed);
       setWorldData(previewData);
       setIsPreviewOpen(false); setPreviewData(null);
-      toast.success('新世界观已应用');
-    } catch (err) { toast.error(err instanceof Error ? err.message : '应用失败'); }
+      toast.success(t.novel.newWorldviewApplied);
+    } catch (err) { toast.error(err instanceof Error ? err.message : t.novel.applyFailed); }
     finally { setSaving(false); }
   };
 
   if (loading) {
-    return <div className="flex items-center justify-center py-12 text-muted-foreground">加载中...</div>;
+    return <div className="flex items-center justify-center py-12 text-muted-foreground">{t.novel.loading}</div>;
   }
 
   return (
@@ -151,48 +157,48 @@ export function WorldSetting({ projectId }: WorldSettingProps) {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold flex items-center gap-2">
-            <Globe className="w-5 h-5" /> 世界观设定
+            <Globe className="w-5 h-5" /> {t.novel.worldSetting}
           </h2>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => { setEditForm(worldData); setIsEditOpen(true); }}>
-              <Edit3 className="w-3.5 h-3.5 mr-1" />编辑
+              <Edit3 className="w-3.5 h-3.5 mr-1" />{t.novel.edit}
             </Button>
             <Button variant="outline" size="sm" onClick={handleRegenerate} disabled={isRegenerating}>
-              <RefreshCw className={cn("w-3.5 h-3.5 mr-1", isRegenerating && "animate-spin")} />AI重新生成
+              <RefreshCw className={cn("w-3.5 h-3.5 mr-1", isRegenerating && "animate-spin")} />{t.novel.aiRegenerate}
             </Button>
           </div>
         </div>
 
         <Card>
           <CardContent className="pt-4 space-y-4">
-            <InfoRow label="时代背景" value={worldData.time_period} />
+            <InfoRow label={t.novel.timePeriod} value={worldData.time_period} />
             <Separator />
-            <InfoRow label="地理环境" value={worldData.location} />
+            <InfoRow label={t.novel.location} value={worldData.location} />
             <Separator />
-            <InfoRow label="氛围基调" value={worldData.atmosphere} />
+            <InfoRow label={t.novel.fieldAtmosphere} value={worldData.atmosphere} />
             <Separator />
-            <InfoRow label="世界规则" value={worldData.rules} multiline />
+            <InfoRow label={t.novel.worldRules} value={worldData.rules} multiline />
           </CardContent>
         </Card>
 
         {!worldData.time_period && !worldData.location && (
-          <p className="text-sm text-muted-foreground text-center py-8">暂无世界观数据，点击"编辑"或"AI重新生成"来创建</p>
+          <p className="text-sm text-muted-foreground text-center py-8">{t.novel.noWorldData}</p>
         )}
       </div>
 
       {/* Edit Dialog */}
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>编辑世界观</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t.novel.editWorldSetting}</DialogTitle></DialogHeader>
           <div className="space-y-3 py-2">
-            <div><Label>时代背景</Label><Input value={editForm.time_period || ''} onChange={(e) => setEditForm((p) => ({ ...p, time_period: e.target.value }))} /></div>
-            <div><Label>地理环境</Label><Input value={editForm.location || ''} onChange={(e) => setEditForm((p) => ({ ...p, location: e.target.value }))} /></div>
-            <div><Label>氛围基调</Label><Input value={editForm.atmosphere || ''} onChange={(e) => setEditForm((p) => ({ ...p, atmosphere: e.target.value }))} /></div>
-            <div><Label>世界规则</Label><Textarea rows={4} value={editForm.rules || ''} onChange={(e) => setEditForm((p) => ({ ...p, rules: e.target.value }))} /></div>
+            <div><Label>{t.novel.timePeriod}</Label><Input value={editForm.time_period || ''} onChange={(e) => setEditForm((p) => ({ ...p, time_period: e.target.value }))} /></div>
+            <div><Label>{t.novel.location}</Label><Input value={editForm.location || ''} onChange={(e) => setEditForm((p) => ({ ...p, location: e.target.value }))} /></div>
+            <div><Label>{t.novel.fieldAtmosphere}</Label><Input value={editForm.atmosphere || ''} onChange={(e) => setEditForm((p) => ({ ...p, atmosphere: e.target.value }))} /></div>
+            <div><Label>{t.novel.worldRules}</Label><Textarea rows={4} value={editForm.rules || ''} onChange={(e) => setEditForm((p) => ({ ...p, rules: e.target.value }))} /></div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditOpen(false)}>取消</Button>
-            <Button onClick={handleSave} disabled={saving}><Save className="w-4 h-4 mr-1" />保存</Button>
+            <Button variant="outline" onClick={() => setIsEditOpen(false)}>{t.novel.cancel}</Button>
+            <Button onClick={handleSave} disabled={saving}><Save className="w-4 h-4 mr-1" />{t.common.save}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -200,20 +206,20 @@ export function WorldSetting({ projectId }: WorldSettingProps) {
       {/* Preview Dialog */}
       <Dialog open={isPreviewOpen} onOpenChange={(v) => !v && setPreviewData(null)}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>预览新生成的世界观</DialogTitle><DialogDescription>确认后将替换当前世界观设定</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>{t.novel.previewNewWorldview}</DialogTitle><DialogDescription>{t.novel.confirmReplaceWorldview}</DialogDescription></DialogHeader>
           {previewData && (
             <ScrollArea className="max-h-[400px] pr-2 -mr-2">
               <div className="space-y-3">
-                <InfoRow label="时代背景" value={previewData.time_period} />
-                <Separator /><InfoRow label="地理环境" value={previewData.location} />
-                <Separator /><InfoRow label="氛围基调" value={previewData.atmosphere} />
-                <Separator /><InfoRow label="世界规则" value={previewData.rules} multiline />
+                <InfoRow label={t.novel.timePeriod} value={previewData.time_period} />
+                <Separator /><InfoRow label={t.novel.location} value={previewData.location} />
+                <Separator /><InfoRow label={t.novel.fieldAtmosphere} value={previewData.atmosphere} />
+                <Separator /><InfoRow label={t.novel.worldRules} value={previewData.rules} multiline />
               </div>
             </ScrollArea>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setPreviewData(null); setIsPreviewOpen(false); }}>放弃</Button>
-            <Button onClick={handleApplyPreview} disabled={saving}><Eye className="w-4 h-4 mr-1" />应用此版本</Button>
+            <Button variant="outline" onClick={() => { setPreviewData(null); setIsPreviewOpen(false); }}>{t.novel.discard}</Button>
+            <Button onClick={handleApplyPreview} disabled={saving}><Eye className="w-4 h-4 mr-1" />{t.novel.applyThisVersion}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

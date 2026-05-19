@@ -30,7 +30,7 @@ router = APIRouter(prefix="/characters", tags=["characters"])
 
 
 class CharacterCreateRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=200)
     is_organization: bool = False
     role_type: str = "supporting"
     personality: str = ""
@@ -40,7 +40,7 @@ class CharacterCreateRequest(BaseModel):
     gender: str | None = None
     organization_type: str | None = None
     organization_purpose: str | None = None
-    traits: list | None = None
+    traits: list[str] | None = None
     relationships: str | None = Field(
         default=None,
         validation_alias=AliasChoices("relationships", "relationships_text"),
@@ -48,7 +48,7 @@ class CharacterCreateRequest(BaseModel):
 
 
 class CharacterUpdateRequest(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=200)
     role_type: str | None = None
     personality: str | None = None
     background: str | None = None
@@ -307,13 +307,28 @@ async def update_character(
     update_fields = ['name', 'role_type', 'personality', 'background', 'appearance',
                       'age', 'gender', 'organization_type', 'organization_purpose',
                       'current_state', 'relationships']
+    updates = {}
     for field_name in update_fields:
         value = getattr(req, field_name, None)
         if value is not None:
-            setattr(character, field_name, value)
+            updates[field_name] = value
 
     if req.traits is not None:
-        character.traits = json.dumps(req.traits, ensure_ascii=False)
+        updates['traits'] = json.dumps(req.traits, ensure_ascii=False)
+
+    if updates:
+        from app.gateway.novel_migrated.services.optimistic_lock import optimistic_update
+        try:
+            lock_result = await optimistic_update(
+                Character, character_id, updates, db=db
+            )
+            logger.info("Character %s updated with optimistic lock (attempts=%d)", character_id, lock_result["attempts"])
+        except ValueError as exc:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        result = await db.execute(select(Character).where(Character.id == character_id))
+        character = result.scalar_one_or_none()
 
     try:
         await _sync_character_document(character=character, user_id=user_id, db=db)
@@ -344,8 +359,52 @@ async def delete_character(
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
     await verify_project_access(character.project_id, user_id, db)
+
+    from app.gateway.novel_migrated.models.document_index import DocumentIndex
+
+    await db.execute(
+        CharacterRelationship.__table__.delete().where(
+            (CharacterRelationship.character_from_id == character_id)
+            | (CharacterRelationship.character_to_id == character_id)
+        )
+    )
+
+    org_result = await db.execute(
+        select(Organization).where(Organization.character_id == character_id)
+    )
+    org = org_result.scalar_one_or_none()
+    if org:
+        from app.gateway.novel_migrated.models.relationship import OrganizationMember
+        await db.execute(
+            OrganizationMember.__table__.delete().where(
+                OrganizationMember.organization_id == org.id
+            )
+        )
+        await db.delete(org)
+
+    await db.execute(
+        DocumentIndex.__table__.delete().where(
+            DocumentIndex.entity_id == character_id,
+            DocumentIndex.entity_type.in_(["character", "organization"]),
+        )
+    )
+
+    project_id = character.project_id
+    is_org = character.is_organization
     await db.delete(character)
     await db.commit()
+
+    for entity_type in (["character", "organization"] if is_org else ["character"]):
+        try:
+            await workspace_document_service.delete_document(
+                user_id=user_id,
+                project_id=project_id,
+                entity_type=entity_type,
+                entity_id=character_id,
+            )
+        except Exception:
+            logger.warning("Failed to delete workspace document (%s) for character_id=%s", entity_type, character_id, exc_info=True)
+
     return {"message": "Character deleted"}
 
 
@@ -480,11 +539,11 @@ async def generate_single_character(
     except json.JSONDecodeError as e:
         logger.error(f"Parse character generation failed (invalid JSON): {e}")
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f"AI response parse error: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"AI response parse error: {str(e)}")
     except Exception as e:
         logger.error(f"Parse character generation failed: {e}")
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f"AI response parse error: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"AI service error: {str(e)}")
 
 
 @router.get("/project/{project_id}/summary")

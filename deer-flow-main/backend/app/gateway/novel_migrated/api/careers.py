@@ -593,21 +593,33 @@ async def update_career(
     
     # 更新字段
     update_data = career_update.model_dump(exclude_unset=True)
-    
+
+    updates = {}
     for field, value in update_data.items():
         if field == "stages" and value is not None:
-            # 转换为JSON字符串
-            # model_dump() 已经将嵌套模型转换为字典，所以 value 中的元素已经是 dict
             stages_list = [
                 stage if isinstance(stage, dict) else stage.model_dump()
                 for stage in value
             ]
-            setattr(career, field, json.dumps(stages_list, ensure_ascii=False))
+            updates[field] = json.dumps(stages_list, ensure_ascii=False)
         elif field == "attribute_bonuses" and value is not None:
-            # 转换为JSON字符串
-            setattr(career, field, json.dumps(value, ensure_ascii=False))
+            updates[field] = json.dumps(value, ensure_ascii=False)
         else:
-            setattr(career, field, value)
+            updates[field] = value
+
+    if updates:
+        from app.gateway.novel_migrated.services.optimistic_lock import optimistic_update
+        try:
+            lock_result = await optimistic_update(
+                Career, career_id, updates, db=db
+            )
+            logger.info("Career %s updated with optimistic lock (attempts=%d)", career_id, lock_result["attempts"])
+        except ValueError as exc:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        result = await db.execute(select(Career).where(Career.id == career_id))
+        career = result.scalar_one_or_none()
 
     try:
         await db.flush()

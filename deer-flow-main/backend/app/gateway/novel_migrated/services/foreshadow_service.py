@@ -604,7 +604,7 @@ class ForeshadowService:
             
         except Exception as e:
             logger.error(f"❌ 获取待回收伏笔失败: {str(e)}")
-            return []
+            raise
     
     async def get_overdue_foreshadows(
         self,
@@ -655,7 +655,7 @@ class ForeshadowService:
 
         except Exception as e:
             logger.error(f"❌ 获取超期伏笔失败: {str(e)}")
-            return []
+            raise
     
     async def get_must_resolve_foreshadows(
         self,
@@ -694,7 +694,7 @@ class ForeshadowService:
             
         except Exception as e:
             logger.error(f"❌ 获取本章必须回收伏笔失败: {str(e)}")
-            return []
+            raise
     
     async def get_foreshadows_to_plant(
         self,
@@ -731,7 +731,7 @@ class ForeshadowService:
             
         except Exception as e:
             logger.error(f"❌ 获取待埋入伏笔失败: {str(e)}")
-            return []
+            raise
     
     async def build_chapter_context(
         self,
@@ -921,16 +921,7 @@ class ForeshadowService:
             
         except Exception as e:
             logger.error(f"❌ 获取伏笔统计失败: {str(e)}")
-            return {
-                "total": 0,
-                "pending": 0,
-                "planted": 0,
-                "resolved": 0,
-                "partially_resolved": 0,
-                "abandoned": 0,
-                "long_term_count": 0,
-                "overdue_count": 0
-            }
+            raise
     
     async def get_planted_foreshadows_for_analysis(
         self,
@@ -1004,7 +995,7 @@ class ForeshadowService:
             
         except Exception as e:
             logger.error(f"❌ 获取已埋入伏笔失败: {str(e)}")
-            return []
+            raise
     
     async def delete_chapter_foreshadows(
         self,

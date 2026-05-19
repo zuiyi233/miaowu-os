@@ -149,8 +149,8 @@ async function streamPost(url: string, body: Record<string, unknown>, callbacks:
         reachedTerminalEvent = true;
         callbacks.onComplete?.();
       }
-    } catch {
-      // skip invalid JSON
+    } catch (error) {
+      console.warn('Skipping invalid SSE JSON:', error);
     }
   };
 
@@ -191,6 +191,7 @@ export function AIProjectGenerator({
 }: AIProjectGeneratorProps) {
   const router = useRouter();
   const startedGenerationKeyRef = useRef<string | null>(null);
+  const routerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [projectId, setProjectId] = useState<string>('');
@@ -217,6 +218,12 @@ export function AIProjectGenerator({
       streamPost(url, body, callbacks, getWizardModelConfig()),
     []
   );
+
+  useEffect(() => {
+    return () => {
+      if (routerTimerRef.current) clearTimeout(routerTimerRef.current);
+    };
+  }, []);
 
   const generationStartKey = useMemo(() => {
     const genreKey = Array.isArray(config.genre) ? config.genre.join('|') : config.genre;
@@ -324,7 +331,8 @@ export function AIProjectGenerator({
         toast.success('项目已完成,正在跳转...');
         setProgress(100);
         onComplete(pidParam);
-        setTimeout(() => router.push('/workspace/novel'), 1000);
+        if (routerTimerRef.current) clearTimeout(routerTimerRef.current);
+        routerTimerRef.current = setTimeout(() => router.push('/workspace/novel'), 1000);
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : '未知错误';
@@ -455,7 +463,8 @@ export function AIProjectGenerator({
     clearStorage();
     setLoading(false);
     onComplete(pid);
-    setTimeout(() => router.push('/workspace/novel'), 1000);
+    if (routerTimerRef.current) clearTimeout(routerTimerRef.current);
+    routerTimerRef.current = setTimeout(() => router.push('/workspace/novel'), 1000);
   };
 
   const handleAutoGenerate = async (data: GenerationConfig) => {
@@ -585,7 +594,8 @@ export function AIProjectGenerator({
       clearStorage();
       setLoading(false);
       onComplete(createdProjectId);
-      setTimeout(() => router.push('/workspace/novel'), 1000);
+      if (routerTimerRef.current) clearTimeout(routerTimerRef.current);
+      routerTimerRef.current = setTimeout(() => router.push('/workspace/novel'), 1000);
     } catch (error) {
       const msg = error instanceof Error ? error.message : '未知错误';
       console.error('创建项目失败:', msg);
@@ -754,7 +764,8 @@ export function AIProjectGenerator({
     toast.success('项目创建成功！正在进入项目...');
     setLoading(false);
     onComplete(pid);
-    setTimeout(() => router.push('/workspace/novel'), 1000);
+    if (routerTimerRef.current) clearTimeout(routerTimerRef.current);
+    routerTimerRef.current = setTimeout(() => router.push('/workspace/novel'), 1000);
   };
 
   const continueFromCareers = async (worldResult: WorldBuildingResult) => {
@@ -833,7 +844,8 @@ export function AIProjectGenerator({
     toast.success('项目创建成功！正在进入项目...');
     setLoading(false);
     onComplete(pid);
-    setTimeout(() => router.push('/workspace/novel'), 1000);
+    if (routerTimerRef.current) clearTimeout(routerTimerRef.current);
+    routerTimerRef.current = setTimeout(() => router.push('/workspace/novel'), 1000);
   };
 
   const getStepStatus = (step: GenerationStep) => {

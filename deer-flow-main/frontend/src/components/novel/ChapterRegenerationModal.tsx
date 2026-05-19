@@ -23,6 +23,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { getBackendBaseURL } from '@/core/config';
+import { useI18n } from '@/core/i18n/hooks';
 import { cn } from '@/lib/utils';
 
 import { SSEProgressModal } from './SSEProgressModal';
@@ -190,6 +191,7 @@ export function ChapterRegenerationModal({
   suggestions = [],
   hasAnalysis,
 }: ChapterRegenerationModalProps) {
+  const { t } = useI18n();
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'generating' | 'success' | 'error'>('idle');
   const [progress, setProgress] = useState(0);
@@ -207,6 +209,7 @@ export function ChapterRegenerationModal({
   const abortControllerRef = useRef<AbortController | null>(null);
   const chunkFlushRafRef = useRef<number | null>(null);
   const chunkWordCountRef = useRef(0);
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -230,6 +233,10 @@ export function ChapterRegenerationModal({
       if (chunkFlushRafRef.current !== null) {
         window.cancelAnimationFrame(chunkFlushRafRef.current);
         chunkFlushRafRef.current = null;
+      }
+      if (successTimerRef.current) {
+        clearTimeout(successTimerRef.current);
+        successTimerRef.current = null;
       }
     };
   }, []);
@@ -296,7 +303,8 @@ export function ChapterRegenerationModal({
           const finalWc = (data as { word_count?: number }).word_count || accumulated.length;
           setWordCount(finalWc);
           toast.success('重新生成完成！');
-          setTimeout(() => onSuccess(accumulated, finalWc), 500);
+          if (successTimerRef.current) clearTimeout(successTimerRef.current);
+          successTimerRef.current = setTimeout(() => onSuccess(accumulated, finalWc), 500);
         },
         onError: (err) => { setStatus('error'); setErrorMsg(err); toast.error('重新生成失败: ' + err); },
       }, abortController.signal);
@@ -322,7 +330,7 @@ export function ChapterRegenerationModal({
 
   const handleCancel = () => {
     if (loading) {
-      if (!window.confirm('生成正在进行中，确定要取消吗？')) return;
+      if (!window.confirm(t.novel.confirmCancelGeneration)) return;
       abortControllerRef.current?.abort();
       setLoading(false);
       setStatus('idle');

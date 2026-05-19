@@ -16,13 +16,16 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { useI18n } from '@/core/i18n/hooks';
 import { useUpdateSettingMutation, useDeleteSettingMutation } from '@/core/novel/queries';
 import type { Setting } from '@/core/novel/schemas';
 
+const SETTING_TYPE_VALUES = ['城市', '建筑', '自然景观', '地区', '其他'] as const;
+
 const settingEditSchema = z.object({
-  name: z.string().min(1, '场景名不能为空'),
+  name: z.string().min(1),
   description: z.string().optional(),
-  type: z.enum(['城市', '建筑', '自然景观', '地区', '其他']).default('其他'),
+  type: z.enum(SETTING_TYPE_VALUES).default('其他'),
   atmosphere: z.string().optional(),
   history: z.string().optional(),
   keyFeatures: z.string().optional(),
@@ -32,16 +35,27 @@ type SettingEditInput = z.input<typeof settingEditSchema>;
 type SettingEditOutput = z.output<typeof settingEditSchema>;
 
 interface SettingEditFormProps {
+  novelId: string;
   setting: Setting;
   onSubmitSuccess?: () => void;
   onDelete?: () => void;
 }
 
+const SETTING_TYPE_LABEL_KEYS: Record<string, string> = {
+  '城市': 'settingTypeCity',
+  '建筑': 'settingTypeBuilding',
+  '自然景观': 'settingTypeNaturalLandscape',
+  '地区': 'settingTypeRegion',
+  '其他': 'settingTypeOther',
+};
+
 export const SettingEditForm: React.FC<SettingEditFormProps> = ({
+  novelId,
   setting,
   onSubmitSuccess,
   onDelete,
 }) => {
+  const { t } = useI18n();
   const updateSetting = useUpdateSettingMutation();
   const deleteSetting = useDeleteSettingMutation();
   const form = useForm<SettingEditInput, unknown, SettingEditOutput>({
@@ -63,59 +77,57 @@ export const SettingEditForm: React.FC<SettingEditFormProps> = ({
   };
 
   const handleDelete = () => {
-    deleteSetting.mutate(setting.id, { onSuccess: () => onDelete?.() });
+    deleteSetting.mutate({ novelId, settingId: setting.id }, { onSuccess: () => onDelete?.() });
   };
 
   return (
     <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
       <div>
-        <Label htmlFor="name">场景名</Label>
+        <Label htmlFor="name">{t.novel.sceneName}</Label>
         <Input id="name" {...form.register('name')} />
         {form.formState.errors.name && (
-          <p className="text-sm text-red-500">{form.formState.errors.name.message}</p>
+          <p className="text-sm text-red-500">{t.novel.sceneNameRequired}</p>
         )}
       </div>
 
       <div>
-        <Label htmlFor="type">场景类型</Label>
+        <Label htmlFor="type">{t.novel.sceneType}</Label>
         <Select onValueChange={(v) => form.setValue('type', v as any)} defaultValue={setting.type}>
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="城市">城市</SelectItem>
-            <SelectItem value="建筑">建筑</SelectItem>
-            <SelectItem value="自然景观">自然景观</SelectItem>
-            <SelectItem value="地区">地区</SelectItem>
-            <SelectItem value="其他">其他</SelectItem>
+            {SETTING_TYPE_VALUES.map((v) => (
+              <SelectItem key={v} value={v}>{(t.novel as any)[SETTING_TYPE_LABEL_KEYS[v]!]}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
 
       <div>
-        <Label htmlFor="description">场景描述</Label>
+        <Label htmlFor="description">{t.novel.sceneDescription}</Label>
         <Textarea id="description" className="resize-none" rows={2} {...form.register('description')} />
       </div>
 
       <div>
-        <Label htmlFor="atmosphere">氛围描述</Label>
+        <Label htmlFor="atmosphere">{t.novel.fieldAtmosphere}</Label>
         <Textarea id="atmosphere" className="resize-none" rows={2} {...form.register('atmosphere')} />
       </div>
 
       <div>
-        <Label htmlFor="history">历史背景</Label>
+        <Label htmlFor="history">{t.novel.itemHistory}</Label>
         <Textarea id="history" className="resize-none" rows={2} {...form.register('history')} />
       </div>
 
       <div>
-        <Label htmlFor="keyFeatures">关键特征或地标</Label>
+        <Label htmlFor="keyFeatures">{t.novel.fieldKeyFeatures}</Label>
         <Textarea id="keyFeatures" className="resize-none" rows={2} {...form.register('keyFeatures')} />
       </div>
 
       <div className="flex gap-2">
         <Button type="submit" className="flex-1" disabled={updateSetting.isPending}>
-          {updateSetting.isPending ? '保存中...' : '保存'}
+          {updateSetting.isPending ? t.novel.saving : t.common.save}
         </Button>
         <Button type="button" variant="destructive" onClick={handleDelete} disabled={deleteSetting.isPending}>
-          删除
+          {t.common.delete}
         </Button>
       </div>
     </form>

@@ -75,7 +75,7 @@ function loadCache(): CacheState | null {
     if (Date.now() - data._ts > CACHE_TTL_MS) { sessionStorage.removeItem(CACHE_KEY); return null; }
     delete (data as any)._ts;
     return data;
-  } catch { return null; }
+  } catch (error) { console.warn('Failed to load cached task:', error); return null; }
 }
 
 function saveCache(state: Partial<CacheState>) {
@@ -104,6 +104,7 @@ export function BookImportPage() {
   // File upload state
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chapterListRef = useRef<HTMLDivElement>(null);
+  const routerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [parseRange, setParseRange] = useState<'tail' | 'full'>('tail');
@@ -113,7 +114,7 @@ export function BookImportPage() {
   const [taskId, setTaskId] = useState<string>('');
   const [taskStatus, setTaskStatus] = useState('');
   const [parseProgress, setParseProgress] = useState(0);
-  const [pollTimer, setPollTimer] = useState<NodeJS.Timeout | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Preview state
   const [preview, setPreview] = useState<BookImportPreview | null>(null);
@@ -160,6 +161,10 @@ export function BookImportPage() {
       setPageStep(cached.pageStep ?? 'upload');
       if (cached.preview?.chapters) setChapters(cached.preview.chapters);
     }
+    return () => {
+      if (routerTimerRef.current) clearTimeout(routerTimerRef.current);
+      if (pollTimerRef.current) { clearInterval(pollTimerRef.current); pollTimerRef.current = null; }
+    };
   }, []);
 
   const updateCache = useCallback((patch: Partial<CacheState>) => {
@@ -171,16 +176,16 @@ export function BookImportPage() {
 
   const resetAll = useCallback(() => {
     clearCache();
-    if (pollTimer) clearInterval(pollTimer);
+    if (pollTimerRef.current) { clearInterval(pollTimerRef.current); pollTimerRef.current = null; }
     setFile(null); setDragOver(false);
-    setTaskId(''); setTaskStatus(''); setParseProgress(0); setPollTimer(null);
+    setTaskId(''); setTaskStatus(''); setParseProgress(0);
     setPreview(null); setChapters([]);
     setProjectTitle(''); setProjectType(''); setProjectTheme('');
     setProjectSummary(''); setNarrativeAngle(''); setTargetWordCount(50000);
     setApplyProgress(0); setApplyStatus(''); setApplyError(null);
     setFailedSteps([]); setRetrying(false);
     setPageStep('upload');
-  }, [pollTimer]);
+  }, []);
 
   // --- File handling ---
   const handleFilePick = (f: File) => {
@@ -221,7 +226,8 @@ export function BookImportPage() {
 
   // --- Poll parsing status ---
   const pollStatus = (tid: string) => {
-    const timer = setInterval(async () => {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    pollTimerRef.current = setInterval(async () => {
       try {
         const statusData = await novelApiService.getBookImportTaskStatus(tid);
         const st = statusData.status;
@@ -230,17 +236,15 @@ export function BookImportPage() {
         updateCache({ taskStatus: st, pageStep: 'parsing' });
 
         if (st === 'completed' || st === 'failed' || st === 'cancelled') {
-          clearInterval(timer);
-          setPollTimer(null);
+          if (pollTimerRef.current) { clearInterval(pollTimerRef.current); pollTimerRef.current = null; }
           if (st === 'completed') {
             loadPreview(tid);
           }
         }
-      } catch {
-        // ignore poll errors
+      } catch (error) {
+        console.error('Polling failed:', error);
       }
     }, 3000);
-    setPollTimer(timer);
   };
 
   // --- Load preview ---
@@ -350,7 +354,8 @@ export function BookImportPage() {
           toast.success('🎉 拆书导入完成！');
           clearCache();
           shouldSyncRetryCache = false;
-          setTimeout(() => router.push('/workspace/novel'), 1500);
+          if (routerTimerRef.current) clearTimeout(routerTimerRef.current);
+          routerTimerRef.current = setTimeout(() => router.push('/workspace/novel'), 1500);
           return;
         }
 
@@ -382,8 +387,8 @@ export function BookImportPage() {
               if (parsed && Array.isArray(parsed.failed_steps)) {
                 failuresRaw = parsed.failed_steps;
               }
-            } catch {
-              // ignore parse error
+            } catch (error) {
+              console.warn('Failed to parse failure data:', error);
             }
           } else if (data.step_name || data.stepName) {
             failuresRaw = [data];
@@ -424,8 +429,8 @@ export function BookImportPage() {
             });
           }
         }
-      } catch {
-        // skip malformed JSON
+      } catch (error) {
+        console.warn('Skipping malformed SSE JSON:', error);
       }
     };
 

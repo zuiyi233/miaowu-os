@@ -67,7 +67,7 @@ export function EntitySidebar({ novelId, novelTitle, compact = false }: EntitySi
               entities={novel.characters || []}
               onAdd={(data) => addCharacter.mutate(data as Character)}
               onUpdate={(data) => updateCharacter.mutate(data as Character)}
-              onDelete={(id) => deleteCharacter.mutate(id)}
+              onDelete={(id) => deleteCharacter.mutate({ novelId: activeNovelId, characterId: id })}
               novelId={activeNovelId}
               compact
             />
@@ -78,7 +78,7 @@ export function EntitySidebar({ novelId, novelTitle, compact = false }: EntitySi
               entities={novel.factions || []}
               onAdd={(data) => addFaction.mutate(data as Faction)}
               onUpdate={(data) => updateFaction.mutate(data as Faction)}
-              onDelete={(id) => deleteFaction.mutate(id)}
+              onDelete={(id) => deleteFaction.mutate({ novelId: activeNovelId, factionId: id })}
               novelId={activeNovelId}
               compact
             />
@@ -89,7 +89,7 @@ export function EntitySidebar({ novelId, novelTitle, compact = false }: EntitySi
               entities={novel.settings || []}
               onAdd={(data) => addSetting.mutate(data as Setting)}
               onUpdate={(data) => updateSetting.mutate(data as Setting)}
-              onDelete={(id) => deleteSetting.mutate(id)}
+              onDelete={(id) => deleteSetting.mutate({ novelId: activeNovelId, settingId: id })}
               novelId={activeNovelId}
               compact
             />
@@ -100,7 +100,7 @@ export function EntitySidebar({ novelId, novelTitle, compact = false }: EntitySi
               entities={novel.items || []}
               onAdd={(data) => addItem.mutate(data as Item)}
               onUpdate={(data) => updateItem.mutate(data as Item)}
-              onDelete={(id) => deleteItem.mutate(id)}
+              onDelete={(id) => deleteItem.mutate({ novelId: activeNovelId, itemId: id })}
               novelId={activeNovelId}
               compact
             />
@@ -131,7 +131,7 @@ export function EntitySidebar({ novelId, novelTitle, compact = false }: EntitySi
               entities={novel.characters || []}
               onAdd={(data) => addCharacter.mutate(data as Character)}
               onUpdate={(data) => updateCharacter.mutate(data as Character)}
-              onDelete={(id) => deleteCharacter.mutate(id)}
+              onDelete={(id) => deleteCharacter.mutate({ novelId: activeNovelId, characterId: id })}
               novelId={activeNovelId}
             />
           </TabsContent>
@@ -141,7 +141,7 @@ export function EntitySidebar({ novelId, novelTitle, compact = false }: EntitySi
               entities={novel.factions || []}
               onAdd={(data) => addFaction.mutate(data as Faction)}
               onUpdate={(data) => updateFaction.mutate(data as Faction)}
-              onDelete={(id) => deleteFaction.mutate(id)}
+              onDelete={(id) => deleteFaction.mutate({ novelId: activeNovelId, factionId: id })}
               novelId={activeNovelId}
             />
           </TabsContent>
@@ -151,7 +151,7 @@ export function EntitySidebar({ novelId, novelTitle, compact = false }: EntitySi
               entities={novel.settings || []}
               onAdd={(data) => addSetting.mutate(data as Setting)}
               onUpdate={(data) => updateSetting.mutate(data as Setting)}
-              onDelete={(id) => deleteSetting.mutate(id)}
+              onDelete={(id) => deleteSetting.mutate({ novelId: activeNovelId, settingId: id })}
               novelId={activeNovelId}
             />
           </TabsContent>
@@ -161,7 +161,7 @@ export function EntitySidebar({ novelId, novelTitle, compact = false }: EntitySi
               entities={novel.items || []}
               onAdd={(data) => addItem.mutate(data as Item)}
               onUpdate={(data) => updateItem.mutate(data as Item)}
-              onDelete={(id) => deleteItem.mutate(id)}
+              onDelete={(id) => deleteItem.mutate({ novelId: activeNovelId, itemId: id })}
               novelId={activeNovelId}
             />
           </TabsContent>

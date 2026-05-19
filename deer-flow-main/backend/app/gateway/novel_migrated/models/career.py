@@ -34,6 +34,7 @@ class Career(Base):
     
     # 元数据
     source = Column(String(20), default='ai', comment="来源: ai/manual")
+    version = Column(Integer, default=1, nullable=False, comment="乐观锁版本号")
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")
     

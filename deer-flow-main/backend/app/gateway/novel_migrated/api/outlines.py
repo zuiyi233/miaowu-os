@@ -205,14 +205,29 @@ async def update_outline(
         raise HTTPException(status_code=404, detail="Outline not found")
     await verify_project_access(outline.project_id, user_id, db)
 
+    updates = {}
     if req.title is not None:
-        outline.title = req.title
+        updates['title'] = req.title
     if req.content is not None:
-        outline.content = req.content
+        updates['content'] = req.content
     if req.structure is not None:
-        outline.structure = req.structure
+        updates['structure'] = req.structure
     if req.order_index is not None:
-        outline.order_index = req.order_index
+        updates['order_index'] = req.order_index
+
+    if updates:
+        from app.gateway.novel_migrated.services.optimistic_lock import optimistic_update
+        try:
+            lock_result = await optimistic_update(
+                Outline, outline_id, updates, db=db
+            )
+            logger.info("Outline %s updated with optimistic lock (attempts=%d)", outline_id, lock_result["attempts"])
+        except ValueError as exc:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        result = await db.execute(select(Outline).where(Outline.id == outline_id))
+        outline = result.scalar_one_or_none()
 
     try:
         await _sync_outline_document(outline=outline, user_id=user_id, db=db)
@@ -242,8 +257,30 @@ async def delete_outline(
     if not outline:
         raise HTTPException(status_code=404, detail="Outline not found")
     await verify_project_access(outline.project_id, user_id, db)
+
+    from app.gateway.novel_migrated.models.document_index import DocumentIndex
+
+    await db.execute(
+        DocumentIndex.__table__.delete().where(
+            DocumentIndex.entity_type == "outline",
+            DocumentIndex.entity_id == outline_id,
+        )
+    )
+
+    project_id = outline.project_id
     await db.delete(outline)
     await db.commit()
+
+    try:
+        await workspace_document_service.delete_document(
+            user_id=user_id,
+            project_id=project_id,
+            entity_type="outline",
+            entity_id=outline_id,
+        )
+    except Exception:
+        logger.warning("Failed to delete workspace document for outline_id=%s", outline_id, exc_info=True)
+
     return {"message": "Outline deleted"}
 
 
@@ -337,9 +374,12 @@ async def continue_outlines(
 
         return {"outlines": [_serialize_outline(o) for o in created]}
 
-    except (json.JSONDecodeError, Exception) as e:
+    except json.JSONDecodeError as e:
         logger.error(f"Parse outline continue response failed: {e}")
-        raise HTTPException(status_code=500, detail=f"AI response parse error: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"AI response parse error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Parse outline continue response failed: {e}")
+        raise HTTPException(status_code=502, detail=f"AI service error: {str(e)}")
 
 
 @router.post("/expand")
@@ -402,14 +442,21 @@ async def reorder_outlines(
     db: AsyncSession = Depends(get_db),
 ):
     await verify_project_access(project_id, user_id, db)
+    from app.gateway.novel_migrated.services.optimistic_lock import optimistic_update
     for item in outline_orders:
         oid = item.get("id")
         new_idx = item.get("order_index")
         if oid and new_idx is not None:
-            result = await db.execute(select(Outline).where(Outline.id == oid))
-            o = result.scalar_one_or_none()
-            if o and o.project_id == project_id:
-                o.order_index = new_idx
+            try:
+                await optimistic_update(
+                    Outline, oid, {"order_index": new_idx}, db=db
+                )
+            except ValueError:
+                logger.warning("Optimistic lock conflict on outline %s during reorder", oid)
+                result = await db.execute(select(Outline).where(Outline.id == oid))
+                o = result.scalar_one_or_none()
+                if o and o.project_id == project_id:
+                    o.order_index = new_idx
     await db.commit()
     return {"message": "Outlines reordered"}
 

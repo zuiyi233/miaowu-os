@@ -29,7 +29,7 @@ export function NovelEditor({ novelId }: { novelId: string }) {
   const debouncedSave = useDebounce(
     (content: string) => {
       if (activeChapterId) {
-        updateChapterMutation.mutate({ chapterId: activeChapterId, content });
+        updateChapterMutation.mutate({ chapterId: activeChapterId, content, novelId });
         setDirtyContent(null);
       }
     },
@@ -49,6 +49,7 @@ export function NovelEditor({ novelId }: { novelId: string }) {
       updateChapterMutation.mutate({
         chapterId: previousChapter.id,
         content: previousChapter.content,
+        novelId,
       });
       setDirtyContent(null);
     }

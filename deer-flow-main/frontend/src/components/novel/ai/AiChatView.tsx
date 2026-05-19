@@ -133,7 +133,8 @@ function mergeStructuredResponse(
       const argsKey = (() => {
         try {
           return JSON.stringify(call.args ?? {});
-        } catch {
+        } catch (error) {
+          console.warn('Failed to serialize args:', error);
           return '[unserializable_args]';
         }
       })();

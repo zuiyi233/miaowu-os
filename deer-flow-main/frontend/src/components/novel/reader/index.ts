@@ -5,3 +5,4 @@ export { RecommendationPanel } from './RecommendationPanel';
 export { AnnotationThreadPanel } from './AnnotationThreadPanel';
 export { QualityReportPanel } from './QualityReportPanel';
 export { AuditLogPanel } from './AuditLogPanel';
+export { TtsPlayer } from './TtsPlayer';
