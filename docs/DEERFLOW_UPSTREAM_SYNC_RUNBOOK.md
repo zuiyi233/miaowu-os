@@ -45,6 +45,18 @@
 - 端口裁决：`local-dev` 保持 `127.0.0.1:8551`；`docker/nginx` 内部 upstream 保持 `gateway:8001`
 - 详细记录：`docs/upstream-sync-guide.md` 第 0 节与第 10/11 节（第六、七批 commit 清单）
 
+### 2026-05-19 增量同步快照（最新）
+
+- 同步前本地基准：`e9deb6c2`（上次本地 upstream/main 指针）
+- 上游目标提交：`c810e9f8`
+- 同步 commit 数：23 个（`e9deb6c2..c810e9f8`）
+- 安全备份分支：`backup-before-upstream-sync-20260519-163844`
+- 安全备份包：`D:\miaowu-os-backups\upstream-sync\backup-before-upstream-sync-20260519-163844.bundle`
+- 冲突报告文件：`docs/upstream-sync-conflicts-20260519-163844.txt`
+- 同步策略：子树补丁应用 + 三方冲突裁决 + 本地 novel 工具/8551 契约保留
+- 差异结论：本轮主要吸收 run store hydration、subagent token usage、memory queue user isolation、tool-search promotion、Discord channel、auth/setup-status、sandbox/PVC、frontend message dedupe/history loading 等上游修复。
+- 验证结果：后端定向 pytest `139 passed, 1 warning`；前端定向 vitest `5 passed`；前端全量 `tsc` 仍被既有 novel/TTS i18n 类型缺口阻塞。
+
 ### 2026-05-09 增量同步快照
 
 - 同步前本地基准：`2b1fcb3e`（上次同步终点）

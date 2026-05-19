@@ -1,6 +1,7 @@
 import errno
 import ntpath
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -223,8 +224,6 @@ class LocalSandbox(Sandbox):
         Returns:
             Command with container paths resolved to local paths
         """
-        import re
-
         # Sort mappings by length (longest first) for correct prefix matching
         sorted_mappings = sorted(self.path_mappings, key=lambda m: len(m.container_path), reverse=True)
 
@@ -239,9 +238,27 @@ class LocalSandbox(Sandbox):
         patterns = [re.escape(m.container_path) + r"(?=/|$|[\s\"';&|<>()])(?:/[^\s\"';&|<>()]*)?" for m in sorted_mappings]
         pattern = re.compile("|".join(f"({p})" for p in patterns))
 
+        def quote_for_windows_shell(path: str) -> str:
+            if os.name != "nt":
+                return path
+
+            # Windows paths with backslashes are interpreted as escape sequences
+            # by MSYS shells. Forward slashes are accepted by PowerShell, cmd,
+            # and Git Bash for local drive paths.
+            normalized = path.replace("\\", "/")
+            escaped = normalized.replace('"', '\\"')
+            return f'"{escaped}"'
+
         def replace_match(match: re.Match) -> str:
             matched_path = match.group(0)
-            return self._resolve_path(matched_path)
+            resolved_path = self._resolve_path(matched_path)
+
+            before = command[match.start() - 1] if match.start() > 0 else ""
+            after = command[match.end()] if match.end() < len(command) else ""
+            if before in {"'", '"'} and after == before:
+                return resolved_path.replace("\\", "/") if os.name == "nt" else resolved_path
+
+            return quote_for_windows_shell(resolved_path)
 
         return pattern.sub(replace_match, command)
 

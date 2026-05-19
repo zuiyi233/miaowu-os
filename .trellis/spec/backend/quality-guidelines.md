@@ -137,3 +137,59 @@ future.add_done_callback(_consume_result)
 ```
 
 **Related**: `error-handling.md` defines the recovery path that clears the model cache once when the loop has already closed.
+
+---
+
+## Scenario: Local sandbox virtual path command execution
+
+### 1. Scope / Trigger
+
+- Trigger: changing `deerflow/sandbox/local/local_sandbox.py` path mapping, command execution, or Windows shell handling.
+- Applies to the public `Sandbox` API methods used after `LocalSandboxProvider.acquire(thread_id)`.
+
+### 2. Signatures
+
+- `LocalSandbox._resolve_paths_in_command(command: str) -> str`
+- `LocalSandbox.execute_command(command: str) -> str`
+- `LocalSandboxProvider.acquire(thread_id: str | None = None) -> str`
+
+### 3. Contracts
+
+- `/mnt/user-data`, `/mnt/user-data/uploads`, `/mnt/user-data/workspace`, and `/mnt/user-data/outputs` must resolve inside the acquired thread's user-data directory.
+- Command execution must preserve the same virtual path behavior as `read_file`, `write_file`, `list_dir`, `glob`, `grep`, and `update_file`.
+- On Windows, resolved local paths passed to PowerShell, cmd, or Git Bash/MSYS must be shell-safe. Do not emit raw backslash paths into MSYS commands because `C:\Users\...` can become `C:Users...`.
+- Output should reverse-resolve local paths back to the documented virtual prefixes when possible.
+
+### 4. Validation & Error Matrix
+
+| Case | Must happen | Must not happen | Verification |
+| --- | --- | --- | --- |
+| `ls /mnt/user-data/uploads` after writing an upload | Lists the file | Loses slashes in `C:\...` paths | `test_execute_command_with_virtual_path` |
+| `ls /mnt/user-data` after touching all subdirs | Lists `workspace`, `uploads`, and `outputs` | Requires caller-side `tools.py` path shims | `test_execute_command_lists_aggregate_user_data_root` |
+| Two different thread ids use the same virtual path | Resolve to isolated host dirs | Leak files between threads | `test_per_thread_user_data_mapping_isolated` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: virtual paths are translated once at the sandbox boundary and quoted for the selected host shell.
+- Base: already quoted user paths remain quoted and are not double-quoted.
+- Bad: returning raw Windows backslash paths for Git Bash/MSYS command strings.
+
+### 6. Tests Required
+
+- `backend/tests/test_local_sandbox_virtual_path_contract.py`
+- Include command execution cases, not only file API cases, whenever path mapping changes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+return command.replace("/mnt/user-data", r"C:\Users\...\user-data")
+```
+
+#### Correct
+
+```python
+resolved = self._resolve_path(matched_path)
+return quote_for_windows_shell(resolved)
+```

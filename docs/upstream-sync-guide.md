@@ -1,7 +1,7 @@
 # 上游同步操作手册
 
 > 基于 2026-05-01 首次成功同步 bytedance/deer-flow 上游的实战经验总结。
-> 最后更新：2026-05-10（第七次增量同步文档收口）
+> 最后更新：2026-05-19（第八次增量同步文档收口）
 
 ---
 
@@ -10,12 +10,12 @@
 | 项目 | 值 |
 |------|-----|
 | 同步分支 | `merge/upstream-main` |
-| 上游最新 commit | `94da8f67` |
-| 上游同步基线 | `5127f08e`（上次同步终点） |
-| 本次同步 commit 数 | 1 个（`5127f08e..94da8f67`） |
-| 同步完整度 | **1/1 commit 已收口到 `deer-flow-main/` 子树** |
-| 前端 tsc | **本步仅做同步收口文档回写，完整测试由人工后续执行** |
-| 后端 py_compile | **本步仅做同步收口文档回写，完整测试由人工后续执行** |
+| 上游最新 commit | `c810e9f8` |
+| 上游同步基线 | `e9deb6c2`（上次本地 upstream/main 指针） |
+| 本次同步 commit 数 | 23 个（`e9deb6c2..c810e9f8`） |
+| 同步完整度 | **23/23 commit 已收口到 `deer-flow-main/` 子树** |
+| 前端 tsc | **失败：既有 novel/TTS i18n 翻译类型缺口，非本轮 upstream 触达文件** |
+| 后端 py_compile | **冲突/集成文件 compileall 通过** |
 | 端口裁决 | **local-dev 默认 `127.0.0.1:8551`；docker/nginx 内部 upstream 保持 `gateway:8001`** |
 
 ### 上游已同步的全部 commit
@@ -109,6 +109,34 @@
 | 上游 commit | 描述 | 状态 |
 |-------------|------|------|
 | `94da8f67` | fix(scripts): 保留 `make dev` 重启后的 uv extras | ✅ 已合并 |
+
+#### 第八批（2026-05-19 同步，e9deb6c2 → c810e9f8）
+
+| 上游 commit | 描述 | 状态 |
+|-------------|------|------|
+| `2a1ac06b` | fix(persistence): reuse token usage model grouping expression | ✅ 已合并 |
+| `f1a0ab69` | fix(tools): preserve tool_search promotions across re-entrant get_available_tools | ✅ 已合并 |
+| `eab7ae3d` | feat: stream subagent token usage to header via terminal task events | ✅ 已合并 |
+| `6e8e6a96` | test: add blocking IO detector | ✅ 已合并 |
+| `ba864112` | chore(deps): bump langsmith from 0.7.36 to 0.8.0 in backend | ✅ 已合并 |
+| `722c690f` | fix(memory): isolate queued memory updates by agent | ✅ 已合并 |
+| `45060a9f` | fix(runtime): avoid postgres aggregate row lock | ✅ 已合并 |
+| `181d8365` | fix(middleware): normalize tool result adjacency before model calls | ✅ 已合并 |
+| `0c37509b` | fix(middleware): prevent todo completion reminder IMMessage leak | ✅ 已合并 |
+| `7a2670ea` | fix(gateway): cap skill artifact preview size | ✅ 已合并 |
+| `7c42ab3e` | fix(frontend): wait for async chat submit before clearing | ✅ 已合并 |
+| `48e038f7` | feat(channels): enhance Discord with mention-only mode, thread routing, and typing indicators | ✅ 已合并 |
+| `6d3cffb4` | fix(frontend): deduplicate restored thread messages | ✅ 已合并 |
+| `6d611c2b` | fix(auth): persist auto-generated JWT secret to survive restarts | ✅ 已合并 |
+| `4538c322` | fix: type check thinking in message content | ✅ 已合并 |
+| `380255f7` | fix(sandbox): uphold /mnt/user-data contract at Sandbox API boundary | ✅ 已合并 |
+| `a814ab50` | fix(skills): robust security scanner JSON parsing | ✅ 已合并 |
+| `c0233cae` | fix(frontend): resolve login page flickering and resize observer loop | ✅ 已合并 |
+| `e74e126e` | fix(sandbox): scope provisioner PVC data by user | ✅ 已合并 |
+| `39f901d3` | fix(runs): restore historical runs from persistent store after gateway restart | ✅ 已合并 |
+| `b5108e35` | fix(auth): replace setup-status 429 rate limit with cached response | ✅ 已合并 |
+| `3acca126` | fix(subagents): make subagent timeout terminal state atomic | ✅ 已合并 |
+| `c810e9f8` | fix(harness)!: hydrate runs from RunStore and persist interrupted status | ✅ 已合并 |
 
 第四批本地裁决要点（固定）：
 

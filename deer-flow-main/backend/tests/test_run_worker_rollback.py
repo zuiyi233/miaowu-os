@@ -1,10 +1,14 @@
-from unittest.mock import AsyncMock, MagicMock, call, patch
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, call
 
 import pytest
 from langgraph.checkpoint.base import empty_checkpoint
 from langgraph.checkpoint.memory import InMemorySaver
 
-from deerflow.runtime.runs.worker import _rollback_to_pre_run_checkpoint
+from deerflow.runtime.runs.manager import RunManager
+from deerflow.runtime.runs.schemas import RunStatus
+from deerflow.runtime.runs.worker import RunContext, _agent_factory_supports_app_config, _build_runtime_context, _install_runtime_context, _rollback_to_pre_run_checkpoint, run_agent
 
 
 class FakeCheckpointer:
@@ -20,6 +24,75 @@ def _make_checkpoint(checkpoint_id: str, messages: list[str], version: int):
     checkpoint["channel_values"] = {"messages": messages}
     checkpoint["channel_versions"] = {"messages": version}
     return checkpoint
+
+
+def test_build_runtime_context_includes_app_config_when_present():
+    app_config = object()
+
+    context = _build_runtime_context("thread-1", "run-1", None, app_config)
+
+    assert context["thread_id"] == "thread-1"
+    assert context["run_id"] == "run-1"
+    assert context["app_config"] is app_config
+
+
+def test_install_runtime_context_preserves_existing_thread_id_and_threads_app_config():
+    app_config = object()
+    config = {"context": {"thread_id": "caller-thread"}}
+
+    _install_runtime_context(
+        config,
+        {
+            "thread_id": "record-thread",
+            "run_id": "run-1",
+            "app_config": app_config,
+        },
+    )
+
+    assert config["context"]["thread_id"] == "caller-thread"
+    assert config["context"]["run_id"] == "run-1"
+    assert config["context"]["app_config"] is app_config
+
+
+@pytest.mark.anyio
+async def test_run_agent_threads_explicit_app_config_into_config_only_factory():
+    run_manager = RunManager()
+    record = await run_manager.create("thread-1")
+    bridge = SimpleNamespace(
+        publish=AsyncMock(),
+        publish_end=AsyncMock(),
+        cleanup=AsyncMock(),
+    )
+    app_config = object()
+    captured: dict[str, object] = {}
+
+    class DummyAgent:
+        async def astream(self, graph_input, config=None, stream_mode=None, subgraphs=False):
+            captured["astream_context"] = config["context"]
+            yield {"messages": []}
+
+    def factory(*, config):
+        captured["factory_context"] = config["context"]
+        return DummyAgent()
+
+    await run_agent(
+        bridge,
+        run_manager,
+        record,
+        ctx=RunContext(checkpointer=None, app_config=app_config),
+        agent_factory=factory,
+        graph_input={},
+        config={},
+    )
+    await asyncio.sleep(0)
+
+    assert captured["factory_context"]["app_config"] is app_config
+    assert captured["astream_context"]["app_config"] is app_config
+    fetched = await run_manager.get(record.run_id)
+    assert fetched is not None
+    assert fetched.status == RunStatus.success
+    bridge.publish_end.assert_awaited_once_with(record.run_id)
+    bridge.cleanup.assert_awaited_once_with(record.run_id, delay=60)
 
 
 @pytest.mark.anyio
@@ -259,29 +332,55 @@ async def test_rollback_propagates_aput_writes_failure():
     checkpointer.aput_writes.assert_awaited_once()
 
 
-def test_fire_and_forget_failure_logger_consumes_exception():
-    from deerflow.runtime.runs.worker import _log_fire_and_forget_failure
+def test_agent_factory_supports_app_config_detects_supported_signature():
+    def factory(*, config, app_config=None):
+        return (config, app_config)
 
-    task = MagicMock()
-    task.cancelled.return_value = False
-    task.exception.return_value = RuntimeError("boom")
-
-    with patch("deerflow.runtime.runs.worker.logger.debug") as mock_debug:
-        _log_fire_and_forget_failure(task, label="bridge cleanup")
-
-    mock_debug.assert_called_once()
-    assert mock_debug.call_args.args[0] == "%s failed: %s"
-    assert mock_debug.call_args.args[1] == "bridge cleanup"
-    assert str(mock_debug.call_args.args[2]) == "boom"
+    assert _agent_factory_supports_app_config(factory) is True
 
 
-def test_fire_and_forget_failure_logger_ignores_cancelled_task():
-    from deerflow.runtime.runs.worker import _log_fire_and_forget_failure
+def test_build_runtime_context_defaults_to_thread_and_run_id():
+    ctx = _build_runtime_context("thread-1", "run-1", None)
+    assert ctx == {"thread_id": "thread-1", "run_id": "run-1"}
 
-    task = MagicMock()
-    task.cancelled.return_value = True
 
-    with patch("deerflow.runtime.runs.worker.logger.debug") as mock_debug:
-        _log_fire_and_forget_failure(task, label="bridge cleanup")
+def test_build_runtime_context_merges_caller_context():
+    """Regression for issue #2677: keys from ``config['context']`` (e.g. ``agent_name``)
+    must be merged into the Runtime's context so that ``ToolRuntime.context`` — which
+    is what ``setup_agent`` reads — can see them."""
+    caller_context = {"agent_name": "my-agent", "is_bootstrap": True, "model_name": "gpt-4"}
 
-    mock_debug.assert_not_called()
+    ctx = _build_runtime_context("thread-1", "run-1", caller_context)
+
+    assert ctx["thread_id"] == "thread-1"
+    assert ctx["run_id"] == "run-1"
+    assert ctx["agent_name"] == "my-agent"
+    assert ctx["is_bootstrap"] is True
+    assert ctx["model_name"] == "gpt-4"
+
+
+def test_build_runtime_context_caller_cannot_override_thread_id_or_run_id():
+    """A malicious or buggy caller must not be able to overwrite the worker-assigned
+    ``thread_id`` / ``run_id`` by stuffing them into ``config['context']``."""
+    caller_context = {"thread_id": "spoofed", "run_id": "spoofed", "agent_name": "ok"}
+
+    ctx = _build_runtime_context("real-thread", "real-run", caller_context)
+
+    assert ctx["thread_id"] == "real-thread"
+    assert ctx["run_id"] == "real-run"
+    assert ctx["agent_name"] == "ok"
+
+
+def test_build_runtime_context_ignores_non_dict_caller_context():
+    ctx = _build_runtime_context("thread-1", "run-1", "not-a-dict")
+    assert ctx == {"thread_id": "thread-1", "run_id": "run-1"}
+
+
+def test_agent_factory_supports_app_config_returns_false_when_signature_lookup_fails(monkeypatch):
+    class BrokenCallable:
+        def __call__(self, **kwargs):
+            return kwargs
+
+    monkeypatch.setattr("deerflow.runtime.runs.worker.inspect.signature", lambda _obj: (_ for _ in ()).throw(ValueError("boom")))
+
+    assert _agent_factory_supports_app_config(BrokenCallable()) is False

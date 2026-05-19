@@ -109,6 +109,16 @@ def get_effective_user_id() -> str:
     return str(user.id)
 
 
+def resolve_runtime_user_id(runtime: object | None) -> str:
+    """Return the effective user_id for runtime-scoped tools and middleware."""
+    context = getattr(runtime, "context", None)
+    if isinstance(context, dict):
+        ctx_user_id = context.get("user_id")
+        if ctx_user_id:
+            return str(ctx_user_id)
+    return get_effective_user_id()
+
+
 # ---------------------------------------------------------------------------
 # Sentinel-based user_id resolution
 # ---------------------------------------------------------------------------

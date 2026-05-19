@@ -154,6 +154,7 @@ async def test_process_queue_does_not_reuse_runtime_override_between_contexts() 
         agent_name=None,
         correction_detected=False,
         reinforcement_detected=False,
+        user_id=None,
     )
     updater_instances[1].aupdate_memory.assert_awaited_once_with(
         messages=["conversation-2"],
@@ -161,6 +162,7 @@ async def test_process_queue_does_not_reuse_runtime_override_between_contexts() 
         agent_name=None,
         correction_detected=False,
         reinforcement_detected=False,
+        user_id=None,
     )
 
 
@@ -194,6 +196,7 @@ async def test_worker_processes_immediate_updates_in_background() -> None:
         agent_name="lead-agent",
         correction_detected=False,
         reinforcement_detected=False,
+        user_id=None,
     )
 
 

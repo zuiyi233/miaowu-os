@@ -79,6 +79,15 @@ class MemoryUpdateQueue:
         except RuntimeError:
             logger.debug("Unable to signal memory worker; event loop may be closing", exc_info=True)
 
+    @staticmethod
+    def _queue_key(
+        thread_id: str,
+        user_id: str | None,
+        agent_name: str | None,
+    ) -> tuple[str, str | None, str | None]:
+        """Return the debounce identity for a memory update target."""
+        return (thread_id, user_id, agent_name)
+
     def add(
         self,
         thread_id: str,
@@ -169,8 +178,9 @@ class MemoryUpdateQueue:
         runtime_base_url: str | None = None,
         runtime_api_key: str | None = None,
     ) -> None:
+        queue_key = self._queue_key(thread_id, user_id, agent_name)
         existing_context = next(
-            (context for context in self._queue if context.thread_id == thread_id),
+            (context for context in self._queue if self._queue_key(context.thread_id, context.user_id, context.agent_name) == queue_key),
             None,
         )
         merged_correction_detected = correction_detected or (existing_context.correction_detected if existing_context is not None else False)
@@ -194,7 +204,7 @@ class MemoryUpdateQueue:
             runtime_api_key=effective_api_key,
         )
 
-        self._queue = [c for c in self._queue if c.thread_id != thread_id]
+        self._queue = [context for context in self._queue if self._queue_key(context.thread_id, context.user_id, context.agent_name) != queue_key]
         self._queue.append(context)
 
     def _snapshot_worker_state_locked(self) -> tuple[bool, bool, bool]:
@@ -425,6 +435,7 @@ class MemoryUpdateQueue:
                         agent_name=context.agent_name,
                         correction_detected=context.correction_detected,
                         reinforcement_detected=context.reinforcement_detected,
+                        user_id=context.user_id,
                     )
                     if success:
                         logger.info("Memory updated successfully for thread %s", context.thread_id)
