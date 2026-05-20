@@ -1,9 +1,8 @@
 """SMTP 邮件发送服务"""
 from __future__ import annotations
 
-from email.message import EmailMessage
-from typing import Optional
 import logging
+from email.message import EmailMessage
 
 try:
     import aiosmtplib
@@ -34,7 +33,7 @@ class EmailService:
         to_email: str,
         subject: str,
         text_body: str,
-        html_body: Optional[str] = None,
+        html_body: str | None = None,
     ) -> None:
         """
         发送邮件

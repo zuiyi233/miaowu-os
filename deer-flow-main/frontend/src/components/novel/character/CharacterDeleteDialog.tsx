@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import { AlertTriangle } from 'lucide-react';
-import React from 'react';
+import { AlertTriangle } from "lucide-react";
+import React from "react";
 
-import { Button } from '@/components/ui/button';
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -11,9 +11,9 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { useI18n } from '@/core/i18n/hooks';
-import { useDeleteCharacterMutation } from '@/core/novel/queries';
+} from "@/components/ui/dialog";
+import { useI18n } from "@/core/i18n/hooks";
+import { useDeleteCharacterMutation } from "@/core/novel/queries";
 
 interface CharacterDeleteDialogProps {
   novelId: string;
@@ -27,7 +27,6 @@ interface CharacterDeleteDialogProps {
 export const CharacterDeleteDialog: React.FC<CharacterDeleteDialogProps> = ({
   novelId,
   characterId,
-  characterName,
   open,
   onOpenChange,
   onDeleted,
@@ -36,12 +35,15 @@ export const CharacterDeleteDialog: React.FC<CharacterDeleteDialogProps> = ({
   const deleteCharacter = useDeleteCharacterMutation();
 
   const handleDelete = () => {
-    deleteCharacter.mutate({ novelId, characterId }, {
-      onSuccess: () => {
-        onOpenChange(false);
-        onDeleted?.();
+    deleteCharacter.mutate(
+      { novelId, characterId },
+      {
+        onSuccess: () => {
+          onOpenChange(false);
+          onDeleted?.();
+        },
       },
-    });
+    );
   };
 
   return (

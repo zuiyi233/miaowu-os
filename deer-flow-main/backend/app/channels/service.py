@@ -29,6 +29,7 @@ _CHANNEL_REGISTRY: dict[str, str] = {
 
 # Keys that indicate a user has configured credentials for a channel.
 _CHANNEL_CREDENTIAL_KEYS: dict[str, list[str]] = {
+    "dingtalk": ["client_id", "client_secret"],
     "discord": ["bot_token"],
     "feishu": ["app_id", "app_secret"],
     "slack": ["bot_token", "app_token"],

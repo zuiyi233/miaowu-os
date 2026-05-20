@@ -1,15 +1,16 @@
 """自动角色引入服务 - 预测分析+生成"""
-from typing import Dict, Any, Optional, List
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 import json
+from typing import Any
 
-from app.gateway.novel_migrated.models.project import Project
-from app.gateway.novel_migrated.models.character import Character
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.chapter import Chapter
+from app.gateway.novel_migrated.models.character import Character
+from app.gateway.novel_migrated.models.project import Project
 from app.gateway.novel_migrated.services.ai_service import AIService
 from app.gateway.novel_migrated.services.prompt_service import PromptService
-from app.gateway.novel_migrated.core.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -22,8 +23,8 @@ class AutoCharacterService:
     async def analyze_need_for_new_characters(
         self, project: Project, chapter_count: int, start_chapter: int,
         plot_stage: str, story_direction: str, db: AsyncSession,
-        provider: Optional[str] = None, model: Optional[str] = None
-    ) -> Dict[str, Any]:
+        provider: str | None = None, model: str | None = None
+    ) -> dict[str, Any]:
         characters_result = await db.execute(
             select(Character).where(Character.project_id == project.id))
         characters = characters_result.scalars().all()
@@ -34,7 +35,7 @@ class AutoCharacterService:
 
         chapters_result = await db.execute(
             select(Chapter.chapter_number, Chapter.title, Chapter.summary)
-            .where(Chapter.project_id == project.id, Chapter.content != None, Chapter.content != "")
+            .where(Chapter.project_id == project.id, Chapter.content is not None, Chapter.content != "")
             .order_by(Chapter.chapter_number))
         chapters = chapters_result.all()
         all_chapters_brief = "\n".join([
@@ -70,8 +71,8 @@ class AutoCharacterService:
     async def generate_new_character(
         self, project: Project, character_specification: str,
         plot_context: str, db: AsyncSession,
-        provider: Optional[str] = None, model: Optional[str] = None
-    ) -> Dict[str, Any]:
+        provider: str | None = None, model: str | None = None
+    ) -> dict[str, Any]:
         characters_result = await db.execute(
             select(Character).where(Character.project_id == project.id))
         characters = characters_result.scalars().all()

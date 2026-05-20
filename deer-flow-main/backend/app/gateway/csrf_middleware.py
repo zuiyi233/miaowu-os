@@ -6,13 +6,15 @@ State-changing operations require CSRF protection.
 
 import os
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from urllib.parse import urlsplit
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp
+
+from app.gateway.config import get_gateway_config
 
 CSRF_COOKIE_NAME = "csrf_token"
 CSRF_HEADER_NAME = "X-CSRF-Token"
@@ -93,10 +95,9 @@ def _normalize_origin(origin: str) -> str | None:
     return f"{scheme}://{_host_with_optional_port(parsed.hostname, port, scheme)}"
 
 
-def _configured_cors_origins() -> set[str]:
-    """Return explicit configured browser origins that may call auth routes."""
+def _normalized_explicit_origins(raw_origins: Iterable[str]) -> set[str]:
     origins = set()
-    for raw_origin in os.environ.get("GATEWAY_CORS_ORIGINS", "").split(","):
+    for raw_origin in raw_origins:
         origin = raw_origin.strip()
         if not origin or origin == "*":
             continue
@@ -104,6 +105,20 @@ def _configured_cors_origins() -> set[str]:
         if normalized:
             origins.add(normalized)
     return origins
+
+
+def _configured_cors_origins() -> set[str]:
+    """Return explicit configured browser origins that may call auth routes."""
+    configured_origins = set(get_gateway_config().cors_origins)
+
+    # Compatibility for older local-dev and upstream-style deployments.  Keep
+    # CORS_ORIGINS as the primary source so app CORS and auth-origin policy stay
+    # aligned in Miaowu local dev.
+    gateway_origins = os.environ.get("GATEWAY_CORS_ORIGINS")
+    if gateway_origins:
+        configured_origins.update(gateway_origins.split(","))
+
+    return _normalized_explicit_origins(configured_origins)
 
 
 def _first_header_value(value: str | None) -> str | None:

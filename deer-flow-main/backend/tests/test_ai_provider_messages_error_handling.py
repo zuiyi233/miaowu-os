@@ -23,6 +23,7 @@ def _load_ai_provider_module(monkeypatch):
     """Load ai_provider with lightweight stubs to avoid import cycles in tests."""
     fake_settings_module = types.ModuleType("app.gateway.novel_migrated.api.settings")
     fake_settings_module.get_user_ai_service = lambda: None
+    fake_settings_module.get_user_ai_service_with_overrides = lambda *args, **kwargs: None
 
     fake_ai_service_module = types.ModuleType("app.gateway.novel_migrated.services.ai_service")
     fake_ai_service_module.AIService = object

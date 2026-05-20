@@ -43,7 +43,7 @@ async def test_wizard_stream_world_building_and_project_detail(monkeypatch: pyte
     async def fake_ensure_project_default_style(*, db, project_id: str) -> None:
         _ = (db, project_id)
 
-    async def fake_generate_world(*, db, user_id: str, project: Project, progress_callback=None, progress_range=(0, 100), raise_on_error=False):
+    async def fake_generate_world(*, db, user_id: str, project: Project, progress_callback=None, progress_range=(0, 100), raise_on_error=False, **kwargs):
         _ = (db, user_id, raise_on_error)
         project.world_time_period = '未来纪元'
         project.world_location = '环城聚落'

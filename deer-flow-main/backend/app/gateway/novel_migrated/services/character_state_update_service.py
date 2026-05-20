@@ -1,13 +1,14 @@
 """角色状态更新服务 - 从章节分析自动更新角色状态/关系/组织成员"""
-from typing import Dict, Any, List, Optional
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 import json
+from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.character import Character
 from app.gateway.novel_migrated.models.memory import PlotAnalysis
-from app.gateway.novel_migrated.models.relationship import CharacterRelationship, Organization, OrganizationMember
-from app.gateway.novel_migrated.core.logger import get_logger
+from app.gateway.novel_migrated.models.relationship import CharacterRelationship
 
 logger = get_logger(__name__)
 
@@ -16,7 +17,7 @@ class CharacterStateUpdateService:
 
     async def update_character_states_from_analysis(
         self, analysis: PlotAnalysis, project_id: str, db: AsyncSession
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         result = {"characters_updated": 0, "relationships_updated": 0, "org_memberships_updated": 0}
         if not analysis or not analysis.character_states:
             return result
@@ -30,7 +31,7 @@ class CharacterStateUpdateService:
                 return result
 
             characters_result = await db.execute(
-                select(Character).where(Character.project_id == project.id))
+                select(Character).where(Character.project_id == project_id))
             characters_map = {c.name: c for c in characters_result.scalars().all()}
 
             for state in character_states:
@@ -65,7 +66,7 @@ class CharacterStateUpdateService:
 
     async def update_relationships_from_analysis(
         self, analysis: PlotAnalysis, project_id: str, db: AsyncSession
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         result = {"relationships_updated": 0}
         if not analysis:
             return result
@@ -119,7 +120,7 @@ class CharacterStateUpdateService:
 
     async def update_all_from_analysis(
         self, analysis: PlotAnalysis, project_id: str, db: AsyncSession
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         char_result = await self.update_character_states_from_analysis(analysis, project_id, db)
         rel_result = await self.update_relationships_from_analysis(analysis, project_id, db)
         return {

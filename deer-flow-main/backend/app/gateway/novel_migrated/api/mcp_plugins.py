@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id
@@ -30,14 +29,14 @@ class MCPPluginCreateRequest(BaseModel):
 
 
 class MCPPluginUpdateRequest(BaseModel):
-    display_name: Optional[str] = None
-    plugin_type: Optional[str] = None
-    server_url: Optional[str] = None
-    command: Optional[str] = None
-    args: Optional[str] = None
-    env: Optional[str] = None
-    enabled: Optional[bool] = None
-    status: Optional[str] = None
+    display_name: str | None = None
+    plugin_type: str | None = None
+    server_url: str | None = None
+    command: str | None = None
+    args: str | None = None
+    env: str | None = None
+    enabled: bool | None = None
+    status: str | None = None
 
 
 class MCPPluginTestRequest(BaseModel):
@@ -48,7 +47,7 @@ class MCPPluginTestRequest(BaseModel):
 async def list_plugins(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
-    enabled: Optional[bool] = None,
+    enabled: bool | None = None,
 ):
     query = select(MCPPlugin).where(MCPPlugin.user_id == user_id)
     if enabled is not None:

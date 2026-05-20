@@ -6,15 +6,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.gateway.novel_migrated.services import book_import_service as book_import_service_module
 from app.gateway.novel_migrated.schemas.book_import import (
     BookImportApplyRequest,
     BookImportChapter,
     BookImportOutline,
     BookImportPreviewResponse,
-    BookImportRetryRequest,
     ProjectSuggestion,
 )
+from app.gateway.novel_migrated.services import book_import_service as book_import_service_module
 
 
 class _ScalarResult:

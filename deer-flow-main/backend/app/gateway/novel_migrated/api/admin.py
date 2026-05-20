@@ -15,17 +15,16 @@
 """
 from __future__ import annotations
 
-import bcrypt
 import hashlib
+import logging
 import secrets
 import string
-import logging
-from typing import Optional, List
 
-from fastapi import APIRouter, HTTPException, Request, Depends
+import bcrypt
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.user_context import get_request_user_id, resolve_user_id
@@ -42,18 +41,18 @@ class CreateUserRequest(BaseModel):
     """创建用户请求"""
     username: str = Field(..., min_length=3, max_length=20, description="用户名")
     display_name: str = Field(..., min_length=2, max_length=50, description="显示名称")
-    password: Optional[str] = Field(None, min_length=6, description="初始密码，留空则自动生成")
-    avatar_url: Optional[str] = Field(None, description="头像URL")
+    password: str | None = Field(None, min_length=6, description="初始密码，留空则自动生成")
+    avatar_url: str | None = Field(None, description="头像URL")
     trust_level: int = Field(0, ge=-1, le=9, description="信任等级（-1=禁用）")
     is_admin: bool = Field(False, description="是否为管理员")
 
 
 class UpdateUserRequest(BaseModel):
     """更新用户请求"""
-    display_name: Optional[str] = Field(None, min_length=2, max_length=50)
-    avatar_url: Optional[str] = None
-    trust_level: Optional[int] = Field(None, ge=-1, le=9)
-    is_admin: Optional[bool] = None
+    display_name: str | None = Field(None, min_length=2, max_length=50)
+    avatar_url: str | None = None
+    trust_level: int | None = Field(None, ge=-1, le=9)
+    is_admin: bool | None = None
 
 
 class ToggleStatusRequest(BaseModel):
@@ -63,7 +62,7 @@ class ToggleStatusRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     """重置密码请求"""
-    new_password: Optional[str] = Field(None, min_length=6, description="新密码，留空则自动生成")
+    new_password: str | None = Field(None, min_length=6, description="新密码，留空则自动生成")
 
 
 class UserResponse(BaseModel):
@@ -71,13 +70,13 @@ class UserResponse(BaseModel):
     user_id: str
     username: str
     display_name: str
-    avatar_url: Optional[str]
+    avatar_url: str | None
     trust_level: int
     is_admin: bool
     is_active: bool
-    linuxdo_id: Optional[str]
-    created_at: Optional[str]
-    last_login: Optional[str]
+    linuxdo_id: str | None
+    created_at: str | None
+    last_login: str | None
 
 
 class CreateUserResponse(BaseModel):
@@ -85,7 +84,7 @@ class CreateUserResponse(BaseModel):
     success: bool
     message: str
     user: dict
-    default_password: Optional[str] = None
+    default_password: str | None = None
 
 
 # ==================== 权限检查 ====================
@@ -289,7 +288,7 @@ async def update_user(
             # 检查是否是最后一个管理员
             if db_user.is_admin and not data.is_admin:
                 admin_count_result = await db.execute(
-                    select(func.count(User.user_id)).where(User.is_admin == True)
+                    select(func.count(User.user_id)).where(User.is_admin)
                 )
                 admin_count = admin_count_result.scalar_one()
                 if admin_count <= 1:
@@ -442,7 +441,7 @@ async def delete_user(
         # 检查是否是最后一个管理员
         if target_user.is_admin:
             admin_count_result = await db.execute(
-                select(func.count(User.user_id)).where(User.is_admin == True)
+                select(func.count(User.user_id)).where(User.is_admin)
             )
             admin_count = admin_count_result.scalar_one()
             if admin_count <= 1:

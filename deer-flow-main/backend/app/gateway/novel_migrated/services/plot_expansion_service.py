@@ -1,16 +1,17 @@
 """大纲剧情展开服务 - 将大纲节点展开为多个章节"""
-from typing import List, Dict, Any, Optional
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
 import json
+from typing import Any
 
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.gateway.novel_migrated.core.logger import get_logger
+from app.gateway.novel_migrated.models.chapter import Chapter
+from app.gateway.novel_migrated.models.character import Character
 from app.gateway.novel_migrated.models.outline import Outline
 from app.gateway.novel_migrated.models.project import Project
-from app.gateway.novel_migrated.models.character import Character
-from app.gateway.novel_migrated.models.chapter import Chapter
 from app.gateway.novel_migrated.services.ai_service import AIService
 from app.gateway.novel_migrated.services.prompt_service import PromptService
-from app.gateway.novel_migrated.core.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -23,10 +24,10 @@ class PlotExpansionService:
     async def analyze_outline_for_chapters(
         self, outline: Outline, project: Project, db: AsyncSession,
         target_chapter_count: int = 3, expansion_strategy: str = "balanced",
-        enable_scene_analysis: bool = True, provider: Optional[str] = None,
-        model: Optional[str] = None, batch_size: int = 5,
+        enable_scene_analysis: bool = True, provider: str | None = None,
+        model: str | None = None, batch_size: int = 5,
         progress_callback=None
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         logger.info(f"Analyzing outline {outline.id}, target {target_chapter_count} chapters")
         if target_chapter_count <= batch_size:
             return await self._generate_chapters_single_batch(
@@ -39,7 +40,7 @@ class PlotExpansionService:
     async def _generate_chapters_single_batch(
         self, outline, project, db, target_chapter_count, expansion_strategy,
         enable_scene_analysis, provider, model
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         characters_result = await db.execute(select(Character).where(Character.project_id == project.id))
         characters = characters_result.scalars().all()
         characters_info = "\n".join([
@@ -73,7 +74,7 @@ class PlotExpansionService:
     async def _generate_chapters_in_batches(
         self, outline, project, db, target_chapter_count, expansion_strategy,
         enable_scene_analysis, provider, model, batch_size, progress_callback
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         total_batches = (target_chapter_count + batch_size - 1) // batch_size
         logger.info(f"Batch plan: {target_chapter_count} chapters in {total_batches} batches")
 
@@ -136,9 +137,9 @@ class PlotExpansionService:
         return all_plans
 
     async def create_chapters_from_plans(
-        self, outline_id: str, chapter_plans: List[Dict[str, Any]],
+        self, outline_id: str, chapter_plans: list[dict[str, Any]],
         project_id: str, db: AsyncSession, start_chapter_number: int = None
-    ) -> List[Chapter]:
+    ) -> list[Chapter]:
         logger.info(f"Creating {len(chapter_plans)} chapters from plans")
 
         if start_chapter_number is None:
@@ -210,7 +211,7 @@ class PlotExpansionService:
             context += f"【后一节】{next_outline.title}: {next_outline.content[:200]}...\n"
         return context if context else "（无前后文）"
 
-    def _parse_expansion_response(self, ai_response: str, outline_id: str) -> List[Dict[str, Any]]:
+    def _parse_expansion_response(self, ai_response: str, outline_id: str) -> list[dict[str, Any]]:
         try:
             cleaned = self.ai_service._clean_json_response(ai_response)
             plans = json.loads(cleaned)
@@ -220,10 +221,14 @@ class PlotExpansionService:
                 plan["outline_id"] = outline_id
                 if "ending_type" not in plan:
                     ng = plan.get("narrative_goal", "")
-                    if "悬念" in ng: plan["ending_type"] = "悬念"
-                    elif "冲突" in ng: plan["ending_type"] = "冲突升级"
-                    elif "转折" in ng: plan["ending_type"] = "情节转折"
-                    else: plan["ending_type"] = f"自然过渡-{idx + 1}"
+                    if "悬念" in ng:
+                        plan["ending_type"] = "悬念"
+                    elif "冲突" in ng:
+                        plan["ending_type"] = "冲突升级"
+                    elif "转折" in ng:
+                        plan["ending_type"] = "情节转折"
+                    else:
+                        plan["ending_type"] = f"自然过渡-{idx + 1}"
                 if not plan.get("key_events"):
                     plan["key_events"] = [f"章节{idx + 1}核心事件"]
             return plans
@@ -240,7 +245,8 @@ class PlotExpansionService:
     async def _renumber_subsequent_chapters(self, project_id, current_outline_id, db):
         current_result = await db.execute(select(Outline).where(Outline.id == current_outline_id))
         current_outline = current_result.scalar_one_or_none()
-        if not current_outline: return
+        if not current_outline:
+            return
 
         prev_result = await db.execute(
             select(Outline).where(Outline.project_id == project_id,

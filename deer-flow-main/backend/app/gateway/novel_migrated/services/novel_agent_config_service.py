@@ -14,7 +14,7 @@ from typing import Any, TypedDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.novel_migrated.models.novel_agent_config import NovelAgentConfig, NovelAgentType
+from app.gateway.novel_migrated.models.novel_agent_config import NovelAgentConfig
 from app.gateway.novel_migrated.models.settings import Settings
 
 logger = logging.getLogger(__name__)

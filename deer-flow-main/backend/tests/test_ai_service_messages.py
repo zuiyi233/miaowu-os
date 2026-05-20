@@ -10,7 +10,6 @@ Also verifies backward compatibility with existing string-prompt methods.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

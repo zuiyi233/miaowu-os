@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.gateway.deps import get_config
 from app.gateway.routers import skills as skills_router
 from deerflow.skills.storage import get_or_new_skill_storage
 from deerflow.skills.types import Skill
@@ -42,6 +43,13 @@ def _make_skill_archive(tmp_path: Path, name: str, content: str | None = None) -
     with zipfile.ZipFile(archive, "w") as zf:
         zf.writestr(f"{name}/SKILL.md", skill_content)
     return archive
+
+
+def _make_test_app(config: SimpleNamespace) -> FastAPI:
+    app = FastAPI()
+    app.dependency_overrides[get_config] = lambda: config
+    app.include_router(skills_router.router)
+    return app
 
 
 def test_install_skill_archive_runs_security_scan(monkeypatch, tmp_path):
@@ -336,7 +344,10 @@ def test_update_skill_refreshes_prompt_cache_before_return(monkeypatch, tmp_path
         refresh_calls.append("refresh")
         enabled_state["value"] = False
 
-    monkeypatch.setattr("app.gateway.routers.skills.load_skills", _load_skills)
+    monkeypatch.setattr(
+        "app.gateway.routers.skills.get_or_new_skill_storage",
+        lambda **kwargs: SimpleNamespace(load_skills=_load_skills),
+    )
     monkeypatch.setattr(
         "app.gateway.routers.skills.get_extensions_config",
         lambda: SimpleNamespace(mcp_servers={}, skills={}, features={}),

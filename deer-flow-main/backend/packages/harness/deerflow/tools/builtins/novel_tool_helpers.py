@@ -208,6 +208,8 @@ def _ok(data: dict[str, Any], **extra: Any) -> dict[str, Any]:
     conflicts: dict[str, Any] = {}
     for key, value in extra.items():
         if key == "success":
+            if value is not True:
+                conflicts[key] = value
             continue
         if key in result and result[key] != value:
             conflicts[key] = value

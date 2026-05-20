@@ -3,6 +3,8 @@
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
+import app.gateway.config as gateway_config
+
 from app.gateway.csrf_middleware import CSRFMiddleware
 
 
@@ -155,14 +157,42 @@ def test_auth_post_allows_explicit_configured_origin(monkeypatch):
     assert response.cookies.get("csrf_token")
 
 
+def test_auth_post_allows_local_dev_origin_from_cors_origins(monkeypatch):
+    original_config = gateway_config._gateway_config
+    gateway_config._gateway_config = None
+    monkeypatch.setenv(
+        "CORS_ORIGINS",
+        "http://localhost:4560,http://127.0.0.1:4560",
+    )
+    monkeypatch.delenv("GATEWAY_CORS_ORIGINS", raising=False)
+    client = TestClient(_make_app(), base_url="http://127.0.0.1:8551")
+
+    try:
+        response = client.post(
+            "/api/v1/auth/login/local",
+            headers={"Origin": "http://localhost:4560"},
+        )
+    finally:
+        gateway_config._gateway_config = original_config
+
+    assert response.status_code == 200
+    assert response.cookies.get("csrf_token")
+
+
 def test_auth_post_does_not_treat_wildcard_cors_as_allowed_origin(monkeypatch):
+    original_config = gateway_config._gateway_config
+    gateway_config._gateway_config = None
+    monkeypatch.setenv("CORS_ORIGINS", "*")
     monkeypatch.setenv("GATEWAY_CORS_ORIGINS", "*")
     client = TestClient(_make_app(), base_url="https://api.example")
 
-    response = client.post(
-        "/api/v1/auth/login/local",
-        headers={"Origin": "https://evil.example"},
-    )
+    try:
+        response = client.post(
+            "/api/v1/auth/login/local",
+            headers={"Origin": "https://evil.example"},
+        )
+    finally:
+        gateway_config._gateway_config = original_config
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Cross-site auth request denied."

@@ -1,7 +1,7 @@
 """生成历史记录模型"""
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.sql import func
 
 from app.gateway.novel_migrated.core.database import Base

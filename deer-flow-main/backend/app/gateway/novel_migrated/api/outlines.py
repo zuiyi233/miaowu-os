@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -31,15 +31,15 @@ router = APIRouter(prefix="/outlines", tags=["outlines"])
 class OutlineCreateRequest(BaseModel):
     title: str
     content: str
-    structure: Optional[str] = None
-    order_index: Optional[int] = None
+    structure: str | None = None
+    order_index: int | None = None
 
 
 class OutlineUpdateRequest(BaseModel):
-    title: Optional[str] = None
-    content: Optional[str] = None
-    structure: Optional[str] = None
-    order_index: Optional[int] = None
+    title: str | None = None
+    content: str | None = None
+    structure: str | None = None
+    order_index: int | None = None
 
 
 class OutlineContinueRequest(BaseModel):

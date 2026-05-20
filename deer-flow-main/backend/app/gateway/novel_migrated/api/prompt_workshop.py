@@ -21,7 +21,6 @@ import logging
 import uuid
 from datetime import datetime
 from functools import lru_cache
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -73,7 +72,7 @@ def _is_workshop_server() -> bool:
 
 class ImportRequest(BaseModel):
     """导入请求"""
-    custom_name: Optional[str] = Field(None, description="自定义名称")
+    custom_name: str | None = Field(None, description="自定义名称")
 
 
 class DownloadRequest(BaseModel):
@@ -85,39 +84,39 @@ class DownloadRequest(BaseModel):
 class PromptSubmissionCreate(BaseModel):
     """提交请求"""
     name: str = Field(..., min_length=1, max_length=100, description="名称")
-    description: Optional[str] = Field(None, max_length=500, description="描述")
+    description: str | None = Field(None, max_length=500, description="描述")
     prompt_content: str = Field(..., min_length=10, description="提示词内容")
     category: str = Field("general", description="分类")
-    tags: Optional[list] = Field(None, description="标签列表")
-    author_display_name: Optional[str] = Field(None, description="希望显示的作者名")
+    tags: list | None = Field(None, description="标签列表")
+    author_display_name: str | None = Field(None, description="希望显示的作者名")
     is_anonymous: bool = Field(False, description="是否匿名发布")
 
 
 class ReviewRequest(BaseModel):
     """审核请求"""
     action: str = Field(..., pattern="^(approve|reject)$", description="操作：approve/reject")
-    category: Optional[str] = Field(None, description="分类（通过时指定）")
-    tags: Optional[list] = Field(None, description="标签（通过时指定）")
-    review_note: Optional[str] = Field(None, description="审核备注")
+    category: str | None = Field(None, description="分类（通过时指定）")
+    tags: list | None = Field(None, description="标签（通过时指定）")
+    review_note: str | None = Field(None, description="审核备注")
 
 
 class AdminItemCreate(BaseModel):
     """创建官方提示词请求"""
     name: str = Field(..., description="名称")
-    description: Optional[str] = None
+    description: str | None = None
     prompt_content: str = Field(..., description="内容")
     category: str = Field("general", description="分类")
-    tags: Optional[list] = None
+    tags: list | None = None
 
 
 class AdminItemUpdate(BaseModel):
     """更新提示词请求"""
-    name: Optional[str] = None
-    description: Optional[str] = None
-    prompt_content: Optional[str] = None
-    category: Optional[str] = None
-    tags: Optional[list] = None
-    status: Optional[str] = None
+    name: str | None = None
+    description: str | None = None
+    prompt_content: str | None = None
+    category: str | None = None
+    tags: list | None = None
+    status: str | None = None
 
 
 # ==================== 辅助函数 ====================
@@ -141,7 +140,7 @@ def _get_user_identifier(user_id: str) -> str:
     return f"{instance_id}:{user_id}"
 
 
-def _get_optional_user_identifier(request: Request) -> Optional[str]:
+def _get_optional_user_identifier(request: Request) -> str | None:
     """
     获取可选的用户标识（用于公开API）
     """
@@ -244,9 +243,9 @@ async def get_status():
 @router.get("/items")
 async def get_items(
     request: Request,
-    category: Optional[str] = None,
-    search: Optional[str] = None,
-    tags: Optional[str] = None,
+    category: str | None = None,
+    search: str | None = None,
+    tags: str | None = None,
     sort: str = "newest",
     page: int = 1,
     limit: int = 20,
@@ -278,13 +277,13 @@ async def get_items(
 
 async def _get_items_local(
     db: AsyncSession,
-    category: Optional[str],
-    search: Optional[str],
-    tags: Optional[str],
+    category: str | None,
+    search: str | None,
+    tags: str | None,
     sort: str,
     page: int,
     limit: int,
-    user_identifier: Optional[str],
+    user_identifier: str | None,
 ) -> dict:
     """本地查询提示词列表"""
     query = select(PromptWorkshopItem).where(PromptWorkshopItem.status == "active")
@@ -630,7 +629,7 @@ async def submit_prompt(
 @router.get("/my-submissions")
 async def get_my_submissions(
     request: Request,
-    status: Optional[str] = None,
+    status: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """获取我的提交记录"""
@@ -711,8 +710,8 @@ async def withdraw_submission(
 @router.get("/admin/submissions")
 async def admin_get_submissions(
     request: Request,
-    status: Optional[str] = None,
-    source: Optional[str] = None,
+    status: str | None = None,
+    source: str | None = None,
     page: int = 1,
     limit: int = 20,
     db: AsyncSession = Depends(get_db),
@@ -915,7 +914,7 @@ async def admin_get_stats(
     official_count = await db.execute(
         select(func.count(PromptWorkshopItem.id)).where(
             PromptWorkshopItem.status == "active",
-            PromptWorkshopItem.is_official == True,
+            PromptWorkshopItem.is_official,
         )
     )
     total_official = official_count.scalar_one()

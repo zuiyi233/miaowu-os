@@ -57,7 +57,14 @@ def _resolve_model_name(requested_model_name: str | None = None, *, app_config: 
     return default_model_name
 
 
-def _create_summarization_middleware(*, app_config: AppConfig | None = None) -> DeerFlowSummarizationMiddleware | None:
+def _create_summarization_middleware(
+    *,
+    app_config: AppConfig | None = None,
+    model_name: str | None = None,
+    runtime_model: str | None = None,
+    runtime_base_url: str | None = None,
+    runtime_api_key: str | None = None,
+) -> DeerFlowSummarizationMiddleware | None:
     """Create and configure the summarization middleware from config."""
     resolved_app_config = app_config or get_app_config()
     config = resolved_app_config.summarization
@@ -80,11 +87,30 @@ def _create_summarization_middleware(*, app_config: AppConfig | None = None) -> 
     # Bind "middleware:summarize" tag so RunJournal identifies these LLM calls
     # as middleware rather than lead_agent (SummarizationMiddleware is a
     # LangChain built-in, so we tag the model at creation time).
-    if config.model_name:
-        model = create_chat_model(name=config.model_name, thinking_enabled=False, app_config=resolved_app_config)
+    chat_model_kwargs = {}
+    if runtime_model:
+        chat_model_kwargs["model"] = runtime_model
+    if runtime_base_url:
+        chat_model_kwargs["base_url"] = runtime_base_url
+    if runtime_api_key:
+        chat_model_kwargs["api_key"] = runtime_api_key
+
+    selected_model_name = model_name or config.model_name
+    if selected_model_name:
+        model = create_chat_model(
+            name=selected_model_name,
+            thinking_enabled=False,
+            app_config=resolved_app_config,
+            **chat_model_kwargs,
+        )
     else:
-        model = create_chat_model(thinking_enabled=False, app_config=resolved_app_config)
-    model = model.with_config(tags=["middleware:summarize"])
+        model = create_chat_model(
+            thinking_enabled=False,
+            app_config=resolved_app_config,
+            **chat_model_kwargs,
+        )
+    if hasattr(model, "with_config"):
+        model = model.with_config(tags=["middleware:summarize"])
 
     # Prepare kwargs
     kwargs = {

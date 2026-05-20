@@ -9,12 +9,11 @@ import hashlib
 import json
 import logging
 from datetime import datetime
-from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete
 
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.user_context import get_request_user_id, resolve_user_id
@@ -38,20 +37,20 @@ class PromptTemplateCreate(BaseModel):
     template_key: str = Field(..., description="模板唯一标识")
     template_name: str = Field(..., description="模板名称")
     template_content: str = Field(..., description="模板内容")
-    description: Optional[str] = Field(None, description="模板描述")
-    category: Optional[str] = Field("general", description="分类")
-    parameters: Optional[str] = Field(None, description="参数JSON")
-    is_active: Optional[bool] = Field(True, description="是否启用")
+    description: str | None = Field(None, description="模板描述")
+    category: str | None = Field("general", description="分类")
+    parameters: str | None = Field(None, description="参数JSON")
+    is_active: bool | None = Field(True, description="是否启用")
 
 
 class PromptTemplateUpdate(BaseModel):
     """更新模板请求"""
-    template_name: Optional[str] = None
-    template_content: Optional[str] = None
-    description: Optional[str] = None
-    category: Optional[str] = None
-    parameters: Optional[str] = None
-    is_active: Optional[bool] = None
+    template_name: str | None = None
+    template_content: str | None = None
+    description: str | None = None
+    category: str | None = None
+    parameters: str | None = None
+    is_active: bool | None = None
 
 
 class PromptTemplatePreviewRequest(BaseModel):
@@ -65,8 +64,8 @@ class PromptTemplatePreviewRequest(BaseModel):
 @router.get("")
 async def get_all_templates(
     request: Request,
-    category: Optional[str] = Query(None, description="按分类筛选"),
-    is_active: Optional[bool] = Query(None, description="按启用状态筛选"),
+    category: str | None = Query(None, description="按分类筛选"),
+    is_active: bool | None = Query(None, description="按启用状态筛选"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -170,7 +169,7 @@ async def get_system_defaults(request: Request):
     """
     获取所有系统默认提示词模板
     """
-    user_id = resolve_user_id(get_request_user_id(request))
+    resolve_user_id(get_request_user_id(request))
 
     system_templates = PromptService.get_all_system_templates()
 
@@ -344,7 +343,7 @@ async def preview_template(
     """
     预览提示词模板（渲染变量）
     """
-    user_id = resolve_user_id(get_request_user_id(request))
+    resolve_user_id(get_request_user_id(request))
 
     try:
         rendered = PromptService.format_prompt(data.template_content, **data.parameters)
@@ -370,13 +369,13 @@ async def preview_template(
 
 class ExportRequest(BaseModel):
     """导出请求"""
-    template_keys: Optional[List[str]] = Field(None, description="要导出的模板键名列表（为空则导出全部）")
+    template_keys: list[str] | None = Field(None, description="要导出的模板键名列表（为空则导出全部）")
     include_system_defaults: bool = Field(False, description="是否包含系统默认模板")
 
 
 class ImportTemplatesRequest(BaseModel):
     """导入请求"""
-    templates: List[dict] = Field(..., min_length=1, description="要导入的模板列表")
+    templates: list[dict] = Field(..., min_length=1, description="要导入的模板列表")
     overwrite: bool = Field(False, description="是否覆盖已存在的模板")
 
 

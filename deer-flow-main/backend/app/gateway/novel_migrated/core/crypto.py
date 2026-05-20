@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import base64
 import os
+
 from cryptography.fernet import Fernet, InvalidToken
 
 _FERNET_KEY = (os.environ.get("SETTINGS_ENCRYPTION_KEY") or "").strip()

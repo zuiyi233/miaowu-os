@@ -624,8 +624,8 @@ class TestUpdateMemoryStructuredResponse:
             result = asyncio.run(updater.aupdate_memory([msg, ai_msg]))
 
         assert result is True
-        model.ainvoke.assert_awaited_once()
-        assert model.ainvoke.await_args.kwargs["config"] == {"run_name": "memory_agent"}
+        model.invoke.assert_called_once()
+        assert model.invoke.call_args.kwargs["config"] == {"run_name": "memory_agent"}
 
     def test_correction_hint_injected_when_detected(self):
         updater = MemoryUpdater()

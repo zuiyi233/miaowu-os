@@ -1,13 +1,12 @@
 """MCP插件测试服务"""
 from __future__ import annotations
 
-import json
-from typing import Dict, Any, Optional, List
+from typing import Any
 
+from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.mcp_plugin import MCPPlugin
 from app.gateway.novel_migrated.services.ai_service import AIService
 from app.gateway.novel_migrated.services.prompt_service import PromptService
-from app.gateway.novel_migrated.core.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -17,7 +16,7 @@ class MCPTestService:
     def __init__(self, ai_service: AIService):
         self.ai_service = ai_service
 
-    async def test_plugin(self, plugin: MCPPlugin) -> Dict[str, Any]:
+    async def test_plugin(self, plugin: MCPPlugin) -> dict[str, Any]:
         result = {
             "plugin_name": plugin.plugin_name,
             "plugin_type": plugin.plugin_type,
@@ -64,7 +63,7 @@ class MCPTestService:
 
         return result
 
-    async def test_plugin_connection(self, plugin: MCPPlugin) -> Dict[str, Any]:
+    async def test_plugin_connection(self, plugin: MCPPlugin) -> dict[str, Any]:
         result = {"plugin_name": plugin.plugin_name, "connection_status": "unknown", "error": None}
 
         try:

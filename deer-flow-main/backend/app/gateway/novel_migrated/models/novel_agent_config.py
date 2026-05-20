@@ -5,7 +5,7 @@ Allows users to configure different models for writer, critic, polish, outline, 
 """
 
 import uuid
-from enum import Enum
+from enum import StrEnum
 
 from sqlalchemy import Boolean, Column, DateTime, Float, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.sql import func
@@ -13,7 +13,7 @@ from sqlalchemy.sql import func
 from app.gateway.novel_migrated.core.database import Base
 
 
-class NovelAgentType(str, Enum):
+class NovelAgentType(StrEnum):
     """Supported novel agent task types."""
 
     WRITER = "writer"

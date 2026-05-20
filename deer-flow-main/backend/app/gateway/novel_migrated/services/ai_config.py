@@ -1,13 +1,14 @@
 """AI配置管理服务"""
 from __future__ import annotations
 
-from typing import Dict, Any, Optional
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from typing import Any
 
-from app.gateway.novel_migrated.models.settings import Settings
-from app.gateway.novel_migrated.core.crypto import safe_decrypt, encrypt_secret, is_encryption_enabled
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.gateway.novel_migrated.core.crypto import encrypt_secret, is_encryption_enabled, safe_decrypt
 from app.gateway.novel_migrated.core.logger import get_logger
+from app.gateway.novel_migrated.models.settings import Settings
 
 logger = get_logger(__name__)
 
@@ -47,7 +48,7 @@ PROVIDER_PRESETS = {
 
 class AIConfigService:
 
-    async def get_user_config(self, user_id: str, db: AsyncSession) -> Dict[str, Any]:
+    async def get_user_config(self, user_id: str, db: AsyncSession) -> dict[str, Any]:
         result = await db.execute(select(Settings).where(Settings.user_id == user_id))
         settings = result.scalar_one_or_none()
         if not settings:
@@ -62,7 +63,7 @@ class AIConfigService:
             "system_prompt": settings.system_prompt,
         }
 
-    async def update_user_config(self, user_id: str, config: Dict[str, Any], db: AsyncSession) -> Settings:
+    async def update_user_config(self, user_id: str, config: dict[str, Any], db: AsyncSession) -> Settings:
         result = await db.execute(select(Settings).where(Settings.user_id == user_id))
         settings = result.scalar_one_or_none()
         if not settings:
@@ -82,7 +83,7 @@ class AIConfigService:
         await db.refresh(settings)
         return settings
 
-    async def apply_preset(self, user_id: str, provider: str, db: AsyncSession) -> Dict[str, Any]:
+    async def apply_preset(self, user_id: str, provider: str, db: AsyncSession) -> dict[str, Any]:
         preset = PROVIDER_PRESETS.get(provider)
         if not preset:
             raise ValueError(f"Unknown provider: {provider}")
@@ -101,7 +102,7 @@ class AIConfigService:
         await db.commit()
         return preset
 
-    def get_available_presets(self) -> Dict[str, Dict[str, str]]:
+    def get_available_presets(self) -> dict[str, dict[str, str]]:
         return PROVIDER_PRESETS.copy()
 
 

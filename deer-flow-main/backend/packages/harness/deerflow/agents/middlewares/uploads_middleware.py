@@ -221,7 +221,12 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
                 thread_id = get_config().get("configurable", {}).get("thread_id")
             except RuntimeError:
                 pass  # get_config() raises outside a runnable context (e.g. unit tests)
-        uploads_dir = self._paths.sandbox_uploads_dir(thread_id) if thread_id else None
+        if thread_id:
+            from deerflow.runtime.user_context import get_effective_user_id
+
+            uploads_dir = self._paths.sandbox_uploads_dir(thread_id, user_id=get_effective_user_id())
+        else:
+            uploads_dir = None
 
         # Get newly uploaded files from the current message's additional_kwargs.files
         new_files = self._files_from_kwargs(last_message, uploads_dir) or []

@@ -10,25 +10,25 @@ Tests cover:
 from __future__ import annotations
 
 import json
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from app.gateway.novel_migrated.models.novel_agent_config import NovelAgentConfig, NovelAgentType
 from app.gateway.novel_migrated.models.settings import Settings
 from app.gateway.novel_migrated.services.novel_agent_config_service import (
+    DEFAULT_AGENT_CONFIGS,
     MAX_MAX_TOKENS,
     MAX_TEMPERATURE,
     MIN_MAX_TOKENS,
     MIN_TEMPERATURE,
     NovelAgentConfigService,
     _build_presets_from_deployed_models,
-    _classify_models,
     _clamp_max_tokens,
     _clamp_temperature,
+    _classify_models,
     _get_deployed_models,
-    DEFAULT_AGENT_CONFIGS,
 )
-
 
 # ==================== Fixtures ====================
 

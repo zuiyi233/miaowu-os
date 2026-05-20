@@ -8,12 +8,13 @@ from app.gateway.novel_migrated.services.ai_service import _make_cache_key
 def test_make_cache_key_hashes_api_key() -> None:
     api_key = "sk-test-plaintext"
     base_url = "https://api.example.com/v1"
-    key = _make_cache_key("gpt-4o-mini", base_url=base_url, api_key=api_key)
+    key = _make_cache_key("gpt-4o-mini", base_url=base_url, api_key=api_key, cache_scope=(123, None))
 
     assert isinstance(key, tuple)
-    assert len(key) == 3
+    assert len(key) == 5
     assert key[0] == "gpt-4o-mini"
     assert key[1] == base_url
+    assert key[3:] == ("thread:123", "loop:none")
 
     # Ensure the plaintext secret never appears in the cache key.
     assert api_key not in "|".join(key)
@@ -25,14 +26,13 @@ def test_make_cache_key_hashes_api_key() -> None:
 def test_make_cache_key_is_stable_and_unique_per_api_key() -> None:
     base_url = "https://api.example.com/v1"
 
-    key1 = _make_cache_key("gpt-4o-mini", base_url=base_url, api_key="sk-a")
-    key2 = _make_cache_key("gpt-4o-mini", base_url=base_url, api_key="sk-b")
-    key3 = _make_cache_key("gpt-4o-mini", base_url=base_url, api_key="sk-a")
+    key1 = _make_cache_key("gpt-4o-mini", base_url=base_url, api_key="sk-a", cache_scope=(123, 456))
+    key2 = _make_cache_key("gpt-4o-mini", base_url=base_url, api_key="sk-b", cache_scope=(123, 456))
+    key3 = _make_cache_key("gpt-4o-mini", base_url=base_url, api_key="sk-a", cache_scope=(123, 456))
 
     assert key1 != key2
     assert key1 == key3
 
 
 def test_make_cache_key_without_overrides_is_minimal() -> None:
-    assert _make_cache_key("gpt-4o-mini") == ("gpt-4o-mini",)
-
+    assert _make_cache_key("gpt-4o-mini", cache_scope=(123, None)) == ("gpt-4o-mini", "thread:123", "loop:none")

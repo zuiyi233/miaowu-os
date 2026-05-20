@@ -13,8 +13,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.deps import get_checkpointer
-from deerflow.media import draft_media_store
 from app.gateway.novel_migrated.core.database import get_db
+from deerflow.media import draft_media_store
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ async def _patch_thread_draft_media(
     *,
     request: Request,
     thread_id: str,
-    mutate: "callable[[dict[str, Any]], dict[str, Any]]",
+    mutate: callable[[dict[str, Any]], dict[str, Any]],
     as_node: str,
 ) -> None:
     """Patch thread.channel_values.draft_media by writing a new checkpoint snapshot."""

@@ -1,20 +1,18 @@
-'use client';
+"use client";
 
 import {
   Wand2,
   Loader2,
-  X,
   RotateCcw,
   Sparkles,
   Target,
   PenLine,
-} from 'lucide-react';
-import { useState } from 'react';
-import { toast } from 'sonner';
+} from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -22,14 +20,14 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { cn } from '@/lib/utils';
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 export interface PartialRegenerateConfig {
   instruction: string;
-  mode: 'rewrite' | 'expand' | 'compress' | 'polish' | 'continue';
+  mode: "rewrite" | "expand" | "compress" | "polish" | "continue";
 }
 
 interface PartialRegenerateToolbarProps {
@@ -39,12 +37,42 @@ interface PartialRegenerateToolbarProps {
   className?: string;
 }
 
-const MODE_OPTIONS: Array<{ value: PartialRegenerateConfig['mode']; label: string; icon: React.ReactNode; desc: string }> = [
-  { value: 'rewrite', label: 'AI重写', icon: <Wand2 className="w-3.5 h-3.5" />, desc: '保持原意，重新表达' },
-  { value: 'expand', label: '扩写', icon: <Sparkles className="w-3.5 h-3.5" />, desc: '增加细节和描写' },
-  { value: 'compress', label: '精简', icon: <Target className="w-3.5 h-3.5" />, desc: '删除冗余，保留核心' },
-  { value: 'polish', label: '润色', icon: <PenLine className="w-3.5 h-3.5" />, desc: '优化文风和表达' },
-  { value: 'continue', label: '续写', icon: <RotateCcw className="w-3.5 h-3.5" />, desc: '基于选段继续创作' },
+const MODE_OPTIONS: Array<{
+  value: PartialRegenerateConfig["mode"];
+  label: string;
+  icon: React.ReactNode;
+  desc: string;
+}> = [
+  {
+    value: "rewrite",
+    label: "AI重写",
+    icon: <Wand2 className="h-3.5 w-3.5" />,
+    desc: "保持原意，重新表达",
+  },
+  {
+    value: "expand",
+    label: "扩写",
+    icon: <Sparkles className="h-3.5 w-3.5" />,
+    desc: "增加细节和描写",
+  },
+  {
+    value: "compress",
+    label: "精简",
+    icon: <Target className="h-3.5 w-3.5" />,
+    desc: "删除冗余，保留核心",
+  },
+  {
+    value: "polish",
+    label: "润色",
+    icon: <PenLine className="h-3.5 w-3.5" />,
+    desc: "优化文风和表达",
+  },
+  {
+    value: "continue",
+    label: "续写",
+    icon: <RotateCcw className="h-3.5 w-3.5" />,
+    desc: "基于选段继续创作",
+  },
 ];
 
 export function PartialRegenerateToolbar({
@@ -57,37 +85,44 @@ export function PartialRegenerateToolbar({
 
   if (!selectedText || disabled) return null;
 
-  const textPreview = selectedText.length > 60 ? `${selectedText.slice(0, 60)}...` : selectedText;
+  const textPreview =
+    selectedText.length > 60 ? `${selectedText.slice(0, 60)}...` : selectedText;
 
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-1 rounded-lg border bg-background px-2 py-1 shadow-sm",
+        "bg-background inline-flex items-center gap-1 rounded-lg border px-2 py-1 shadow-sm",
         showModes && "rounded-b-none border-b-0",
-        className
+        className,
       )}
       onMouseLeave={() => setShowModes(false)}
     >
-      <Badge variant="secondary" className="text-xs font-normal shrink-0 max-w-[200px] truncate">
+      <Badge
+        variant="secondary"
+        className="max-w-[200px] shrink-0 truncate text-xs font-normal"
+      >
         已选 {selectedText.length} 字
       </Badge>
-      <span className="text-xs text-muted-foreground truncate hidden sm:inline max-w-[180px]" title={selectedText}>
+      <span
+        className="text-muted-foreground hidden max-w-[180px] truncate text-xs sm:inline"
+        title={selectedText}
+      >
         {textPreview}
       </span>
 
       <Button
         size="sm"
         variant="ghost"
-        className="h-6 px-2 text-xs gap-1"
+        className="h-6 gap-1 px-2 text-xs"
         onMouseEnter={() => setShowModes(true)}
         onClick={() => setShowModes((v) => !v)}
       >
-        <Wand2 className="w-3 h-3" />
+        <Wand2 className="h-3 w-3" />
         AI处理
       </Button>
 
       {showModes && (
-        <div className="absolute left-0 right-0 top-full z-50 flex gap-1 rounded-b-lg border border-t-0 bg-background p-2 shadow-lg">
+        <div className="bg-background absolute top-full right-0 left-0 z-50 flex gap-1 rounded-b-lg border border-t-0 p-2 shadow-lg">
           {MODE_OPTIONS.map((opt) => (
             <Button
               key={opt.value}
@@ -96,7 +131,7 @@ export function PartialRegenerateToolbar({
               className="h-auto flex-col gap-0.5 px-2.5 py-1.5 text-[11px]"
               onClick={() => {
                 setShowModes(false);
-                onOpenModal({ instruction: '', mode: opt.value });
+                onOpenModal({ instruction: "", mode: opt.value });
               }}
             >
               {opt.icon}
@@ -125,21 +160,22 @@ export function PartialRegenerateModal({
   onSubmit,
 }: PartialRegenerateModalProps) {
   const [loading, setLoading] = useState(false);
-  const [instruction, setInstruction] = useState('');
+  const [instruction, setInstruction] = useState("");
 
   if (!config) return null;
 
-  const modeLabel = MODE_OPTIONS.find((m) => m.value === config.mode)?.label || config.mode;
+  const modeLabel =
+    MODE_OPTIONS.find((m) => m.value === config.mode)?.label || config.mode;
 
   const handleSubmit = async () => {
     try {
       setLoading(true);
       await onSubmit({ ...config, instruction });
-      toast.success('文本已更新');
-      setInstruction('');
+      toast.success("文本已更新");
+      setInstruction("");
       onClose();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '操作失败');
+      toast.error(err instanceof Error ? err.message : "操作失败");
     } finally {
       setLoading(false);
     }
@@ -156,7 +192,7 @@ export function PartialRegenerateModal({
         <div className="space-y-4">
           <div className="space-y-1.5">
             <Label className="text-xs">原始文本</Label>
-            <div className="max-h-[120px] overflow-y-auto rounded-md bg-muted/50 p-2.5 text-sm whitespace-pre-wrap">
+            <div className="bg-muted/50 max-h-[120px] overflow-y-auto rounded-md p-2.5 text-sm whitespace-pre-wrap">
               {originalText}
             </div>
           </div>
@@ -173,7 +209,9 @@ export function PartialRegenerateModal({
               value={instruction}
               onChange={(e) => setInstruction(e.target.value)}
             />
-            <p className="text-[11px] text-muted-foreground">{instruction.length}/500</p>
+            <p className="text-muted-foreground text-[11px]">
+              {instruction.length}/500
+            </p>
           </div>
         </div>
 

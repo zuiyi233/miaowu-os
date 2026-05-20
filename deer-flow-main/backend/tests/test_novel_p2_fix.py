@@ -11,13 +11,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
-import json
 import logging
+
 import pytest
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +121,7 @@ class TestUserModels:
         pwd = UserPassword(
             user_id="test-user",
             username="testuser",
-            password_hash=hashlib.sha256("password123".encode()).hexdigest(),
+            password_hash=hashlib.sha256(b"password123").hexdigest(),
         )
 
         assert pwd.user_id == "test-user"
@@ -138,7 +135,7 @@ class TestWorkshopClient:
 
     def test_client_initialization(self):
         """测试客户端初始化"""
-        from app.gateway.novel_migrated.services.workshop_client import WorkshopClient, WorkshopClientError
+        from app.gateway.novel_migrated.services.workshop_client import WorkshopClient
 
         client = WorkshopClient(
             base_url="https://example.com",

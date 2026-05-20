@@ -1,10 +1,11 @@
 """云端提示词工坊 API 客户端（client 模式使用）"""
 from __future__ import annotations
 
-import httpx
 import logging
 import os
-from typing import Optional, Dict, Any
+from typing import Any
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +34,10 @@ class WorkshopClient:
         self,
         method: str,
         path: str,
-        params: Optional[Dict] = None,
-        json: Optional[Dict] = None,
-        user_identifier: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        params: dict | None = None,
+        json: dict | None = None,
+        user_identifier: str | None = None,
+    ) -> dict[str, Any]:
         """发送请求到云端"""
         headers = {
             "X-Instance-ID": self.instance_id,
@@ -82,14 +83,14 @@ class WorkshopClient:
 
     async def get_items(
         self,
-        category: Optional[str] = None,
-        search: Optional[str] = None,
-        tags: Optional[str] = None,
+        category: str | None = None,
+        search: str | None = None,
+        tags: str | None = None,
         sort: str = "newest",
         page: int = 1,
         limit: int = 20,
-        user_identifier: Optional[str] = None,
-    ) -> Dict:
+        user_identifier: str | None = None,
+    ) -> dict:
         """获取提示词列表"""
         params = {
             "sort": sort,
@@ -110,7 +111,7 @@ class WorkshopClient:
             user_identifier=user_identifier,
         )
 
-    async def get_item(self, item_id: str, user_identifier: Optional[str] = None) -> Dict:
+    async def get_item(self, item_id: str, user_identifier: str | None = None) -> dict:
         """获取单个提示词详情"""
         return await self._request(
             "GET",
@@ -118,7 +119,7 @@ class WorkshopClient:
             user_identifier=user_identifier,
         )
 
-    async def record_download(self, item_id: str, user_identifier: str) -> Dict:
+    async def record_download(self, item_id: str, user_identifier: str) -> dict:
         """记录下载"""
         return await self._request(
             "POST",
@@ -130,7 +131,7 @@ class WorkshopClient:
             user_identifier=user_identifier,
         )
 
-    async def toggle_like(self, item_id: str, user_identifier: str) -> Dict:
+    async def toggle_like(self, item_id: str, user_identifier: str) -> dict:
         """点赞/取消点赞"""
         return await self._request(
             "POST",
@@ -142,8 +143,8 @@ class WorkshopClient:
         self,
         user_identifier: str,
         submitter_name: str,
-        data: Dict,
-    ) -> Dict:
+        data: dict,
+    ) -> dict:
         """提交提示词"""
         payload = {
             "instance_id": self.instance_id,
@@ -161,8 +162,8 @@ class WorkshopClient:
     async def get_submissions(
         self,
         user_identifier: str,
-        status: Optional[str] = None,
-    ) -> Dict:
+        status: str | None = None,
+    ) -> dict:
         """获取用户的提交记录"""
         params = {}
         if status:
@@ -179,7 +180,7 @@ class WorkshopClient:
         submission_id: str,
         user_identifier: str,
         force: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """撤回/删除提交"""
         params = {}
         if force:
@@ -217,7 +218,7 @@ def _parse_tls_verify(raw_value: Any) -> bool | str:
 
 
 # 全局客户端实例（延迟初始化）
-_workshop_client: Optional[WorkshopClient] = None
+_workshop_client: WorkshopClient | None = None
 
 
 def get_workshop_client() -> WorkshopClient:

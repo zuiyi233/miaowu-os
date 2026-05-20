@@ -2,22 +2,21 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
-from sqlalchemy import select, func
+from pydantic import BaseModel
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
 from app.gateway.novel_migrated.api.settings import get_user_ai_service
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
-from app.gateway.novel_migrated.models.project import Project
+from app.gateway.novel_migrated.models.career import Career
 from app.gateway.novel_migrated.models.chapter import Chapter
 from app.gateway.novel_migrated.models.character import Character
 from app.gateway.novel_migrated.models.outline import Outline
-from app.gateway.novel_migrated.models.career import Career
+from app.gateway.novel_migrated.models.project import Project
 from app.gateway.novel_migrated.services.ai_service import AIService
 from app.gateway.novel_migrated.services.optimistic_lock import optimistic_update
 from app.gateway.novel_migrated.services.prompt_service import PromptService
@@ -42,21 +41,21 @@ class ProjectCreateRequest(BaseModel):
 
 
 class ProjectUpdateRequest(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    theme: Optional[str] = None
-    genre: Optional[str] = None
-    target_words: Optional[int] = None
-    chapter_count: Optional[int] = None
-    narrative_perspective: Optional[str] = None
-    outline_mode: Optional[str] = None
-    world_time_period: Optional[str] = None
-    world_location: Optional[str] = None
-    world_atmosphere: Optional[str] = None
-    world_rules: Optional[str] = None
-    status: Optional[str] = None
-    wizard_status: Optional[str] = None
-    wizard_step: Optional[int] = None
+    title: str | None = None
+    description: str | None = None
+    theme: str | None = None
+    genre: str | None = None
+    target_words: int | None = None
+    chapter_count: int | None = None
+    narrative_perspective: str | None = None
+    outline_mode: str | None = None
+    world_time_period: str | None = None
+    world_location: str | None = None
+    world_atmosphere: str | None = None
+    world_rules: str | None = None
+    status: str | None = None
+    wizard_status: str | None = None
+    wizard_step: int | None = None
 
 
 class WorldBuildRequest(BaseModel):
@@ -68,7 +67,7 @@ class WorldBuildRequest(BaseModel):
 async def list_projects(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
-    status: Optional[str] = None,
+    status: str | None = None,
     offset: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
 ):
@@ -187,7 +186,6 @@ async def delete_project(
 
     from app.gateway.novel_migrated.models.document_index import DocumentIndex
     from app.gateway.novel_migrated.models.foreshadow import Foreshadow
-    from app.gateway.novel_migrated.models.memory import Memory
     from app.gateway.novel_migrated.models.relationship import CharacterRelationship, Organization, OrganizationMember
     from app.gateway.novel_migrated.services.memory_service import memory_service
     from app.gateway.novel_migrated.services.workspace_document_service import workspace_document_service
@@ -334,12 +332,12 @@ async def get_project_stats(
 
     char_count = await db.execute(
         select(func.count(Character.id)).where(
-            Character.project_id == project_id, Character.is_organization == False))
+            Character.project_id == project_id, not Character.is_organization))
     total_characters = char_count.scalar() or 0
 
     org_count = await db.execute(
         select(func.count(Character.id)).where(
-            Character.project_id == project_id, Character.is_organization == True))
+            Character.project_id == project_id, Character.is_organization))
     total_organizations = org_count.scalar() or 0
 
     outline_count = await db.execute(
@@ -371,8 +369,8 @@ async def get_project_stats(
 @router.put("/{project_id}/wizard")
 async def update_wizard_status(
     project_id: str,
-    wizard_status: Optional[str] = None,
-    wizard_step: Optional[int] = None,
+    wizard_status: str | None = None,
+    wizard_step: int | None = None,
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):

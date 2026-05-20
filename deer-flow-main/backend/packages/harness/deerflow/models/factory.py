@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 from langchain.chat_models import BaseChatModel
 
@@ -32,7 +31,7 @@ def _vllm_disable_chat_template_kwargs(chat_template_kwargs: dict) -> dict:
     return disable_kwargs
 
 
-def _enable_stream_usage_by_default(model_use_path: str, model_settings_from_config: dict) -> None:
+def _enable_stream_usage_by_default(model_use_path: str, model_class: type, model_settings_from_config: dict) -> None:
     """Enable stream usage for OpenAI-compatible models unless explicitly configured.
 
     LangChain only auto-enables ``stream_usage`` for OpenAI models when no custom
@@ -40,15 +39,19 @@ def _enable_stream_usage_by_default(model_use_path: str, model_settings_from_con
     gateways, so token usage tracking would otherwise stay empty and the
     TokenUsageMiddleware would have nothing to log.
     """
-    if model_use_path != "langchain_openai:ChatOpenAI":
-        return
     if "stream_usage" in model_settings_from_config:
         return
-    if "base_url" in model_settings_from_config or "openai_api_base" in model_settings_from_config:
+    model_fields = getattr(model_class, "model_fields", {})
+    supports_stream_usage = (
+        model_use_path == "langchain_openai:ChatOpenAI"
+        or "stream_usage" in model_fields
+        or hasattr(model_class, "stream_usage")
+    )
+    if supports_stream_usage:
         model_settings_from_config["stream_usage"] = True
 
 
-def _normalize_model_name(name: str | object | None) -> Optional[str]:
+def _normalize_model_name(name: str | object | None) -> str | None:
     """Normalize various model selector types into a string model name.
 
     Handles the following cases in order of precedence:
@@ -189,7 +192,7 @@ def create_chat_model(
         kwargs.pop("reasoning_effort", None)
         model_settings_from_config.pop("reasoning_effort", None)
 
-    _enable_stream_usage_by_default(model_config.use, model_settings_from_config)
+    _enable_stream_usage_by_default(model_config.use, model_class, model_settings_from_config)
 
     # For Codex Responses API models: map thinking mode to reasoning_effort
     from deerflow.models.openai_codex_provider import CodexChatModel

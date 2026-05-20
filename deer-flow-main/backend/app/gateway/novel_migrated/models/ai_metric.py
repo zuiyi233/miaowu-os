@@ -1,7 +1,7 @@
 """AI使用统计数据模型"""
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Index
+from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String
 from sqlalchemy.sql import func
 
 from app.gateway.novel_migrated.core.database import Base

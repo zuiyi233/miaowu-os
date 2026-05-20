@@ -81,7 +81,7 @@ class TestAnalyzeChapterInternalContract:
 class TestUserIdResolutionContract:
     @pytest.mark.skipif(not HAS_USER_CONTEXT, reason="user_context module not importable")
     def test_user_id_resolution_chain(self):
-        from app.gateway.novel_migrated.core.user_context import resolve_user_id, get_default_user_id
+        from app.gateway.novel_migrated.core.user_context import get_default_user_id, resolve_user_id
 
         default_user = get_default_user_id()
         assert default_user is not None and len(default_user) > 0, (

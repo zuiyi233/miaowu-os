@@ -1,19 +1,16 @@
 """写作风格管理API"""
 from __future__ import annotations
 
-import json
-from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
-from app.gateway.novel_migrated.models.writing_style import WritingStyle
 from app.gateway.novel_migrated.models.project_default_style import ProjectDefaultStyle
+from app.gateway.novel_migrated.models.writing_style import WritingStyle
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/writing-styles", tags=["writing-styles"])
@@ -22,17 +19,17 @@ router = APIRouter(prefix="/writing-styles", tags=["writing-styles"])
 class WritingStyleCreateRequest(BaseModel):
     name: str
     style_type: str = "custom"
-    preset_id: Optional[str] = None
+    preset_id: str | None = None
     description: str = ""
     prompt_content: str = ""
     order_index: int = 0
 
 
 class WritingStyleUpdateRequest(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    prompt_content: Optional[str] = None
-    order_index: Optional[int] = None
+    name: str | None = None
+    description: str | None = None
+    prompt_content: str | None = None
+    order_index: int | None = None
 
 
 class ProjectDefaultStyleRequest(BaseModel):
@@ -44,7 +41,7 @@ class ProjectDefaultStyleRequest(BaseModel):
 async def list_styles(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
-    style_type: Optional[str] = None,
+    style_type: str | None = None,
 ):
     query = select(WritingStyle).where(WritingStyle.user_id == user_id)
     if style_type:

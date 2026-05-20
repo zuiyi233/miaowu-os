@@ -28,6 +28,7 @@ class _FakeResponse:
 
 class _FakeAsyncClient:
     calls: list[tuple[str, str]] = []
+    is_closed = False
 
     def __init__(self, *args, **kwargs) -> None:
         pass

@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
@@ -34,13 +34,13 @@ def _coerce_mapping(value: Any) -> dict[str, Any]:
     return {}
 
 
-class SessionMode(str, Enum):
+class SessionMode(StrEnum):
     NORMAL = "normal"
     CREATE = "create"
     MANAGE = "manage"
 
 
-class SessionStatus(str, Enum):
+class SessionStatus(StrEnum):
     ACTIVE = "active"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
@@ -48,7 +48,7 @@ class SessionStatus(str, Enum):
     EXPIRED = "expired"
 
 
-class Entity(str, Enum):
+class Entity(StrEnum):
     PROJECT = "project"
     CHAPTER = "chapter"
     OUTLINE = "outline"
@@ -59,7 +59,7 @@ class Entity(str, Enum):
     FORESHADOW = "foreshadow"
 
 
-class Operation(str, Enum):
+class Operation(StrEnum):
     CREATE = "create"
     UPDATE = "update"
     DELETE = "delete"
@@ -68,7 +68,7 @@ class Operation(str, Enum):
     SWITCH = "switch"
 
 
-class ExecuteStatus(str, Enum):
+class ExecuteStatus(StrEnum):
     PENDING = "pending"
     SUCCESS = "success"
     FAILED = "failed"

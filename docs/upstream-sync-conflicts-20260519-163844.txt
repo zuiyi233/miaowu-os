@@ -111,3 +111,50 @@ Known remaining risk
 - Full backend ruff remains blocked by broad pre-existing legacy lint debt outside the upstream sync conflict fixes.
 - Frontend lint still reports 25 warnings for existing unused imports/variables in novel components/tests, but exits successfully with 0 errors.
 - Runtime/browser functional testing was not run in this pass.
+
+Follow-up verification debt cleanup on 2026-05-19
+- Backend ruff debt resolved:
+  uv run ruff check .
+  Result: passed.
+- Frontend lint warning debt resolved:
+  pnpm lint
+  Result: passed with 0 reported warnings/errors.
+- Frontend type/unit regression after cleanup:
+  pnpm tsc --noEmit && pnpm test
+  Result: passed; vitest reported 42 files passed and 145 tests passed.
+- Targeted frontend Prettier for files changed during warning cleanup:
+  pnpm prettier --check <changed novel component/test files>
+  Result: passed.
+- Backend targeted regression after lint/test contract cleanup:
+  uv run pytest -q tests/test_ai_provider_messages_error_handling.py tests/test_ai_service_cache_key.py tests/test_aio_sandbox_provider.py tests/test_auth_type_system.py::test_csrf_cookie_secure_on_https tests/test_auth_type_system.py::test_csrf_cookie_not_secure_on_http tests/test_checkpointer.py::TestHarnessPackaging tests/test_claude_caching_config.py tests/test_gateway_docs_toggle.py::test_health_still_works_when_docs_disabled tests/test_models_router_user_settings.py tests/test_client_e2e.py::TestFileUploadIntegration::test_upload_files tests/test_uploads_middleware_core_logic.py tests/test_dev_entrypoint.py tests/test_dingtalk_channel.py::TestChannelRegistration tests/test_novel_wizard_stream_router.py tests/test_novel_tool_helpers.py tests/test_local_sandbox_provider_mounts.py::TestMultipleMounts::test_execute_command_path_replacement tests/test_model_factory.py::test_stream_usage_injected_for_openai_compatible_model tests/test_lead_agent_model_resolution.py::test_create_summarization_middleware_forwards_runtime_provider_model_override tests/test_lead_agent_model_resolution.py::test_create_summarization_middleware_registers_memory_flush_hook_when_memory_enabled tests/test_lead_agent_model_resolution.py::test_create_summarization_middleware_passes_skill_read_tool_names tests/test_memory_queue_user_isolation.py tests/test_memory_updater.py::TestUpdateMemoryStructuredResponse::test_async_update_memory_delegates_to_sync
+  Result: all listed targeted tests passed in individual runs.
+- Backend deterministic full pytest with live LLM tests skipped:
+  CI=1 uv run pytest -q
+  Result: 3695 passed, 24 skipped, 3 failed, 46 warnings.
+  Remaining failures:
+  1. tests/test_feedback.py::TestFollowUpAssociation::test_follow_up_auto_detection_logic[asyncio]
+     Current MemoryRunStore.list_by_thread(limit=1) returns the latest successful run rather than the newest run regardless of status. A read-only comparison against D:\deer-flow-main showed this failure exists in the original checkout too, so it is tracked as existing run-store/test-contract drift rather than an upstream sync conflict fix regression.
+  2. tests/test_gateway_memory_worker_lifecycle.py::test_langgraph_runtime_starts_and_stops_memory_worker[asyncio]
+     The test calls langgraph_runtime(FastAPI()) without app.state.config; current runtime intentionally raises RuntimeError when config is missing. This matches the original checkout behavior and is tracked as test-contract drift.
+  3. tests/test_harness_boundary.py::test_harness_does_not_import_app
+     Harness middleware still imports app.gateway.novel_migrated.services.ai_service from packages/harness/deerflow/agents/middlewares/llm_error_handling_middleware.py. The same boundary violation exists in the original checkout; resolving it requires an architectural dependency split and was not folded into this sync-risk cleanup.
+- Runtime smoke after cleanup:
+  scripts\dev-local.bat restart -View single
+  scripts\dev-local.bat status
+  Result: backend 8551 alive, frontend 4560 alive.
+  HTTP checks:
+  http://127.0.0.1:4560 returned 200.
+  http://127.0.0.1:8551/api/v1/auth/setup-status returned {"needs_setup":false}.
+  http://127.0.0.1:8551/api/models returned 401 not_authenticated, confirming protected gateway/auth path is alive.
+- Browser/screenshot check:
+  pnpm exec playwright screenshot -b chromium --channel msedge --wait-for-timeout 1000 http://127.0.0.1:4560/ %TEMP%\miaowu-home.png
+  Result: screenshot captured successfully.
+  HTML smoke: title "MiaoWu Novel - AI 驱动的小说创作与阅读平台", ad-pattern match false.
+- Spam/boot-notice cleanup check:
+  rg -n "175877552|通.{0,4}知.{0,4}群|公益.{0,8}(τ|t|T|token|Token|TOKEN)|开机广告" . -g "!*node_modules*" -g "!*.lock"
+  Result: no matches.
+
+Known remaining risk after follow-up
+- Full backend pytest still has 3 failures listed above. They are not treated as this sync conflict cleanup's introduced regressions, but they remain real blockers if the project requires a completely green full backend suite.
+- Live LLM e2e tests are skipped under CI=1. Without CI=1, tests/test_client_e2e.py::TestBasicChat::test_basic_chat enters a real LLM call because OPENAI_API_KEY is present in the environment; that path was not used as a deterministic local gate.
+- Local dev services were restarted and left running for manual inspection: backend 8551 and frontend 4560.

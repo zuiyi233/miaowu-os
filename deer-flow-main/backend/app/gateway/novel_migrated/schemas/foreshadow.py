@@ -1,11 +1,11 @@
 """伏笔管理 Pydantic Schema"""
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class ForeshadowStatus(str, Enum):
+class ForeshadowStatus(StrEnum):
     """伏笔状态枚举"""
     PENDING = "pending"  # 待埋入
     PLANTED = "planted"  # 已埋入
@@ -14,13 +14,13 @@ class ForeshadowStatus(str, Enum):
     ABANDONED = "abandoned"  # 已废弃
 
 
-class ForeshadowSourceType(str, Enum):
+class ForeshadowSourceType(StrEnum):
     """伏笔来源类型"""
     ANALYSIS = "analysis"  # 分析提取
     MANUAL = "manual"  # 手动添加
 
 
-class ForeshadowCategory(str, Enum):
+class ForeshadowCategory(StrEnum):
     """伏笔分类"""
     IDENTITY = "identity"  # 身世
     MYSTERY = "mystery"  # 悬念

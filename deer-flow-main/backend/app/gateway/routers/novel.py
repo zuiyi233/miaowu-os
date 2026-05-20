@@ -1005,7 +1005,8 @@ async def delete_novel(novel_id: str):
         return {"deleted": True}
 
     try:
-        from sqlalchemy import delete as sa_delete, select
+        from sqlalchemy import delete as sa_delete
+        from sqlalchemy import select
 
         from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
         from app.gateway.novel_migrated.models.project import Project

@@ -9,11 +9,12 @@ from types import ModuleType
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.gateway.auth_middleware import AuthMiddleware
 from app.gateway.config import get_gateway_config
+from app.gateway.csrf_middleware import CSRFMiddleware
 from app.gateway.middleware.request_trace import RequestTraceMiddleware
 from app.gateway.novel_migrated.core.logger import setup_logging
 from app.gateway.observability.context import install_trace_log_filter
@@ -41,7 +42,7 @@ class _ExceptionShieldMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        path = scope.get("path", "?")
+        scope.get("path", "?")
         try:
             await self.app(scope, receive, send)
         except Exception as exc:
@@ -486,6 +487,10 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
     # answered with the negotiated CORS headers before auth rejects the call.
     app.add_middleware(AuthMiddleware)
 
+    # CSRF stays inside the CORS layer and issues a JS-readable csrf_token
+    # cookie after successful auth POSTs.
+    app.add_middleware(CSRFMiddleware)
+
     # Allow direct frontend->gateway calls in local dev (without nginx).
     # In docker/nginx mode this remains compatible because gateway is usually
     # same-origin behind the reverse proxy.
@@ -551,7 +556,7 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
     app.add_middleware(RequestTraceMiddleware)
 
     @app.get("/health", tags=["health"])
-    async def health_check() -> dict[str, str]:
+    async def health_check() -> dict[str, str | int | bool]:
         """Health check endpoint.
 
         Returns:

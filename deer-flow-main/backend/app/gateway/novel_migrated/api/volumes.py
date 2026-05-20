@@ -7,7 +7,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
@@ -76,6 +76,7 @@ async def _find_volume_in_all_projects(
     db: AsyncSession,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any] | None, str]:
     from sqlalchemy import select
+
     from app.gateway.novel_migrated.core.database import Project
 
     result = await db.execute(

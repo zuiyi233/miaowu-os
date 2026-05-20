@@ -9,8 +9,13 @@ Tests the L2 provider-level caching mechanism:
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import MagicMock, patch
+
+
+def _claude_test_env():
+    return patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-test"}, clear=False)
 
 
 class TestClaudeCachingConfiguration:
@@ -21,7 +26,7 @@ class TestClaudeCachingConfiguration:
         try:
             from deerflow.models.claude_provider import ClaudeChatModel
 
-            with patch("deerflow.models.claude_provider.AnthropicChatOpenAI.__init__", return_value=None):
+            with _claude_test_env():
                 model = ClaudeChatModel(
                     model="claude-sonnet-4-20250514",
                     enable_prompt_caching=True,
@@ -34,15 +39,15 @@ class TestClaudeCachingConfiguration:
         except ImportError:
             pytest.skip("deerflow.models.claude_provider not available")
 
-    def test_claude_model_caching_disabled_by_default(self):
-        """Prompt caching should be disabled by default if not specified."""
+    def test_claude_model_caching_enabled_by_default(self):
+        """Prompt caching should be enabled by default if not specified."""
         try:
             from deerflow.models.claude_provider import ClaudeChatModel
 
-            with patch("deerflow.models.claude_provider.AnthropicChatOpenAI.__init__", return_value=None):
+            with _claude_test_env():
                 model = ClaudeChatModel(model="claude-sonnet-4-20250514")
 
-                assert getattr(model, 'enable_prompt_caching', False) is False
+                assert getattr(model, "enable_prompt_caching", False) is True
 
         except ImportError:
             pytest.skip("deerflow.models.claude_provider not available")
@@ -56,7 +61,7 @@ class TestApplyPromptCaching:
         try:
             from deerflow.models.claude_provider import ClaudeChatModel
 
-            with patch("deerflow.models.claude_provider.AnthropicChatOpenAI.__init__", return_value=None):
+            with _claude_test_env():
                 self.model = ClaudeChatModel(
                     model="claude-sonnet-4-20250514",
                     enable_prompt_caching=True,
@@ -134,6 +139,7 @@ class TestApplyPromptCaching:
         payload = {
             "messages": [
                 {"role": "user", "content": "Old message 1"},
+                {"role": "assistant", "content": "Middle message"},
                 {"role": "user", "content": "Recent message"},
             ],
         }
@@ -168,7 +174,7 @@ class TestStripCacheControl:
         try:
             from deerflow.models.claude_provider import ClaudeChatModel
 
-            with patch("deerflow.models.claude_provider.AnthropicChatOpenAI.__init__", return_value=None):
+            with _claude_test_env():
                 self.model = ClaudeChatModel(model="claude-sonnet-4-20250514")
         except ImportError:
             self.model = None
@@ -235,7 +241,7 @@ class TestConfigValidation:
             valid_sizes = [1, 3, 5, 10]
 
             for size in valid_sizes:
-                with patch("deerflow.models.claude_provider.AnthropicChatOpenAI.__init__", return_value=None):
+                with _claude_test_env():
                     model = ClaudeChatModel(
                         model="claude-sonnet-4-20250514",
                         enable_prompt_caching=True,
@@ -252,7 +258,7 @@ class TestConfigValidation:
             from deerflow.models.claude_provider import ClaudeChatModel
 
             for value in [True, False]:
-                with patch("deerflow.models.claude_provider.AnthropicChatOpenAI.__init__", return_value=None):
+                with _claude_test_env():
                     model = ClaudeChatModel(
                         model="claude-sonnet-4-20250514",
                         enable_prompt_caching=value,
