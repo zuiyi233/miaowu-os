@@ -36,6 +36,9 @@ const zhLabels: Partial<Record<keyof NovelTranslations, string>> = {
   readingTableOfContents: "目录",
   readingPreviousChapter: "上一章",
   readingNextChapter: "下一章",
+  routeLoadFailed: "页面加载失败",
+  routeLoadFailedDescription: "请重试，或返回上一页后重新打开该小说。",
+  retry: "重试",
 };
 
 const enLabels: Partial<Record<keyof NovelTranslations, string>> = {
@@ -71,6 +74,9 @@ const enLabels: Partial<Record<keyof NovelTranslations, string>> = {
   readingTableOfContents: "Table of contents",
   readingPreviousChapter: "Previous chapter",
   readingNextChapter: "Next chapter",
+  routeLoadFailed: "Page failed to load",
+  routeLoadFailedDescription: "Try again, or go back and reopen this novel.",
+  retry: "Retry",
 };
 
 function labelFromKey(key: string, locale: NovelLocale): string {

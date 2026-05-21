@@ -159,6 +159,9 @@ interface NovelTranslations {
   generationResult: string;
   generationComplete: string;
   generationFailed: string;
+  routeLoadFailed: string;
+  routeLoadFailedDescription: string;
+  retry: string;
   applyToChapter: string;
   applyToOutline: string;
   importMaterials: string;

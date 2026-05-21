@@ -2,8 +2,8 @@
 
 import { useEffect } from 'react';
 
-import { useAiPanelStore } from '@/core/novel/useAiPanelStore';
 import { aiEventBus } from '@/core/novel/ai-event-bus';
+import { useAiPanelStore } from '@/core/novel/useAiPanelStore';
 
 export function NovelAiBridge() {
   const startStreaming = useAiPanelStore((s) => s.startStreaming);

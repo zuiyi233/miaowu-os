@@ -158,8 +158,9 @@ export function useDeleteNovelMutation() {
   return useMutation({
     mutationFn: (novelId: string | number) =>
       novelDomainService.deleteNovel(String(novelId)).then(() => undefined),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['novel'] });
+    onSuccess: (_, novelId) => {
+      queryClient.removeQueries({ queryKey: ['novel', String(novelId)], exact: true });
+      queryClient.invalidateQueries({ queryKey: ['novels'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
     },
   });
@@ -533,8 +534,8 @@ export function useUpdateVolumeMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (volume: Volume) => novelDomainService.updateVolume(volume),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['novel'] });
+    onSuccess: (_, volume) => {
+      queryClient.invalidateQueries({ queryKey: ['novel', volume.novelId] });
     },
   });
 }

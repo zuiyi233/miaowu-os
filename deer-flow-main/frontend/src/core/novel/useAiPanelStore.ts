@@ -120,7 +120,8 @@ export const useAiPanelStore = create<AiPanelState>()((set) => ({
     });
   }),
   clearStream: (requestId) => set((state) => {
-    const { [requestId]: _removed, ...streams } = state.streams;
+    const streams = { ...state.streams };
+    delete streams[requestId];
     const activeRequestId = state.activeRequestId === requestId ? null : state.activeRequestId;
     const aiStream = activeRequestId ? (streams[activeRequestId] ?? DEFAULT_AI_STREAM) : DEFAULT_AI_STREAM;
     return { streams, activeRequestId, aiStream };
