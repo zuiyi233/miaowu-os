@@ -1,6 +1,6 @@
 export * from './schemas';
 export { useNovelStore } from './useNovelStore';
-export { useAiPanelStore } from './useAiPanelStore';
+export { useAiPanelStore, useActiveAiStream, selectActiveAiStream } from './useAiPanelStore';
 export { useEditorStore } from './useEditorStore';
 export { useSettingsStore } from './useSettingsStore';
 export { useModalStore } from './useModalStore';

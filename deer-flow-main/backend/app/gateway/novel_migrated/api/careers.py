@@ -278,14 +278,14 @@ async def generate_career_system(
     ai_model: str | None = None,
     http_request: Request = None,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = None,
+    user_id: str = Depends(get_user_id),
 ):
     """
     使用AI生成新职业（增量式，基于已有职业补充，支持SSE流式进度显示）
     
     通过Server-Sent Events返回实时进度信息
     """
-    effective_user_id = user_id if user_id else get_user_id(http_request) if http_request else "local_single_user"
+    effective_user_id = user_id
     effective_ai_service = await get_user_ai_service_with_overrides(
         request=http_request,
         db=db,

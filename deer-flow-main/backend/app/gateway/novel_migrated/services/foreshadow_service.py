@@ -1,12 +1,12 @@
 """伏笔管理服务 - 处理伏笔的CRUD和业务逻辑"""
 import hashlib
 import uuid
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy import and_, delete, desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.novel_migrated.core.clock import utcnow_naive
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.chapter import Chapter
 from app.gateway.novel_migrated.models.foreshadow import Foreshadow
@@ -391,7 +391,7 @@ class ForeshadowService:
             foreshadow.status = "planted"
             foreshadow.plant_chapter_id = data.chapter_id
             foreshadow.plant_chapter_number = data.chapter_number
-            foreshadow.planted_at = datetime.now()
+            foreshadow.planted_at = utcnow_naive()
             
             if data.hint_text:
                 foreshadow.hint_text = data.hint_text
@@ -436,7 +436,7 @@ class ForeshadowService:
             
             foreshadow.actual_resolve_chapter_id = data.chapter_id
             foreshadow.actual_resolve_chapter_number = data.chapter_number
-            foreshadow.resolved_at = datetime.now()
+            foreshadow.resolved_at = utcnow_naive()
             
             if data.resolution_text:
                 foreshadow.resolution_text = data.resolution_text
@@ -1353,7 +1353,7 @@ class ForeshadowService:
                             existing.status = "resolved"
                             existing.actual_resolve_chapter_id = chapter_id
                             existing.actual_resolve_chapter_number = chapter_number
-                            existing.resolved_at = datetime.now()
+                            existing.resolved_at = utcnow_naive()
                             
                             # 更新回收文本
                             if fs_data.get("content"):
@@ -1447,7 +1447,7 @@ class ForeshadowService:
                                 source_memory_id=source_memory_id,  # 使用稳定的唯一标识
                                 plant_chapter_id=chapter_id,
                                 plant_chapter_number=chapter_number,
-                                planted_at=datetime.now(),
+                                planted_at=utcnow_naive(),
                                 target_resolve_chapter_number=estimated_resolve,
                                 status="planted",
                                 is_long_term=fs_data.get("is_long_term", False),
@@ -1530,7 +1530,7 @@ class ForeshadowService:
                 if should_plant:
                     fs.status = "planted"
                     fs.plant_chapter_id = chapter_id
-                    fs.planted_at = datetime.now()
+                    fs.planted_at = utcnow_naive()
                     
                     stats["planted_count"] += 1
                     stats["planted_ids"].append(fs.id)

@@ -92,7 +92,7 @@ async def analyze_chapter(
     chapter_id: str,
     request: Request = None,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = None,
+    user_id: str = Depends(get_user_id),
 ):
     """
     分析章节并生成记忆
@@ -100,7 +100,7 @@ async def analyze_chapter(
     对指定章节进行剧情分析,提取钩子、伏笔、情节点等,并存入记忆系统
     """
     try:
-        effective_user_id = user_id if user_id else get_user_id(request) if request else "local_single_user"
+        effective_user_id = user_id
         
         # 验证用户权限
         await verify_project_access(project_id, effective_user_id, db)
@@ -544,11 +544,11 @@ async def search_memories(
         description="已弃用（计划于 2026-08-31 移除），请改用 min_similarity。",
     ),
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = None,
+    user_id: str = Depends(get_user_id),
 ):
     """语义搜索项目记忆"""
     try:
-        effective_user_id = user_id if user_id else get_user_id(request) if request else "local_single_user"
+        effective_user_id = user_id
         
         # 验证用户权限
         await verify_project_access(project_id, effective_user_id, db)

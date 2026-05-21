@@ -19,11 +19,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from app.gateway.novel_migrated.api.common import get_user_id
 from app.gateway.novel_migrated.services.novel_query_service import novel_query_service
 
 logger = logging.getLogger(__name__)
@@ -973,17 +974,19 @@ async def get_novel(novel_id: str):
 
 @router.post("/novels")
 @router.post("/novel/novels", deprecated=True)
-async def create_novel(request: Request):
+async def create_novel(request: Request, user_id: str = Depends(get_user_id)):
     """Create a new novel project."""
     data = await request.json()
+    data["user_id"] = user_id
     return await _novel_store.create_novel(data)
 
 
 @router.put("/novels/{novel_id}")
 @router.put("/novel/novels/{novel_id}", deprecated=True)
-async def update_novel(novel_id: str, request: Request):
+async def update_novel(novel_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Update a novel's metadata."""
     data = await request.json()
+    data["user_id"] = user_id
     novel = await _novel_store.update_novel(novel_id, data)
     if not novel:
         raise HTTPException(status_code=404, detail="Novel not found")
@@ -995,7 +998,7 @@ _NOVEL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 
 @router.delete("/novels/{novel_id}")
 @router.delete("/novel/novels/{novel_id}", deprecated=True)
-async def delete_novel(novel_id: str):
+async def delete_novel(novel_id: str, user_id: str = Depends(get_user_id)):
     """Delete a novel and all its associated data."""
     if not _NOVEL_ID_PATTERN.match(novel_id):
         raise HTTPException(status_code=400, detail="Invalid novel_id format")
@@ -1061,18 +1064,20 @@ async def get_chapter(novel_id: str, chapter_id: str):
 
 @router.post("/novels/{novel_id}/chapters")
 @router.post("/novel/novels/{novel_id}/chapters", deprecated=True)
-async def create_chapter(novel_id: str, request: Request):
+async def create_chapter(novel_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Create a new chapter."""
     data = await request.json()
+    data["user_id"] = user_id
     idempotency_key = _extract_idempotency_key(request, data)
     return await _novel_store.create_chapter(novel_id, _strip_idempotency_fields(data), idempotency_key=idempotency_key)
 
 
 @router.put("/novels/{novel_id}/chapters/{chapter_id}")
 @router.put("/novel/novels/{novel_id}/chapters/{chapter_id}", deprecated=True)
-async def update_chapter(novel_id: str, chapter_id: str, request: Request):
+async def update_chapter(novel_id: str, chapter_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Update a chapter's content."""
     data = await request.json()
+    data["user_id"] = user_id
     idempotency_key = _extract_idempotency_key(request, data)
     chapter = await _novel_store.update_chapter(novel_id, chapter_id, _strip_idempotency_fields(data), idempotency_key=idempotency_key)
     if not chapter:
@@ -1082,7 +1087,7 @@ async def update_chapter(novel_id: str, chapter_id: str, request: Request):
 
 @router.delete("/novels/{novel_id}/chapters/{chapter_id}")
 @router.delete("/novel/novels/{novel_id}/chapters/{chapter_id}", deprecated=True)
-async def delete_chapter(novel_id: str, chapter_id: str, request: Request):
+async def delete_chapter(novel_id: str, chapter_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Delete a chapter."""
     idempotency_key = _extract_idempotency_key(request)
     ok = await _novel_store.delete_chapter(novel_id, chapter_id, idempotency_key=idempotency_key)
@@ -1105,17 +1110,19 @@ async def list_entities(novel_id: str, entity_type: str | None = None):
 
 @router.post("/novels/{novel_id}/entities")
 @router.post("/novel/novels/{novel_id}/entities", deprecated=True)
-async def create_entity(novel_id: str, request: Request):
+async def create_entity(novel_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Create a new entity."""
     data = await request.json()
+    data["user_id"] = user_id
     return await _novel_store.create_entity(novel_id, data)
 
 
 @router.put("/novels/{novel_id}/entities/{entity_id}")
 @router.put("/novel/novels/{novel_id}/entities/{entity_id}", deprecated=True)
-async def update_entity(novel_id: str, entity_id: str, request: Request):
+async def update_entity(novel_id: str, entity_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Update an entity."""
     data = await request.json()
+    data["user_id"] = user_id
     entity = await _novel_store.update_entity(novel_id, entity_id, data)
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
@@ -1124,7 +1131,7 @@ async def update_entity(novel_id: str, entity_id: str, request: Request):
 
 @router.delete("/novels/{novel_id}/entities/{entity_id}")
 @router.delete("/novel/novels/{novel_id}/entities/{entity_id}", deprecated=True)
-async def delete_entity(novel_id: str, entity_id: str):
+async def delete_entity(novel_id: str, entity_id: str, user_id: str = Depends(get_user_id)):
     """Delete an entity."""
     ok = await _novel_store.delete_entity(novel_id, entity_id)
     if not ok:
@@ -1146,17 +1153,19 @@ async def get_timeline(novel_id: str):
 
 @router.post("/novels/{novel_id}/timeline")
 @router.post("/novel/novels/{novel_id}/timeline", deprecated=True)
-async def create_timeline_event(novel_id: str, request: Request):
+async def create_timeline_event(novel_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Create a timeline event."""
     data = await request.json()
+    data["user_id"] = user_id
     return await _novel_store.create_timeline_event(novel_id, data)
 
 
 @router.put("/novels/{novel_id}/timeline/{event_id}")
 @router.put("/novel/novels/{novel_id}/timeline/{event_id}", deprecated=True)
-async def update_timeline_event(novel_id: str, event_id: str, request: Request):
+async def update_timeline_event(novel_id: str, event_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Update a timeline event."""
     data = await request.json()
+    data["user_id"] = user_id
     event = await _novel_store.update_timeline_event(novel_id, event_id, data)
     if not event:
         raise HTTPException(status_code=404, detail="Timeline event not found")
@@ -1165,7 +1174,7 @@ async def update_timeline_event(novel_id: str, event_id: str, request: Request):
 
 @router.delete("/novels/{novel_id}/timeline/{event_id}")
 @router.delete("/novel/novels/{novel_id}/timeline/{event_id}", deprecated=True)
-async def delete_timeline_event(novel_id: str, event_id: str):
+async def delete_timeline_event(novel_id: str, event_id: str, user_id: str = Depends(get_user_id)):
     """Delete a timeline event."""
     ok = await _novel_store.delete_timeline_event(novel_id, event_id)
     if not ok:
@@ -1190,9 +1199,10 @@ async def get_graph(novel_id: str):
 
 @router.put("/novels/{novel_id}/graph")
 @router.put("/novel/novels/{novel_id}/graph", deprecated=True)
-async def save_graph(novel_id: str, request: Request):
+async def save_graph(novel_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Save graph layout (node positions for relationship visualization)."""
     data = await request.json()
+    data["user_id"] = user_id
     return await _novel_store.save_graph(novel_id, data)
 
 

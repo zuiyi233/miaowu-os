@@ -292,6 +292,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Shutting down API Gateway")
         return
 
+    # 注册 novel backend，使 harness 层 novel_internal 通过 Protocol 反向访问 app 能力，
+    # 替代以前的 importlib.import_module("app.*") 反向 import。
+    try:
+        from app.gateway.novel_migrated.core.novel_backend_impl import install_novel_backend
+
+        install_novel_backend()
+    except Exception:
+        logger.exception("Failed to install novel backend; internal direct-call bridge unavailable")
+
     # Load config and check necessary environment variables at startup
     try:
         app.state.config = get_app_config()

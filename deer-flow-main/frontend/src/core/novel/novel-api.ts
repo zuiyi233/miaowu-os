@@ -2,11 +2,6 @@ import { fetch as authFetch } from '@/core/api/fetcher';
 import { getBackendBaseURL } from '@/core/config';
 import { buildUrlWithPrefix, parseJsonOrText, type QueryValue } from '@/core/request-utils';
 
-import {
-  clearNovelCache as clearNovelCacheStore,
-  createNovelCache,
-  getCachedOrLoadNovel,
-} from './novel-cache';
 import type {
   BookImportPreview,
   BookImportTask,
@@ -1107,25 +1102,13 @@ export class NovelApiService {
   }
 
   async getCharacters(novelId: string): Promise<Character[]> {
-    const novel = await this.getNovelCached(novelId);
+    const novel = await this.getNovelByIdOrTitle(novelId);
     return novel?.characters ?? [];
   }
 
   async getChapters(novelId: string): Promise<Chapter[]> {
-    const novel = await this.getNovelCached(novelId);
+    const novel = await this.getNovelByIdOrTitle(novelId);
     return novel?.chapters ?? [];
-  }
-
-  private _novelCache = createNovelCache<Novel>();
-
-  async getNovelCached(novelId: string): Promise<Novel | null> {
-    return getCachedOrLoadNovel(this._novelCache, novelId, () =>
-      this.getNovelByIdOrTitle(novelId),
-    );
-  }
-
-  clearNovelCache(novelId?: string) {
-    clearNovelCacheStore(this._novelCache, novelId);
   }
 
   async getOutlines(novelId: string): Promise<Outline[]> {

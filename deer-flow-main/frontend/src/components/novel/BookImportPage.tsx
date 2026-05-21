@@ -9,6 +9,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
+import { z } from 'zod';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -67,15 +68,59 @@ interface CacheState {
   pageStep: PageStep;
 }
 
+function getErrorMessage(error: unknown, fallback = '操作失败'): string {
+  if (error instanceof Error) {
+    if (error.name === 'AbortError') return '已取消';
+    return error.message || fallback;
+  }
+  if (typeof error === 'string' && error.trim()) return error.trim();
+  if (error && typeof error === 'object' && 'message' in error) {
+    const msg = (error as { message?: unknown }).message;
+    if (typeof msg === 'string' && msg.trim()) return msg.trim();
+  }
+  return fallback;
+}
+
+// Schema for the persisted cache. Only the fields the page actually consumes
+// are validated — unknown extras are tolerated via passthrough so future
+// additions don't invalidate existing caches.
+const BookImportCacheSchema = z
+  .object({
+    _ts: z.number().optional(),
+    taskId: z.string().optional(),
+    taskStatus: z.string().optional(),
+    preview: z.unknown().optional(),
+    applyProgress: z.number().optional(),
+    applyStatus: z.string().optional(),
+    applyError: z.string().nullable().optional(),
+    failedSteps: z.array(z.unknown()).optional(),
+    retrying: z.boolean().optional(),
+    pageStep: z.enum(['upload', 'parsing', 'preview', 'applying']).optional(),
+  })
+  .passthrough();
+
 function loadCache(): CacheState | null {
   try {
     const raw = sessionStorage.getItem(CACHE_KEY);
     if (!raw) return null;
-    const data = JSON.parse(raw) as CacheState & { _ts: number };
-    if (Date.now() - data._ts > CACHE_TTL_MS) { sessionStorage.removeItem(CACHE_KEY); return null; }
-    delete (data as any)._ts;
-    return data;
-  } catch (error) { console.warn('Failed to load cached task:', error); return null; }
+    const json = JSON.parse(raw) as unknown;
+    const parsed = BookImportCacheSchema.safeParse(json);
+    if (!parsed.success) {
+      sessionStorage.removeItem(CACHE_KEY);
+      console.warn('[BookImport] cache schema invalid, cleared');
+      return null;
+    }
+    const { _ts, ...rest } = parsed.data;
+    if (typeof _ts === 'number' && Date.now() - _ts > CACHE_TTL_MS) {
+      sessionStorage.removeItem(CACHE_KEY);
+      return null;
+    }
+    return rest as CacheState;
+  } catch (error) {
+    sessionStorage.removeItem(CACHE_KEY);
+    console.warn('[BookImport] cache parse failed, cleared:', getErrorMessage(error));
+    return null;
+  }
 }
 
 function saveCache(state: Partial<CacheState>) {
@@ -219,17 +264,20 @@ export function BookImportPage() {
       updateCache({ taskId: tid, taskStatus: 'pending', pageStep: 'parsing' });
 
       pollStatus(tid);
-    } catch (err: any) {
-      toast.error(err.message || '创建解析任务失败');
+    } catch (err) {
+      toast.error(getErrorMessage(err, '创建解析任务失败'));
     }
   };
 
   // --- Poll parsing status ---
-  const pollStatus = (tid: string) => {
+  const pollStatus = (tid: string, opts?: { maxRetries?: number }) => {
+    const maxRetries = opts?.maxRetries ?? 5;
+    let consecutiveFailures = 0;
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     pollTimerRef.current = setInterval(async () => {
       try {
         const statusData = await novelApiService.getBookImportTaskStatus(tid);
+        consecutiveFailures = 0;
         const st = statusData.status;
         setTaskStatus(st);
         setParseProgress(statusData.progress ?? parseProgress);
@@ -242,7 +290,16 @@ export function BookImportPage() {
           }
         }
       } catch (error) {
-        console.error('Polling failed:', error);
+        consecutiveFailures += 1;
+        console.error('[BookImport] poll error', getErrorMessage(error));
+        if (consecutiveFailures >= maxRetries) {
+          if (pollTimerRef.current) { clearInterval(pollTimerRef.current); pollTimerRef.current = null; }
+          const message = `轮询失败 ${maxRetries} 次：${getErrorMessage(error, '解析状态查询失败')}`;
+          setTaskStatus('failed');
+          setApplyError(message);
+          updateCache({ taskStatus: 'failed', applyError: message });
+          toast.error(message);
+        }
       }
     }, 3000);
   };
@@ -308,8 +365,8 @@ export function BookImportPage() {
 
       const response = await novelApiService.applyBookImportStream(taskId, payload, modelRoutingPayload);
       await readSSEStream(response, false);
-    } catch (err: any) {
-      const errorMessage = err instanceof Error ? err.message : '导入失败';
+    } catch (err) {
+      const errorMessage = getErrorMessage(err, '导入失败');
       setApplyError(errorMessage);
       setApplyStatus('error');
       updateCache({ applyError: errorMessage, applyStatus: 'error' });

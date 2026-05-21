@@ -183,9 +183,14 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
             self._loop_closed_recovery_done = True
 
         try:
-            from app.gateway.novel_migrated.services.ai_service import clear_model_cache
+            from deerflow.tools.builtins.novel_internal import load_attr
+
+            clear_model_cache = load_attr("app.gateway.novel_migrated.services.ai_service", "clear_model_cache")
         except Exception:
-            logger.debug("Failed to import novel ai_service.clear_model_cache for loop_closed recovery", exc_info=True)
+            logger.debug("Failed to resolve novel ai_service.clear_model_cache for loop_closed recovery", exc_info=True)
+            return
+
+        if not callable(clear_model_cache):
             return
 
         try:

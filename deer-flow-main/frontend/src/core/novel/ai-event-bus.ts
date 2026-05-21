@@ -19,12 +19,11 @@ export interface AiEvent {
 
 type AiEventListener = (event: AiEvent) => void;
 
-let requestIdCounter = 0;
-
 export class AiEventBus {
   private listeners = new Map<AiEventType, Set<AiEventListener>>();
   private eventHistory: AiEvent[] = [];
   private maxHistorySize = 100;
+  private requestIdCounter = 0;
 
   on(eventType: AiEventType, listener: AiEventListener): () => void {
     if (!this.listeners.has(eventType)) {
@@ -47,11 +46,14 @@ export class AiEventBus {
   }
 
   emit(eventType: AiEventType, payload: Record<string, unknown> = {}): AiEvent {
+    const requestIdFromPayload = payload.requestId;
     const event: AiEvent = {
       type: eventType,
       payload,
       timestamp: Date.now(),
-      requestId: `req-${++requestIdCounter}`,
+      requestId: typeof requestIdFromPayload === 'string' && requestIdFromPayload.trim()
+        ? requestIdFromPayload.trim()
+        : `req-${++this.requestIdCounter}`,
     };
 
     this.eventHistory.push(event);
@@ -86,8 +88,22 @@ export class AiEventBus {
     this.eventHistory = [];
   }
 
+  clear(eventType?: AiEventType): void {
+    if (eventType) {
+      this.listeners.delete(eventType);
+      return;
+    }
+    this.listeners.clear();
+  }
+
+  dispose(): void {
+    this.listeners.clear();
+    this.eventHistory = [];
+    this.requestIdCounter = 0;
+  }
+
   toStreamCallbacks(requestId?: string): AiStreamCallbacks {
-    const rid = requestId || `req-${++requestIdCounter}`;
+    const rid = requestId || `req-${++this.requestIdCounter}`;
 
     return {
       onChunk: (chunk: string) => {

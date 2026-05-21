@@ -513,7 +513,7 @@ async def _generate_single_chapter_stream(
     request: ChapterGenerateStreamRequest | ChapterContinueStreamRequest,
     append_mode: bool,
     continue_mode: bool,
-    style_user_id: str | None = None,
+    style_user_id_override: str | None = None,
     emit_result: bool = True,
     emit_complete: bool = True,
 ) -> AsyncGenerator[str, None]:
@@ -533,7 +533,7 @@ async def _generate_single_chapter_stream(
         style_content = await _build_style_content(
             style_id=request.style_id,
             project_id=project.id,
-            user_id=style_user_id or project.user_id,
+            user_id=style_user_id_override or project.user_id,
             db=db,
         )
 
@@ -616,7 +616,7 @@ async def _generate_single_chapter_stream(
                 db=db,
                 chapter=chapter,
                 project_id=project.id,
-                user_id=style_user_id or project.user_id,
+                user_id=style_user_id_override or project.user_id,
                 ai_service=ai_service,
                 idempotency_key=analysis_idem_key,
             )
@@ -1298,9 +1298,9 @@ async def analyze_chapter(
     force: bool = False,
     db: AsyncSession = Depends(get_db),
     user_ai_service: AIService = Depends(get_user_ai_service),
-    user_id: str | None = None,
+    user_id: str = Depends(get_user_id),
 ):
-    effective_user_id = user_id if user_id else get_user_id(request) if request else "local_single_user"
+    effective_user_id = user_id
     _enforce_stream_rate_limit(user_id=effective_user_id, action="analyze_chapter")
     _cleanup_analysis_cache()
     project, chapter = await _get_chapter_with_project_access(

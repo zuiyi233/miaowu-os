@@ -140,24 +140,24 @@ export const useOutlineStore = create<OutlineState>()((set, _get) => ({
 
   moveNode: (activeId, overId) => {
     set((state) => {
-      const deepClone = JSON.parse(JSON.stringify(state.tree));
+      const tree = state.tree;
 
-      const activeIndexRoot = deepClone.findIndex((n: OutlineNode) => n.id === activeId);
-      const overIndexRoot = deepClone.findIndex((n: OutlineNode) => n.id === overId);
-
+      const activeIndexRoot = tree.findIndex((n) => n.id === activeId);
+      const overIndexRoot = tree.findIndex((n) => n.id === overId);
       if (activeIndexRoot !== -1 && overIndexRoot !== -1) {
-        return { tree: arrayMove(deepClone, activeIndexRoot, overIndexRoot) };
+        return { tree: arrayMove(tree, activeIndexRoot, overIndexRoot) };
       }
 
-      for (const vol of deepClone) {
-        if (vol.children) {
-          const activeIndex = vol.children.findIndex((n: OutlineNode) => n.id === activeId);
-          const overIndex = vol.children.findIndex((n: OutlineNode) => n.id === overId);
-
-          if (activeIndex !== -1 && overIndex !== -1) {
-            vol.children = arrayMove(vol.children, activeIndex, overIndex);
-            return { tree: deepClone };
-          }
+      for (let volIndex = 0; volIndex < tree.length; volIndex++) {
+        const vol = tree[volIndex];
+        if (!vol?.children) continue;
+        const activeIndex = vol.children.findIndex((n) => n.id === activeId);
+        const overIndex = vol.children.findIndex((n) => n.id === overId);
+        if (activeIndex !== -1 && overIndex !== -1) {
+          const newChildren = arrayMove(vol.children, activeIndex, overIndex);
+          const newTree = tree.slice();
+          newTree[volIndex] = { ...vol, children: newChildren };
+          return { tree: newTree };
         }
       }
 

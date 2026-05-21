@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any
 
+from app.gateway.novel_migrated.core.clock import utcnow_naive
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.analysis_task import AnalysisTask
 from app.gateway.novel_migrated.models.batch_generation_task import BatchGenerationTask
@@ -23,7 +24,7 @@ class RecoveryService:
 
     @staticmethod
     def _utcnow() -> datetime:
-        return datetime.utcnow()
+        return utcnow_naive()
 
     def recover_analysis_task(self, task: AnalysisTask) -> bool:
         if task.status != "running":

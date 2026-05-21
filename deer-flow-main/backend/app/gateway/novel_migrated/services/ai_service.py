@@ -20,7 +20,7 @@ import json
 import threading
 import time
 from collections import OrderedDict, defaultdict
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
@@ -835,6 +835,8 @@ class AIService:
         agent_type: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
+        include_tool_calls: bool = True,
+        on_tool_calls: Callable[[list], None] | None = None,
         **_: Any,
     ) -> AsyncGenerator[str, None]:
         """流式文本生成；保持与 careers/memories/plot_analyzer 调用兼容。
@@ -849,6 +851,9 @@ class AIService:
             auto_mcp: 是否自动加载 MCP 工具
             agent_type: 智能体类型（writer/critic/polish/outline 等），
                         提供时会从配置服务解析对应模型和参数
+            include_tool_calls: 是否在工具被绑定时处理模型返回的 tool_calls
+                （默认 True；False 时强制纯流式，忽略 tool_calls）
+            on_tool_calls: tool_calls 命中时的可选回调，用于通知调用方
         """
         model, temperature, max_tokens, system_prompt = await self._resolve_agent_params(agent_type, model, temperature, max_tokens, system_prompt)
 
@@ -874,16 +879,74 @@ class AIService:
 
         messages = self._build_messages(prompt, system_prompt)
 
+        if not tools or not include_tool_calls:
+            async for chunk in llm.astream(messages):
+                if isinstance(chunk, AIMessage):
+                    text = chunk.content
+                else:
+                    text = getattr(chunk, "content", chunk)
+
+                if isinstance(text, list):
+                    text = "".join(str(part) for part in text)
+                if text:
+                    yield str(text)
+            return
+
+        # 工具被绑定：先用流式累积内容 + tool_call_chunks，结束后检查 tool_calls
+        accumulated_text_parts: list[str] = []
+        last_chunk: Any = None
         async for chunk in llm.astream(messages):
+            last_chunk = chunk
             if isinstance(chunk, AIMessage):
                 text = chunk.content
             else:
                 text = getattr(chunk, "content", chunk)
-
             if isinstance(text, list):
                 text = "".join(str(part) for part in text)
             if text:
+                accumulated_text_parts.append(str(text))
                 yield str(text)
+
+        tool_calls: list = []
+        if last_chunk is not None:
+            tool_calls = list(getattr(last_chunk, "tool_calls", None) or [])
+
+        if not tool_calls:
+            return
+
+        logger.info("流式路径检测到 tool_calls，切换到 tool 循环：tool_call_count=%d", len(tool_calls))
+        if on_tool_calls is not None:
+            try:
+                on_tool_calls(tool_calls)
+            except Exception:
+                logger.exception("on_tool_calls callback failed")
+
+        accumulated_text = "".join(accumulated_text_parts)
+        response_for_loop = (
+            last_chunk
+            if isinstance(last_chunk, AIMessage)
+            else AIMessage(
+                content=accumulated_text,
+                tool_calls=tool_calls,
+            )
+        )
+
+        final_content, _ = await self._handle_tool_calls_loop(
+            messages,
+            response_for_loop,
+            tools,
+            llm,
+            max_iterations=5,
+        )
+
+        final_str = str(final_content)
+        if final_str.startswith(accumulated_text):
+            delta = final_str[len(accumulated_text):]
+            if delta:
+                yield delta
+        else:
+            yield "\n[tool_calls 处理完成]\n"
+            yield final_str
 
     async def generate_text_with_messages(
         self,
@@ -943,9 +1006,17 @@ class AIService:
         auto_mcp: bool = True,
         base_url: str | None = None,
         api_key: str | None = None,
+        include_tool_calls: bool = True,
+        on_tool_calls: Callable[[list], None] | None = None,
         **_: Any,
     ) -> AsyncGenerator[str, None]:
-        """流式文本生成（messages数组直传版本）。"""
+        """流式文本生成（messages数组直传版本）。
+
+        Args:
+            include_tool_calls: 是否在工具被绑定时处理模型返回的 tool_calls
+                （默认 True；False 时强制纯流式，忽略 tool_calls）
+            on_tool_calls: tool_calls 命中时的可选回调，用于通知调用方
+        """
         effective_base_url = base_url or self.api_base_url
         has_custom_endpoint = bool(effective_base_url and effective_base_url.strip())
         model_name = self._resolve_model_name(model, has_custom_endpoint=has_custom_endpoint)
@@ -961,16 +1032,73 @@ class AIService:
 
         langchain_messages = self._build_messages_from_array(messages)
 
+        if not tools or not include_tool_calls:
+            async for chunk in llm.astream(langchain_messages):
+                if isinstance(chunk, AIMessage):
+                    text = chunk.content
+                else:
+                    text = getattr(chunk, "content", chunk)
+
+                if isinstance(text, list):
+                    text = "".join(str(part) for part in text)
+                if text:
+                    yield str(text)
+            return
+
+        accumulated_text_parts: list[str] = []
+        last_chunk: Any = None
         async for chunk in llm.astream(langchain_messages):
+            last_chunk = chunk
             if isinstance(chunk, AIMessage):
                 text = chunk.content
             else:
                 text = getattr(chunk, "content", chunk)
-
             if isinstance(text, list):
                 text = "".join(str(part) for part in text)
             if text:
+                accumulated_text_parts.append(str(text))
                 yield str(text)
+
+        tool_calls: list = []
+        if last_chunk is not None:
+            tool_calls = list(getattr(last_chunk, "tool_calls", None) or [])
+
+        if not tool_calls:
+            return
+
+        logger.info("流式路径检测到 tool_calls，切换到 tool 循环：tool_call_count=%d", len(tool_calls))
+        if on_tool_calls is not None:
+            try:
+                on_tool_calls(tool_calls)
+            except Exception:
+                logger.exception("on_tool_calls callback failed")
+
+        accumulated_text = "".join(accumulated_text_parts)
+        response_for_loop = (
+            last_chunk
+            if isinstance(last_chunk, AIMessage)
+            else AIMessage(
+                content=accumulated_text,
+                tool_calls=tool_calls,
+            )
+        )
+
+        final_content, _ = await self._handle_tool_calls_loop(
+            langchain_messages,
+            response_for_loop,
+            tools,
+            llm,
+            max_iterations=5,
+        )
+
+        final_str = str(final_content)
+        if final_str.startswith(accumulated_text):
+            delta = final_str[len(accumulated_text):]
+            if delta:
+                yield delta
+        else:
+            yield "\n[tool_calls 处理完成]\n"
+            yield final_str
 
     @staticmethod
     def _clean_json_response(text: str) -> str:

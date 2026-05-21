@@ -14,13 +14,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.novel_migrated.core.clock import utcnow_naive
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.analysis_task import AnalysisTask
 from app.gateway.novel_migrated.models.chapter import Chapter
@@ -410,7 +410,7 @@ class ChapterOrchestrationService:
             project_id=project_id,
             status="running",
             progress=10,
-            started_at=datetime.utcnow(),
+            started_at=utcnow_naive(),
         )
         db.add(task)
         await db.commit()
@@ -452,7 +452,7 @@ class ChapterOrchestrationService:
             task.status = "failed"
             task.progress = 0
             task.error_message = f"AI 分析异常: {exc}"
-            task.completed_at = datetime.utcnow()
+            task.completed_at = utcnow_naive()
             await db.commit()
             if normalized_idempotency_key:
                 await self.release_idempotency_key(
@@ -482,7 +482,7 @@ class ChapterOrchestrationService:
             task.status = "failed"
             task.progress = 0
             task.error_message = "AI 分析失败"
-            task.completed_at = datetime.utcnow()
+            task.completed_at = utcnow_naive()
             await db.commit()
             if normalized_idempotency_key:
                 await self.release_idempotency_key(
@@ -495,7 +495,7 @@ class ChapterOrchestrationService:
 
         existing = existing_analysis
 
-        analysis_time = datetime.utcnow()
+        analysis_time = utcnow_naive()
         payload = {
             "plot_stage": result.get("plot_stage"),
             "conflict_level": (result.get("conflict") or {}).get("level"),
@@ -561,7 +561,7 @@ class ChapterOrchestrationService:
         task.status = "completed"
         task.progress = 100
         task.error_message = None
-        task.completed_at = datetime.utcnow()
+        task.completed_at = utcnow_naive()
         await db.commit()
 
         stored_result = await db.execute(select(PlotAnalysis).where(PlotAnalysis.chapter_id == chapter_id))
@@ -663,7 +663,7 @@ class ChapterOrchestrationService:
             original_word_count=chapter.word_count,
             status="running",
             progress=5,
-            started_at=datetime.utcnow(),
+            started_at=utcnow_naive(),
             version_note=version_note,
         )
         db.add(task)
@@ -726,7 +726,7 @@ class ChapterOrchestrationService:
             task.status = "failed"
             task.progress = 0
             task.error_message = f"修订失败: {last_error}" if last_error else "修订失败"
-            task.completed_at = datetime.utcnow()
+            task.completed_at = utcnow_naive()
             await db.commit()
             raise RuntimeError(task.error_message)
 
@@ -759,7 +759,7 @@ class ChapterOrchestrationService:
         task.error_message = None
         task.regenerated_content = chapter.content
         task.regenerated_word_count = chapter.word_count
-        task.completed_at = datetime.utcnow()
+        task.completed_at = utcnow_naive()
 
         await db.commit()
         await db.refresh(chapter)

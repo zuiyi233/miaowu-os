@@ -49,6 +49,7 @@ export interface NovelQualityReport {
   generatedAt: string;
 }
 
+export const NOVEL_QUERY_STALE_TIME_MS = 30_000;
 export const QUALITY_REPORT_DEFAULT_REFETCH_INTERVAL_MS = 15000;
 export const QUALITY_REPORT_PAGE_REFETCH_INTERVAL_MS = 5000;
 
@@ -123,6 +124,7 @@ export function useNovelQuery(novelTitle?: string) {
       return novel;
     },
     enabled: !!novelTitle,
+    staleTime: NOVEL_QUERY_STALE_TIME_MS,
   });
 }
 
@@ -174,7 +176,9 @@ export function useUpdateChapterMutation() {
       emitNovelEvent('chapter_save', {
         chapterId: variables.chapterId,
       });
-      queryClient.invalidateQueries({ queryKey: ['novel'] });
+      if (variables.novelId) {
+        queryClient.invalidateQueries({ queryKey: ['novel', variables.novelId] });
+      }
     },
   });
 }
@@ -225,8 +229,8 @@ export function useDeleteCharacterMutation() {
   return useMutation({
     mutationFn: ({ novelId, characterId }: { novelId: string; characterId: string }) =>
       novelDomainService.deleteCharacter(novelId, characterId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['novel'] });
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['novel', variables.novelId] });
     },
   });
 }
@@ -262,8 +266,8 @@ export function useDeleteFactionMutation() {
   return useMutation({
     mutationFn: ({ novelId, factionId }: { novelId: string; factionId: string }) =>
       novelDomainService.deleteFaction(novelId, factionId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['novel'] });
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['novel', variables.novelId] });
     },
   });
 }
@@ -299,8 +303,8 @@ export function useDeleteSettingMutation() {
   return useMutation({
     mutationFn: ({ novelId, settingId }: { novelId: string; settingId: string }) =>
       novelDomainService.deleteSetting(novelId, settingId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['novel'] });
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['novel', variables.novelId] });
     },
   });
 }
@@ -337,8 +341,8 @@ export function useDeleteItemMutation() {
   return useMutation({
     mutationFn: ({ novelId, itemId }: { novelId: string; itemId: string }) =>
       novelDomainService.deleteItem(novelId, itemId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['novel'] });
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['novel', variables.novelId] });
     },
   });
 }
@@ -358,8 +362,8 @@ export function useDeleteVolumeMutation() {
   return useMutation({
     mutationFn: ({ novelId, volumeId }: { novelId: string; volumeId: string }) =>
       novelDomainService.deleteVolume(novelId, volumeId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['novel'] });
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['novel', variables.novelId] });
     },
   });
 }
@@ -385,8 +389,8 @@ export function useDeleteChapterMutation() {
   return useMutation({
     mutationFn: ({ novelId, chapterId }: { novelId: string; chapterId: string }) =>
       novelDomainService.deleteChapter(novelId, chapterId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['novel'] });
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['novel', variables.novelId] });
     },
   });
 }

@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { useMemo } from 'react';
 import type { ReactNode } from 'react';
 
+import { NovelAiBridge } from '@/components/novel/NovelAiBridge';
 import { Phase2StatusBar } from '@/components/novel/Phase2StatusBar';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useI18n } from '@/core/i18n/hooks';
@@ -130,6 +131,7 @@ export function ProjectWorkspaceLayout({ novelId, children }: ProjectWorkspaceLa
 
   return (
     <div className="flex h-full min-h-0 flex-col md:flex-row">
+      <NovelAiBridge />
       <aside className="border-b bg-muted/10 md:w-72 md:border-b-0 md:border-r">
         <ScrollArea className="max-h-64 md:h-full md:max-h-none">
           <div className="space-y-5 p-3 md:p-4">

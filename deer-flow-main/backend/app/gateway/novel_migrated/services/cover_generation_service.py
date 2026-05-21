@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -13,6 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.novel_migrated.core.clock import utcnow_naive
 from app.gateway.novel_migrated.core.crypto import safe_decrypt
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.project import Project
@@ -113,7 +113,7 @@ class CoverGenerationService:
             project.cover_image_url = image_url
             project.cover_status = "ready"
             project.cover_error = None
-            project.cover_updated_at = datetime.utcnow()
+            project.cover_updated_at = utcnow_naive()
             project.cover_prompt = result.get("revised_prompt") or prompt
             await db.commit()
             await db.refresh(project)
@@ -314,7 +314,7 @@ class CoverGenerationService:
         user_dir = GENERATED_COVER_STORAGE_DIR / user_id
         user_dir.mkdir(parents=True, exist_ok=True)
 
-        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        timestamp = utcnow_naive().strftime("%Y%m%d%H%M%S")
         safe_extension = (file_extension or "png").lstrip(".")
         filename = f"{project_id}_{timestamp}.{safe_extension}"
         file_path = user_dir / filename
