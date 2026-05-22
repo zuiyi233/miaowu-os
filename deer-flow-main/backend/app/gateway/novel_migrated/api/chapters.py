@@ -9,7 +9,12 @@ from pydantic import AliasChoices, BaseModel, Field
 from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
+from app.gateway.novel_migrated.api.common import (
+    get_owned_project_resource,
+    get_user_id,
+    require_authenticated_user,
+    verify_project_access,
+)
 from app.gateway.novel_migrated.api.settings import get_user_ai_service
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
@@ -312,11 +317,9 @@ async def get_chapter(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
-    chapter = result.scalar_one_or_none()
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
-    await verify_project_access(chapter.project_id, user_id, db)
+    chapter = await get_owned_project_resource(
+        Chapter, chapter_id, user_id, db, not_found_detail="Chapter not found"
+    )
     try:
         file_payload = await workspace_document_service.read_document(
             user_id=user_id,
@@ -392,11 +395,9 @@ async def update_chapter(
     db: AsyncSession = Depends(get_db),
 ):
     _bind_idempotency_context(request, req)
-    result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
-    chapter = result.scalar_one_or_none()
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
-    await verify_project_access(chapter.project_id, user_id, db)
+    chapter = await get_owned_project_resource(
+        Chapter, chapter_id, user_id, db, not_found_detail="Chapter not found"
+    )
 
     updates = {}
     if req.title is not None:
@@ -417,8 +418,9 @@ async def update_chapter(
             if should_snapshot:
                 await _snapshot_chapter_history_before_mutation(chapter=chapter, user_id=user_id)
             await optimistic_update(Chapter, chapter_id, updates, db=db)
-            result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
-            chapter = result.scalar_one_or_none()
+            chapter = await get_owned_project_resource(
+                Chapter, chapter_id, user_id, db, not_found_detail="Chapter not found"
+            )
             if chapter is None:
                 raise HTTPException(status_code=404, detail="Chapter not found")
             await _sync_chapter_document(chapter=chapter, user_id=user_id, db=db)
@@ -448,11 +450,9 @@ async def delete_chapter(
     db: AsyncSession = Depends(get_db),
 ):
     _bind_idempotency_context(request)
-    result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
-    chapter = result.scalar_one_or_none()
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
-    await verify_project_access(chapter.project_id, user_id, db)
+    chapter = await get_owned_project_resource(
+        Chapter, chapter_id, user_id, db, not_found_detail="Chapter not found"
+    )
 
     from app.gateway.novel_migrated.models.document_index import DocumentIndex
     from app.gateway.novel_migrated.models.foreshadow import Foreshadow
@@ -512,7 +512,7 @@ async def batch_generate_chapters(
     ai_service: AIService = Depends(get_user_ai_service),
 ):
     _bind_idempotency_context(request, req)
-    effective_user_id = user_id if user_id else get_user_id(request) if request else "local_single_user"
+    effective_user_id = require_authenticated_user(user_id, request)
     await verify_project_access(req.project_id, effective_user_id, db)
 
     chapter_ids: list[str] = []
@@ -678,10 +678,14 @@ async def regenerate_chapter(
     _bind_idempotency_context(request, req)
     await verify_project_access(req.project_id, user_id, db)
 
-    result = await db.execute(select(Chapter).where(Chapter.id == req.chapter_id))
-    chapter = result.scalar_one_or_none()
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
+    chapter = await get_owned_project_resource(
+        Chapter,
+        req.chapter_id,
+        user_id,
+        db,
+        project_id=req.project_id,
+        not_found_detail="Chapter not found",
+    )
 
     task = RegenerationTask(
         chapter_id=req.chapter_id,
@@ -742,10 +746,14 @@ async def partial_regenerate(
     _bind_idempotency_context(request, req)
     await verify_project_access(req.project_id, user_id, db)
 
-    result = await db.execute(select(Chapter).where(Chapter.id == req.chapter_id))
-    chapter = result.scalar_one_or_none()
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
+    chapter = await get_owned_project_resource(
+        Chapter,
+        req.chapter_id,
+        user_id,
+        db,
+        project_id=req.project_id,
+        not_found_detail="Chapter not found",
+    )
 
     from app.gateway.novel_migrated.services.prompt_service import PromptService
     template = PromptService.PARTIAL_REGENERATE
@@ -797,11 +805,9 @@ async def update_chapter_status(
     db: AsyncSession = Depends(get_db),
 ):
     _bind_idempotency_context(request)
-    result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
-    chapter = result.scalar_one_or_none()
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
-    await verify_project_access(chapter.project_id, user_id, db)
+    chapter = await get_owned_project_resource(
+        Chapter, chapter_id, user_id, db, not_found_detail="Chapter not found"
+    )
 
     valid_statuses = ["planned", "draft", "completed", "archived"]
     if status not in valid_statuses:

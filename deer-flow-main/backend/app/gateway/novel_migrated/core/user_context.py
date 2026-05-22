@@ -1,33 +1,59 @@
-"""novel_migrated 用户上下文工具。
+"""User identity helpers for novel APIs.
 
-提供单机单用户模式下的 user_id 解析逻辑：
-1. 优先使用 request.state.user_id；
-2. 未提供时回退到固定 user_id；
-3. 固定值可通过环境变量覆盖。
+Novel data belongs to the main DeerFlow authenticated user.  This module no
+longer falls back to a single local user because that breaks account-level
+isolation in the unified SaaS data model.
 """
 
 from __future__ import annotations
 
-import os
+from typing import Any
 
-from fastapi import Request
-
-DEFAULT_USER_ID_ENV = "NOVEL_MIGRATED_DEFAULT_USER_ID"
-DEFAULT_USER_ID = "local_single_user"
+from fastapi import HTTPException, Request
 
 
-def get_default_user_id() -> str:
-    """获取默认 user_id（支持环境变量覆盖）。"""
-    env_user_id = (os.getenv(DEFAULT_USER_ID_ENV) or "").strip()
-    return env_user_id or DEFAULT_USER_ID
+def _normalize_user_id(raw_user_id: Any) -> str | None:
+    if raw_user_id is None:
+        return None
+    normalized = str(raw_user_id).strip()
+    return normalized or None
+
+
+def _extract_user_id_from_auth(request: Request) -> str | None:
+    auth = getattr(request.state, "auth", None)
+    user = getattr(auth, "user", None)
+    user_id = getattr(user, "id", None)
+    return _normalize_user_id(user_id)
+
+
+def _extract_user_id_from_state_user(request: Request) -> str | None:
+    user = getattr(request.state, "user", None)
+    user_id = getattr(user, "id", None)
+    return _normalize_user_id(user_id)
 
 
 def resolve_user_id(user_id: str | None) -> str:
-    """标准化 user_id；为空时回退到默认 user_id。"""
-    normalized = (user_id or "").strip()
-    return normalized or get_default_user_id()
+    """Normalize an explicit main-project user id.
+
+    Internal/background callers must pass a concrete user id.  API request
+    callers should use ``get_request_user_id`` so the main auth context is
+    consulted first.
+    """
+    normalized = _normalize_user_id(user_id)
+    if normalized is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return normalized
 
 
 def get_request_user_id(request: Request) -> str:
-    """从请求上下文读取 user_id；缺失时自动回退。"""
-    return resolve_user_id(getattr(request.state, "user_id", None))
+    """Return the authenticated main DeerFlow user id for this request."""
+    user_id = (
+        _normalize_user_id(getattr(request.state, "user_id", None))
+        or _extract_user_id_from_auth(request)
+        or _extract_user_id_from_state_user(request)
+    )
+    return resolve_user_id(user_id)

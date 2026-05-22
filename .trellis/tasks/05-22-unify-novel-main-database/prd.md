@@ -12,16 +12,17 @@ Make the novel二开 module use the main DeerFlow backend persistence as the can
 - Novel project access must remain scoped by `projects.user_id`.
 - The legacy novel admin user source must be disabled or routed away from the novel module.
 - Object storage planning must use the verified local server truth: current active path is SeaweedFS S3-compatible via VIP `172.22.22.170:18334`; MinIO is historical only.
+- The novel compatibility `users` / `user_passwords` model must not be part of the unified production schema.
 - First phase does not migrate old data from `novel_migrated.db`, legacy JSON store, or browser IndexedDB.
 
 ## Acceptance Criteria
 
-- [ ] Backend tests prove `novel_migrated.core.database` uses the main persistence session factory.
-- [ ] Backend tests prove no hard-coded `novel_migrated.db` URL is used for the new novel DB engine.
-- [ ] Backend tests prove unauthenticated novel user resolution returns 401.
-- [ ] Backend tests prove project access is denied across users.
-- [ ] A media asset metadata model exists for object-storage-backed assets with user/project ownership fields.
-- [ ] Object storage config defaults are S3-compatible/Seaweed-friendly and do not mention MinIO as the active default.
+- [x] Backend tests prove `novel_migrated.core.database` uses the main persistence session factory.
+- [x] Backend tests prove no hard-coded `novel_migrated.db` URL is used for the new novel DB engine.
+- [x] Backend tests prove unauthenticated novel user resolution returns 401.
+- [x] Backend tests prove project access is denied across users.
+- [x] A media asset metadata model exists for object-storage-backed assets with user/project ownership fields.
+- [x] Object storage config defaults are S3-compatible/Seaweed-friendly and do not mention MinIO as the active default.
 
 ## Out of Scope
 

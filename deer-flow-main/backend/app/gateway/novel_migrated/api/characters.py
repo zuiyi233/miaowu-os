@@ -10,7 +10,7 @@ from pydantic import AliasChoices, BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
+from app.gateway.novel_migrated.api.common import get_owned_project_resource, get_user_id, verify_project_access
 from app.gateway.novel_migrated.api.settings import get_user_ai_service
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
@@ -226,11 +226,9 @@ async def get_character(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Character).where(Character.id == character_id))
-    character = result.scalar_one_or_none()
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    await verify_project_access(character.project_id, user_id, db)
+    character = await get_owned_project_resource(
+        Character, character_id, user_id, db, not_found_detail="Character not found"
+    )
     try:
         file_payload = await workspace_document_service.read_document(
             user_id=user_id,
@@ -298,11 +296,9 @@ async def update_character(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Character).where(Character.id == character_id))
-    character = result.scalar_one_or_none()
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    await verify_project_access(character.project_id, user_id, db)
+    character = await get_owned_project_resource(
+        Character, character_id, user_id, db, not_found_detail="Character not found"
+    )
 
     update_fields = ['name', 'role_type', 'personality', 'background', 'appearance',
                       'age', 'gender', 'organization_type', 'organization_purpose',
@@ -327,8 +323,9 @@ async def update_character(
             await db.rollback()
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-        result = await db.execute(select(Character).where(Character.id == character_id))
-        character = result.scalar_one_or_none()
+        character = await get_owned_project_resource(
+            Character, character_id, user_id, db, not_found_detail="Character not found"
+        )
 
     try:
         await _sync_character_document(character=character, user_id=user_id, db=db)
@@ -354,11 +351,9 @@ async def delete_character(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Character).where(Character.id == character_id))
-    character = result.scalar_one_or_none()
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    await verify_project_access(character.project_id, user_id, db)
+    character = await get_owned_project_resource(
+        Character, character_id, user_id, db, not_found_detail="Character not found"
+    )
 
     from app.gateway.novel_migrated.models.document_index import DocumentIndex
 

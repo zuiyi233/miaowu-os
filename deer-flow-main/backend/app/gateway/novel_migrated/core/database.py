@@ -1,4 +1,10 @@
-"""Minimal async database bridge for novel_migrated."""
+"""Novel ORM integration with the main DeerFlow persistence engine.
+
+The novel module no longer owns a separate ``novel_migrated.db`` or a
+separate SQLAlchemy metadata tree.  All novel tables are registered on the
+main ``deerflow.persistence.base.Base`` and sessions are created from the
+main ``deerflow.persistence.engine`` session factory.
+"""
 
 from __future__ import annotations
 
@@ -6,65 +12,52 @@ import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator
-from pathlib import Path
+from typing import Any
 
+from fastapi import HTTPException
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-Base = declarative_base()
+from deerflow.persistence.base import Base
+from deerflow.persistence.engine import get_engine as get_main_engine
+from deerflow.persistence.engine import get_session_factory
+
 logger = logging.getLogger(__name__)
 
-_BACKEND_ROOT = Path(__file__).resolve().parents[4]
-_DB_DIR = _BACKEND_ROOT / ".deer-flow"
-_DB_DIR.mkdir(parents=True, exist_ok=True)
-_DB_PATH = _DB_DIR / "novel_migrated.db"
-
-DATABASE_URL = f"sqlite+aiosqlite:///{_DB_PATH.as_posix()}"
-
-engine = create_async_engine(
-    DATABASE_URL,
-    future=True,
-    echo=False,
-    connect_args={
-        "check_same_thread": False,
-    },
-)
-
-_WAL_INITIALIZED = asyncio.Event()
-_WAL_INIT_LOCK = asyncio.Lock()
-
-
-async def _ensure_wal_and_pragma(conn) -> None:
-    if _WAL_INITIALIZED.is_set():
-        return
-    async with _WAL_INIT_LOCK:
-        if _WAL_INITIALIZED.is_set():
-            return
-        await conn.execute(text("PRAGMA journal_mode=WAL"))
-        await conn.execute(text("PRAGMA synchronous=NORMAL"))
-        await conn.execute(text("PRAGMA cache_size=-64000"))
-        await conn.execute(text("PRAGMA foreign_keys=ON"))
-        _WAL_INITIALIZED.set()
-
-AsyncSessionLocal = async_sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autoflush=False,
-    autocommit=False,
-)
-
-async_session_factory = AsyncSessionLocal
-
 _schema_initialized = asyncio.Event()
+_schema_initialized_engine: AsyncEngine | None = None
 _SCHEMA_INIT_LOCK = asyncio.Lock()
 _SCHEMA_MODE_ENV = "NOVEL_FILE_TRUTH_SCHEMA_MODE"
 _SCHEMA_MODE_FULL = "full"
 _SCHEMA_MODE_MINIMAL = "minimal_file_truth"
 
 
+class _MainSessionFactoryProxy:
+    """Callable proxy preserving the old ``AsyncSessionLocal()`` shape."""
+
+    def __call__(self, *args: Any, **kwargs: Any) -> AsyncSession:
+        session_factory = get_session_factory()
+        if session_factory is None:
+            raise RuntimeError(
+                "Main persistence session factory is not initialized. "
+                "Initialize deerflow.persistence.engine before using novel APIs."
+            )
+        return session_factory(*args, **kwargs)
+
+
+AsyncSessionLocal = _MainSessionFactoryProxy()
+async_session_factory = AsyncSessionLocal
+
+
 def _load_models_for_schema_mode(schema_mode: str) -> None:
+    """Register novel ORM models on the shared DeerFlow metadata.
+
+    ``models.user`` is intentionally not imported here.  Main DeerFlow already
+    owns the ``users`` table via ``deerflow.persistence.user.model.UserRow``.
+    The old novel user/password models are deprecated compatibility code and
+    must not become part of the unified production schema.
+    """
     if schema_mode == _SCHEMA_MODE_MINIMAL:
         from app.gateway.novel_migrated.models import (  # noqa: F401
             ai_metric,
@@ -75,6 +68,7 @@ def _load_models_for_schema_mode(schema_mode: str) -> None:
             generation_history,
             intent_session,
             mcp_plugin,
+            media_asset,
             novel_agent_config,
             project,
             project_default_style,
@@ -82,7 +76,6 @@ def _load_models_for_schema_mode(schema_mode: str) -> None:
             prompt_workshop,
             regeneration_task,
             settings,
-            user,
             writing_style,
         )
         return
@@ -100,6 +93,7 @@ def _load_models_for_schema_mode(schema_mode: str) -> None:
         generation_history,
         intent_session,
         mcp_plugin,
+        media_asset,
         memory,
         novel_agent_config,
         outline,
@@ -110,42 +104,62 @@ def _load_models_for_schema_mode(schema_mode: str) -> None:
         regeneration_task,
         relationship,
         settings,
-        user,
         writing_style,
     )
 
 
+def _resolve_schema_mode() -> str:
+    schema_mode = (os.getenv(_SCHEMA_MODE_ENV) or _SCHEMA_MODE_FULL).strip().lower()
+    if schema_mode not in {_SCHEMA_MODE_FULL, _SCHEMA_MODE_MINIMAL}:
+        return _SCHEMA_MODE_FULL
+    return schema_mode
+
+
 async def init_db_schema() -> None:
-    """Initialize migrated novel tables once."""
-    if _schema_initialized.is_set():
+    """Register and create novel tables in the shared main database."""
+    global _schema_initialized_engine
+
+    engine = get_main_engine()
+    if engine is None:
+        raise RuntimeError(
+            "Main persistence engine is not initialized. "
+            "Novel schema cannot be created outside DeerFlow persistence."
+        )
+
+    if _schema_initialized.is_set() and _schema_initialized_engine is engine:
         return
+
     async with _SCHEMA_INIT_LOCK:
-        if _schema_initialized.is_set():
+        engine = get_main_engine()
+        if engine is None:
+            raise RuntimeError(
+                "Main persistence engine is not initialized. "
+                "Novel schema cannot be created outside DeerFlow persistence."
+            )
+
+        if _schema_initialized.is_set() and _schema_initialized_engine is engine:
             return
 
-        schema_mode = (os.getenv(_SCHEMA_MODE_ENV) or _SCHEMA_MODE_FULL).strip().lower()
-        if schema_mode not in {_SCHEMA_MODE_FULL, _SCHEMA_MODE_MINIMAL}:
-            schema_mode = _SCHEMA_MODE_FULL
-
-        # Ensure mapped tables are registered before create_all.
-        _load_models_for_schema_mode(schema_mode)
+        _load_models_for_schema_mode(_resolve_schema_mode())
 
         async with engine.begin() as conn:
-            await _ensure_wal_and_pragma(conn)
             await conn.run_sync(Base.metadata.create_all)
             await _ensure_version_columns(conn)
+
+        _schema_initialized_engine = engine
         _schema_initialized.set()
 
 
 async def _ensure_version_columns(conn) -> None:
-    from sqlalchemy import inspect as sa_inspect
-
     version_tables = ["characters", "outlines", "careers"]
     for table_name in version_tables:
         try:
-            col_names = [c["name"] for c in await conn.run_sync(
-                lambda sync_conn, tn=table_name: sa_inspect(sync_conn).get_columns(tn)
-            )]
+            col_names = [
+                c["name"]
+                for c in await conn.run_sync(
+                    lambda sync_conn, tn=table_name: sa_inspect(sync_conn).get_columns(tn)
+                )
+            ]
             if "version" not in col_names:
                 await conn.execute(
                     text(f"ALTER TABLE {table_name} ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
@@ -156,14 +170,20 @@ async def _ensure_version_columns(conn) -> None:
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """Yield an async database session."""
-    await init_db_schema()
-    async with AsyncSessionLocal() as session:
-        yield session
+    """Yield an async database session from the main DeerFlow engine."""
+    try:
+        await init_db_schema()
+        async with AsyncSessionLocal() as session:
+            yield session
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-async def get_engine(user_id: str | None = None):
-    """兼容旧服务签名：返回共享异步 engine。"""
+async def get_engine(user_id: str | None = None) -> AsyncEngine:
+    """Return the shared DeerFlow async engine."""
     del user_id
     await init_db_schema()
+    engine = get_main_engine()
+    if engine is None:
+        raise RuntimeError("Main persistence engine is not initialized")
     return engine

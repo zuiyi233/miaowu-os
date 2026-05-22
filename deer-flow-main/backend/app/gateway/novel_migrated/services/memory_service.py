@@ -348,7 +348,9 @@ class MemoryService:
         - 增量：仅处理 `status != indexed` 的文档（或 force=True）
         - 命名空间隔离：collection 已按 user_id/project_id 哈希隔离
         """
-        scope_user = (user_id or "").strip() or "local_single_user"
+        scope_user = (user_id or "").strip()
+        if not scope_user:
+            raise ValueError("user_id is required for workspace document memory sync")
         scope_project = (project_id or "").strip()
         if not scope_project:
             return {"total": 0, "indexed": 0, "skipped": 0, "failed": 0}

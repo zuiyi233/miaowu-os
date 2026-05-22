@@ -62,6 +62,14 @@ def _include_optional_router(module_path: str) -> bool:
     if module_path == _ADMIN_ROUTER_MODULE and not _is_admin_router_enabled():
         logger.info("Skip optional router %s: disabled by %s", module_path, _ADMIN_ROUTE_SWITCH_ENV)
         return False
+    if module_path == _ADMIN_ROUTER_MODULE and _is_admin_router_enabled():
+        logger.error(
+            "Skip optional router %s: %s is deprecated in unified persistence mode; "
+            "use main DeerFlow admin permissions instead.",
+            module_path,
+            _ADMIN_ROUTE_SWITCH_ENV,
+        )
+        return False
 
     try:
         module = _import_router_module(module_path)

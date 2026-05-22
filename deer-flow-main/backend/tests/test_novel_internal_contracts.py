@@ -1,15 +1,16 @@
 """Contract tests for internal (request=None) novel tool calls.
 
 Validates that:
-1. generate_chapter internal path resolves user_id correctly when request=None
-2. analyze_chapter internal path resolves user_id correctly when request=None
-3. Both paths fall back to 'local_single_user' when no user context is available
+1. generate_chapter internal path still accepts request=None for direct calls
+2. analyze_chapter internal path still accepts request=None for direct calls
+3. Missing user context fails instead of falling back to a default user
 4. API signatures remain compatible with the internal calling convention
 """
 from __future__ import annotations
 
 import importlib
 import inspect
+from types import SimpleNamespace
 
 import pytest
 
@@ -44,13 +45,11 @@ class TestGenerateChapterInternalContract:
         )
 
     @pytest.mark.skipif(not HAS_USER_CONTEXT, reason="user_context module not importable")
-    def test_effective_user_id_fallback_when_request_none(self):
+    def test_missing_user_id_is_rejected_when_request_none(self):
         from app.gateway.novel_migrated.core.user_context import resolve_user_id
 
-        result = resolve_user_id(None)
-        assert result == "local_single_user" or isinstance(result, str), (
-            f"When user_id is None, resolve_user_id should fallback gracefully, got: {result}"
-        )
+        with pytest.raises(Exception):
+            resolve_user_id(None)
 
 
 class TestAnalyzeChapterInternalContract:
@@ -81,34 +80,37 @@ class TestAnalyzeChapterInternalContract:
 class TestUserIdResolutionContract:
     @pytest.mark.skipif(not HAS_USER_CONTEXT, reason="user_context module not importable")
     def test_user_id_resolution_chain(self):
-        from app.gateway.novel_migrated.core.user_context import get_default_user_id, resolve_user_id
-
-        default_user = get_default_user_id()
-        assert default_user is not None and len(default_user) > 0, (
-            "get_default_user_id() must return a non-empty string"
-        )
-
-        resolved = resolve_user_id(None)
-        assert resolved is not None and len(resolved) > 0, (
-            "resolve_user_id(None) must return a non-None user_id"
-        )
-
-    @pytest.mark.skipif(not HAS_USER_CONTEXT, reason="user_context module not importable")
-    def test_internal_call_user_id_not_empty(self):
         from app.gateway.novel_migrated.core.user_context import resolve_user_id
 
-        user_id = resolve_user_id(None)
-        assert isinstance(user_id, str) and len(user_id) > 0, (
-            f"Internal call must always resolve to a non-empty user_id, got: {user_id!r}"
-        )
+        assert resolve_user_id("main-user") == "main-user"
+        with pytest.raises(Exception):
+            resolve_user_id(None)
 
     @pytest.mark.skipif(not HAS_USER_CONTEXT, reason="user_context module not importable")
-    def test_default_user_id_is_local_single_user(self):
-        from app.gateway.novel_migrated.core.user_context import DEFAULT_USER_ID
+    def test_internal_call_requires_explicit_user_id(self):
+        from app.gateway.novel_migrated.core.user_context import resolve_user_id
 
-        assert DEFAULT_USER_ID == "local_single_user", (
-            f"DEFAULT_USER_ID should be 'local_single_user', got: {DEFAULT_USER_ID!r}"
-        )
+        assert resolve_user_id("main-user") == "main-user"
+        with pytest.raises(Exception):
+            resolve_user_id(None)
+
+    @pytest.mark.no_auto_user
+    def test_harness_internal_bridge_reads_main_runtime_user(self):
+        from deerflow.runtime.user_context import reset_current_user, set_current_user
+        from deerflow.tools.builtins.novel_internal import resolve_user_id
+
+        token = set_current_user(SimpleNamespace(id="runtime-user"))
+        try:
+            assert resolve_user_id(None) == "runtime-user"
+        finally:
+            reset_current_user(token)
+
+    @pytest.mark.no_auto_user
+    def test_harness_internal_bridge_rejects_missing_runtime_user(self):
+        from deerflow.tools.builtins.novel_internal import resolve_user_id
+
+        with pytest.raises(RuntimeError, match="requires explicit authenticated user_id"):
+            resolve_user_id(None)
 
 
 class TestSignatureStability:

@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
+from app.gateway.novel_migrated.api.common import get_owned_project_resource, get_user_id, verify_project_access
 from app.gateway.novel_migrated.api.settings import get_user_ai_service
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
@@ -129,11 +129,9 @@ async def get_outline(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Outline).where(Outline.id == outline_id))
-    outline = result.scalar_one_or_none()
-    if not outline:
-        raise HTTPException(status_code=404, detail="Outline not found")
-    await verify_project_access(outline.project_id, user_id, db)
+    outline = await get_owned_project_resource(
+        Outline, outline_id, user_id, db, not_found_detail="Outline not found"
+    )
     try:
         file_payload = await workspace_document_service.read_document(
             user_id=user_id,
@@ -199,11 +197,9 @@ async def update_outline(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Outline).where(Outline.id == outline_id))
-    outline = result.scalar_one_or_none()
-    if not outline:
-        raise HTTPException(status_code=404, detail="Outline not found")
-    await verify_project_access(outline.project_id, user_id, db)
+    outline = await get_owned_project_resource(
+        Outline, outline_id, user_id, db, not_found_detail="Outline not found"
+    )
 
     updates = {}
     if req.title is not None:
@@ -226,8 +222,9 @@ async def update_outline(
             await db.rollback()
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-        result = await db.execute(select(Outline).where(Outline.id == outline_id))
-        outline = result.scalar_one_or_none()
+        outline = await get_owned_project_resource(
+            Outline, outline_id, user_id, db, not_found_detail="Outline not found"
+        )
 
     try:
         await _sync_outline_document(outline=outline, user_id=user_id, db=db)
@@ -252,11 +249,9 @@ async def delete_outline(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Outline).where(Outline.id == outline_id))
-    outline = result.scalar_one_or_none()
-    if not outline:
-        raise HTTPException(status_code=404, detail="Outline not found")
-    await verify_project_access(outline.project_id, user_id, db)
+    outline = await get_owned_project_resource(
+        Outline, outline_id, user_id, db, not_found_detail="Outline not found"
+    )
 
     from app.gateway.novel_migrated.models.document_index import DocumentIndex
 
@@ -394,10 +389,14 @@ async def expand_outline(
     from app.gateway.novel_migrated.services.plot_expansion_service import PlotExpansionService
     service = PlotExpansionService(ai_service)
 
-    outline_result = await db.execute(select(Outline).where(Outline.id == req.outline_id))
-    outline = outline_result.scalar_one_or_none()
-    if not outline:
-        raise HTTPException(status_code=404, detail="Outline not found")
+    outline = await get_owned_project_resource(
+        Outline,
+        req.outline_id,
+        user_id,
+        db,
+        project_id=req.project_id,
+        not_found_detail="Outline not found",
+    )
 
     project_result = await db.execute(select(Project).where(Project.id == req.project_id))
     project = project_result.scalar_one_or_none()

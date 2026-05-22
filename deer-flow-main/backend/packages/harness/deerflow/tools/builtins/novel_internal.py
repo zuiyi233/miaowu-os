@@ -5,9 +5,9 @@
 App 层在启动时调用 register_novel_backend(impl)，传入实现这些方法的对象；
 harness 层只通过此处的 Protocol 调用，不直接依赖应用层模块。
 
-为兼容历史行为，若 register_novel_backend 未被调用，
-get_internal_db / get_internal_ai_service / resolve_user_id 将返回 None / 默认值，
-调用方应当回退到 HTTP 路径。
+若 register_novel_backend 未被调用，get_internal_db / get_internal_ai_service
+会抛出 RuntimeError，调用方应当回退到 HTTP 路径。内部直连写入必须显式
+传入主项目 user_id，不能回退默认用户。
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ class NovelBackendProtocol(Protocol):
         ...
 
     def resolve_user_id(self, raw_user_id: str | None) -> str:
-        """标准化 user_id；为空时回退默认值。"""
+        """标准化 user_id；为空时抛错。"""
         ...
 
     def load_attr(self, module_path: str, attr_name: str) -> Any | None:
@@ -74,15 +74,20 @@ async def get_internal_ai_service(
 
 
 def resolve_user_id(raw_user_id: str | None) -> str:
-    if _backend is not None:
-        try:
-            result = _backend.resolve_user_id(raw_user_id)
-            if isinstance(result, str) and result.strip():
-                return result.strip()
-        except Exception:
-            logger.exception("backend.resolve_user_id failed, fallback to default")
     normalized = (raw_user_id or "").strip()
-    return normalized or "local_single_user"
+    if normalized:
+        return normalized
+    try:
+        from deerflow.runtime.user_context import require_current_user
+
+        return str(require_current_user().id)
+    except Exception:
+        logger.debug("No DeerFlow runtime user context available for novel internal call", exc_info=True)
+    if _backend is not None:
+        result = _backend.resolve_user_id(raw_user_id)
+        if isinstance(result, str) and result.strip():
+            return result.strip()
+    raise RuntimeError("Novel internal call requires explicit authenticated user_id")
 
 
 def load_attr(module_path: str, attr_name: str) -> Any | None:
