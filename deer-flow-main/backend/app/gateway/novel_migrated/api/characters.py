@@ -519,6 +519,7 @@ async def generate_single_character(
         if req.is_organization and char_data.get("is_organization"):
             org = Organization(
                 character_id=character.id,
+                project_id=req.project_id,
                 name=character.name,
                 organization_type=char_data.get("organization_type", ""),
                 purpose=char_data.get("organization_purpose", ""),

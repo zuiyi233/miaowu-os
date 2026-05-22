@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.novel_migrated.api.common import get_user_id
+from app.gateway.novel_migrated.api.common import get_owned_user_resource, get_user_id
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.project_default_style import ProjectDefaultStyle
@@ -78,10 +78,9 @@ async def get_style(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(WritingStyle).where(WritingStyle.id == style_id))
-    style = result.scalar_one_or_none()
-    if not style or style.user_id != user_id:
-        raise HTTPException(status_code=404, detail="Writing style not found")
+    style = await get_owned_user_resource(
+        WritingStyle, style_id, user_id, db, not_found_detail="Writing style not found"
+    )
     return _serialize_style(style)
 
 
@@ -92,10 +91,9 @@ async def update_style(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(WritingStyle).where(WritingStyle.id == style_id))
-    style = result.scalar_one_or_none()
-    if not style or style.user_id != user_id:
-        raise HTTPException(status_code=404, detail="Writing style not found")
+    style = await get_owned_user_resource(
+        WritingStyle, style_id, user_id, db, not_found_detail="Writing style not found"
+    )
 
     for field_name in ['name', 'description', 'prompt_content', 'order_index']:
         value = getattr(req, field_name, None)
@@ -113,10 +111,9 @@ async def delete_style(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(WritingStyle).where(WritingStyle.id == style_id))
-    style = result.scalar_one_or_none()
-    if not style or style.user_id != user_id:
-        raise HTTPException(status_code=404, detail="Writing style not found")
+    style = await get_owned_user_resource(
+        WritingStyle, style_id, user_id, db, not_found_detail="Writing style not found"
+    )
     await db.delete(style)
     await db.commit()
     return {"message": "Writing style deleted"}
@@ -131,9 +128,9 @@ async def set_project_default_style(
     from app.gateway.novel_migrated.api.common import verify_project_access
     await verify_project_access(req.project_id, user_id, db)
 
-    style_result = await db.execute(select(WritingStyle).where(WritingStyle.id == req.style_id))
-    if not style_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Writing style not found")
+    await get_owned_user_resource(
+        WritingStyle, req.style_id, user_id, db, not_found_detail="Writing style not found"
+    )
 
     existing = await db.execute(
         select(ProjectDefaultStyle).where(ProjectDefaultStyle.project_id == req.project_id))
@@ -163,8 +160,15 @@ async def get_project_default_style(
     if not default:
         return {"project_id": project_id, "style_id": None, "style": None}
 
-    style_result = await db.execute(select(WritingStyle).where(WritingStyle.id == default.style_id))
-    style = style_result.scalar_one_or_none()
+    style = None
+    if default.style_id is not None:
+        style = await get_owned_user_resource(
+            WritingStyle,
+            default.style_id,
+            user_id,
+            db,
+            not_found_detail="Writing style not found",
+        )
     return {
         "project_id": project_id,
         "style_id": default.style_id,

@@ -65,6 +65,10 @@ class Organization(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), comment="组织ID")
     character_id = Column(String(36), ForeignKey("characters.id", ondelete="CASCADE"), nullable=False, unique=True, comment="关联的角色ID")
     project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True, comment="项目ID")
+    name = Column(String(100), comment="组织名称缓存")
+    organization_type = Column(String(100), comment="组织类型")
+    purpose = Column(Text, comment="组织目的")
+    hierarchy = Column(Text, comment="组织层级说明")
     
     # 组织层级
     parent_org_id = Column(String(36), ForeignKey("organizations.id", ondelete="SET NULL"), comment="父组织ID")

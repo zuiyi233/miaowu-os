@@ -5,10 +5,11 @@ identity is a hard 401; there is no single-user fallback in the unified SaaS
 data model.
 """
 
+from typing import Any
+
 from fastapi import HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Any
 
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.core.user_context import get_request_user_id, resolve_user_id
@@ -95,6 +96,28 @@ async def get_owned_project_resource(
         query = query.where(model.project_id == project_id)
 
     result = await db.execute(query)
+    resource = result.scalar_one_or_none()
+    if resource is None:
+        raise HTTPException(status_code=404, detail=not_found_detail)
+    return resource
+
+
+async def get_owned_user_resource(
+    model: Any,
+    resource_id: str | int,
+    user_id: str | None,
+    db: AsyncSession,
+    *,
+    not_found_detail: str = "Resource not found",
+) -> Any:
+    """Load a resource that has its own ``user_id`` ownership column."""
+    effective_user_id = require_authenticated_user(user_id)
+    result = await db.execute(
+        select(model).where(
+            model.id == resource_id,
+            model.user_id == effective_user_id,
+        )
+    )
     resource = result.scalar_one_or_none()
     if resource is None:
         raise HTTPException(status_code=404, detail=not_found_detail)

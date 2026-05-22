@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
+from app.gateway.novel_migrated.api.common import get_owned_project_resource, get_user_id, verify_project_access
 from app.gateway.novel_migrated.api.settings import get_user_ai_service_with_overrides
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
@@ -579,17 +579,10 @@ async def update_career(
     db: AsyncSession = Depends(get_db)
 ):
     """更新职业信息"""
-    result = await db.execute(
-        select(Career).where(Career.id == career_id)
-    )
-    career = result.scalar_one_or_none()
-    
-    if not career:
-        raise HTTPException(status_code=404, detail="职业不存在")
-    
-    # 验证用户权限
     user_id = get_user_id(request)
-    await verify_project_access(career.project_id, user_id, db)
+    career = await get_owned_project_resource(
+        Career, career_id, user_id, db, not_found_detail="职业不存在"
+    )
     
     # 更新字段
     update_data = career_update.model_dump(exclude_unset=True)
@@ -618,8 +611,9 @@ async def update_career(
             await db.rollback()
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-        result = await db.execute(select(Career).where(Career.id == career_id))
-        career = result.scalar_one_or_none()
+        career = await get_owned_project_resource(
+            Career, career_id, user_id, db, not_found_detail="职业不存在"
+        )
 
     try:
         await db.flush()
@@ -651,17 +645,10 @@ async def delete_career(
     db: AsyncSession = Depends(get_db)
 ):
     """删除职业"""
-    result = await db.execute(
-        select(Career).where(Career.id == career_id)
-    )
-    career = result.scalar_one_or_none()
-    
-    if not career:
-        raise HTTPException(status_code=404, detail="职业不存在")
-    
-    # 验证用户权限
     user_id = get_user_id(request)
-    await verify_project_access(career.project_id, user_id, db)
+    career = await get_owned_project_resource(
+        Career, career_id, user_id, db, not_found_detail="职业不存在"
+    )
     
     # 检查是否有角色使用该职业
     char_career_result = await db.execute(
@@ -690,17 +677,10 @@ async def get_career(
     db: AsyncSession = Depends(get_db)
 ):
     """根据ID获取职业详情"""
-    result = await db.execute(
-        select(Career).where(Career.id == career_id)
-    )
-    career = result.scalar_one_or_none()
-    
-    if not career:
-        raise HTTPException(status_code=404, detail="职业不存在")
-    
-    # 验证用户权限
     user_id = get_user_id(request)
-    await verify_project_access(career.project_id, user_id, db)
+    career = await get_owned_project_resource(
+        Career, career_id, user_id, db, not_found_detail="职业不存在"
+    )
     
     try:
         file_payload = await workspace_document_service.read_document(
@@ -728,18 +708,10 @@ async def get_character_careers(
     db: AsyncSession = Depends(get_db)
 ):
     """获取角色的所有职业信息（主职业和副职业）"""
-    # 验证角色存在
-    char_result = await db.execute(
-        select(Character).where(Character.id == character_id)
-    )
-    character = char_result.scalar_one_or_none()
-    
-    if not character:
-        raise HTTPException(status_code=404, detail="角色不存在")
-    
-    # 验证用户权限
     user_id = get_user_id(request)
-    await verify_project_access(character.project_id, user_id, db)
+    character = await get_owned_project_resource(
+        Character, character_id, user_id, db, not_found_detail="角色不存在"
+    )
     
     # 获取角色的所有职业关联
     result = await db.execute(
@@ -803,18 +775,10 @@ async def set_main_career(
     db: AsyncSession = Depends(get_db)
 ):
     """设置或更换角色的主职业"""
-    # 验证角色存在
-    char_result = await db.execute(
-        select(Character).where(Character.id == character_id)
-    )
-    character = char_result.scalar_one_or_none()
-    
-    if not character:
-        raise HTTPException(status_code=404, detail="角色不存在")
-    
-    # 验证用户权限
     user_id = get_user_id(request)
-    await verify_project_access(character.project_id, user_id, db)
+    character = await get_owned_project_resource(
+        Character, character_id, user_id, db, not_found_detail="角色不存在"
+    )
     
     # 验证职业存在且为主职业类型
     career_result = await db.execute(
@@ -878,18 +842,10 @@ async def add_sub_career(
     db: AsyncSession = Depends(get_db)
 ):
     """为角色添加副职业"""
-    # 验证角色存在
-    char_result = await db.execute(
-        select(Character).where(Character.id == character_id)
-    )
-    character = char_result.scalar_one_or_none()
-    
-    if not character:
-        raise HTTPException(status_code=404, detail="角色不存在")
-    
-    # 验证用户权限
     user_id = get_user_id(request)
-    await verify_project_access(character.project_id, user_id, db)
+    character = await get_owned_project_resource(
+        Character, character_id, user_id, db, not_found_detail="角色不存在"
+    )
     
     # 验证职业存在且为副职业类型
     career_result = await db.execute(
@@ -965,14 +921,19 @@ async def update_career_stage(
     db: AsyncSession = Depends(get_db)
 ):
     """更新角色在某个职业的阶段"""
+    user_id = get_user_id(request)
+    character = await get_owned_project_resource(
+        Character, character_id, user_id, db, not_found_detail="角色不存在"
+    )
+
     # 验证角色职业关联存在
     result = await db.execute(
-        select(CharacterCareer, Career, Character)
+        select(CharacterCareer, Career)
         .join(Career, CharacterCareer.career_id == Career.id)
-        .join(Character, CharacterCareer.character_id == Character.id)
         .where(
             CharacterCareer.character_id == character_id,
-            CharacterCareer.career_id == career_id
+            CharacterCareer.career_id == career_id,
+            Career.project_id == character.project_id,
         )
     )
     relation_data = result.one_or_none()
@@ -980,11 +941,7 @@ async def update_career_stage(
     if not relation_data:
         raise HTTPException(status_code=404, detail="角色职业关联不存在")
     
-    char_career, career, character = relation_data
-    
-    # 验证用户权限
-    user_id = get_user_id(request)
-    await verify_project_access(character.project_id, user_id, db)
+    char_career, career = relation_data
     
     # 验证新阶段有效性
     if stage_request.current_stage > career.max_stage:
@@ -1024,25 +981,25 @@ async def remove_sub_career(
     db: AsyncSession = Depends(get_db)
 ):
     """删除角色的副职业"""
+    user_id = get_user_id(request)
+    character = await get_owned_project_resource(
+        Character, character_id, user_id, db, not_found_detail="角色不存在"
+    )
+
     # 验证角色职业关联存在
     result = await db.execute(
-        select(CharacterCareer, Character)
-        .join(Character, CharacterCareer.character_id == Character.id)
+        select(CharacterCareer)
+        .join(Career, CharacterCareer.career_id == Career.id)
         .where(
             CharacterCareer.character_id == character_id,
-            CharacterCareer.career_id == career_id
+            CharacterCareer.career_id == career_id,
+            Career.project_id == character.project_id,
         )
     )
-    relation_data = result.one_or_none()
+    char_career = result.scalar_one_or_none()
     
-    if not relation_data:
+    if not char_career:
         raise HTTPException(status_code=404, detail="角色职业关联不存在")
-    
-    char_career, character = relation_data
-    
-    # 验证用户权限
-    user_id = get_user_id(request)
-    await verify_project_access(character.project_id, user_id, db)
     
     # 不允许删除主职业
     if char_career.career_type == "main":

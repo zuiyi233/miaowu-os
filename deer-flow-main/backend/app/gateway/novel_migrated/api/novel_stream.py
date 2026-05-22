@@ -12,7 +12,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
@@ -294,16 +294,22 @@ async def _get_chapter_with_project_access(
     user_id: str,
     db: AsyncSession,
 ) -> tuple[Project, Chapter]:
-    chapter_result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
-    chapter = chapter_result.scalar_one_or_none()
-    if not chapter:
+    query = (
+        select(Project, Chapter)
+        .join(Chapter, Chapter.project_id == Project.id)
+        .where(
+            Chapter.id == chapter_id,
+            Project.user_id == user_id,
+        )
+    )
+    if novel_id is not None:
+        query = query.where(Project.id == novel_id)
+
+    chapter_result = await db.execute(query)
+    row = chapter_result.one_or_none()
+    if row is None:
         raise HTTPException(status_code=404, detail="章节不存在")
-
-    project_id = novel_id or chapter.project_id
-    if chapter.project_id != project_id:
-        raise HTTPException(status_code=404, detail="章节不存在或不属于当前小说")
-
-    project = await verify_project_access(project_id, user_id, db)
+    project, chapter = row
     return project, chapter
 
 
@@ -315,9 +321,14 @@ async def _build_style_content(
     db: AsyncSession,
 ) -> str:
     if style_id is not None:
-        style_result = await db.execute(select(WritingStyle).where(WritingStyle.id == style_id))
+        style_result = await db.execute(
+            select(WritingStyle).where(
+                WritingStyle.id == style_id,
+                or_(WritingStyle.user_id.is_(None), WritingStyle.user_id == user_id),
+            )
+        )
         style = style_result.scalar_one_or_none()
-        if style and (style.user_id is None or style.user_id == user_id):
+        if style:
             return style.prompt_content or ""
         return ""
 
@@ -444,7 +455,12 @@ def _build_chapter_prompt(
 
 async def _resolve_outline_for_chapter(db: AsyncSession, chapter: Chapter) -> Outline | None:
     if chapter.outline_id:
-        outline_result = await db.execute(select(Outline).where(Outline.id == chapter.outline_id))
+        outline_result = await db.execute(
+            select(Outline).where(
+                Outline.id == chapter.outline_id,
+                Outline.project_id == chapter.project_id,
+            )
+        )
         outline = outline_result.scalar_one_or_none()
         if outline:
             return outline

@@ -77,7 +77,7 @@ async def _find_volume_in_all_projects(
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any] | None, str]:
     from sqlalchemy import select
 
-    from app.gateway.novel_migrated.core.database import Project
+    from app.gateway.novel_migrated.models.project import Project
 
     result = await db.execute(
         select(Project.id).where(Project.user_id == user_id)

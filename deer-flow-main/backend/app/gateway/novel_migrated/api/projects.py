@@ -127,11 +127,7 @@ async def get_project(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    await verify_project_access(project_id, user_id, db)
-    result = await db.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await verify_project_access(project_id, user_id, db)
     return _serialize_project(project)
 
 
@@ -143,10 +139,6 @@ async def update_project(
     db: AsyncSession = Depends(get_db),
 ):
     await verify_project_access(project_id, user_id, db)
-    result = await db.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
 
     update_fields = ['title', 'description', 'theme', 'genre', 'target_words',
                       'chapter_count', 'narrative_perspective', 'outline_mode',
@@ -167,7 +159,7 @@ async def update_project(
             await db.rollback()
             raise HTTPException(status_code=409, detail=str(exc))
 
-    result = await db.execute(select(Project).where(Project.id == project_id))
+    result = await db.execute(select(Project).where(Project.id == project_id, Project.user_id == user_id))
     project = result.scalar_one_or_none()
     return _serialize_project(project)
 
@@ -178,11 +170,7 @@ async def delete_project(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    await verify_project_access(project_id, user_id, db)
-    result = await db.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await verify_project_access(project_id, user_id, db)
 
     from app.gateway.novel_migrated.models.document_index import DocumentIndex
     from app.gateway.novel_migrated.models.foreshadow import Foreshadow
@@ -261,12 +249,7 @@ async def world_build(
     db: AsyncSession = Depends(get_db),
     ai_service: AIService = Depends(get_user_ai_service),
 ):
-    await verify_project_access(req.project_id, user_id, db)
-
-    result = await db.execute(select(Project).where(Project.id == req.project_id))
-    project = result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await verify_project_access(req.project_id, user_id, db)
 
     if project.world_time_period and project.world_location and not req.force_regenerate:
         return _serialize_project(project)
@@ -375,10 +358,6 @@ async def update_wizard_status(
     db: AsyncSession = Depends(get_db),
 ):
     await verify_project_access(project_id, user_id, db)
-    result = await db.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
 
     updates = {}
     if wizard_status is not None:
@@ -394,7 +373,7 @@ async def update_wizard_status(
             await db.rollback()
             raise HTTPException(status_code=409, detail=str(exc))
 
-    result = await db.execute(select(Project).where(Project.id == project_id))
+    result = await db.execute(select(Project).where(Project.id == project_id, Project.user_id == user_id))
     project = result.scalar_one_or_none()
     return _serialize_project(project)
 

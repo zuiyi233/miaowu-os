@@ -195,7 +195,10 @@ async def analyze_chapter(
         
         # 检查是否已存在分析记录，如有则删除
         existing_result = await db.execute(
-            select(PlotAnalysis).where(PlotAnalysis.chapter_id == chapter_id)
+            select(PlotAnalysis).where(
+                PlotAnalysis.project_id == project_id,
+                PlotAnalysis.chapter_id == chapter_id,
+            )
         )
         existing_analysis = existing_result.scalar_one_or_none()
         if existing_analysis:
@@ -232,11 +235,19 @@ async def analyze_chapter(
 
         # 重新分析前，先清理该章节旧记忆（关系库 + 向量库）
         old_memories_result = await db.execute(
-            select(StoryMemory).where(StoryMemory.chapter_id == chapter_id)
+            select(StoryMemory).where(
+                StoryMemory.project_id == project_id,
+                StoryMemory.chapter_id == chapter_id,
+            )
         )
         old_memories = old_memories_result.scalars().all()
         if old_memories:
-            await db.execute(delete(StoryMemory).where(StoryMemory.chapter_id == chapter_id))
+            await db.execute(
+                delete(StoryMemory).where(
+                    StoryMemory.project_id == project_id,
+                    StoryMemory.chapter_id == chapter_id,
+                )
+            )
             await db.flush()
 
         if effective_user_id:

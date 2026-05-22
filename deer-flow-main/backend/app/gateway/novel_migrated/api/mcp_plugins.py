@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.novel_migrated.api.common import get_user_id
+from app.gateway.novel_migrated.api.common import get_owned_user_resource, get_user_id
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.mcp_plugin import MCPPlugin
@@ -94,10 +94,9 @@ async def get_plugin(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(MCPPlugin).where(MCPPlugin.id == plugin_id))
-    plugin = result.scalar_one_or_none()
-    if not plugin or plugin.user_id != user_id:
-        raise HTTPException(status_code=404, detail="Plugin not found")
+    plugin = await get_owned_user_resource(
+        MCPPlugin, plugin_id, user_id, db, not_found_detail="Plugin not found"
+    )
     return _serialize_plugin(plugin)
 
 
@@ -108,10 +107,9 @@ async def update_plugin(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(MCPPlugin).where(MCPPlugin.id == plugin_id))
-    plugin = result.scalar_one_or_none()
-    if not plugin or plugin.user_id != user_id:
-        raise HTTPException(status_code=404, detail="Plugin not found")
+    plugin = await get_owned_user_resource(
+        MCPPlugin, plugin_id, user_id, db, not_found_detail="Plugin not found"
+    )
 
     for field_name in ['display_name', 'plugin_type', 'server_url', 'command',
                         'args', 'env', 'enabled', 'status']:
@@ -130,10 +128,9 @@ async def delete_plugin(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(MCPPlugin).where(MCPPlugin.id == plugin_id))
-    plugin = result.scalar_one_or_none()
-    if not plugin or plugin.user_id != user_id:
-        raise HTTPException(status_code=404, detail="Plugin not found")
+    plugin = await get_owned_user_resource(
+        MCPPlugin, plugin_id, user_id, db, not_found_detail="Plugin not found"
+    )
     await db.delete(plugin)
     await db.commit()
     return {"message": "Plugin deleted"}
@@ -145,10 +142,9 @@ async def test_plugin(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(MCPPlugin).where(MCPPlugin.id == req.plugin_id))
-    plugin = result.scalar_one_or_none()
-    if not plugin or plugin.user_id != user_id:
-        raise HTTPException(status_code=404, detail="Plugin not found")
+    plugin = await get_owned_user_resource(
+        MCPPlugin, req.plugin_id, user_id, db, not_found_detail="Plugin not found"
+    )
 
     plugin.status = "testing"
     await db.commit()

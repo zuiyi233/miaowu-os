@@ -396,7 +396,10 @@ async def import_item(
     # 获取提示词详情
     if _is_workshop_server():
         result = await db.execute(
-            select(PromptWorkshopItem).where(PromptWorkshopItem.id == item_id)
+            select(PromptWorkshopItem).where(
+                PromptWorkshopItem.id == item_id,
+                PromptWorkshopItem.status == "active",
+            )
         )
         item = result.scalar_one_or_none()
         if not item:
@@ -468,7 +471,10 @@ async def toggle_like(
         existing_like = result.scalar_one_or_none()
 
         item_result = await db.execute(
-            select(PromptWorkshopItem).where(PromptWorkshopItem.id == item_id)
+            select(PromptWorkshopItem).where(
+                PromptWorkshopItem.id == item_id,
+                PromptWorkshopItem.status == "active",
+            )
         )
         item = item_result.scalar_one_or_none()
         if not item:

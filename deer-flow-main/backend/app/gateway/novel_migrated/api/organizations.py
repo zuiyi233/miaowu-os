@@ -10,9 +10,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
+from app.gateway.novel_migrated.api.common import get_owned_project_resource, get_user_id, verify_project_access
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.models.character import Character
+from app.gateway.novel_migrated.models.project import Project
 from app.gateway.novel_migrated.models.relationship import Organization, OrganizationMember
 from app.gateway.novel_migrated.services.workspace_document_service import WorkspaceSecurityError, workspace_document_service
 
@@ -69,15 +70,10 @@ def _extract_org_payload(markdown: str) -> dict[str, Any] | None:
 
 async def _build_org_payload_from_db(
     *,
-    organization_id: str,
+    org_char: Character,
     db: AsyncSession,
 ) -> tuple[Character, dict[str, Any]]:
-    char_result = await db.execute(select(Character).where(Character.id == organization_id))
-    org_char = char_result.scalar_one_or_none()
-    if not org_char or not org_char.is_organization:
-        raise HTTPException(status_code=404, detail="Organization not found")
-
-    org_result = await db.execute(select(Organization).where(Organization.character_id == organization_id))
+    org_result = await db.execute(select(Organization).where(Organization.character_id == org_char.id))
     org_detail = org_result.scalar_one_or_none()
 
     members: list[dict[str, Any]] = []
@@ -115,6 +111,47 @@ async def _build_org_payload_from_db(
         "members": members,
     }
     return org_char, payload
+
+
+async def _get_owned_organization_character(
+    *,
+    organization_id: str,
+    user_id: str,
+    db: AsyncSession,
+) -> Character:
+    org_char = await get_owned_project_resource(
+        Character,
+        organization_id,
+        user_id,
+        db,
+        not_found_detail="Organization not found",
+    )
+    if not org_char.is_organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return org_char
+
+
+async def _get_owned_organization_member(
+    *,
+    member_id: str,
+    user_id: str,
+    db: AsyncSession,
+) -> tuple[OrganizationMember, Organization, Character]:
+    result = await db.execute(
+        select(OrganizationMember, Organization, Character)
+        .join(Organization, OrganizationMember.organization_id == Organization.id)
+        .join(Character, Organization.character_id == Character.id)
+        .join(Project, Organization.project_id == Project.id)
+        .where(
+            OrganizationMember.id == member_id,
+            Project.user_id == user_id,
+            Character.is_organization.is_(True),
+        )
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return row
 
 
 async def _sync_org_document(
@@ -228,11 +265,11 @@ async def get_organization(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    char_result = await db.execute(select(Character).where(Character.id == organization_id))
-    org_char = char_result.scalar_one_or_none()
-    if not org_char or not org_char.is_organization:
-        raise HTTPException(status_code=404, detail="Organization not found")
-    await verify_project_access(org_char.project_id, user_id, db)
+    org_char = await _get_owned_organization_character(
+        organization_id=organization_id,
+        user_id=user_id,
+        db=db,
+    )
 
     payload, doc_meta = await _read_org_document_or_404(
         project_id=org_char.project_id,
@@ -255,20 +292,25 @@ async def update_organization(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    org_char, payload = await _build_org_payload_from_db(organization_id=organization_id, db=db)
-    await verify_project_access(org_char.project_id, user_id, db)
+    org_char = await _get_owned_organization_character(
+        organization_id=organization_id,
+        user_id=user_id,
+        db=db,
+    )
 
     org_result = await db.execute(select(Organization).where(Organization.character_id == org_char.id))
     org_detail = org_result.scalar_one_or_none()
     if not org_detail:
-        org_detail = Organization(character_id=org_char.id, name=org_char.name)
+        org_detail = Organization(character_id=org_char.id, project_id=org_char.project_id, name=org_char.name)
         db.add(org_detail)
         await db.flush()
 
     if req.organization_type is not None:
         org_detail.organization_type = req.organization_type
+        org_char.organization_type = req.organization_type
     if req.purpose is not None:
         org_detail.purpose = req.purpose
+        org_char.organization_purpose = req.purpose
     if req.hierarchy is not None:
         org_detail.hierarchy = req.hierarchy
     if req.power_level is not None:
@@ -277,7 +319,7 @@ async def update_organization(
         org_detail.location = req.location
 
     await db.flush()
-    _, payload = await _build_org_payload_from_db(organization_id=organization_id, db=db)
+    _, payload = await _build_org_payload_from_db(org_char=org_char, db=db)
     file_meta = await _sync_org_document(org_char=org_char, payload=payload, user_id=user_id, db=db)
     await db.commit()
     return {"message": "Organization updated", "id": organization_id, **file_meta}
@@ -290,12 +332,20 @@ async def add_member(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    org_char, _ = await _build_org_payload_from_db(organization_id=organization_id, db=db)
-    await verify_project_access(org_char.project_id, user_id, db)
+    org_char = await _get_owned_organization_character(
+        organization_id=organization_id,
+        user_id=user_id,
+        db=db,
+    )
 
-    char_result = await db.execute(select(Character).where(Character.id == req.character_id))
-    if not char_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Character not found")
+    await get_owned_project_resource(
+        Character,
+        req.character_id,
+        user_id,
+        db,
+        project_id=org_char.project_id,
+        not_found_detail="Character not found",
+    )
 
     org_result = await db.execute(select(Organization).where(Organization.character_id == organization_id))
     org_detail = org_result.scalar_one_or_none()
@@ -321,7 +371,7 @@ async def add_member(
     )
     db.add(member)
     await db.flush()
-    _, payload = await _build_org_payload_from_db(organization_id=organization_id, db=db)
+    _, payload = await _build_org_payload_from_db(org_char=org_char, db=db)
     file_meta = await _sync_org_document(org_char=org_char, payload=payload, user_id=user_id, db=db)
     await db.commit()
     return {"id": member.id, "organization_id": org_detail.id, "character_id": req.character_id, "position": req.position, **file_meta}
@@ -334,21 +384,7 @@ async def update_member(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(OrganizationMember).where(OrganizationMember.id == member_id))
-    member = result.scalar_one_or_none()
-    if not member:
-        raise HTTPException(status_code=404, detail="Member not found")
-
-    org_result = await db.execute(select(Organization).where(Organization.id == member.organization_id))
-    org_detail = org_result.scalar_one_or_none()
-    if not org_detail:
-        raise HTTPException(status_code=404, detail="Organization not found")
-
-    char_result = await db.execute(select(Character).where(Character.id == org_detail.character_id))
-    org_char = char_result.scalar_one_or_none()
-    if not org_char:
-        raise HTTPException(status_code=404, detail="Organization not found")
-    await verify_project_access(org_char.project_id, user_id, db)
+    member, _org_detail, org_char = await _get_owned_organization_member(member_id=member_id, user_id=user_id, db=db)
 
     update_data = req.model_dump(exclude_unset=True)
     for key, value in update_data.items():
@@ -356,7 +392,7 @@ async def update_member(
             setattr(member, key, value)
 
     await db.flush()
-    _, payload = await _build_org_payload_from_db(organization_id=org_char.id, db=db)
+    _, payload = await _build_org_payload_from_db(org_char=org_char, db=db)
     file_meta = await _sync_org_document(org_char=org_char, payload=payload, user_id=user_id, db=db)
     await db.commit()
     return {"message": "Member updated", "id": member_id, **file_meta}
@@ -368,25 +404,11 @@ async def remove_member(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(OrganizationMember).where(OrganizationMember.id == member_id))
-    member = result.scalar_one_or_none()
-    if not member:
-        raise HTTPException(status_code=404, detail="Member not found")
-
-    org_result = await db.execute(select(Organization).where(Organization.id == member.organization_id))
-    org_detail = org_result.scalar_one_or_none()
-    if not org_detail:
-        raise HTTPException(status_code=404, detail="Organization not found")
-
-    char_result = await db.execute(select(Character).where(Character.id == org_detail.character_id))
-    org_char = char_result.scalar_one_or_none()
-    if not org_char:
-        raise HTTPException(status_code=404, detail="Organization not found")
-    await verify_project_access(org_char.project_id, user_id, db)
+    member, _org_detail, org_char = await _get_owned_organization_member(member_id=member_id, user_id=user_id, db=db)
 
     await db.delete(member)
     await db.flush()
-    _, payload = await _build_org_payload_from_db(organization_id=org_char.id, db=db)
+    _, payload = await _build_org_payload_from_db(org_char=org_char, db=db)
     file_meta = await _sync_org_document(org_char=org_char, payload=payload, user_id=user_id, db=db)
     await db.commit()
     return {"message": "Member removed", **file_meta}

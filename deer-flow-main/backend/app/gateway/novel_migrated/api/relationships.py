@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
+from app.gateway.novel_migrated.api.common import get_owned_project_resource, get_user_id, verify_project_access
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.models.character import Character
 from app.gateway.novel_migrated.models.document_index import DocumentIndex
@@ -344,17 +344,14 @@ async def create_relationship(
 ):
     await verify_project_access(req.project_id, user_id, db)
     for character_id in (req.character_from_id, req.character_to_id):
-        character_row = await db.execute(
-            select(Character.project_id).where(Character.id == character_id)
+        await get_owned_project_resource(
+            Character,
+            character_id,
+            user_id,
+            db,
+            project_id=req.project_id,
+            not_found_detail=f"Character not found: {character_id}",
         )
-        character_project_id = character_row.scalar_one_or_none()
-        if character_project_id is None:
-            raise HTTPException(status_code=404, detail=f"Character not found: {character_id}")
-        if str(character_project_id) != req.project_id:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Character does not belong to project {req.project_id}: {character_id}",
-            )
         try:
             await workspace_document_service.read_document(
                 user_id=user_id,

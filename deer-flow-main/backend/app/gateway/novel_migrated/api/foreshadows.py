@@ -3,9 +3,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
+from app.gateway.novel_migrated.api.common import get_owned_project_resource, get_user_id, verify_project_access
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
+from app.gateway.novel_migrated.models.foreshadow import Foreshadow
 from app.gateway.novel_migrated.schemas.foreshadow import (
     ForeshadowContextResponse,
     ForeshadowCreate,
@@ -162,13 +163,9 @@ async def get_foreshadow(
 ):
     """获取单个伏笔详情"""
     try:
-        foreshadow = await foreshadow_service.get_foreshadow(db, foreshadow_id)
-        
-        if not foreshadow:
-            raise HTTPException(status_code=404, detail="伏笔不存在")
-        
-        await verify_project_access(foreshadow.project_id, user_id, db)
-        
+        foreshadow = await get_owned_project_resource(
+            Foreshadow, foreshadow_id, user_id, db, not_found_detail="伏笔不存在"
+        )
         return foreshadow.to_dict()
         
     except HTTPException:
@@ -209,13 +206,9 @@ async def update_foreshadow(
 ):
     """更新伏笔"""
     try:
-        foreshadow = await foreshadow_service.get_foreshadow(db, foreshadow_id)
-        
-        if not foreshadow:
-            raise HTTPException(status_code=404, detail="伏笔不存在")
-        
-        await verify_project_access(foreshadow.project_id, user_id, db)
-        
+        await get_owned_project_resource(
+            Foreshadow, foreshadow_id, user_id, db, not_found_detail="伏笔不存在"
+        )
         updated = await foreshadow_service.update_foreshadow(db, foreshadow_id, data)
         return updated.to_dict()
         
@@ -233,13 +226,9 @@ async def delete_foreshadow(
 ):
     """删除伏笔"""
     try:
-        foreshadow = await foreshadow_service.get_foreshadow(db, foreshadow_id)
-        
-        if not foreshadow:
-            raise HTTPException(status_code=404, detail="伏笔不存在")
-        
-        await verify_project_access(foreshadow.project_id, user_id, db)
-        
+        await get_owned_project_resource(
+            Foreshadow, foreshadow_id, user_id, db, not_found_detail="伏笔不存在"
+        )
         await foreshadow_service.delete_foreshadow(db, foreshadow_id)
         
         return {"message": "伏笔删除成功", "id": foreshadow_id}
@@ -263,13 +252,9 @@ async def plant_foreshadow(
     将伏笔状态从pending改为planted，记录埋入章节
     """
     try:
-        foreshadow = await foreshadow_service.get_foreshadow(db, foreshadow_id)
-        
-        if not foreshadow:
-            raise HTTPException(status_code=404, detail="伏笔不存在")
-        
-        await verify_project_access(foreshadow.project_id, user_id, db)
-        
+        await get_owned_project_resource(
+            Foreshadow, foreshadow_id, user_id, db, not_found_detail="伏笔不存在"
+        )
         updated = await foreshadow_service.mark_as_planted(db, foreshadow_id, data)
         return updated.to_dict()
         
@@ -292,13 +277,9 @@ async def resolve_foreshadow(
     将伏笔状态改为resolved或partially_resolved
     """
     try:
-        foreshadow = await foreshadow_service.get_foreshadow(db, foreshadow_id)
-        
-        if not foreshadow:
-            raise HTTPException(status_code=404, detail="伏笔不存在")
-        
-        await verify_project_access(foreshadow.project_id, user_id, db)
-        
+        await get_owned_project_resource(
+            Foreshadow, foreshadow_id, user_id, db, not_found_detail="伏笔不存在"
+        )
         updated = await foreshadow_service.mark_as_resolved(db, foreshadow_id, data)
         return updated.to_dict()
         
@@ -321,13 +302,9 @@ async def abandon_foreshadow(
     决定不再使用此伏笔
     """
     try:
-        foreshadow = await foreshadow_service.get_foreshadow(db, foreshadow_id)
-        
-        if not foreshadow:
-            raise HTTPException(status_code=404, detail="伏笔不存在")
-        
-        await verify_project_access(foreshadow.project_id, user_id, db)
-        
+        await get_owned_project_resource(
+            Foreshadow, foreshadow_id, user_id, db, not_found_detail="伏笔不存在"
+        )
         updated = await foreshadow_service.mark_as_abandoned(db, foreshadow_id, reason)
         return updated.to_dict()
         

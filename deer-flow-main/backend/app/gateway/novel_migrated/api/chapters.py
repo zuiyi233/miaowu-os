@@ -593,7 +593,11 @@ async def get_batch_task_status(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(BatchGenerationTask).where(BatchGenerationTask.id == task_id))
+        select(BatchGenerationTask).where(
+            BatchGenerationTask.id == task_id,
+            BatchGenerationTask.user_id == user_id,
+        )
+    )
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Batch task not found")
@@ -713,7 +717,11 @@ async def get_regen_task_status(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(RegenerationTask).where(RegenerationTask.id == task_id))
+        select(RegenerationTask).where(
+            RegenerationTask.id == task_id,
+            RegenerationTask.user_id == user_id,
+        )
+    )
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Regeneration task not found")

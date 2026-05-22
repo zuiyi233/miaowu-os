@@ -1,6 +1,6 @@
 # Miaowu-OS 小说 SaaS 改造剩余任务清单
 
-更新时间：2026-05-22
+更新时间：2026-05-23
 
 本文档只记录当前尚未完成的工作，用于后续继续推进“统一 Miaowu-OS 主项目与小说二开数据源：后端全包 SaaS 改造”。
 
@@ -12,8 +12,11 @@
 - 小说自建 `users` / `user_passwords` 不再作为 ORM schema 真源注册
 - legacy novel admin router 已阻断
 - 章节、人物、大纲的主要按 ID 访问路径已增加 owner-scoped 查询
+- 2026-05-23 继续补齐：项目、职业、伏笔、关系创建、MCP 插件、写作风格、组织/成员、记忆清理、卷管理、小说流式生成章节入口、批量生成任务状态、重写任务状态的 owner-scoped 查询
+- 已补齐 `Organization` ORM 与组织 API 已使用字段的一致性，避免组织生成/更新因 `name/project_id/organization_type/purpose/hierarchy` 字段不匹配失败
 - 已新增 SeaweedFS / S3-compatible 对象存储配置基础和 `media_assets` 元数据模型
-- 已通过定向测试：`57 passed`
+- 已新增 `media_assets` 上传/元数据/下载/删除 API；上传走后端对象存储服务，响应不暴露裸 object key
+- 已通过定向测试：`62 passed`
 
 以下是仍需完成的全部任务。
 
@@ -36,24 +39,25 @@ rg "select\\(Chapter\\)|select\\(Character\\)|select\\(Outline\\)|select\\(Caree
 - `chapters.py`
 - `characters.py`
 - `outlines.py`
+- `projects.py`
+- `careers.py`（职业详情/更新/删除、角色职业关联主要路径）
+- `foreshadows.py`（按伏笔 ID 的详情/更新/删除/状态修改入口）
+- `relationships.py`（创建关系时校验双方角色归属）
+- `mcp_plugins.py`
+- `writing_styles.py`
+- `organizations.py`（组织详情/更新/成员增改删入口）
+- `memories.py`（章节重分析清理按 project_id + chapter_id 过滤）
+- `volumes.py`（卷文件真值入口按当前用户项目集合查找）
+- `novel_stream.py`（章节流式入口、写作风格、大纲关联、批量任务状态热路径）
+- `prompt_templates.py`（已核对模板读写按 user_id 过滤）
+- `prompt_workshop.py`（公开条目入口按 active 状态过滤；用户提交按 submitter_id 过滤；管理入口走 admin 检查）
 
 仍需重点处理：
 
-- `deer-flow-main/backend/app/gateway/novel_migrated/api/careers.py`
-- `deer-flow-main/backend/app/gateway/novel_migrated/api/foreshadows.py`
-- `deer-flow-main/backend/app/gateway/novel_migrated/api/relationships.py`
-- `deer-flow-main/backend/app/gateway/novel_migrated/api/organizations.py`
-- `deer-flow-main/backend/app/gateway/novel_migrated/api/mcp_plugins.py`
-- `deer-flow-main/backend/app/gateway/novel_migrated/api/prompt_templates.py`
-- `deer-flow-main/backend/app/gateway/novel_migrated/api/prompt_workshop.py`
-- `deer-flow-main/backend/app/gateway/novel_migrated/api/writing_styles.py`
-- `deer-flow-main/backend/app/gateway/novel_migrated/api/novel_stream.py`
-- `deer-flow-main/backend/app/gateway/novel_migrated/api/memories.py`
 - `deer-flow-main/backend/app/gateway/novel_migrated/api/book_import.py`
 - `deer-flow-main/backend/app/gateway/novel_migrated/api/import_export.py`
 - `deer-flow-main/backend/app/gateway/novel_migrated/api/project_covers.py`
 - `deer-flow-main/backend/app/gateway/novel_migrated/api/workspace_documents.py`
-- `deer-flow-main/backend/app/gateway/novel_migrated/api/volumes.py`
 - `deer-flow-main/backend/app/gateway/novel_migrated/api/wizard_stream.py`
 
 验收标准：
@@ -66,8 +70,8 @@ rg "select\\(Chapter\\)|select\\(Character\\)|select\\(Outline\\)|select\\(Caree
 
 必须覆盖：
 
-- `BatchGenerationTask`
-- `RegenerationTask`
+- `BatchGenerationTask`（状态查询入口已按 `task_id + user_id` 收敛）
+- `RegenerationTask`（状态查询入口已按 `task_id + user_id` 收敛）
 - `AnalysisTask`
 - book import task
 - consistency / generation history
@@ -160,6 +164,8 @@ rg "resolve_user_id\\(None\\)" deer-flow-main/backend/packages/harness/deerflow/
 
 - `core/object_storage.py`
 - `models/media_asset.py`
+- `services/object_storage_service.py`
+- `api/media_assets.py`
 
 尚未完成：
 
@@ -182,9 +188,9 @@ rg "resolve_user_id\\(None\\)" deer-flow-main/backend/packages/harness/deerflow/
 
 验收标准：
 
-- 可以上传一个测试对象到 SeaweedFS。
-- 可以读取对象 metadata。
-- 可以删除或标记删除对象。
+- [代码已完成，真实服务未验] 可以上传一个测试对象到 SeaweedFS。
+- [代码已完成，真实服务未验] 可以读取对象 metadata。
+- [代码已完成，真实服务未验] 可以删除或标记删除对象。
 - 日志不输出 secret key。
 
 ### P0.7 媒体资产 API
@@ -211,10 +217,10 @@ rg "resolve_user_id\\(None\\)" deer-flow-main/backend/packages/harness/deerflow/
 
 验收标准：
 
-- 用户 A 上传文件，用户 B 不能下载。
-- 数据库只保存 metadata，不保存大文件内容。
-- SeaweedFS 中实际出现对象。
-- 删除或标记删除后，下载不可用。
+- [自动化已覆盖元数据权限] 用户 A 上传文件，用户 B 不能下载。
+- [自动化已覆盖 metadata 写入] 数据库只保存 metadata，不保存大文件内容。
+- [真实服务未验] SeaweedFS 中实际出现对象。
+- [代码已完成，真实服务未验] 删除或标记删除后，下载不可用。
 
 ### P0.8 封面、导入原文、导出包接入对象存储
 
