@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend module conventions and overall scope for helper extraction"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend lint, test, and forbidden-pattern guidance for touched code"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Type normalization and helper signature conventions for service extraction"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Cache lifecycle and concurrency-related frontend state guidance"}

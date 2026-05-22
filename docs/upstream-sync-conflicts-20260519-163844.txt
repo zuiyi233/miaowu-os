@@ -1,0 +1,160 @@
+Miaowu upstream sync conflict report
+Timestamp: 2026-05-19 16:38:44
+Branch: merge/upstream-main
+Backup branch: backup-before-upstream-sync-20260519-163844
+Backup bundle: D:\miaowu-os-backups\upstream-sync\backup-before-upstream-sync-20260519-163844.bundle
+Upstream range: e9deb6c2..c810e9f8
+Upstream target: c810e9f809222ad8449348667b5c438803c7885e
+Upstream commits: 23
+
+Strategy
+- Applied upstream e9deb6c2..c810e9f8 as a subtree patch under deer-flow-main/.
+- Used git apply --3way to preserve downstream files and expose real conflicts.
+- Resolved conflicts with local Miaowu behavior as the hard constraint.
+- Preserved local novel tool registration and create_novel_progress frontend handling.
+- Preserved local-dev 127.0.0.1:8551 contract; did not rewrite Docker internal gateway:8001.
+
+Conflicted files and decisions
+- deer-flow-main/backend/CLAUDE.md
+  Resolution: accepted upstream runtime/thread-runs documentation for the newly synced core runtime changes. Local-dev 8551 remains documented in project-level guidance and Trellis/spec.
+- deer-flow-main/backend/app/gateway/routers/auth.py
+  Resolution: accepted upstream setup-status single-flight cache. This prevents multi-tab or restart storms from receiving 429 while keeping local trusted-proxy handling.
+- deer-flow-main/backend/docs/AUTH_UPGRADE.md
+  Resolution: accepted upstream auth upgrade wording because current auth uses deerflow.db, first-boot initialization, and persisted JWT secret rather than the older users.db wording.
+- deer-flow-main/backend/packages/harness/deerflow/runtime/runs/manager.py
+  Resolution: accepted upstream RunStore hydration/model_name/status persistence, then restored deterministic newest-first in-memory listing for current tests.
+- deer-flow-main/backend/packages/harness/deerflow/sandbox/local/local_sandbox_provider.py
+  Resolution: accepted upstream reset/shutdown support while preserving local/local:* sandbox compatibility.
+- deer-flow-main/backend/packages/harness/deerflow/subagents/executor.py
+  Resolution: accepted upstream atomic terminal-state and token-usage recording logic.
+- deer-flow-main/backend/packages/harness/deerflow/tools/builtins/task_tool.py
+  Resolution: merged upstream subagent usage reporting/deferred cleanup with local host-bash gate, app_config propagation, skill allowlist, and non-recursive subagent tool policy.
+- deer-flow-main/backend/packages/harness/deerflow/tools/tools.py
+  Resolution: preserved local CORE_BUILTIN_TOOLS/NOVEL_BUILTIN_TOOLS registration and include_novel flag; absorbed upstream deferred registry reuse and async-tool sync wrapper support.
+- deer-flow-main/backend/tests/test_dangling_tool_call_middleware.py
+  Resolution: accepted upstream invalid_tool_calls coverage and updated implementation accordingly.
+- deer-flow-main/backend/tests/test_memory_queue.py
+  Resolution: restored Miaowu async worker test semantics and added explicit user_id=None expectations to match user-scoped memory forwarding.
+- deer-flow-main/backend/tests/test_run_manager.py
+  Resolution: accepted upstream RunManager coverage and aligned timestamp-tie expectation with newest-first list_by_thread contract.
+- deer-flow-main/backend/tests/test_run_repository.py
+  Resolution: accepted upstream RunRepository model_name persistence coverage and completed missing repository/store implementation pieces.
+- deer-flow-main/backend/tests/test_run_worker_rollback.py
+  Resolution: accepted upstream rollback/runtime context coverage.
+- deer-flow-main/backend/tests/test_task_tool_core_logic.py
+  Resolution: accepted upstream subagent usage/cancellation coverage while keeping local task-tool policy.
+- deer-flow-main/backend/tests/test_tool_deduplication.py
+  Resolution: accepted upstream async-only tool wrapper coverage and added deerflow.tools.sync.
+- deer-flow-main/docker/nginx/nginx.conf
+  Resolution: accepted upstream same-origin/CORS guidance and kept Docker internal gateway:8001.
+- deer-flow-main/frontend/src/core/threads/hooks.ts
+  Resolution: merged upstream message dedupe/history loading/token baseline fixes with local create_novel_progress toast de-duplication.
+
+Additional integration fixes after conflict resolution
+- Added resolve_runtime_user_id() to deer-flow-main/backend/packages/harness/deerflow/runtime/user_context.py because upstream summarization_hook now imports it.
+- Added model_name to RunStore.put(), MemoryRunStore.put(), and RunRepository.put().
+- Added RunRepository._normalize_model_name().
+- Added deer-flow-main/backend/packages/harness/deerflow/tools/sync.py.
+- Added sync wrapper wiring in deer-flow-main/backend/packages/harness/deerflow/tools/tools.py without dropping local novel tools.
+- Aligned deer-flow-main/backend/tests/test_subagent_executor.py with upstream subagent construction: create_agent receives system_prompt=None because the prompt is injected into the initial state messages.
+- Fixed Windows LocalSandbox command path replacement in deer-flow-main/backend/packages/harness/deerflow/sandbox/local/local_sandbox.py by quoting resolved local paths and normalizing backslashes to forward slashes for shell execution. This preserves the public /mnt/user-data virtual path contract under Git Bash/MSYS.
+- Added frontend novel i18n default fallback in deer-flow-main/frontend/src/core/i18n/locales/novel-defaults.ts. Existing locale strings remain preferred, while missing NovelTranslations keys now resolve to readable fallbacks instead of runtime undefined values.
+- Captured the LocalSandbox virtual path command contract and the novel i18n fallback contract in .trellis/spec.
+
+Spam/boot-notice cleanup check
+- User-requested suspicious spam-pattern search: no matches in code/docs after excluding the report text itself. No files were removed for this item.
+- A broader exploratory search that included plain "token" produced only normal code/docs/test hits and was intentionally not used for deletion.
+
+Verification
+- Conflict marker check: passed with rg -n "^(<<<<<<<|=======$|>>>>>>>)" deer-flow-main.
+- Conflict marker check including docs: passed with rg -n "^(<<<<<<<|=======$|>>>>>>>)" deer-flow-main docs.
+- Whitespace/conflict artifact check: git diff --check passed.
+- Python compileall targeted conflicted/integration files: passed.
+- Python compile check for LocalSandbox after Windows quoting fix:
+  uv run python -m py_compile packages/harness/deerflow/sandbox/local/local_sandbox.py
+  Result: passed.
+- Backend targeted pytest:
+  uv run pytest -q tests/test_dangling_tool_call_middleware.py tests/test_memory_queue.py tests/test_run_manager.py tests/test_run_repository.py tests/test_run_worker_rollback.py tests/test_task_tool_core_logic.py tests/test_tool_deduplication.py
+  Result: 139 passed, 1 warning.
+- Backend subagent/task-tool pytest after system_prompt test alignment:
+  uv run pytest -q tests/test_subagent_executor.py tests/test_task_tool_core_logic.py
+  Result: 71 passed, 1 warning.
+- Backend local sandbox/deferred registry pytest after Windows path quoting fix:
+  uv run pytest -q tests/test_local_sandbox_virtual_path_contract.py tests/test_deferred_tool_registry_promotion.py
+  Result: 24 passed, 1 warning.
+- Backend combined regression for subagent/task-tool/local-sandbox/deferred registry:
+  uv run pytest -q tests/test_subagent_executor.py tests/test_task_tool_core_logic.py tests/test_local_sandbox_virtual_path_contract.py tests/test_deferred_tool_registry_promotion.py
+  Result: 95 passed, 1 warning.
+- Backend targeted ruff for files changed after conflict resolution:
+  uv run ruff check packages/harness/deerflow/sandbox/local/local_sandbox.py tests/test_subagent_executor.py
+  Result: passed.
+- Backend full ruff:
+  uv run ruff check .
+  Result: failed with 275 existing lint errors across broad legacy areas, mostly app/gateway/novel_migrated and older tests, including import ordering, unused imports, Optional-style modernization, E712, and pre-existing undefined _make_test_app references in tests/test_skills_custom_router.py. These are outside the upstream sync conflict fixes and were not mass-rewritten in this pass.
+- Frontend targeted vitest:
+  pnpm vitest run tests/unit/core/threads/message-merge.test.ts tests/unit/core/messages/utils.test.ts
+  Result: 2 files passed, 5 tests passed.
+- Frontend targeted vitest after i18n fallback:
+  pnpm vitest run tests/unit/components/novel/reader/TtsPlayer.test.tsx tests/unit/core/threads/message-merge.test.ts tests/unit/core/messages/utils.test.ts
+  Result: 3 files passed, 6 tests passed.
+- Frontend lint:
+  pnpm lint
+  Result: passed with 25 existing warnings and 0 errors.
+- Frontend targeted prettier:
+  pnpm prettier --check src/core/i18n/locales/novel-defaults.ts src/core/i18n/locales/en-US.ts src/core/i18n/locales/zh-CN.ts
+  Result: passed.
+- Frontend full tsc:
+  pnpm tsc --noEmit
+  Result: passed after adding withNovelDefaults() for the novel locale namespace.
+
+Known remaining risk
+- Full backend ruff remains blocked by broad pre-existing legacy lint debt outside the upstream sync conflict fixes.
+- Frontend lint still reports 25 warnings for existing unused imports/variables in novel components/tests, but exits successfully with 0 errors.
+- Runtime/browser functional testing was not run in this pass.
+
+Follow-up verification debt cleanup on 2026-05-19
+- Backend ruff debt resolved:
+  uv run ruff check .
+  Result: passed.
+- Frontend lint warning debt resolved:
+  pnpm lint
+  Result: passed with 0 reported warnings/errors.
+- Frontend type/unit regression after cleanup:
+  pnpm tsc --noEmit && pnpm test
+  Result: passed; vitest reported 42 files passed and 145 tests passed.
+- Targeted frontend Prettier for files changed during warning cleanup:
+  pnpm prettier --check <changed novel component/test files>
+  Result: passed.
+- Backend targeted regression after lint/test contract cleanup:
+  uv run pytest -q tests/test_ai_provider_messages_error_handling.py tests/test_ai_service_cache_key.py tests/test_aio_sandbox_provider.py tests/test_auth_type_system.py::test_csrf_cookie_secure_on_https tests/test_auth_type_system.py::test_csrf_cookie_not_secure_on_http tests/test_checkpointer.py::TestHarnessPackaging tests/test_claude_caching_config.py tests/test_gateway_docs_toggle.py::test_health_still_works_when_docs_disabled tests/test_models_router_user_settings.py tests/test_client_e2e.py::TestFileUploadIntegration::test_upload_files tests/test_uploads_middleware_core_logic.py tests/test_dev_entrypoint.py tests/test_dingtalk_channel.py::TestChannelRegistration tests/test_novel_wizard_stream_router.py tests/test_novel_tool_helpers.py tests/test_local_sandbox_provider_mounts.py::TestMultipleMounts::test_execute_command_path_replacement tests/test_model_factory.py::test_stream_usage_injected_for_openai_compatible_model tests/test_lead_agent_model_resolution.py::test_create_summarization_middleware_forwards_runtime_provider_model_override tests/test_lead_agent_model_resolution.py::test_create_summarization_middleware_registers_memory_flush_hook_when_memory_enabled tests/test_lead_agent_model_resolution.py::test_create_summarization_middleware_passes_skill_read_tool_names tests/test_memory_queue_user_isolation.py tests/test_memory_updater.py::TestUpdateMemoryStructuredResponse::test_async_update_memory_delegates_to_sync
+  Result: all listed targeted tests passed in individual runs.
+- Backend deterministic full pytest with live LLM tests skipped:
+  CI=1 uv run pytest -q
+  Result: 3695 passed, 24 skipped, 3 failed, 46 warnings.
+  Remaining failures:
+  1. tests/test_feedback.py::TestFollowUpAssociation::test_follow_up_auto_detection_logic[asyncio]
+     Current MemoryRunStore.list_by_thread(limit=1) returns the latest successful run rather than the newest run regardless of status. A read-only comparison against D:\deer-flow-main showed this failure exists in the original checkout too, so it is tracked as existing run-store/test-contract drift rather than an upstream sync conflict fix regression.
+  2. tests/test_gateway_memory_worker_lifecycle.py::test_langgraph_runtime_starts_and_stops_memory_worker[asyncio]
+     The test calls langgraph_runtime(FastAPI()) without app.state.config; current runtime intentionally raises RuntimeError when config is missing. This matches the original checkout behavior and is tracked as test-contract drift.
+  3. tests/test_harness_boundary.py::test_harness_does_not_import_app
+     Harness middleware still imports app.gateway.novel_migrated.services.ai_service from packages/harness/deerflow/agents/middlewares/llm_error_handling_middleware.py. The same boundary violation exists in the original checkout; resolving it requires an architectural dependency split and was not folded into this sync-risk cleanup.
+- Runtime smoke after cleanup:
+  scripts\dev-local.bat restart -View single
+  scripts\dev-local.bat status
+  Result: backend 8551 alive, frontend 4560 alive.
+  HTTP checks:
+  http://127.0.0.1:4560 returned 200.
+  http://127.0.0.1:8551/api/v1/auth/setup-status returned {"needs_setup":false}.
+  http://127.0.0.1:8551/api/models returned 401 not_authenticated, confirming protected gateway/auth path is alive.
+- Browser/screenshot check:
+  pnpm exec playwright screenshot -b chromium --channel msedge --wait-for-timeout 1000 http://127.0.0.1:4560/ %TEMP%\miaowu-home.png
+  Result: screenshot captured successfully.
+  HTML smoke: title "MiaoWu Novel - AI 驱动的小说创作与阅读平台", ad-pattern match false.
+- Spam/boot-notice cleanup check:
+  rg -n "175877552|通.{0,4}知.{0,4}群|公益.{0,8}(τ|t|T|token|Token|TOKEN)|开机广告" . -g "!*node_modules*" -g "!*.lock"
+  Result: no matches.
+
+Known remaining risk after follow-up
+- Full backend pytest still has 3 failures listed above. They are not treated as this sync conflict cleanup's introduced regressions, but they remain real blockers if the project requires a completely green full backend suite.
+- Live LLM e2e tests are skipped under CI=1. Without CI=1, tests/test_client_e2e.py::TestBasicChat::test_basic_chat enters a real LLM call because OPENAI_API_KEY is present in the environment; that path was not used as a deterministic local gate.
+- Local dev services were restarted and left running for manual inspection: backend 8551 and frontend 4560.

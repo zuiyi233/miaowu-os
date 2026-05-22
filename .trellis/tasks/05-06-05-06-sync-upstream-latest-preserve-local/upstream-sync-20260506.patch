@@ -1,0 +1,2868 @@
+diff --git a/.env.example b/.env.example
+index 41d87a8c7134348f9e7a832b5370a7216571ce46..a859ec2a5e43667522d722e4ba0b33188e71ce2d 100644
+--- a/.env.example
++++ b/.env.example
+@@ -48,3 +48,14 @@ INFOQUEST_API_KEY=your-infoquest-api-key
+ 
+ # Set to "false" to disable Swagger UI, ReDoc, and OpenAPI schema in production
+ # GATEWAY_ENABLE_DOCS=false
++
++# ── Frontend SSR → Gateway wiring ─────────────────────────────────────────────
++# The Next.js server uses these to reach the Gateway during SSR (auth checks,
++# /api/* rewrites). They default to localhost values that match `make dev` and
++# `make start`, so most local users do not need to set them.
++#
++# Override only when the Gateway is not on localhost:8001 (e.g. when the
++# frontend and gateway run on different hosts, in containers with a service
++# alias, or behind a different port). docker-compose already sets these.
++# DEER_FLOW_INTERNAL_GATEWAY_BASE_URL=http://localhost:8001
++# DEER_FLOW_TRUSTED_ORIGINS=http://localhost:3000,http://localhost:2026
+diff --git a/backend/CLAUDE.md b/backend/CLAUDE.md
+index b185ce4a18ba1588f6c9c7a52f7cce0e63043537..86e3f84767e190f7701358896d5fb8cfcea1c2e9 100644
+--- a/backend/CLAUDE.md
++++ b/backend/CLAUDE.md
+@@ -263,6 +263,8 @@ Proxied through nginx: `/api/langgraph/*` → LangGraph, all other `/api/*` →
+    - `present_files` - Make output files visible to user (only `/mnt/user-data/outputs`)
+    - `ask_clarification` - Request clarification (intercepted by ClarificationMiddleware → interrupts)
+    - `view_image` - Read image as base64 (added only if model supports vision)
++   - `setup_agent` - Bootstrap-only: persist a brand-new custom agent's `SOUL.md` and `config.yaml`. Bound only when `is_bootstrap=True`.
++   - `update_agent` - Custom-agent-only: persist self-updates to the current agent's `SOUL.md` / `config.yaml` from inside a normal chat (partial update + atomic write). Bound when `agent_name` is set and `is_bootstrap=False`.
+ 4. **Subagent tool** (if enabled):
+    - `task` - Delegate to subagent (description, prompt, subagent_type, max_turns)
+ 
+@@ -354,10 +356,11 @@ Bridges external messaging platforms (Feishu, Slack, Telegram, DingTalk) to the
+ **Per-User Isolation**:
+ - Memory is stored per-user at `{base_dir}/users/{user_id}/memory.json`
+ - Per-agent per-user memory at `{base_dir}/users/{user_id}/agents/{agent_name}/memory.json`
++- Custom agent definitions (`SOUL.md` + `config.yaml`) are also per-user at `{base_dir}/users/{user_id}/agents/{agent_name}/`. The legacy shared layout `{base_dir}/agents/{agent_name}/` remains read-only fallback for unmigrated installations
+ - `user_id` is resolved via `get_effective_user_id()` from `deerflow.runtime.user_context`
+ - In no-auth mode, `user_id` defaults to `"default"` (constant `DEFAULT_USER_ID`)
+ - Absolute `storage_path` in config opts out of per-user isolation
+-- **Migration**: Run `PYTHONPATH=. python scripts/migrate_user_isolation.py` to move legacy `memory.json` and `threads/` into per-user layout; supports `--dry-run`
++- **Migration**: Run `PYTHONPATH=. python scripts/migrate_user_isolation.py` to move legacy `memory.json`, `threads/`, and `agents/` into per-user layout. Supports `--dry-run` (preview changes) and `--user-id USER_ID` (assign unowned legacy data to a user, defaults to `default`).
+ 
+ **Data Structure** (stored in `{base_dir}/users/{user_id}/memory.json`):
+ - **User Context**: `workContext`, `personalContext`, `topOfMind` (1-3 sentence summaries)
+diff --git a/backend/app/channels/manager.py b/backend/app/channels/manager.py
+index e08a443eef47952b8d23831cf0d5be8e5e5c0d10..e59dbcf2ce21784ecc6febd6bfc2d95eb6e283cc 100644
+--- a/backend/app/channels/manager.py
++++ b/backend/app/channels/manager.py
+@@ -146,6 +146,13 @@ def _normalize_custom_agent_name(raw_value: str) -> str:
+     return normalized
+ 
+ 
++def _strip_loop_warning_text(text: str) -> str:
++    """Remove middleware-authored loop warning lines from display text."""
++    if "[LOOP DETECTED]" not in text:
++        return text
++    return "\n".join(line for line in text.splitlines() if "[LOOP DETECTED]" not in line).strip()
++
++
+ def _extract_response_text(result: dict | list) -> str:
+     """Extract the last AI message text from a LangGraph runs.wait result.
+ 
+@@ -155,7 +162,7 @@ def _extract_response_text(result: dict | list) -> str:
+     Handles special cases:
+     - Regular AI text responses
+     - Clarification interrupts (``ask_clarification`` tool messages)
+-    - AI messages with tool_calls but no text content
++    - Strips loop-detection warnings attached to tool-call AI messages
+     """
+     if isinstance(result, list):
+         messages = result
+@@ -185,7 +192,12 @@ def _extract_response_text(result: dict | list) -> str:
+         # Regular AI message with text content
+         if msg_type == "ai":
+             content = msg.get("content", "")
++            has_tool_calls = bool(msg.get("tool_calls"))
+             if isinstance(content, str) and content:
++                if has_tool_calls:
++                    content = _strip_loop_warning_text(content)
++                    if not content:
++                        continue
+                 return content
+             # content can be a list of content blocks
+             if isinstance(content, list):
+@@ -196,6 +208,8 @@ def _extract_response_text(result: dict | list) -> str:
+                     elif isinstance(block, str):
+                         parts.append(block)
+                 text = "".join(parts)
++                if has_tool_calls:
++                    text = _strip_loop_warning_text(text)
+                 if text:
+                     return text
+     return ""
+@@ -983,7 +997,11 @@ class ChannelManager:
+ 
+         try:
+             async with httpx.AsyncClient() as http:
+-                resp = await http.get(f"{self._gateway_url}{path}", timeout=10)
++                resp = await http.get(
++                    f"{self._gateway_url}{path}",
++                    timeout=10,
++                    headers=create_internal_auth_headers(),
++                )
+                 resp.raise_for_status()
+                 data = resp.json()
+         except Exception:
+diff --git a/backend/app/gateway/routers/agents.py b/backend/app/gateway/routers/agents.py
+index ff4476893e058d9e55005fc57f22d1b9ad0b477b..8769e9834d866d47f96c010aaf449f20d4ac049f 100644
+--- a/backend/app/gateway/routers/agents.py
++++ b/backend/app/gateway/routers/agents.py
+@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
+ from deerflow.config.agents_api_config import get_agents_api_config
+ from deerflow.config.agents_config import AgentConfig, list_custom_agents, load_agent_config, load_agent_soul
+ from deerflow.config.paths import get_paths
++from deerflow.runtime.user_context import get_effective_user_id
+ 
+ logger = logging.getLogger(__name__)
+ router = APIRouter(prefix="/api", tags=["agents"])
+@@ -86,11 +87,11 @@ def _require_agents_api_enabled() -> None:
+         )
+ 
+ 
+-def _agent_config_to_response(agent_cfg: AgentConfig, include_soul: bool = False) -> AgentResponse:
++def _agent_config_to_response(agent_cfg: AgentConfig, include_soul: bool = False, *, user_id: str | None = None) -> AgentResponse:
+     """Convert AgentConfig to AgentResponse."""
+     soul: str | None = None
+     if include_soul:
+-        soul = load_agent_soul(agent_cfg.name) or ""
++        soul = load_agent_soul(agent_cfg.name, user_id=user_id) or ""
+ 
+     return AgentResponse(
+         name=agent_cfg.name,
+@@ -116,9 +117,10 @@ async def list_agents() -> AgentsListResponse:
+     """
+     _require_agents_api_enabled()
+ 
++    user_id = get_effective_user_id()
+     try:
+-        agents = list_custom_agents()
+-        return AgentsListResponse(agents=[_agent_config_to_response(a, include_soul=True) for a in agents])
++        agents = list_custom_agents(user_id=user_id)
++        return AgentsListResponse(agents=[_agent_config_to_response(a, include_soul=True, user_id=user_id) for a in agents])
+     except Exception as e:
+         logger.error(f"Failed to list agents: {e}", exc_info=True)
+         raise HTTPException(status_code=500, detail=f"Failed to list agents: {str(e)}")
+@@ -144,7 +146,12 @@ async def check_agent_name(name: str) -> dict:
+     _require_agents_api_enabled()
+     _validate_agent_name(name)
+     normalized = _normalize_agent_name(name)
+-    available = not get_paths().agent_dir(normalized).exists()
++    user_id = get_effective_user_id()
++    paths = get_paths()
++    # Treat the name as taken if either the per-user path or the legacy shared
++    # path holds an agent — picking a name that collides with an unmigrated
++    # legacy agent would shadow the legacy entry once migration runs.
++    available = not paths.user_agent_dir(user_id, normalized).exists() and not paths.agent_dir(normalized).exists()
+     return {"available": available, "name": normalized}
+ 
+ 
+@@ -169,10 +176,11 @@ async def get_agent(name: str) -> AgentResponse:
+     _require_agents_api_enabled()
+     _validate_agent_name(name)
+     name = _normalize_agent_name(name)
++    user_id = get_effective_user_id()
+ 
+     try:
+-        agent_cfg = load_agent_config(name)
+-        return _agent_config_to_response(agent_cfg, include_soul=True)
++        agent_cfg = load_agent_config(name, user_id=user_id)
++        return _agent_config_to_response(agent_cfg, include_soul=True, user_id=user_id)
+     except FileNotFoundError:
+         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+     except Exception as e:
+@@ -202,10 +210,13 @@ async def create_agent_endpoint(request: AgentCreateRequest) -> AgentResponse:
+     _require_agents_api_enabled()
+     _validate_agent_name(request.name)
+     normalized_name = _normalize_agent_name(request.name)
++    user_id = get_effective_user_id()
++    paths = get_paths()
+ 
+-    agent_dir = get_paths().agent_dir(normalized_name)
++    agent_dir = paths.user_agent_dir(user_id, normalized_name)
++    legacy_dir = paths.agent_dir(normalized_name)
+ 
+-    if agent_dir.exists():
++    if agent_dir.exists() or legacy_dir.exists():
+         raise HTTPException(status_code=409, detail=f"Agent '{normalized_name}' already exists")
+ 
+     try:
+@@ -232,8 +243,8 @@ async def create_agent_endpoint(request: AgentCreateRequest) -> AgentResponse:
+ 
+         logger.info(f"Created agent '{normalized_name}' at {agent_dir}")
+ 
+-        agent_cfg = load_agent_config(normalized_name)
+-        return _agent_config_to_response(agent_cfg, include_soul=True)
++        agent_cfg = load_agent_config(normalized_name, user_id=user_id)
++        return _agent_config_to_response(agent_cfg, include_soul=True, user_id=user_id)
+ 
+     except HTTPException:
+         raise
+@@ -267,13 +278,20 @@ async def update_agent(name: str, request: AgentUpdateRequest) -> AgentResponse:
+     _require_agents_api_enabled()
+     _validate_agent_name(name)
+     name = _normalize_agent_name(name)
++    user_id = get_effective_user_id()
+ 
+     try:
+-        agent_cfg = load_agent_config(name)
++        agent_cfg = load_agent_config(name, user_id=user_id)
+     except FileNotFoundError:
+         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+ 
+-    agent_dir = get_paths().agent_dir(name)
++    paths = get_paths()
++    agent_dir = paths.user_agent_dir(user_id, name)
++    if not agent_dir.exists() and paths.agent_dir(name).exists():
++        raise HTTPException(
++            status_code=409,
++            detail=(f"Agent '{name}' only exists in the legacy shared layout and is not scoped to a user. Run scripts/migrate_user_isolation.py to move legacy agents into the per-user layout before updating."),
++        )
+ 
+     try:
+         # Update config if any config fields changed
+@@ -314,8 +332,8 @@ async def update_agent(name: str, request: AgentUpdateRequest) -> AgentResponse:
+ 
+         logger.info(f"Updated agent '{name}'")
+ 
+-        refreshed_cfg = load_agent_config(name)
+-        return _agent_config_to_response(refreshed_cfg, include_soul=True)
++        refreshed_cfg = load_agent_config(name, user_id=user_id)
++        return _agent_config_to_response(refreshed_cfg, include_soul=True, user_id=user_id)
+ 
+     except HTTPException:
+         raise
+@@ -402,15 +420,22 @@ async def delete_agent(name: str) -> None:
+         name: The agent name.
+ 
+     Raises:
+-        HTTPException: 404 if agent not found.
++        HTTPException: 404 if no per-user copy exists; 409 if only a legacy
++            shared copy exists (suggesting the migration script).
+     """
+     _require_agents_api_enabled()
+     _validate_agent_name(name)
+     name = _normalize_agent_name(name)
+-
+-    agent_dir = get_paths().agent_dir(name)
++    user_id = get_effective_user_id()
++    paths = get_paths()
++    agent_dir = paths.user_agent_dir(user_id, name)
+ 
+     if not agent_dir.exists():
++        if paths.agent_dir(name).exists():
++            raise HTTPException(
++                status_code=409,
++                detail=(f"Agent '{name}' only exists in the legacy shared layout and is not scoped to a user. Run scripts/migrate_user_isolation.py to move legacy agents into the per-user layout before deleting."),
++            )
+         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+ 
+     try:
+diff --git a/backend/packages/harness/deerflow/agents/lead_agent/agent.py b/backend/packages/harness/deerflow/agents/lead_agent/agent.py
+index a908e9f967997ca5ea448b3c226e7031c6828659..075c1937c9c0b240cddf051aa0d4de9feb3bd8e1 100644
+--- a/backend/packages/harness/deerflow/agents/lead_agent/agent.py
++++ b/backend/packages/harness/deerflow/agents/lead_agent/agent.py
+@@ -318,7 +318,7 @@ def make_lead_agent(config: RunnableConfig):
+ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
+     # Lazy import to avoid circular dependency
+     from deerflow.tools import get_available_tools
+-    from deerflow.tools.builtins import setup_agent
++    from deerflow.tools.builtins import setup_agent, update_agent
+ 
+     cfg = _get_runtime_config(config)
+     resolved_app_config = app_config
+@@ -390,6 +390,9 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
+             state_schema=ThreadState,
+         )
+ 
++    # Custom agents can update their own SOUL.md / config via update_agent.
++    # The default agent (no agent_name) does not see this tool.
++    extra_tools = [update_agent] if agent_name else []
+     # Default lead agent (unchanged behavior)
+     return create_agent(
+         model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, reasoning_effort=reasoning_effort, app_config=resolved_app_config),
+@@ -398,7 +401,8 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
+             groups=agent_config.tool_groups if agent_config else None,
+             subagent_enabled=subagent_enabled,
+             app_config=resolved_app_config,
+-        ),
++        )
++        + extra_tools,
+         middleware=_build_middlewares(config, model_name=model_name, agent_name=agent_name, app_config=resolved_app_config),
+         system_prompt=apply_prompt_template(
+             subagent_enabled=subagent_enabled,
+diff --git a/backend/packages/harness/deerflow/agents/lead_agent/prompt.py b/backend/packages/harness/deerflow/agents/lead_agent/prompt.py
+index b02c86344e60edcc4d1a373acc84d7e4790176a8..2e02b967f42afeb685a1c195350b5ac13860a395 100644
+--- a/backend/packages/harness/deerflow/agents/lead_agent/prompt.py
++++ b/backend/packages/harness/deerflow/agents/lead_agent/prompt.py
+@@ -344,6 +344,7 @@ You are {agent_name}, an open-source super agent.
+ </role>
+ 
+ {soul}
++{self_update_section}
+ {memory_context}
+ 
+ <thinking_style>
+@@ -643,6 +644,26 @@ def get_agent_soul(agent_name: str | None) -> str:
+     return ""
+ 
+ 
++def _build_self_update_section(agent_name: str | None) -> str:
++    """Prompt block that teaches the custom agent to persist self-updates via update_agent."""
++    if not agent_name:
++        return ""
++    return f"""<self_update>
++You are running as the custom agent **{agent_name}** with a persisted SOUL.md and config.yaml.
++
++When the user asks you to update your own description, personality, behaviour, skill set, tool groups, or default model,
++you MUST persist the change with the `update_agent` tool. Do NOT use `bash`, `write_file`, or any sandbox tool to edit
++SOUL.md or config.yaml — those write into a temporary sandbox/tool workspace and the changes will be lost on the next turn.
++
++Rules:
++- Always pass the FULL replacement text for `soul` (no patch semantics). Start from your current SOUL above and apply the user's edits.
++- Only pass the fields that should change. Omit the others to preserve them.
++- Pass `skills=[]` to disable all skills, or omit `skills` to keep the existing whitelist.
++- After `update_agent` returns successfully, tell the user the change is persisted and will take effect on the next turn.
++</self_update>
++"""
++
++
+ def get_deferred_tools_prompt_section(*, app_config: AppConfig | None = None) -> str:
+     """Generate <available-deferred-tools> block for the system prompt.
+ 
+@@ -772,6 +793,7 @@ def apply_prompt_template(
+     prompt = SYSTEM_PROMPT_TEMPLATE.format(
+         agent_name=agent_name or "DeerFlow 2.0",
+         soul=get_agent_soul(agent_name),
++        self_update_section=_build_self_update_section(agent_name),
+         skills_section=skills_section,
+         deferred_tools_section=deferred_tools_section,
+         memory_context=memory_context,
+diff --git a/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py b/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py
+index 36054876bb36d42a3ac958e6cc26717a6fa9a86c..0c17d95c4b8671e488624c306f23ecfa1b61a3e8 100644
+--- a/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py
++++ b/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py
+@@ -22,7 +22,6 @@ from typing import override
+ 
+ from langchain.agents import AgentState
+ from langchain.agents.middleware import AgentMiddleware
+-from langchain_core.messages import HumanMessage
+ from langgraph.runtime import Runtime
+ 
+ logger = logging.getLogger(__name__)
+@@ -356,13 +355,30 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
+             return {"messages": [stripped_msg]}
+ 
+         if warning:
+-            # Inject as HumanMessage instead of SystemMessage to avoid
+-            # Anthropic's "multiple non-consecutive system messages" error.
+-            # Anthropic models require system messages only at the start of
+-            # the conversation; injecting one mid-conversation crashes
+-            # langchain_anthropic's _format_messages(). HumanMessage works
+-            # with all providers. See #1299.
+-            return {"messages": [HumanMessage(content=warning, name="loop_warning")]}
++            # WORKAROUND for v2.0-m1 — see #2724.
++            #
++            # Append the warning to the AIMessage content instead of
++            # injecting a separate HumanMessage. Inserting any non-tool
++            # message between an AIMessage(tool_calls=...) and its
++            # ToolMessage responses breaks OpenAI/Moonshot strict pairing
++            # validation ("tool_call_ids did not have response messages")
++            # because the tools node has not run yet at after_model time.
++            # tool_calls are preserved so the tools node still executes.
++            #
++            # This is a temporary mitigation: mutating an existing
++            # AIMessage to carry framework-authored text leaks loop-warning
++            # text into downstream consumers (MemoryMiddleware fact
++            # extraction, TitleMiddleware, telemetry, model replay) as if
++            # the model said it. The proper fix is to defer warning
++            # injection from after_model to wrap_model_call so every prior
++            # ToolMessage is already in the request — see RFC #2517 (which
++            # lists "loop intervention does not leave invalid
++            # tool-call/tool-message state" as acceptance criteria) and
++            # the prototype on `fix/loop-detection-tool-call-pairing`.
++            messages = state.get("messages", [])
++            last_msg = messages[-1]
++            patched_msg = last_msg.model_copy(update={"content": self._append_text(last_msg.content, warning)})
++            return {"messages": [patched_msg]}
+ 
+         return None
+ 
+diff --git a/backend/packages/harness/deerflow/community/aio_sandbox/remote_backend.py b/backend/packages/harness/deerflow/community/aio_sandbox/remote_backend.py
+index 458d9e61b99977ad356ee84a90bf69a99d9ff8ee..4f64070d209f21c69b21a93457e071a685ee5b00 100644
+--- a/backend/packages/harness/deerflow/community/aio_sandbox/remote_backend.py
++++ b/backend/packages/harness/deerflow/community/aio_sandbox/remote_backend.py
+@@ -84,8 +84,52 @@ class RemoteSandboxBackend(SandboxBackend):
+         """
+         return self._provisioner_discover(sandbox_id)
+ 
++    def list_running(self) -> list[SandboxInfo]:
++        """Return all sandboxes currently managed by the provisioner.
++
++        Calls ``GET /api/sandboxes`` so that ``AioSandboxProvider._reconcile_orphans()``
++        can adopt pods that were created by a previous process and were never
++        explicitly destroyed.
++        Without this, a process restart silently orphans all existing k8s Pods —
++        they stay running forever because the idle checker only
++        tracks in-process state.
++        """
++        return self._provisioner_list()
++
+     # ── Provisioner API calls ─────────────────────────────────────────────
+ 
++    def _provisioner_list(self) -> list[SandboxInfo]:
++        """GET /api/sandboxes → list all running sandboxes."""
++        try:
++            resp = requests.get(f"{self._provisioner_url}/api/sandboxes", timeout=10)
++            resp.raise_for_status()
++            data = resp.json()
++            if not isinstance(data, dict):
++                logger.warning("Provisioner list_running returned non-dict payload: %r", type(data))
++                return []
++
++            sandboxes = data.get("sandboxes", [])
++            if not isinstance(sandboxes, list):
++                logger.warning("Provisioner list_running returned non-list sandboxes: %r", type(sandboxes))
++                return []
++
++            infos: list[SandboxInfo] = []
++            for sandbox in sandboxes:
++                if not isinstance(sandbox, dict):
++                    logger.warning("Provisioner list_running entry is not a dict: %r", type(sandbox))
++                    continue
++
++                sandbox_id = sandbox.get("sandbox_id")
++                sandbox_url = sandbox.get("sandbox_url")
++                if isinstance(sandbox_id, str) and sandbox_id and isinstance(sandbox_url, str) and sandbox_url:
++                    infos.append(SandboxInfo(sandbox_id=sandbox_id, sandbox_url=sandbox_url))
++
++            logger.info("Provisioner list_running: %d sandbox(es) found", len(infos))
++            return infos
++        except requests.RequestException as exc:
++            logger.warning("Provisioner list_running failed: %s", exc)
++            return []
++
+     def _provisioner_create(self, thread_id: str, sandbox_id: str, extra_mounts: list[tuple[str, str, bool]] | None = None) -> SandboxInfo:
+         """POST /api/sandboxes → create Pod + Service."""
+         try:
+diff --git a/backend/packages/harness/deerflow/config/agents_config.py b/backend/packages/harness/deerflow/config/agents_config.py
+index 0fc9851158fb290615f6dff11751efc70c40fb9c..86b5347dbe77c86f96c7ecf8c1c69796926c46c6 100644
+--- a/backend/packages/harness/deerflow/config/agents_config.py
++++ b/backend/packages/harness/deerflow/config/agents_config.py
+@@ -1,13 +1,22 @@
+-"""Configuration and loaders for custom agents."""
++"""Configuration and loaders for custom agents.
++
++Custom agents are stored per-user under ``{base_dir}/users/{user_id}/agents/{name}/``.
++A legacy shared layout at ``{base_dir}/agents/{name}/`` is still readable so that
++installations that pre-date user isolation continue to work until they run the
++``scripts/migrate_user_isolation.py`` migration. New writes always target the
++per-user layout.
++"""
+ 
+ import logging
+ import re
++from pathlib import Path
+ from typing import Any
+ 
+ import yaml
+ from pydantic import BaseModel
+ 
+ from deerflow.config.paths import get_paths
++from deerflow.runtime.user_context import get_effective_user_id
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -40,14 +49,47 @@ class AgentConfig(BaseModel):
+     skills: list[str] | None = None
+ 
+ 
+-def load_agent_config(name: str | None) -> AgentConfig | None:
++def resolve_agent_dir(name: str, *, user_id: str | None = None) -> Path:
++    """Return the on-disk directory for an agent, preferring the per-user layout.
++
++    Resolution order:
++    1. ``{base_dir}/users/{user_id}/agents/{name}/`` (per-user, current layout).
++    2. ``{base_dir}/agents/{name}/`` (legacy shared layout — read-only fallback).
++
++    If neither exists, the per-user path is returned so callers that intend to
++    create the agent write into the new layout.
++
++    Args:
++        name: Validated agent name.
++        user_id: Owner of the agent. Defaults to the effective user from the
++            request context (or ``"default"`` in no-auth mode).
++    """
++    paths = get_paths()
++    effective_user = user_id or get_effective_user_id()
++    user_path = paths.user_agent_dir(effective_user, name)
++    if user_path.exists():
++        return user_path
++
++    legacy_path = paths.agent_dir(name)
++    if legacy_path.exists():
++        return legacy_path
++
++    return user_path
++
++
++def load_agent_config(name: str | None, *, user_id: str | None = None) -> AgentConfig | None:
+     """Load the custom or default agent's config from its directory.
+ 
++    Reads from the per-user layout first; falls back to the legacy shared layout
++    for installations that have not yet been migrated.
++
+     Args:
+         name: The agent name.
++        user_id: Owner of the agent. Defaults to the effective user from the
++            current request context.
+ 
+     Returns:
+-        AgentConfig instance.
++        AgentConfig instance, or ``None`` if ``name`` is ``None``.
+ 
+     Raises:
+         FileNotFoundError: If the agent directory or config.yaml does not exist.
+@@ -58,7 +100,7 @@ def load_agent_config(name: str | None) -> AgentConfig | None:
+         return None
+ 
+     name = validate_agent_name(name)
+-    agent_dir = get_paths().agent_dir(name)
++    agent_dir = resolve_agent_dir(name, user_id=user_id)
+     config_file = agent_dir / "config.yaml"
+ 
+     if not agent_dir.exists():
+@@ -84,7 +126,7 @@ def load_agent_config(name: str | None) -> AgentConfig | None:
+     return AgentConfig(**data)
+ 
+ 
+-def load_agent_soul(agent_name: str | None) -> str | None:
++def load_agent_soul(agent_name: str | None, *, user_id: str | None = None) -> str | None:
+     """Read the SOUL.md file for a custom agent, if it exists.
+ 
+     SOUL.md defines the agent's personality, values, and behavioral guardrails.
+@@ -92,11 +134,16 @@ def load_agent_soul(agent_name: str | None) -> str | None:
+ 
+     Args:
+         agent_name: The name of the agent or None for the default agent.
++        user_id: Owner of the agent. Defaults to the effective user from the
++            current request context.
+ 
+     Returns:
+         The SOUL.md content as a string, or None if the file does not exist.
+     """
+-    agent_dir = get_paths().agent_dir(agent_name) if agent_name else get_paths().base_dir
++    if agent_name:
++        agent_dir = resolve_agent_dir(agent_name, user_id=user_id)
++    else:
++        agent_dir = get_paths().base_dir
+     soul_path = agent_dir / SOUL_FILENAME
+     if not soul_path.exists():
+         return None
+@@ -104,32 +151,50 @@ def load_agent_soul(agent_name: str | None) -> str | None:
+     return content or None
+ 
+ 
+-def list_custom_agents() -> list[AgentConfig]:
++def list_custom_agents(*, user_id: str | None = None) -> list[AgentConfig]:
+     """Scan the agents directory and return all valid custom agents.
+ 
++    Returns the union of agents in the per-user layout and the legacy shared
++    layout, so that pre-migration installations remain visible until they are
++    migrated. Per-user entries shadow legacy entries with the same name.
++
++    Args:
++        user_id: Owner whose agents to list. Defaults to the effective user
++            from the current request context.
++
+     Returns:
+         List of AgentConfig for each valid agent directory found.
+     """
+-    agents_dir = get_paths().agents_dir
+-
+-    if not agents_dir.exists():
+-        return []
++    paths = get_paths()
++    effective_user = user_id or get_effective_user_id()
+ 
++    seen: set[str] = set()
+     agents: list[AgentConfig] = []
+ 
+-    for entry in sorted(agents_dir.iterdir()):
+-        if not entry.is_dir():
+-            continue
++    user_root = paths.user_agents_dir(effective_user)
++    legacy_root = paths.agents_dir
+ 
+-        config_file = entry / "config.yaml"
+-        if not config_file.exists():
+-            logger.debug(f"Skipping {entry.name}: no config.yaml")
++    for root in (user_root, legacy_root):
++        if not root.exists():
+             continue
+-
+-        try:
+-            agent_cfg = load_agent_config(entry.name)
+-            agents.append(agent_cfg)
+-        except Exception as e:
+-            logger.warning(f"Skipping agent '{entry.name}': {e}")
+-
++        for entry in sorted(root.iterdir()):
++            if not entry.is_dir():
++                continue
++            if entry.name in seen:
++                continue
++            config_file = entry / "config.yaml"
++            if not config_file.exists():
++                logger.debug(f"Skipping {entry.name}: no config.yaml")
++                continue
++
++            try:
++                agent_cfg = load_agent_config(entry.name, user_id=effective_user)
++                if agent_cfg is None:
++                    continue
++                agents.append(agent_cfg)
++                seen.add(entry.name)
++            except Exception as e:
++                logger.warning(f"Skipping agent '{entry.name}': {e}")
++
++    agents.sort(key=lambda a: a.name)
+     return agents
+diff --git a/backend/packages/harness/deerflow/config/app_config.py b/backend/packages/harness/deerflow/config/app_config.py
+index dae41b14d11801495c342de5203da27c09da5651..7fe218919217a6f75fb556e64ddb706d4d5f1b5d 100644
+--- a/backend/packages/harness/deerflow/config/app_config.py
++++ b/backend/packages/harness/deerflow/config/app_config.py
+@@ -1,5 +1,6 @@
+ import logging
+ import os
++from collections.abc import Mapping
+ from contextvars import ContextVar
+ from pathlib import Path
+ from typing import Any, Self
+@@ -157,56 +158,54 @@ class AppConfig(BaseModel):
+         config_data = cls.resolve_env_variables(config_data)
+         cls._apply_database_defaults(config_data)
+ 
+-        # Load title config if present
+-        if "title" in config_data:
+-            load_title_config_from_dict(config_data["title"])
+-
+-        # Load summarization config if present
+-        if "summarization" in config_data:
+-            load_summarization_config_from_dict(config_data["summarization"])
+-
+-        # Load memory config if present
+-        if "memory" in config_data:
+-            load_memory_config_from_dict(config_data["memory"])
+-
+-        # Always refresh agents API config so removed config sections reset
+-        # singleton-backed state to its default/disabled values on reload.
+-        load_agents_api_config_from_dict(config_data.get("agents_api") or {})
+-
+-        # Load subagents config if present
+-        if "subagents" in config_data:
+-            load_subagents_config_from_dict(config_data["subagents"])
+-
+-        # Load tool_search config if present
+-        if "tool_search" in config_data:
+-            load_tool_search_config_from_dict(config_data["tool_search"])
+-
+-        # Load guardrails config if present
+-        if "guardrails" in config_data:
+-            load_guardrails_config_from_dict(config_data["guardrails"])
+-
+         # Load circuit_breaker config if present
+         if "circuit_breaker" in config_data:
+             config_data["circuit_breaker"] = config_data["circuit_breaker"]
+ 
+-        # Load checkpointer config if present
+-        if "checkpointer" in config_data:
+-            load_checkpointer_config_from_dict(config_data["checkpointer"])
+-
+-        # Load stream bridge config if present
+-        if "stream_bridge" in config_data:
+-            load_stream_bridge_config_from_dict(config_data["stream_bridge"])
+-
+-        # Always refresh ACP agent config so removed entries do not linger across reloads.
+-        load_acp_config_from_dict(config_data.get("acp_agents", {}))
+-
+         # Load extensions config separately (it's in a different file)
+         extensions_config = ExtensionsConfig.from_file()
+         config_data["extensions"] = extensions_config.model_dump()
+ 
+         result = cls.model_validate(config_data)
++        acp_agents = cls._validate_acp_agents(config_data.get("acp_agents", {}))
++        cls._apply_singleton_configs(result, acp_agents)
+         return result
+ 
++    @classmethod
++    def _validate_acp_agents(
++        cls,
++        config_data: Mapping[str, Mapping[str, object]] | None,
++    ) -> dict[str, ACPAgentConfig]:
++        if config_data is None:
++            config_data = {}
++        return {name: ACPAgentConfig(**cfg) for name, cfg in config_data.items()}
++
++    @classmethod
++    def _apply_singleton_configs(cls, config: Self, acp_agents: dict[str, ACPAgentConfig]) -> None:
++        from deerflow.config.checkpointer_config import get_checkpointer_config
++
++        previous_checkpointer_config = get_checkpointer_config()
++
++        load_title_config_from_dict(config.title.model_dump())
++        load_summarization_config_from_dict(config.summarization.model_dump())
++        load_memory_config_from_dict(config.memory.model_dump())
++        load_agents_api_config_from_dict(config.agents_api.model_dump())
++        load_subagents_config_from_dict(config.subagents.model_dump())
++        load_tool_search_config_from_dict(config.tool_search.model_dump())
++        load_guardrails_config_from_dict(config.guardrails.model_dump())
++        load_checkpointer_config_from_dict(config.checkpointer.model_dump() if config.checkpointer is not None else None)
++        load_stream_bridge_config_from_dict(config.stream_bridge.model_dump() if config.stream_bridge is not None else None)
++        load_acp_config_from_dict({name: agent.model_dump() for name, agent in acp_agents.items()})
++
++        if previous_checkpointer_config != config.checkpointer:
++            # These runtime singletons derive their backend from checkpointer config.
++            # Keep imports local to avoid cycles: both providers import get_app_config.
++            from deerflow.runtime.checkpointer import reset_checkpointer
++            from deerflow.runtime.store import reset_store
++
++            reset_checkpointer()
++            reset_store()
++
+     @classmethod
+     def _apply_database_defaults(cls, config_data: dict[str, Any]) -> None:
+         """Apply config.yaml defaults for persistence when the section is absent."""
+diff --git a/backend/packages/harness/deerflow/config/checkpointer_config.py b/backend/packages/harness/deerflow/config/checkpointer_config.py
+index 6947cefb7e04be4ab734cf52736b1a97e68fa514..0afe6a4852b8512f4c3e321a908eaabc3713eebd 100644
+--- a/backend/packages/harness/deerflow/config/checkpointer_config.py
++++ b/backend/packages/harness/deerflow/config/checkpointer_config.py
+@@ -40,7 +40,10 @@ def set_checkpointer_config(config: CheckpointerConfig | None) -> None:
+     _checkpointer_config = config
+ 
+ 
+-def load_checkpointer_config_from_dict(config_dict: dict) -> None:
++def load_checkpointer_config_from_dict(config_dict: dict | None) -> None:
+     """Load checkpointer configuration from a dictionary."""
+     global _checkpointer_config
++    if config_dict is None:
++        _checkpointer_config = None
++        return
+     _checkpointer_config = CheckpointerConfig(**config_dict)
+diff --git a/backend/packages/harness/deerflow/config/paths.py b/backend/packages/harness/deerflow/config/paths.py
+index 9fa633f540a560108f5853504d7106019c22854f..c068390401d54f36387ebbca02b9abd73c165e72 100644
+--- a/backend/packages/harness/deerflow/config/paths.py
++++ b/backend/packages/harness/deerflow/config/paths.py
+@@ -132,15 +132,20 @@ class Paths:
+ 
+     @property
+     def agents_dir(self) -> Path:
+-        """Root directory for all custom agents: `{base_dir}/agents/`."""
++        """Legacy root for shared (pre user-isolation) custom agents: `{base_dir}/agents/`.
++
++        New code should use :meth:`user_agents_dir` instead. This property remains
++        only as a read-side fallback for installations that have not yet run the
++        ``migrate_user_isolation.py`` script.
++        """
+         return self.base_dir / "agents"
+ 
+     def agent_dir(self, name: str) -> Path:
+-        """Directory for a specific agent: `{base_dir}/agents/{name}/`."""
++        """Legacy per-agent directory (no user isolation): `{base_dir}/agents/{name}/`."""
+         return self.agents_dir / name.lower()
+ 
+     def agent_memory_file(self, name: str) -> Path:
+-        """Per-agent memory file: `{base_dir}/agents/{name}/memory.json`."""
++        """Legacy per-agent memory file: `{base_dir}/agents/{name}/memory.json`."""
+         return self.agent_dir(name) / "memory.json"
+ 
+     def user_dir(self, user_id: str) -> Path:
+@@ -151,9 +156,17 @@ class Paths:
+         """Per-user memory file: `{base_dir}/users/{user_id}/memory.json`."""
+         return self.user_dir(user_id) / "memory.json"
+ 
++    def user_agents_dir(self, user_id: str) -> Path:
++        """Per-user root for that user's custom agents: `{base_dir}/users/{user_id}/agents/`."""
++        return self.user_dir(user_id) / "agents"
++
++    def user_agent_dir(self, user_id: str, agent_name: str) -> Path:
++        """Per-user per-agent directory: `{base_dir}/users/{user_id}/agents/{name}/`."""
++        return self.user_agents_dir(user_id) / agent_name.lower()
++
+     def user_agent_memory_file(self, user_id: str, agent_name: str) -> Path:
+         """Per-user per-agent memory: `{base_dir}/users/{user_id}/agents/{name}/memory.json`."""
+-        return self.user_dir(user_id) / "agents" / agent_name.lower() / "memory.json"
++        return self.user_agent_dir(user_id, agent_name) / "memory.json"
+ 
+     def thread_dir(self, thread_id: str, *, user_id: str | None = None) -> Path:
+         """
+diff --git a/backend/packages/harness/deerflow/config/stream_bridge_config.py b/backend/packages/harness/deerflow/config/stream_bridge_config.py
+index 895c4639cf81d9d5126cfde381858db712ea969c..7e1b0956fb5257521195997f55c5ac9dd51c3c8f 100644
+--- a/backend/packages/harness/deerflow/config/stream_bridge_config.py
++++ b/backend/packages/harness/deerflow/config/stream_bridge_config.py
+@@ -40,7 +40,10 @@ def set_stream_bridge_config(config: StreamBridgeConfig | None) -> None:
+     _stream_bridge_config = config
+ 
+ 
+-def load_stream_bridge_config_from_dict(config_dict: dict) -> None:
++def load_stream_bridge_config_from_dict(config_dict: dict | None) -> None:
+     """Load stream bridge configuration from a dictionary."""
+     global _stream_bridge_config
++    if config_dict is None:
++        _stream_bridge_config = None
++        return
+     _stream_bridge_config = StreamBridgeConfig(**config_dict)
+diff --git a/backend/packages/harness/deerflow/config/subagents_config.py b/backend/packages/harness/deerflow/config/subagents_config.py
+index e7219284d6f19308cc18ef46b8aa2fcc81c1c39f..026016b211b5c58d649acf39ceffc1e3f3978981 100644
+--- a/backend/packages/harness/deerflow/config/subagents_config.py
++++ b/backend/packages/harness/deerflow/config/subagents_config.py
+@@ -179,9 +179,3 @@ def load_subagents_config_from_dict(config_dict: dict) -> None:
+             overrides_summary or "none",
+             custom_agents_names or "none",
+         )
+-    else:
+-        logger.info(
+-            "Subagents config loaded: default timeout=%ss, default max_turns=%s, no per-agent overrides",
+-            _subagents_config.timeout_seconds,
+-            _subagents_config.max_turns,
+-        )
+diff --git a/backend/packages/harness/deerflow/tools/builtins/__init__.py b/backend/packages/harness/deerflow/tools/builtins/__init__.py
+index 706d5d3f02cbd996f8f51296408d49f3d96163ee..4b1afa0389c06c864e814ee8fea4fef814fe1682 100644
+--- a/backend/packages/harness/deerflow/tools/builtins/__init__.py
++++ b/backend/packages/harness/deerflow/tools/builtins/__init__.py
+@@ -2,10 +2,12 @@ from .clarification_tool import ask_clarification_tool
+ from .present_file_tool import present_file_tool
+ from .setup_agent_tool import setup_agent
+ from .task_tool import task_tool
++from .update_agent_tool import update_agent
+ from .view_image_tool import view_image_tool
+ 
+ __all__ = [
+     "setup_agent",
++    "update_agent",
+     "present_file_tool",
+     "ask_clarification_tool",
+     "view_image_tool",
+diff --git a/backend/packages/harness/deerflow/tools/builtins/setup_agent_tool.py b/backend/packages/harness/deerflow/tools/builtins/setup_agent_tool.py
+index 793ccb13a93f9d2da08c78aea89f723ac3a45bf7..d05d0cc73d06fa5a788ad3e287e48c162e119a8b 100644
+--- a/backend/packages/harness/deerflow/tools/builtins/setup_agent_tool.py
++++ b/backend/packages/harness/deerflow/tools/builtins/setup_agent_tool.py
+@@ -8,6 +8,7 @@ from langgraph.types import Command
+ 
+ from deerflow.config.agents_config import validate_agent_name
+ from deerflow.config.paths import get_paths
++from deerflow.runtime.user_context import get_effective_user_id
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -34,7 +35,14 @@ def setup_agent(
+     try:
+         agent_name = validate_agent_name(agent_name)
+         paths = get_paths()
+-        agent_dir = paths.agent_dir(agent_name) if agent_name else paths.base_dir
++        if agent_name:
++            # Custom agents are persisted under the current user's bucket so
++            # different users do not see each other's agents.
++            user_id = get_effective_user_id()
++            agent_dir = paths.user_agent_dir(user_id, agent_name)
++        else:
++            # Default agent (no agent_name): SOUL.md lives at the global base dir.
++            agent_dir = paths.base_dir
+         is_new_dir = not agent_dir.exists()
+         agent_dir.mkdir(parents=True, exist_ok=True)
+ 
+diff --git a/backend/packages/harness/deerflow/tools/builtins/update_agent_tool.py b/backend/packages/harness/deerflow/tools/builtins/update_agent_tool.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..76cedefcf375bccc0782fea4762e2fe89dc6bf5c
+--- /dev/null
++++ b/backend/packages/harness/deerflow/tools/builtins/update_agent_tool.py
+@@ -0,0 +1,241 @@
++"""update_agent tool — let a custom agent persist updates to its own SOUL.md / config.
++
++Bound to the lead agent only when ``runtime.context['agent_name']`` is set
++(i.e. inside an existing custom agent's chat). The default agent does not see
++this tool, and the bootstrap flow continues to use ``setup_agent`` for the
++initial creation handshake.
++
++The tool writes back to ``{base_dir}/users/{user_id}/agents/{agent_name}/{config.yaml,SOUL.md}``
++so an agent created by one user is never visible to (or mutable by) another.
++Writes are staged into temp files first; both files are renamed into place only
++after both temp files are successfully written, so a partial failure cannot leave
++config.yaml updated while SOUL.md still holds stale content.
++"""
++
++from __future__ import annotations
++
++import logging
++import tempfile
++from pathlib import Path
++from typing import Any
++
++import yaml
++from langchain_core.messages import ToolMessage
++from langchain_core.tools import tool
++from langgraph.prebuilt import ToolRuntime
++from langgraph.types import Command
++
++from deerflow.config.agents_config import load_agent_config, validate_agent_name
++from deerflow.config.app_config import get_app_config
++from deerflow.config.paths import get_paths
++from deerflow.runtime.user_context import get_effective_user_id
++
++logger = logging.getLogger(__name__)
++
++
++def _stage_temp(path: Path, text: str) -> Path:
++    """Write ``text`` into a sibling temp file and return its path.
++
++    The caller is responsible for ``Path.replace``-ing the temp into the target
++    once every staged file is ready, or for unlinking it on failure.
++    """
++    path.parent.mkdir(parents=True, exist_ok=True)
++    fd = tempfile.NamedTemporaryFile(
++        mode="w",
++        dir=path.parent,
++        suffix=".tmp",
++        delete=False,
++        encoding="utf-8",
++    )
++    try:
++        fd.write(text)
++        fd.flush()
++        fd.close()
++        return Path(fd.name)
++    except BaseException:
++        fd.close()
++        Path(fd.name).unlink(missing_ok=True)
++        raise
++
++
++def _cleanup_temps(temps: list[Path]) -> None:
++    """Best-effort removal of staged temp files."""
++    for tmp in temps:
++        try:
++            tmp.unlink(missing_ok=True)
++        except OSError:
++            logger.debug("Failed to clean up temp file %s", tmp, exc_info=True)
++
++
++@tool
++def update_agent(
++    runtime: ToolRuntime,
++    soul: str | None = None,
++    description: str | None = None,
++    skills: list[str] | None = None,
++    tool_groups: list[str] | None = None,
++    model: str | None = None,
++) -> Command:
++    """Persist updates to the current custom agent's SOUL.md and config.yaml.
++
++    Use this when the user asks to refine the agent's identity, description,
++    skill whitelist, tool-group whitelist, or default model. Only the fields
++    you explicitly pass are updated; omitted fields keep their existing values.
++
++    Pass ``soul`` as the FULL replacement SOUL.md content — there is no patch
++    semantics, so always start from the current SOUL and apply your edits.
++
++    Pass ``skills=[]`` to disable all skills for this agent. Omit ``skills``
++    entirely to keep the existing whitelist.
++
++    Args:
++        soul: Optional full replacement SOUL.md content.
++        description: Optional new one-line description.
++        skills: Optional skill whitelist. ``[]`` = no skills, omit = unchanged.
++        tool_groups: Optional tool-group whitelist. ``[]`` = empty, omit = unchanged.
++        model: Optional model override (must match a configured model name).
++
++    Returns:
++        Command with a ToolMessage describing the result. Changes take effect
++        on the next user turn (when the lead agent is rebuilt with the fresh
++        SOUL.md and config.yaml).
++    """
++    tool_call_id = runtime.tool_call_id
++    agent_name_raw: str | None = runtime.context.get("agent_name") if runtime.context else None
++
++    def _err(message: str) -> Command:
++        return Command(update={"messages": [ToolMessage(content=f"Error: {message}", tool_call_id=tool_call_id)]})
++
++    if soul is None and description is None and skills is None and tool_groups is None and model is None:
++        return _err("No fields provided. Pass at least one of: soul, description, skills, tool_groups, model.")
++
++    try:
++        agent_name = validate_agent_name(agent_name_raw)
++    except ValueError as e:
++        return _err(str(e))
++
++    if not agent_name:
++        return _err("update_agent is only available inside a custom agent's chat. There is no agent_name in the current runtime context, so there is nothing to update. If you are inside the bootstrap flow, use setup_agent instead.")
++
++    # Resolve the active user so that updates only affect this user's agent.
++    # ``get_effective_user_id`` returns DEFAULT_USER_ID when no auth context
++    # is set (matching how memory and thread storage behave).
++    user_id = get_effective_user_id()
++
++    # Reject an unknown ``model`` *before* touching the filesystem. Otherwise
++    # ``_resolve_model_name`` silently falls back to the default at runtime
++    # and the user sees confusing repeated warnings on every later turn.
++    if model is not None and get_app_config().get_model_config(model) is None:
++        return _err(f"Unknown model '{model}'. Pass a model name that exists in config.yaml's models section.")
++
++    paths = get_paths()
++    agent_dir = paths.user_agent_dir(user_id, agent_name)
++    if not agent_dir.exists() and paths.agent_dir(agent_name).exists():
++        return _err(f"Agent '{agent_name}' only exists in the legacy shared layout and is not scoped to a user. Run scripts/migrate_user_isolation.py to move legacy agents into the per-user layout before updating.")
++
++    try:
++        existing_cfg = load_agent_config(agent_name, user_id=user_id)
++    except FileNotFoundError:
++        return _err(f"Agent '{agent_name}' does not exist for the current user. Use setup_agent to create a new agent first.")
++    except ValueError as e:
++        return _err(f"Agent '{agent_name}' has an unreadable config: {e}")
++
++    if existing_cfg is None:
++        return _err(f"Agent '{agent_name}' could not be loaded.")
++
++    updated_fields: list[str] = []
++
++    # Force the on-disk ``name`` to match the directory we are writing into,
++    # even if ``existing_cfg.name`` had drifted (e.g. from manual yaml edits).
++    config_data: dict[str, Any] = {"name": agent_name}
++    new_description = description if description is not None else existing_cfg.description
++    config_data["description"] = new_description
++    if description is not None and description != existing_cfg.description:
++        updated_fields.append("description")
++
++    new_model = model if model is not None else existing_cfg.model
++    if new_model is not None:
++        config_data["model"] = new_model
++    if model is not None and model != existing_cfg.model:
++        updated_fields.append("model")
++
++    new_tool_groups = tool_groups if tool_groups is not None else existing_cfg.tool_groups
++    if new_tool_groups is not None:
++        config_data["tool_groups"] = new_tool_groups
++    if tool_groups is not None and tool_groups != existing_cfg.tool_groups:
++        updated_fields.append("tool_groups")
++
++    new_skills = skills if skills is not None else existing_cfg.skills
++    if new_skills is not None:
++        config_data["skills"] = new_skills
++    if skills is not None and skills != existing_cfg.skills:
++        updated_fields.append("skills")
++
++    config_changed = bool({"description", "model", "tool_groups", "skills"} & set(updated_fields))
++
++    # Stage every file we intend to rewrite into a temp sibling. Only after
++    # *all* temp files exist do we rename them into place — so a failure on
++    # SOUL.md cannot leave config.yaml already replaced.
++    pending: list[tuple[Path, Path]] = []
++    staged_temps: list[Path] = []
++
++    try:
++        agent_dir.mkdir(parents=True, exist_ok=True)
++
++        if config_changed:
++            yaml_text = yaml.dump(config_data, default_flow_style=False, allow_unicode=True, sort_keys=False)
++            config_target = agent_dir / "config.yaml"
++            config_tmp = _stage_temp(config_target, yaml_text)
++            staged_temps.append(config_tmp)
++            pending.append((config_tmp, config_target))
++
++        if soul is not None:
++            soul_target = agent_dir / "SOUL.md"
++            soul_tmp = _stage_temp(soul_target, soul)
++            staged_temps.append(soul_tmp)
++            pending.append((soul_tmp, soul_target))
++            updated_fields.append("soul")
++
++        # Commit phase. ``Path.replace`` is atomic per file on POSIX/NTFS and
++        # the staging step above means any earlier failure has already been
++        # reported. The remaining failure mode is a crash *between* two
++        # ``replace`` calls, which is reported via the partial-write error
++        # branch below so the caller knows which files are now on disk.
++        committed: list[Path] = []
++        try:
++            for tmp, target in pending:
++                tmp.replace(target)
++                committed.append(target)
++        except Exception as e:
++            _cleanup_temps([t for t, _ in pending if t not in committed])
++            if committed:
++                logger.error(
++                    "[update_agent] Partial write for agent '%s' (user=%s): committed=%s, failed during rename: %s",
++                    agent_name,
++                    user_id,
++                    [p.name for p in committed],
++                    e,
++                    exc_info=True,
++                )
++                return _err(f"Partial update for agent '{agent_name}': {[p.name for p in committed]} were updated, but the rest failed ({e}). Re-run update_agent to retry the remaining fields.")
++            raise
++
++    except Exception as e:
++        _cleanup_temps(staged_temps)
++        logger.error("[update_agent] Failed to update agent '%s' (user=%s): %s", agent_name, user_id, e, exc_info=True)
++        return _err(f"Failed to update agent '{agent_name}': {e}")
++
++    if not updated_fields:
++        return Command(update={"messages": [ToolMessage(content=f"No changes applied to agent '{agent_name}'. The provided values matched the existing config.", tool_call_id=tool_call_id)]})
++
++    logger.info("[update_agent] Updated agent '%s' (user=%s) fields: %s", agent_name, user_id, updated_fields)
++    return Command(
++        update={
++            "messages": [
++                ToolMessage(
++                    content=(f"Agent '{agent_name}' updated successfully. Changed: {', '.join(updated_fields)}. The new configuration takes effect on the next user turn."),
++                    tool_call_id=tool_call_id,
++                )
++            ]
++        }
++    )
+diff --git a/backend/scripts/migrate_user_isolation.py b/backend/scripts/migrate_user_isolation.py
+index 82923e4b729ef324079265e5853b2d6df38df05e..b7716958027309d09e7f50759a5d653778f2b6d3 100644
+--- a/backend/scripts/migrate_user_isolation.py
++++ b/backend/scripts/migrate_user_isolation.py
+@@ -1,7 +1,7 @@
+ """One-time migration: move legacy thread dirs and memory into per-user layout.
+ 
+ Usage:
+-    PYTHONPATH=. python scripts/migrate_user_isolation.py [--dry-run]
++    PYTHONPATH=. python scripts/migrate_user_isolation.py [--dry-run] [--user-id USER_ID]
+ 
+ The script is idempotent — re-running it after a successful migration is a no-op.
+ """
+@@ -69,6 +69,67 @@ def migrate_thread_dirs(
+     return report
+ 
+ 
++def migrate_agents(
++    paths: Paths,
++    user_id: str = "default",
++    *,
++    dry_run: bool = False,
++) -> list[dict]:
++    """Move legacy custom-agent directories into per-user layout.
++
++    Legacy layout:  ``{base_dir}/agents/{name}/``
++    Per-user layout: ``{base_dir}/users/{user_id}/agents/{name}/``
++
++    Pre-existing per-user agents take precedence: if a destination already
++    exists for an agent name, the legacy copy is moved to
++    ``{base_dir}/migration-conflicts/agents/{name}/`` for manual review.
++
++    Args:
++        paths: Paths instance.
++        user_id: Target user to receive the legacy agents (defaults to
++            ``"default"``, matching ``DEFAULT_USER_ID`` for no-auth setups).
++        dry_run: If True, only log what would happen.
++
++    Returns:
++        List of migration report entries, one per legacy agent directory found.
++    """
++    report: list[dict] = []
++    legacy_agents = paths.agents_dir
++    if not legacy_agents.exists():
++        logger.info("No legacy agents directory found — nothing to migrate.")
++        return report
++
++    for agent_dir in sorted(legacy_agents.iterdir()):
++        if not agent_dir.is_dir():
++            continue
++        agent_name = agent_dir.name
++        dest = paths.user_agent_dir(user_id, agent_name)
++
++        entry = {"agent": agent_name, "user_id": user_id, "action": ""}
++
++        if dest.exists():
++            conflicts_dir = paths.base_dir / "migration-conflicts" / "agents" / agent_name
++            entry["action"] = f"conflict -> {conflicts_dir}"
++            if not dry_run:
++                conflicts_dir.parent.mkdir(parents=True, exist_ok=True)
++                shutil.move(str(agent_dir), str(conflicts_dir))
++            logger.warning("Conflict for agent %s: moved legacy copy to %s", agent_name, conflicts_dir)
++        else:
++            entry["action"] = f"moved -> {dest}"
++            if not dry_run:
++                dest.parent.mkdir(parents=True, exist_ok=True)
++                shutil.move(str(agent_dir), str(dest))
++            logger.info("Migrated agent %s -> user %s", agent_name, user_id)
++
++        report.append(entry)
++
++    # Clean up empty legacy agents dir
++    if not dry_run and legacy_agents.exists() and not any(legacy_agents.iterdir()):
++        legacy_agents.rmdir()
++
++    return report
++
++
+ def migrate_memory(
+     paths: Paths,
+     user_id: str = "default",
+@@ -127,6 +188,12 @@ def _build_owner_map_from_db(paths: Paths) -> dict[str, str]:
+ def main() -> None:
+     parser = argparse.ArgumentParser(description="Migrate DeerFlow data to per-user layout")
+     parser.add_argument("--dry-run", action="store_true", help="Log actions without making changes")
++    parser.add_argument(
++        "--user-id",
++        default="default",
++        metavar="USER_ID",
++        help=("User ID to claim un-owned legacy data (global memory.json and legacy custom agents). Defaults to 'default'. In multi-user installs, set this to the operator account that should inherit those legacy artifacts."),
++    )
+     args = parser.parse_args()
+ 
+     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+@@ -134,26 +201,42 @@ def main() -> None:
+     paths = get_paths()
+     logger.info("Base directory: %s", paths.base_dir)
+     logger.info("Dry run: %s", args.dry_run)
++    logger.info("Claiming un-owned legacy data for user_id=%s", args.user_id)
+ 
+     owner_map = _build_owner_map_from_db(paths)
+     logger.info("Found %d thread ownership records in DB", len(owner_map))
+ 
+     report = migrate_thread_dirs(paths, owner_map, dry_run=args.dry_run)
+-    migrate_memory(paths, user_id="default", dry_run=args.dry_run)
++    migrate_memory(paths, user_id=args.user_id, dry_run=args.dry_run)
++    agent_report = migrate_agents(paths, user_id=args.user_id, dry_run=args.dry_run)
+ 
+     if report:
+-        logger.info("Migration report:")
++        logger.info("Thread migration report:")
+         for entry in report:
+             logger.info("  thread=%s user=%s action=%s", entry["thread_id"], entry["user_id"], entry["action"])
+     else:
+         logger.info("No threads to migrate.")
+ 
++    if agent_report:
++        logger.info("Agent migration report:")
++        for entry in agent_report:
++            logger.info("  agent=%s user=%s action=%s", entry["agent"], entry["user_id"], entry["action"])
++    else:
++        logger.info("No agents to migrate.")
++
+     unowned = [e for e in report if e["user_id"] == "default"]
+     if unowned:
+         logger.warning("%d thread(s) had no owner and were assigned to 'default':", len(unowned))
+         for e in unowned:
+             logger.warning("  %s", e["thread_id"])
+ 
++    if agent_report:
++        logger.warning(
++            "%d legacy agent(s) were assigned to '%s'. If those agents belonged to other users, move them manually under {base_dir}/users/<user_id>/agents/.",
++            len(agent_report),
++            args.user_id,
++        )
++
+ 
+ if __name__ == "__main__":
+     main()
+diff --git a/backend/tests/test_app_config_reload.py b/backend/tests/test_app_config_reload.py
+index 31e571afe4f843307088d0c4a0d8296f3751aa89..3f744aee2f45121602f97eadf9962efe56202b1c 100644
+--- a/backend/tests/test_app_config_reload.py
++++ b/backend/tests/test_app_config_reload.py
+@@ -4,10 +4,40 @@ import json
+ import os
+ from pathlib import Path
+ 
++import pytest
+ import yaml
++from pydantic import ValidationError
+ 
+-from deerflow.config.agents_api_config import get_agents_api_config
++import deerflow.config.app_config as app_config_module
++from deerflow.config.acp_config import load_acp_config_from_dict
++from deerflow.config.agents_api_config import get_agents_api_config, load_agents_api_config_from_dict
+ from deerflow.config.app_config import AppConfig, get_app_config, reset_app_config
++from deerflow.config.checkpointer_config import get_checkpointer_config, load_checkpointer_config_from_dict
++from deerflow.config.guardrails_config import get_guardrails_config, load_guardrails_config_from_dict
++from deerflow.config.memory_config import get_memory_config, load_memory_config_from_dict
++from deerflow.config.stream_bridge_config import get_stream_bridge_config, load_stream_bridge_config_from_dict
++from deerflow.config.subagents_config import get_subagents_app_config, load_subagents_config_from_dict
++from deerflow.config.summarization_config import get_summarization_config, load_summarization_config_from_dict
++from deerflow.config.title_config import get_title_config, load_title_config_from_dict
++from deerflow.config.tool_search_config import get_tool_search_config, load_tool_search_config_from_dict
++from deerflow.runtime.checkpointer import get_checkpointer, reset_checkpointer
++from deerflow.runtime.store import get_store, reset_store
++
++
++def _reset_config_singletons() -> None:
++    load_title_config_from_dict({})
++    load_summarization_config_from_dict({})
++    load_memory_config_from_dict({})
++    load_agents_api_config_from_dict({})
++    load_subagents_config_from_dict({})
++    load_tool_search_config_from_dict({})
++    load_guardrails_config_from_dict({})
++    load_checkpointer_config_from_dict(None)
++    load_stream_bridge_config_from_dict(None)
++    load_acp_config_from_dict({})
++    reset_checkpointer()
++    reset_store()
++    reset_app_config()
+ 
+ 
+ def _write_config(path: Path, *, model_name: str, supports_thinking: bool) -> None:
+@@ -53,6 +83,23 @@ def _write_config_with_agents_api(
+     path.write_text(yaml.safe_dump(config), encoding="utf-8")
+ 
+ 
++def _write_config_with_sections(path: Path, sections: dict | None = None) -> None:
++    config = {
++        "sandbox": {"use": "deerflow.sandbox.local:LocalSandboxProvider"},
++        "models": [
++            {
++                "name": "first-model",
++                "use": "langchain_openai:ChatOpenAI",
++                "model": "gpt-test",
++            }
++        ],
++    }
++    if sections:
++        config.update(sections)
++
++    path.write_text(yaml.safe_dump(config), encoding="utf-8")
++
++
+ def _write_extensions_config(path: Path) -> None:
+     path.write_text(json.dumps({"mcpServers": {}, "skills": {}}), encoding="utf-8")
+ 
+@@ -175,3 +222,168 @@ def test_get_app_config_resets_agents_api_config_when_section_removed(tmp_path,
+         assert get_agents_api_config().enabled is False
+     finally:
+         reset_app_config()
++
++
++def test_get_app_config_resets_singleton_configs_when_sections_removed(tmp_path, monkeypatch):
++    config_path = tmp_path / "config.yaml"
++    extensions_path = tmp_path / "extensions_config.json"
++    _write_extensions_config(extensions_path)
++    _write_config_with_sections(
++        config_path,
++        {
++            "title": {"enabled": False, "max_words": 3},
++            "summarization": {"enabled": True},
++            "memory": {"enabled": False, "max_facts": 50},
++            "subagents": {"timeout_seconds": 42, "agents": {"reviewer": {"max_turns": 2}}},
++            "tool_search": {"enabled": True},
++            "guardrails": {"enabled": True, "fail_closed": False},
++            "checkpointer": {"type": "memory"},
++            "stream_bridge": {"type": "memory", "queue_maxsize": 12},
++        },
++    )
++
++    monkeypatch.setenv("DEER_FLOW_CONFIG_PATH", str(config_path))
++    monkeypatch.setenv("DEER_FLOW_EXTENSIONS_CONFIG_PATH", str(extensions_path))
++    reset_app_config()
++
++    try:
++        get_app_config()
++        assert get_title_config().enabled is False
++        assert get_summarization_config().enabled is True
++        assert get_memory_config().enabled is False
++        assert get_subagents_app_config().timeout_seconds == 42
++        assert get_tool_search_config().enabled is True
++        assert get_guardrails_config().enabled is True
++        assert get_checkpointer_config() is not None
++        assert get_stream_bridge_config() is not None
++
++        _write_config_with_sections(config_path)
++        next_mtime = config_path.stat().st_mtime + 5
++        os.utime(config_path, (next_mtime, next_mtime))
++
++        get_app_config()
++        assert get_title_config().enabled is True
++        assert get_summarization_config().enabled is False
++        assert get_memory_config().enabled is True
++        assert get_subagents_app_config().timeout_seconds == 900
++        assert get_tool_search_config().enabled is False
++        assert get_guardrails_config().enabled is False
++        assert get_checkpointer_config() is None
++        assert get_stream_bridge_config() is None
++    finally:
++        _reset_config_singletons()
++
++
++def test_get_app_config_resets_persistence_runtime_singletons_when_checkpointer_removed(tmp_path, monkeypatch):
++    config_path = tmp_path / "config.yaml"
++    extensions_path = tmp_path / "extensions_config.json"
++    _write_extensions_config(extensions_path)
++    _write_config_with_sections(config_path, {"checkpointer": {"type": "memory"}})
++
++    monkeypatch.setenv("DEER_FLOW_CONFIG_PATH", str(config_path))
++    monkeypatch.setenv("DEER_FLOW_EXTENSIONS_CONFIG_PATH", str(extensions_path))
++    reset_checkpointer()
++    reset_store()
++    reset_app_config()
++
++    try:
++        get_app_config()
++        initial_checkpointer = get_checkpointer()
++        initial_store = get_store()
++
++        _write_config_with_sections(config_path)
++        next_mtime = config_path.stat().st_mtime + 5
++        os.utime(config_path, (next_mtime, next_mtime))
++
++        get_app_config()
++
++        assert get_checkpointer_config() is None
++        assert get_checkpointer() is not initial_checkpointer
++        assert get_store() is not initial_store
++    finally:
++        _reset_config_singletons()
++
++
++def test_get_app_config_keeps_persistence_runtime_singletons_when_checkpointer_unchanged(tmp_path, monkeypatch):
++    config_path = tmp_path / "config.yaml"
++    extensions_path = tmp_path / "extensions_config.json"
++    _write_extensions_config(extensions_path)
++    _write_config_with_sections(
++        config_path,
++        {
++            "title": {"enabled": False},
++            "checkpointer": {"type": "memory"},
++        },
++    )
++
++    monkeypatch.setenv("DEER_FLOW_CONFIG_PATH", str(config_path))
++    monkeypatch.setenv("DEER_FLOW_EXTENSIONS_CONFIG_PATH", str(extensions_path))
++    _reset_config_singletons()
++
++    try:
++        get_app_config()
++        initial_checkpointer = get_checkpointer()
++        initial_store = get_store()
++
++        _write_config_with_sections(
++            config_path,
++            {
++                "title": {"enabled": True},
++                "checkpointer": {"type": "memory"},
++            },
++        )
++        next_mtime = config_path.stat().st_mtime + 5
++        os.utime(config_path, (next_mtime, next_mtime))
++
++        get_app_config()
++
++        assert get_checkpointer() is initial_checkpointer
++        assert get_store() is initial_store
++    finally:
++        _reset_config_singletons()
++
++
++def test_get_app_config_does_not_mutate_singletons_when_reload_validation_fails(tmp_path, monkeypatch):
++    config_path = tmp_path / "config.yaml"
++    extensions_path = tmp_path / "extensions_config.json"
++    _write_extensions_config(extensions_path)
++    _write_config_with_sections(
++        config_path,
++        {
++            "title": {"enabled": False},
++            "tool_search": {"enabled": True},
++            "checkpointer": {"type": "memory"},
++        },
++    )
++
++    monkeypatch.setenv("DEER_FLOW_CONFIG_PATH", str(config_path))
++    monkeypatch.setenv("DEER_FLOW_EXTENSIONS_CONFIG_PATH", str(extensions_path))
++    _reset_config_singletons()
++
++    try:
++        previous_app_config = get_app_config()
++        initial_checkpointer = get_checkpointer()
++        initial_store = get_store()
++
++        _write_config_with_sections(
++            config_path,
++            {
++                "title": False,
++                "tool_search": False,
++                "checkpointer": {"type": "memory"},
++            },
++        )
++        next_mtime = config_path.stat().st_mtime + 5
++        os.utime(config_path, (next_mtime, next_mtime))
++
++        with pytest.raises(ValidationError):
++            get_app_config()
++
++        assert app_config_module._app_config is previous_app_config
++        assert get_title_config().enabled is False
++        assert get_tool_search_config().enabled is True
++        assert get_checkpointer_config() is not None
++        assert get_checkpointer() is initial_checkpointer
++        assert get_store() is initial_store
++    finally:
++        _reset_config_singletons()
+diff --git a/backend/tests/test_channels.py b/backend/tests/test_channels.py
+index 9bd484567d9e3d0960b9d558b51c442b85c5ccfa..d68701c4ef87969bbf0a3e884d44c978bd6531db 100644
+--- a/backend/tests/test_channels.py
++++ b/backend/tests/test_channels.py
+@@ -372,6 +372,37 @@ class TestExtractResponseText:
+         # Should return "" (no text in current turn), NOT "Hi there!" from previous turn
+         assert _extract_response_text(result) == ""
+ 
++    def test_does_not_publish_loop_warning_on_tool_calling_ai_message(self):
++        """Loop-detection warning text on a tool-calling AI message is middleware-authored."""
++        from app.channels.manager import _extract_response_text
++
++        result = {
++            "messages": [
++                {"type": "human", "content": "search the repo"},
++                {
++                    "type": "ai",
++                    "content": "[LOOP DETECTED] You are repeating the same tool calls.",
++                    "tool_calls": [{"name": "grep", "args": {"pattern": "TODO"}, "id": "call_1"}],
++                },
++            ]
++        }
++        assert _extract_response_text(result) == ""
++
++    def test_preserves_visible_text_when_stripping_loop_warning(self):
++        from app.channels.manager import _extract_response_text
++
++        result = {
++            "messages": [
++                {"type": "human", "content": "prepare the report"},
++                {
++                    "type": "ai",
++                    "content": "Here is the report.\n\n[LOOP DETECTED] You are repeating the same tool calls.",
++                    "tool_calls": [{"name": "present_files", "args": {"filepaths": ["/mnt/user-data/outputs/report.md"]}, "id": "call_1"}],
++                },
++            ]
++        }
++        assert _extract_response_text(result) == "Here is the report."
++
+ 
+ # ---------------------------------------------------------------------------
+ # ChannelManager tests
+@@ -435,6 +466,47 @@ class TestChannelManager:
+         assert headers["Cookie"] == f"csrf_token={csrf_token}"
+         assert headers["X-DeerFlow-Internal-Token"]
+ 
++    def test_fetch_gateway_includes_internal_auth_headers(self, monkeypatch):
++        from app.channels.manager import ChannelManager
++
++        class MockResponse:
++            def raise_for_status(self):
++                return None
++
++            def json(self):
++                return {"models": [{"name": "default"}]}
++
++        class MockAsyncClient:
++            def __init__(self, *args, **kwargs):
++                return None
++
++            async def __aenter__(self):
++                return self
++
++            async def __aexit__(self, exc_type, exc, tb):
++                return None
++
++            async def get(self, url, **kwargs):
++                calls.append({"url": url, **kwargs})
++                return MockResponse()
++
++        calls = []
++        monkeypatch.setattr("app.channels.manager.httpx.AsyncClient", MockAsyncClient)
++
++        async def go():
++            bus = MessageBus()
++            store = ChannelStore(path=Path(tempfile.mkdtemp()) / "store.json")
++            manager = ChannelManager(bus=bus, store=store, gateway_url="http://gateway:8001")
++
++            reply = await manager._fetch_gateway("/api/models", "models")
++
++            assert reply == "Available models:\n• default"
++            assert calls[0]["url"] == "http://gateway:8001/api/models"
++            assert calls[0]["timeout"] == 10
++            assert calls[0]["headers"]["X-DeerFlow-Internal-Token"]
++
++        _run(go())
++
+     def test_handle_chat_calls_channel_receive_file_for_inbound_files(self, monkeypatch):
+         from app.channels.manager import ChannelManager
+ 
+diff --git a/backend/tests/test_custom_agent.py b/backend/tests/test_custom_agent.py
+index 2117e05d2cb459f443705643f86e2a751d3a1c01..284908081db8ae04d7e33368ae75a3b9d17c8d61 100644
+--- a/backend/tests/test_custom_agent.py
++++ b/backend/tests/test_custom_agent.py
+@@ -537,7 +537,10 @@ class TestAgentsAPI:
+     def test_create_persists_files_on_disk(self, agent_client, tmp_path):
+         agent_client.post("/api/agents", json={"name": "disk-check", "soul": "disk soul"})
+ 
+-        agent_dir = tmp_path / "agents" / "disk-check"
++        # tests/conftest.py installs an autouse fixture that sets the
++        # contextvar to "test-user-autouse", so the agent is persisted under
++        # users/test-user-autouse/agents/ rather than the legacy shared dir.
++        agent_dir = tmp_path / "users" / "test-user-autouse" / "agents" / "disk-check"
+         assert agent_dir.exists()
+         assert (agent_dir / "config.yaml").exists()
+         assert (agent_dir / "SOUL.md").exists()
+@@ -545,12 +548,23 @@ class TestAgentsAPI:
+ 
+     def test_delete_removes_files_from_disk(self, agent_client, tmp_path):
+         agent_client.post("/api/agents", json={"name": "remove-me", "soul": "bye"})
+-        agent_dir = tmp_path / "agents" / "remove-me"
++        agent_dir = tmp_path / "users" / "test-user-autouse" / "agents" / "remove-me"
+         assert agent_dir.exists()
+ 
+         agent_client.delete("/api/agents/remove-me")
+         assert not agent_dir.exists()
+ 
++    def test_create_rejects_legacy_name_collision(self, agent_client, tmp_path):
++        """An unmigrated legacy agent must still block name collision so that
++        running the migration script later won't shadow the legacy entry."""
++        legacy_dir = tmp_path / "agents" / "legacy-agent"
++        legacy_dir.mkdir(parents=True)
++        (legacy_dir / "config.yaml").write_text("name: legacy-agent\n", encoding="utf-8")
++        (legacy_dir / "SOUL.md").write_text("legacy soul", encoding="utf-8")
++
++        response = agent_client.post("/api/agents", json={"name": "legacy-agent", "soul": "x"})
++        assert response.status_code == 409
++
+ 
+ # ===========================================================================
+ # 9. Gateway API – User Profile endpoints
+diff --git a/backend/tests/test_gateway_runtime_cleanup.py b/backend/tests/test_gateway_runtime_cleanup.py
+index 2cc184215342b79df6e59636b682a1f80eb63446..3bf7c1a5b9eddfbbde3ad9b98db3f03e927dcd8b 100644
+--- a/backend/tests/test_gateway_runtime_cleanup.py
++++ b/backend/tests/test_gateway_runtime_cleanup.py
+@@ -50,7 +50,7 @@ def test_nginx_routes_official_langgraph_prefix_to_gateway_api():
+         assert "/api/langgraph-compat" not in content
+         assert "proxy_pass http://langgraph" not in content
+         assert "rewrite ^/api/langgraph/(.*) /api/$1 break;" in content
+-        assert "proxy_pass http://gateway" in content
++        assert "proxy_pass http://gateway" in content or "proxy_pass http://$gateway_upstream" in content
+ 
+ 
+ def test_frontend_rewrites_langgraph_prefix_to_gateway():
+diff --git a/backend/tests/test_lead_agent_prompt.py b/backend/tests/test_lead_agent_prompt.py
+index ecaca314af36b32920977c69b7f7c6a6cee590b3..8781bd307191c63f5010dfef821376c35c478564 100644
+--- a/backend/tests/test_lead_agent_prompt.py
++++ b/backend/tests/test_lead_agent_prompt.py
+@@ -17,6 +17,18 @@ def _set_skills_cache_state(*, skills=None, active=False, version=0):
+         prompt_module._enabled_skills_refresh_event.clear()
+ 
+ 
++def test_build_self_update_section_empty_for_default_agent():
++    assert prompt_module._build_self_update_section(None) == ""
++
++
++def test_build_self_update_section_present_for_custom_agent():
++    section = prompt_module._build_self_update_section("my-agent")
++
++    assert "<self_update>" in section
++    assert "my-agent" in section
++    assert "update_agent" in section
++
++
+ def test_build_custom_mounts_section_returns_empty_when_no_mounts(monkeypatch):
+     config = SimpleNamespace(sandbox=SimpleNamespace(mounts=[]))
+     monkeypatch.setattr("deerflow.config.get_app_config", lambda: config)
+diff --git a/backend/tests/test_loop_detection_middleware.py b/backend/tests/test_loop_detection_middleware.py
+index 8d2b34860d599be44b26d0cecbd2d8a2ff80db06..878a433dd500ef9dd777f4143a51b3f37b5fd7a0 100644
+--- a/backend/tests/test_loop_detection_middleware.py
++++ b/backend/tests/test_loop_detection_middleware.py
+@@ -3,7 +3,7 @@
+ import copy
+ from unittest.mock import MagicMock
+ 
+-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
++from langchain_core.messages import AIMessage, SystemMessage
+ 
+ from deerflow.agents.middlewares.loop_detection_middleware import (
+     _HARD_STOP_MSG,
+@@ -146,14 +146,42 @@ class TestLoopDetection:
+         for _ in range(2):
+             mw._apply(_make_state(tool_calls=call), runtime)
+ 
+-        # Third identical call triggers warning
++        # Third identical call triggers warning. The warning is appended to
++        # the AIMessage content (tool_calls preserved) — never inserted as a
++        # separate HumanMessage between the AIMessage(tool_calls) and its
++        # ToolMessage responses, which would break OpenAI/Moonshot strict
++        # tool-call pairing validation.
+         result = mw._apply(_make_state(tool_calls=call), runtime)
+         assert result is not None
+         msgs = result["messages"]
+         assert len(msgs) == 1
+-        assert isinstance(msgs[0], HumanMessage)
++        assert isinstance(msgs[0], AIMessage)
++        assert len(msgs[0].tool_calls) == len(call)
++        assert msgs[0].tool_calls[0]["id"] == call[0]["id"]
+         assert "LOOP DETECTED" in msgs[0].content
+ 
++    def test_warn_does_not_break_tool_call_pairing(self):
++        """Regression: the warn branch must NOT inject a non-tool message
++        after an AIMessage(tool_calls=...). Moonshot/OpenAI reject the next
++        request with 'tool_call_ids did not have response messages' if any
++        non-tool message is wedged between the AIMessage and its ToolMessage
++        responses. See #2029.
++        """
++        mw = LoopDetectionMiddleware(warn_threshold=3, hard_limit=10)
++        runtime = _make_runtime()
++        call = [_bash_call("ls")]
++
++        for _ in range(2):
++            mw._apply(_make_state(tool_calls=call), runtime)
++
++        result = mw._apply(_make_state(tool_calls=call), runtime)
++        assert result is not None
++        msgs = result["messages"]
++        assert len(msgs) == 1
++        assert isinstance(msgs[0], AIMessage)
++        assert len(msgs[0].tool_calls) == len(call)
++        assert msgs[0].tool_calls[0]["id"] == call[0]["id"]
++
+     def test_warn_only_injected_once(self):
+         """Warning for the same hash should only be injected once per thread."""
+         mw = LoopDetectionMiddleware(warn_threshold=3, hard_limit=10)
+@@ -483,7 +511,11 @@ class TestToolFrequencyDetection:
+         result = mw._apply(_make_state(tool_calls=[self._read_call("/file_4.py")]), runtime)
+         assert result is not None
+         msg = result["messages"][0]
+-        assert isinstance(msg, HumanMessage)
++        # Warning is appended to the AIMessage content; tool_calls preserved
++        # so the tools node still runs and Moonshot/OpenAI tool-call pairing
++        # validation does not break.
++        assert isinstance(msg, AIMessage)
++        assert msg.tool_calls
+         assert "read_file" in msg.content
+         assert "LOOP DETECTED" in msg.content
+ 
+diff --git a/backend/tests/test_migration_user_isolation.py b/backend/tests/test_migration_user_isolation.py
+index dbb20bdd8ad66caf693c4b218bda1c9dede9c2ff..da979e8f7a342bcf010be25029c2e181b55a9051 100644
+--- a/backend/tests/test_migration_user_isolation.py
++++ b/backend/tests/test_migration_user_isolation.py
+@@ -125,3 +125,68 @@ class TestMigrateMemory:
+         from scripts.migrate_user_isolation import migrate_memory
+ 
+         migrate_memory(paths, user_id="default")  # should not raise
++
++
++class TestMigrateAgents:
++    @staticmethod
++    def _seed_legacy_agent(paths: Paths, name: str, *, soul: str = "soul", description: str = "d") -> Path:
++        legacy_dir = paths.agents_dir / name
++        legacy_dir.mkdir(parents=True, exist_ok=True)
++        (legacy_dir / "config.yaml").write_text(f"name: {name}\ndescription: {description}\n", encoding="utf-8")
++        (legacy_dir / "SOUL.md").write_text(soul, encoding="utf-8")
++        return legacy_dir
++
++    def test_moves_legacy_into_user_layout(self, base_dir: Path, paths: Paths):
++        self._seed_legacy_agent(paths, "agent-a", soul="soul-a")
++        self._seed_legacy_agent(paths, "agent-b", soul="soul-b")
++
++        from scripts.migrate_user_isolation import migrate_agents
++
++        report = migrate_agents(paths, user_id="default")
++
++        assert {entry["agent"] for entry in report} == {"agent-a", "agent-b"}
++        for entry in report:
++            assert entry["user_id"] == "default"
++            assert "moved -> " in entry["action"]
++
++        for name, soul in [("agent-a", "soul-a"), ("agent-b", "soul-b")]:
++            dest = paths.user_agent_dir("default", name)
++            assert dest.exists(), f"{name} should have moved into the per-user layout"
++            assert (dest / "SOUL.md").read_text() == soul
++
++        # Legacy agents/ root is cleaned up once empty.
++        assert not paths.agents_dir.exists()
++
++    def test_dry_run_does_not_move(self, base_dir: Path, paths: Paths):
++        legacy_dir = self._seed_legacy_agent(paths, "agent-a")
++
++        from scripts.migrate_user_isolation import migrate_agents
++
++        report = migrate_agents(paths, user_id="default", dry_run=True)
++
++        assert len(report) == 1
++        assert legacy_dir.exists(), "dry-run must not touch the filesystem"
++        assert not paths.user_agent_dir("default", "agent-a").exists()
++
++    def test_existing_destination_is_treated_as_conflict(self, base_dir: Path, paths: Paths):
++        self._seed_legacy_agent(paths, "agent-a", soul="legacy soul")
++        dest = paths.user_agent_dir("default", "agent-a")
++        dest.mkdir(parents=True)
++        (dest / "SOUL.md").write_text("preexisting", encoding="utf-8")
++
++        from scripts.migrate_user_isolation import migrate_agents
++
++        report = migrate_agents(paths, user_id="default")
++
++        assert report[0]["action"].startswith("conflict -> ")
++        # Per-user destination must be left untouched.
++        assert (dest / "SOUL.md").read_text() == "preexisting"
++        # Legacy copy lands under migration-conflicts/agents/.
++        conflicts_dir = paths.base_dir / "migration-conflicts" / "agents" / "agent-a"
++        assert (conflicts_dir / "SOUL.md").read_text() == "legacy soul"
++
++    def test_no_legacy_dir_is_noop(self, base_dir: Path, paths: Paths):
++        from scripts.migrate_user_isolation import migrate_agents
++
++        report = migrate_agents(paths, user_id="default")
++        assert report == []
+diff --git a/backend/tests/test_paths_user_isolation.py b/backend/tests/test_paths_user_isolation.py
+index 8f312dcff44d0515c79baf63d432c865f19c19e8..d5c0f540f12b8f5e80ed70c9966fe0b786d2081f 100644
+--- a/backend/tests/test_paths_user_isolation.py
++++ b/backend/tests/test_paths_user_isolation.py
+@@ -50,6 +50,21 @@ class TestUserAgentMemoryFile:
+         assert paths.user_agent_memory_file("bob", "MyAgent") == expected
+ 
+ 
++class TestUserAgentDir:
++    def test_user_agents_dir(self, paths: Paths):
++        assert paths.user_agents_dir("alice") == paths.base_dir / "users" / "alice" / "agents"
++
++    def test_user_agent_dir(self, paths: Paths):
++        assert paths.user_agent_dir("alice", "code-reviewer") == paths.base_dir / "users" / "alice" / "agents" / "code-reviewer"
++
++    def test_user_agent_dir_lowercases_name(self, paths: Paths):
++        assert paths.user_agent_dir("alice", "CodeReviewer") == paths.base_dir / "users" / "alice" / "agents" / "codereviewer"
++
++    def test_user_agent_dir_validates_user_id(self, paths: Paths):
++        with pytest.raises(ValueError, match="Invalid user_id"):
++            paths.user_agent_dir("../escape", "myagent")
++
++
+ class TestUserThreadDir:
+     def test_user_thread_dir(self, paths: Paths):
+         expected = paths.base_dir / "users" / "u1" / "threads" / "t1"
+diff --git a/backend/tests/test_remote_sandbox_backend.py b/backend/tests/test_remote_sandbox_backend.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..c33cd66effc9f3861e64610b44bceccfc8c64c74
+--- /dev/null
++++ b/backend/tests/test_remote_sandbox_backend.py
+@@ -0,0 +1,293 @@
++from __future__ import annotations
++
++import pytest
++import requests
++
++from deerflow.community.aio_sandbox.remote_backend import RemoteSandboxBackend
++from deerflow.community.aio_sandbox.sandbox_info import SandboxInfo
++
++
++class _StubResponse:
++    def __init__(
++        self,
++        *,
++        status_code: int = 200,
++        payload: object | None = None,
++        json_exc: Exception | None = None,
++    ):
++        self.status_code = status_code
++        self._payload = {} if payload is None else payload
++        self._json_exc = json_exc
++        self.ok = 200 <= status_code < 400
++        self.text = ""
++
++    def raise_for_status(self) -> None:
++        if self.status_code >= 400:
++            raise requests.HTTPError(f"HTTP {self.status_code}")
++
++    def json(self) -> object:
++        if self._json_exc is not None:
++            raise self._json_exc
++        return self._payload
++
++
++def test_list_running_delegates_to_provisioner_list(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++    sandbox_info = SandboxInfo(sandbox_id="test-id", sandbox_url="http://localhost:8080")
++
++    def mock_list():
++        return [sandbox_info]
++
++    monkeypatch.setattr(backend, "_provisioner_list", mock_list)
++
++    assert backend.list_running() == [sandbox_info]
++
++
++def test_provisioner_list_returns_sandbox_infos_and_filters_invalid_entries(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++
++    def mock_get(url: str, timeout: int):
++        assert url == "http://provisioner:8002/api/sandboxes"
++        assert timeout == 10
++        return _StubResponse(
++            payload={
++                "sandboxes": [
++                    {"sandbox_id": "abc123", "sandbox_url": "http://k3s:31001"},
++                    {"sandbox_id": "missing-url"},
++                    {"sandbox_url": "http://k3s:31002"},
++                ]
++            }
++        )
++
++    monkeypatch.setattr(requests, "get", mock_get)
++
++    infos = backend._provisioner_list()
++    assert len(infos) == 1
++    assert infos[0].sandbox_id == "abc123"
++    assert infos[0].sandbox_url == "http://k3s:31001"
++
++
++def test_provisioner_list_returns_empty_on_request_exception(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++
++    def mock_get(url: str, timeout: int):
++        raise requests.RequestException("network down")
++
++    monkeypatch.setattr(requests, "get", mock_get)
++
++    assert backend._provisioner_list() == []
++
++
++def test_provisioner_list_returns_empty_when_payload_is_not_dict(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++
++    def mock_get(url: str, timeout: int):
++        return _StubResponse(payload=[{"sandbox_id": "abc", "sandbox_url": "http://k3s:31001"}])
++
++    monkeypatch.setattr(requests, "get", mock_get)
++
++    assert backend._provisioner_list() == []
++
++
++def test_provisioner_list_returns_empty_when_sandboxes_is_not_list(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++
++    def mock_get(url: str, timeout: int):
++        return _StubResponse(payload={"sandboxes": {"sandbox_id": "abc"}})
++
++    monkeypatch.setattr(requests, "get", mock_get)
++
++    assert backend._provisioner_list() == []
++
++
++def test_provisioner_list_skips_non_dict_sandbox_entries(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++
++    def mock_get(url: str, timeout: int):
++        return _StubResponse(
++            payload={
++                "sandboxes": [
++                    {"sandbox_id": "abc123", "sandbox_url": "http://k3s:31001"},
++                    "bad-entry",
++                    123,
++                    None,
++                ]
++            }
++        )
++
++    monkeypatch.setattr(requests, "get", mock_get)
++
++    infos = backend._provisioner_list()
++    assert len(infos) == 1
++    assert infos[0].sandbox_id == "abc123"
++    assert infos[0].sandbox_url == "http://k3s:31001"
++
++
++def test_create_delegates_to_provisioner_create(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++    expected = SandboxInfo(sandbox_id="abc123", sandbox_url="http://k3s:31001")
++
++    def mock_create(thread_id: str, sandbox_id: str, extra_mounts=None):
++        assert thread_id == "thread-1"
++        assert sandbox_id == "abc123"
++        assert extra_mounts == [("/host", "/container", False)]
++        return expected
++
++    monkeypatch.setattr(backend, "_provisioner_create", mock_create)
++
++    result = backend.create("thread-1", "abc123", extra_mounts=[("/host", "/container", False)])
++    assert result == expected
++
++
++def test_provisioner_create_returns_sandbox_info(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++
++    def mock_post(url: str, json: dict, timeout: int):
++        assert url == "http://provisioner:8002/api/sandboxes"
++        assert json == {"sandbox_id": "abc123", "thread_id": "thread-1"}
++        assert timeout == 30
++        return _StubResponse(payload={"sandbox_id": "abc123", "sandbox_url": "http://k3s:31001"})
++
++    monkeypatch.setattr(requests, "post", mock_post)
++
++    info = backend._provisioner_create("thread-1", "abc123")
++    assert info.sandbox_id == "abc123"
++    assert info.sandbox_url == "http://k3s:31001"
++
++
++def test_provisioner_create_raises_runtime_error_on_request_exception(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++
++    def mock_post(url: str, json: dict, timeout: int):
++        raise requests.RequestException("boom")
++
++    monkeypatch.setattr(requests, "post", mock_post)
++
++    with pytest.raises(RuntimeError, match="Provisioner create failed"):
++        backend._provisioner_create("thread-1", "abc123")
++
++
++def test_destroy_delegates_to_provisioner_destroy(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++    called: list[str] = []
++
++    def mock_destroy(sandbox_id: str):
++        called.append(sandbox_id)
++
++    monkeypatch.setattr(backend, "_provisioner_destroy", mock_destroy)
++
++    backend.destroy(SandboxInfo(sandbox_id="abc123", sandbox_url="http://k3s:31001"))
++    assert called == ["abc123"]
++
++
++def test_provisioner_destroy_calls_delete(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++
++    def mock_delete(url: str, timeout: int):
++        assert url == "http://provisioner:8002/api/sandboxes/abc123"
++        assert timeout == 15
++        return _StubResponse(status_code=200)
++
++    monkeypatch.setattr(requests, "delete", mock_delete)
++
++    backend._provisioner_destroy("abc123")
++
++
++def test_provisioner_destroy_swallows_request_exception(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++
++    def mock_delete(url: str, timeout: int):
++        raise requests.RequestException("network down")
++
++    monkeypatch.setattr(requests, "delete", mock_delete)
++
++    backend._provisioner_destroy("abc123")
++
++
++def test_is_alive_delegates_to_provisioner_is_alive(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++
++    def mock_is_alive(sandbox_id: str):
++        assert sandbox_id == "abc123"
++        return True
++
++    monkeypatch.setattr(backend, "_provisioner_is_alive", mock_is_alive)
++
++    alive = backend.is_alive(SandboxInfo(sandbox_id="abc123", sandbox_url="http://k3s:31001"))
++    assert alive is True
++
++
++def test_provisioner_is_alive_true_only_when_status_running(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++
++    def mock_get_running(url: str, timeout: int):
++        return _StubResponse(payload={"status": "Running"})
++
++    monkeypatch.setattr(requests, "get", mock_get_running)
++    assert backend._provisioner_is_alive("abc123") is True
++
++    def mock_get_pending(url: str, timeout: int):
++        return _StubResponse(payload={"status": "Pending"})
++
++    monkeypatch.setattr(requests, "get", mock_get_pending)
++    assert backend._provisioner_is_alive("abc123") is False
++
++
++def test_provisioner_is_alive_returns_false_on_request_exception(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++
++    def mock_get(url: str, timeout: int):
++        raise requests.RequestException("boom")
++
++    monkeypatch.setattr(requests, "get", mock_get)
++    assert backend._provisioner_is_alive("abc123") is False
++
++
++def test_discover_delegates_to_provisioner_discover(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++    expected = SandboxInfo(sandbox_id="abc123", sandbox_url="http://k3s:31001")
++
++    def mock_discover(sandbox_id: str):
++        assert sandbox_id == "abc123"
++        return expected
++
++    monkeypatch.setattr(backend, "_provisioner_discover", mock_discover)
++
++    result = backend.discover("abc123")
++    assert result == expected
++
++
++def test_provisioner_discover_returns_none_on_404(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++
++    def mock_get(url: str, timeout: int):
++        return _StubResponse(status_code=404)
++
++    monkeypatch.setattr(requests, "get", mock_get)
++
++    assert backend._provisioner_discover("abc123") is None
++
++
++def test_provisioner_discover_returns_info_on_success(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++
++    def mock_get(url: str, timeout: int):
++        return _StubResponse(payload={"sandbox_id": "abc123", "sandbox_url": "http://k3s:31001"})
++
++    monkeypatch.setattr(requests, "get", mock_get)
++
++    info = backend._provisioner_discover("abc123")
++    assert info is not None
++    assert info.sandbox_id == "abc123"
++    assert info.sandbox_url == "http://k3s:31001"
++
++
++def test_provisioner_discover_returns_none_on_request_exception(monkeypatch):
++    backend = RemoteSandboxBackend("http://provisioner:8002")
++
++    def mock_get(url: str, timeout: int):
++        raise requests.RequestException("boom")
++
++    monkeypatch.setattr(requests, "get", mock_get)
++
++    assert backend._provisioner_discover("abc123") is None
+diff --git a/backend/tests/test_setup_agent_tool.py b/backend/tests/test_setup_agent_tool.py
+index 482fe13589ad62ce32e33f3c67bb870ba68a29b3..0de56d641bfd13dd909386141aaa0a9ed1e789bc 100644
+--- a/backend/tests/test_setup_agent_tool.py
++++ b/backend/tests/test_setup_agent_tool.py
+@@ -27,6 +27,7 @@ def _make_paths_mock(tmp_path: Path):
+     paths = MagicMock()
+     paths.base_dir = tmp_path
+     paths.agent_dir = lambda name: tmp_path / "agents" / name
++    paths.user_agent_dir = lambda user_id, name: tmp_path / "users" / user_id / "agents" / name
+     return paths
+ 
+ 
+@@ -54,7 +55,7 @@ def test_setup_agent_rejects_invalid_agent_name_before_writing(tmp_path, monkeyp
+     messages = result.update["messages"]
+     assert len(messages) == 1
+     assert "Invalid agent name" in messages[0].content
+-    assert not (tmp_path / "agents").exists()
++    assert not (tmp_path / "users" / "test-user-autouse" / "agents").exists()
+     assert not (outside_dir / "evil" / "SOUL.md").exists()
+ 
+ 
+@@ -68,7 +69,7 @@ def test_setup_agent_rejects_absolute_agent_name_before_writing(tmp_path, monkey
+     messages = result.update["messages"]
+     assert len(messages) == 1
+     assert "Invalid agent name" in messages[0].content
+-    assert not (tmp_path / "agents").exists()
++    assert not (tmp_path / "users" / "test-user-autouse" / "agents").exists()
+     assert not (Path(absolute_agent) / "SOUL.md").exists()
+ 
+ 
+@@ -81,10 +82,10 @@ class TestSetupAgentNoDataLoss:
+     def test_existing_agent_dir_preserved_on_failure(self, tmp_path: Path):
+         """If the agent directory already exists and setup fails,
+         the directory and its contents must NOT be deleted."""
+-        agent_dir = tmp_path / "agents" / "test-agent"
++        agent_dir = tmp_path / "users" / "test-user-autouse" / "agents" / "test-agent"
+         agent_dir.mkdir(parents=True)
+         old_soul = agent_dir / "SOUL.md"
+-        old_soul.write_text("original soul content")
++        old_soul.write_text("original soul content", encoding="utf-8")
+ 
+         with patch("deerflow.tools.builtins.setup_agent_tool.get_paths", return_value=_make_paths_mock(tmp_path)):
+             # Force soul_file.write_text to raise after directory already exists
+@@ -103,7 +104,7 @@ class TestSetupAgentNoDataLoss:
+     def test_new_agent_dir_cleaned_up_on_failure(self, tmp_path: Path):
+         """If the agent directory is newly created and setup fails,
+         the directory should be cleaned up."""
+-        agent_dir = tmp_path / "agents" / "test-agent"
++        agent_dir = tmp_path / "users" / "test-user-autouse" / "agents" / "test-agent"
+         assert not agent_dir.exists()
+ 
+         with patch("deerflow.tools.builtins.setup_agent_tool.get_paths", return_value=_make_paths_mock(tmp_path)):
+@@ -121,7 +122,7 @@ class TestSetupAgentNoDataLoss:
+         """Happy path: setup_agent creates config.yaml and SOUL.md."""
+         _call_setup_agent(tmp_path, soul="# My Agent", description="A test agent")
+ 
+-        agent_dir = tmp_path / "agents" / "test-agent"
++        agent_dir = tmp_path / "users" / "test-user-autouse" / "agents" / "test-agent"
+         assert agent_dir.exists()
+         assert (agent_dir / "SOUL.md").read_text() == "# My Agent"
+         assert (agent_dir / "config.yaml").exists()
+diff --git a/backend/tests/test_update_agent_tool.py b/backend/tests/test_update_agent_tool.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..3cef11252db64e188503b5e4bfa63e32c6a053bf
+--- /dev/null
++++ b/backend/tests/test_update_agent_tool.py
+@@ -0,0 +1,310 @@
++"""Tests for update_agent tool — partial updates, atomic writes, and validation.
++
++Resolves issue #2616: a custom agent must be able to persist updates to its
++own SOUL.md / config.yaml from inside a normal chat (not only from bootstrap).
++
++The tool writes per-user (``{base_dir}/users/{user_id}/agents/{name}/``) so
++that one user's update cannot mutate another user's agent.
++"""
++
++from __future__ import annotations
++
++from pathlib import Path
++from types import SimpleNamespace
++from unittest.mock import MagicMock, patch
++
++import pytest
++import yaml
++
++from deerflow.config.agents_config import AgentConfig
++from deerflow.tools.builtins.update_agent_tool import update_agent
++
++DEFAULT_USER = "test-user-autouse"  # matches the autouse fixture in tests/conftest.py
++
++
++class _DummyRuntime(SimpleNamespace):
++    context: dict
++    tool_call_id: str
++
++
++def _runtime(agent_name: str | None = "test-agent", tool_call_id: str = "call_1") -> _DummyRuntime:
++    return _DummyRuntime(context={"agent_name": agent_name} if agent_name is not None else {}, tool_call_id=tool_call_id)
++
++
++def _make_paths_mock(tmp_path: Path) -> MagicMock:
++    paths = MagicMock()
++    paths.base_dir = tmp_path
++    paths.agent_dir = lambda name: tmp_path / "agents" / name
++    paths.agents_dir = tmp_path / "agents"
++    paths.user_agent_dir = lambda user_id, name: tmp_path / "users" / user_id / "agents" / name
++    paths.user_agents_dir = lambda user_id: tmp_path / "users" / user_id / "agents"
++    return paths
++
++
++def _user_agent_dir(tmp_path: Path, name: str = "test-agent", user_id: str = DEFAULT_USER) -> Path:
++    return tmp_path / "users" / user_id / "agents" / name
++
++
++def _seed_agent(
++    tmp_path: Path,
++    name: str = "test-agent",
++    *,
++    description: str = "old desc",
++    soul: str = "old soul",
++    skills: list[str] | None = None,
++    user_id: str = DEFAULT_USER,
++) -> Path:
++    """Create a baseline agent dir with config.yaml and SOUL.md for tests to mutate."""
++    agent_dir = _user_agent_dir(tmp_path, name, user_id=user_id)
++    agent_dir.mkdir(parents=True, exist_ok=True)
++    cfg: dict = {"name": name, "description": description}
++    if skills is not None:
++        cfg["skills"] = skills
++    (agent_dir / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
++    (agent_dir / "SOUL.md").write_text(soul, encoding="utf-8")
++    return agent_dir
++
++
++@pytest.fixture()
++def patched_paths(tmp_path: Path):
++    paths_mock = _make_paths_mock(tmp_path)
++    with patch("deerflow.tools.builtins.update_agent_tool.get_paths", return_value=paths_mock):
++        # load_agent_config also calls get_paths(); patch the same target it uses.
++        with patch("deerflow.config.agents_config.get_paths", return_value=paths_mock):
++            yield paths_mock
++
++
++@pytest.fixture()
++def stub_app_config():
++    """Stub get_app_config so model validation accepts only known names."""
++    fake = MagicMock()
++    fake.get_model_config.side_effect = lambda name: object() if name in {"gpt-known", "m1"} else None
++    with patch("deerflow.tools.builtins.update_agent_tool.get_app_config", return_value=fake):
++        yield fake
++
++
++# --- Validation tests ---
++
++
++def test_update_agent_rejects_missing_agent_name(patched_paths):
++    result = update_agent.func(runtime=_runtime(agent_name=None), soul="new soul")
++
++    msg = result.update["messages"][0]
++    assert "only available inside a custom agent's chat" in msg.content
++
++
++def test_update_agent_rejects_invalid_agent_name(patched_paths):
++    result = update_agent.func(runtime=_runtime(agent_name="../../etc/passwd"), soul="x")
++
++    msg = result.update["messages"][0]
++    assert "Invalid agent name" in msg.content
++
++
++def test_update_agent_rejects_unknown_agent(tmp_path, patched_paths):
++    result = update_agent.func(runtime=_runtime(agent_name="ghost"), soul="x")
++
++    msg = result.update["messages"][0]
++    assert "does not exist" in msg.content
++    assert not _user_agent_dir(tmp_path, "ghost").exists()
++
++
++def test_update_agent_requires_at_least_one_field(tmp_path, patched_paths):
++    _seed_agent(tmp_path)
++
++    result = update_agent.func(runtime=_runtime())
++
++    msg = result.update["messages"][0]
++    assert "No fields provided" in msg.content
++
++
++def test_update_agent_rejects_unknown_model(tmp_path, patched_paths, stub_app_config):
++    """Copilot review: model must be validated against configured models before
++    being persisted; otherwise _resolve_model_name silently falls back to the
++    default and the user gets repeated warnings on every later turn."""
++    _seed_agent(tmp_path)
++
++    result = update_agent.func(runtime=_runtime(), model="not-in-config")
++
++    msg = result.update["messages"][0]
++    assert "Unknown model" in msg.content
++    cfg = yaml.safe_load((_user_agent_dir(tmp_path) / "config.yaml").read_text())
++    assert "model" not in cfg, "Invalid model must not have been written to config.yaml"
++
++
++def test_update_agent_accepts_known_model(tmp_path, patched_paths, stub_app_config):
++    _seed_agent(tmp_path)
++
++    result = update_agent.func(runtime=_runtime(), model="gpt-known")
++
++    cfg = yaml.safe_load((_user_agent_dir(tmp_path) / "config.yaml").read_text())
++    assert cfg["model"] == "gpt-known"
++    assert "model" in result.update["messages"][0].content
++
++
++# --- Partial update tests ---
++
++
++def test_update_agent_updates_soul_only(tmp_path, patched_paths):
++    agent_dir = _seed_agent(tmp_path, description="keep me", soul="old soul")
++
++    result = update_agent.func(runtime=_runtime(), soul="brand new soul")
++
++    assert (agent_dir / "SOUL.md").read_text() == "brand new soul"
++    cfg = yaml.safe_load((agent_dir / "config.yaml").read_text())
++    assert cfg["description"] == "keep me", "description must be preserved"
++    assert "soul" in result.update["messages"][0].content
++
++
++def test_update_agent_updates_description_only(tmp_path, patched_paths):
++    agent_dir = _seed_agent(tmp_path, description="old desc", soul="keep this soul")
++
++    result = update_agent.func(runtime=_runtime(), description="new desc")
++
++    cfg = yaml.safe_load((agent_dir / "config.yaml").read_text())
++    assert cfg["description"] == "new desc"
++    assert (agent_dir / "SOUL.md").read_text() == "keep this soul", "SOUL.md must be preserved"
++    assert "description" in result.update["messages"][0].content
++
++
++def test_update_agent_skills_empty_list_disables_all(tmp_path, patched_paths):
++    agent_dir = _seed_agent(tmp_path, skills=["a", "b"])
++
++    result = update_agent.func(runtime=_runtime(), skills=[])
++
++    cfg = yaml.safe_load((agent_dir / "config.yaml").read_text())
++    assert cfg["skills"] == [], "empty list must persist as empty list (not be omitted)"
++    assert "skills" in result.update["messages"][0].content
++
++
++def test_update_agent_skills_omitted_keeps_existing(tmp_path, patched_paths):
++    agent_dir = _seed_agent(tmp_path, skills=["alpha", "beta"])
++
++    update_agent.func(runtime=_runtime(), description="bumped")
++
++    cfg = yaml.safe_load((agent_dir / "config.yaml").read_text())
++    assert cfg["skills"] == ["alpha", "beta"], "omitting skills must preserve the existing whitelist"
++
++
++def test_update_agent_no_op_when_values_match_existing(tmp_path, patched_paths):
++    _seed_agent(tmp_path, description="same")
++
++    result = update_agent.func(runtime=_runtime(), description="same")
++
++    assert "No changes applied" in result.update["messages"][0].content
++
++
++def test_update_agent_forces_name_to_directory(tmp_path, patched_paths):
++    """Copilot review: if the existing config.yaml has a drifted ``name`` field,
++    update_agent must rewrite it to match the directory name so on-disk state
++    stays consistent with the runtime context."""
++    agent_dir = _user_agent_dir(tmp_path)
++    agent_dir.mkdir(parents=True)
++    (agent_dir / "config.yaml").write_text(yaml.safe_dump({"name": "drifted-name", "description": "old"}, sort_keys=False), encoding="utf-8")
++    (agent_dir / "SOUL.md").write_text("soul", encoding="utf-8")
++
++    update_agent.func(runtime=_runtime(), description="bumped")
++
++    cfg = yaml.safe_load((agent_dir / "config.yaml").read_text())
++    assert cfg["name"] == "test-agent", "config.yaml name must follow the directory name, not legacy yaml content"
++
++
++# --- Atomicity tests ---
++
++
++def test_update_agent_failure_preserves_existing_files(tmp_path, patched_paths):
++    agent_dir = _seed_agent(tmp_path, soul="original soul")
++
++    real_replace = Path.replace
++
++    def _explode(self, target):
++        if str(target).endswith("SOUL.md"):
++            raise OSError("disk full")
++        return real_replace(self, target)
++
++    with patch.object(Path, "replace", _explode):
++        result = update_agent.func(runtime=_runtime(), soul="poisoned content")
++
++    assert (agent_dir / "SOUL.md").read_text() == "original soul", "atomic write must not corrupt existing SOUL.md"
++    assert "Error" in result.update["messages"][0].content
++    leftover_tmps = list(agent_dir.glob("*.tmp"))
++    assert leftover_tmps == [], "temp files must be cleaned up on failure"
++
++
++def test_update_agent_soul_failure_does_not_replace_config(tmp_path, patched_paths):
++    """Copilot review: if both config.yaml and SOUL.md are scheduled to be
++    written and SOUL.md staging fails *before* any rename, config.yaml must
++    NOT be replaced. The fix stages every temp file first and only renames
++    after all temps exist on disk."""
++    agent_dir = _seed_agent(tmp_path, description="original-desc", soul="original soul")
++
++    real_named_temp_file = __import__("tempfile").NamedTemporaryFile
++    call_count = {"n": 0}
++
++    def _explode_on_soul(*args, **kwargs):
++        # Inspect target dir + suffix; the SOUL temp file is the second one we stage.
++        call_count["n"] += 1
++        if call_count["n"] >= 2:
++            raise OSError("disk full while staging SOUL.md")
++        return real_named_temp_file(*args, **kwargs)
++
++    with patch("deerflow.tools.builtins.update_agent_tool.tempfile.NamedTemporaryFile", side_effect=_explode_on_soul):
++        result = update_agent.func(runtime=_runtime(), description="new-desc", soul="new soul")
++
++    cfg = yaml.safe_load((agent_dir / "config.yaml").read_text())
++    assert cfg["description"] == "original-desc", "config.yaml must not be replaced when SOUL.md staging fails"
++    assert (agent_dir / "SOUL.md").read_text() == "original soul"
++    assert "Error" in result.update["messages"][0].content
++    assert list(agent_dir.glob("*.tmp")) == [], "staged config.yaml temp must be cleaned up on SOUL.md failure"
++
++
++# --- Per-user isolation ---
++
++
++def test_update_agent_only_writes_under_current_user(tmp_path, patched_paths):
++    """An update from user 'alice' must never touch user 'bob's agent files."""
++    from deerflow.runtime.user_context import reset_current_user, set_current_user
++
++    # Seed an agent for both users with the same name.
++    alice_dir = _seed_agent(tmp_path, name="shared", description="alice-desc", soul="alice soul", user_id="alice")
++    bob_dir = _seed_agent(tmp_path, name="shared", description="bob-desc", soul="bob soul", user_id="bob")
++
++    # Override the autouse contextvar so update_agent runs as Alice.
++    token = set_current_user(SimpleNamespace(id="alice"))
++    try:
++        update_agent.func(runtime=_runtime(agent_name="shared"), description="alice-bumped")
++    finally:
++        reset_current_user(token)
++
++    alice_cfg = yaml.safe_load((alice_dir / "config.yaml").read_text())
++    bob_cfg = yaml.safe_load((bob_dir / "config.yaml").read_text())
++    assert alice_cfg["description"] == "alice-bumped"
++    assert bob_cfg["description"] == "bob-desc", "bob's config.yaml must not have been touched"
++    assert (bob_dir / "SOUL.md").read_text() == "bob soul"
++
++
++# --- Loader passthrough sanity check ---
++
++
++def test_update_agent_round_trips_known_fields(tmp_path, patched_paths):
++    """update_agent reads through load_agent_config so all fields the loader
++    knows about (name, description, model, tool_groups, skills) round-trip
++    on a partial update.
++
++    Note: ``load_agent_config`` strips unknown fields before constructing
++    AgentConfig, so legacy/extra YAML keys are NOT preserved across
++    updates — by design.
++    """
++    _seed_agent(tmp_path, description="legacy")
++
++    fake_cfg = AgentConfig(name="test-agent", description="legacy", skills=["s1"], tool_groups=["g1"], model="m1")
++    fake_app_config = MagicMock()
++    fake_app_config.get_model_config.return_value = object()
++    with patch("deerflow.tools.builtins.update_agent_tool.load_agent_config", return_value=fake_cfg):
++        with patch("deerflow.tools.builtins.update_agent_tool.get_app_config", return_value=fake_app_config):
++            update_agent.func(runtime=_runtime(), description="bumped")
++
++    cfg = yaml.safe_load((_user_agent_dir(tmp_path) / "config.yaml").read_text())
++    assert cfg["description"] == "bumped"
++    assert cfg["skills"] == ["s1"]
++    assert cfg["tool_groups"] == ["g1"]
++    assert cfg["model"] == "m1"
+diff --git a/docker/nginx/nginx.conf b/docker/nginx/nginx.conf
+index a5e0eb6b67acbd19d4b6cb8e207cd382569252b2..cf34d6eae7799c13534fb2c93fa73037c88de7a1 100644
+--- a/docker/nginx/nginx.conf
++++ b/docker/nginx/nginx.conf
+@@ -17,25 +17,17 @@ http {
+     # Docker internal DNS (for resolving k3s hostname)
+     resolver 127.0.0.11 valid=10s ipv6=off;
+ 
+-    # Upstream servers (using Docker service names)
+-    # NOTE: `zone` and `resolve` are nginx Plus-only features and are not
+-    # available in the standard nginx:alpine image. Docker's internal DNS
+-    # (127.0.0.11) handles service discovery; upstreams are resolved at
+-    # nginx startup and remain valid for the lifetime of the deployment.
+-    upstream gateway {
+-        server gateway:8001;
+-    }
+-
+-    upstream frontend {
+-        server frontend:3000;
+-    }
+-
+     # ── Main server (path-based routing) ─────────────────────────────────
+     server {
+         listen 2026 default_server;
+         listen [::]:2026 default_server;
+         server_name _;
+ 
++        # Resolve Docker service names at request time to avoid stale upstream
++        # IPs when containers restart and receive new addresses.
++        set $gateway_upstream gateway:8001;
++        set $frontend_upstream frontend:3000;
++
+         # Hide CORS headers from upstream to prevent duplicates
+         proxy_hide_header 'Access-Control-Allow-Origin';
+         proxy_hide_header 'Access-Control-Allow-Methods';
+@@ -56,7 +48,7 @@ http {
+         # Rewrites /api/langgraph/* to /api/* before proxying to Gateway.
+         location /api/langgraph/ {
+             rewrite ^/api/langgraph/(.*) /api/$1 break;
+-            proxy_pass http://gateway;
++            proxy_pass http://$gateway_upstream;
+             proxy_http_version 1.1;
+ 
+             # Headers
+@@ -82,7 +74,7 @@ http {
+ 
+         # Custom API: Models endpoint
+         location /api/models {
+-            proxy_pass http://gateway;
++            proxy_pass http://$gateway_upstream;
+             proxy_http_version 1.1;
+             proxy_set_header Host $host;
+             proxy_set_header X-Real-IP $remote_addr;
+@@ -92,7 +84,7 @@ http {
+ 
+         # Custom API: Memory endpoint
+         location /api/memory {
+-            proxy_pass http://gateway;
++            proxy_pass http://$gateway_upstream;
+             proxy_http_version 1.1;
+             proxy_set_header Host $host;
+             proxy_set_header X-Real-IP $remote_addr;
+@@ -102,7 +94,7 @@ http {
+ 
+         # Custom API: MCP configuration endpoint
+         location /api/mcp {
+-            proxy_pass http://gateway;
++            proxy_pass http://$gateway_upstream;
+             proxy_http_version 1.1;
+             proxy_set_header Host $host;
+             proxy_set_header X-Real-IP $remote_addr;
+@@ -112,7 +104,7 @@ http {
+ 
+         # Custom API: Skills configuration endpoint
+         location /api/skills {
+-            proxy_pass http://gateway;
++            proxy_pass http://$gateway_upstream;
+             proxy_http_version 1.1;
+             proxy_set_header Host $host;
+             proxy_set_header X-Real-IP $remote_addr;
+@@ -122,7 +114,7 @@ http {
+ 
+         # Custom API: Agents endpoint
+         location /api/agents {
+-            proxy_pass http://gateway;
++            proxy_pass http://$gateway_upstream;
+             proxy_http_version 1.1;
+             proxy_set_header Host $host;
+             proxy_set_header X-Real-IP $remote_addr;
+@@ -132,7 +124,7 @@ http {
+ 
+         # Custom API: Uploads endpoint
+         location ~ ^/api/threads/[^/]+/uploads {
+-            proxy_pass http://gateway;
++            proxy_pass http://$gateway_upstream;
+             proxy_http_version 1.1;
+             proxy_set_header Host $host;
+             proxy_set_header X-Real-IP $remote_addr;
+@@ -146,7 +138,7 @@ http {
+ 
+         # Custom API: Other endpoints under /api/threads
+         location ~ ^/api/threads {
+-            proxy_pass http://gateway;
++            proxy_pass http://$gateway_upstream;
+             proxy_http_version 1.1;
+             proxy_set_header Host $host;
+             proxy_set_header X-Real-IP $remote_addr;
+@@ -156,7 +148,7 @@ http {
+ 
+         # API Documentation: Swagger UI
+         location /docs {
+-            proxy_pass http://gateway;
++            proxy_pass http://$gateway_upstream;
+             proxy_http_version 1.1;
+             proxy_set_header Host $host;
+             proxy_set_header X-Real-IP $remote_addr;
+@@ -166,7 +158,7 @@ http {
+ 
+         # API Documentation: ReDoc
+         location /redoc {
+-            proxy_pass http://gateway;
++            proxy_pass http://$gateway_upstream;
+             proxy_http_version 1.1;
+             proxy_set_header Host $host;
+             proxy_set_header X-Real-IP $remote_addr;
+@@ -176,7 +168,7 @@ http {
+ 
+         # API Documentation: OpenAPI Schema
+         location /openapi.json {
+-            proxy_pass http://gateway;
++            proxy_pass http://$gateway_upstream;
+             proxy_http_version 1.1;
+             proxy_set_header Host $host;
+             proxy_set_header X-Real-IP $remote_addr;
+@@ -186,7 +178,7 @@ http {
+ 
+         # Health check endpoint (gateway)
+         location /health {
+-            proxy_pass http://gateway;
++            proxy_pass http://$gateway_upstream;
+             proxy_http_version 1.1;
+             proxy_set_header Host $host;
+             proxy_set_header X-Real-IP $remote_addr;
+@@ -210,7 +202,7 @@ http {
+         # Catch-all for /api/ routes not covered above (e.g. /api/v1/auth/*).
+         # More specific prefix and regex locations above still take precedence.
+         location /api/ {
+-            proxy_pass http://gateway;
++            proxy_pass http://$gateway_upstream;
+             proxy_http_version 1.1;
+             proxy_set_header Host $host;
+             proxy_set_header X-Real-IP $remote_addr;
+@@ -220,7 +212,7 @@ http {
+ 
+         # All other requests go to frontend
+         location / {
+-            proxy_pass http://frontend;
++            proxy_pass http://$frontend_upstream;
+             proxy_http_version 1.1;
+ 
+             # Headers
+diff --git a/frontend/.env.example b/frontend/.env.example
+index 19cce7478dc4a234316b43632b9f471bdef23ef9..c5d397e90617d1185dd386e1a661909dd23ce1e9 100644
+--- a/frontend/.env.example
++++ b/frontend/.env.example
+@@ -14,3 +14,8 @@
+ # Only set these if you need to connect to backend services directly
+ # NEXT_PUBLIC_BACKEND_BASE_URL="http://localhost:8001"
+ # NEXT_PUBLIC_LANGGRAPH_BASE_URL="http://localhost:2024"
++
++# Server-only Gateway wiring used by SSR (auth checks, /api/* rewrites).
++# Defaults to localhost — only override for non-local deployments.
++# DEER_FLOW_INTERNAL_GATEWAY_BASE_URL="http://localhost:8001"
++# DEER_FLOW_TRUSTED_ORIGINS="http://localhost:3000,http://localhost:2026"
+diff --git a/frontend/src/content/en/harness/tools.mdx b/frontend/src/content/en/harness/tools.mdx
+index f9cf9a2343e33999e33c907f89a0cec1c2cc4536..1abc7f6fe6fc8cbd1070f468ee21ebda71c68985 100644
+--- a/frontend/src/content/en/harness/tools.mdx
++++ b/frontend/src/content/en/harness/tools.mdx
+@@ -64,6 +64,12 @@ Dynamically configures the current agent session. Used during the bootstrap flow
+ 
+ ---
+ 
++### update_agent
++
++Persists updates to the current custom agent's `SOUL.md` and `config.yaml`. Bound to the lead agent only when a custom agent is active (`agent_name` is set in the runtime context). Use this when the user asks the agent to refine its own description, personality, skill whitelist, tool-group whitelist, or default model — it writes directly into the per-user layout `{base_dir}/users/{user_id}/agents/{agent_name}/`, so the change is picked up automatically on the next user turn. Only the fields you explicitly pass are updated; omit a field to preserve its existing value. Pass `skills=[]` to disable all skills, or omit `skills` to keep the existing whitelist.
++
++---
++
+ ### invoke_acp_agent
+ 
+ Invokes an external agent using the [Agent Connect Protocol (ACP)](https://agentconnectprotocol.org/). Requires `acp_agents:` configuration in `config.yaml`. See the [Subagents](/docs/harness/subagents) page for ACP configuration.
+diff --git a/frontend/src/content/zh/harness/tools.mdx b/frontend/src/content/zh/harness/tools.mdx
+index 954a1ad01950e4f04695f9c368b6341cc19b6b08..a8d158b218550f21f94d6bb6b7c86aa2e4d7e6a9 100644
+--- a/frontend/src/content/zh/harness/tools.mdx
++++ b/frontend/src/content/zh/harness/tools.mdx
+@@ -61,6 +61,12 @@ task(agent="general-purpose", task="...", context="...")
+ 
+ ---
+ 
++### update_agent
++
++将更新持久化到当前自定义 Agent 的 `SOUL.md` 和 `config.yaml`。仅当激活了自定义 Agent（运行时上下文中存在 `agent_name`）时，才会绑定到 lead agent。当用户在 Agent 内开启 chat 并要求该 Agent 调整自身的描述、人格、技能白名单、工具组白名单或默认模型时使用——它会直接写入按用户隔离的 `{base_dir}/users/{user_id}/agents/{agent_name}/` 下的真实配置文件，下一轮对话即可生效。仅显式传入的字段会被更新；省略某个字段以保留其现有值。传入 `skills=[]` 可禁用全部技能，省略 `skills` 则保留现有白名单。
++
++---
++
+ ### invoke_acp_agent
+ 
+ 使用 [Agent Connect Protocol (ACP)](https://agentconnectprotocol.org/) 调用外部 Agent。需要在 `config.yaml` 中配置 `acp_agents:`。参见[子 Agent](/docs/harness/subagents)页面了解 ACP 配置。
+diff --git a/frontend/src/core/auth/gateway-config.ts b/frontend/src/core/auth/gateway-config.ts
+index 61c6ae8507757f429bcd9f21e02cfa00b31508e0..1439473a5150efe2b5064ec0fdb70e8021b9e7eb 100644
+--- a/frontend/src/core/auth/gateway-config.ts
++++ b/frontend/src/core/auth/gateway-config.ts
+@@ -12,12 +12,11 @@ let _cached: GatewayConfig | null = null;
+ export function getGatewayConfig(): GatewayConfig {
+   if (_cached) return _cached;
+ 
+-  const isDev = process.env.NODE_ENV === "development";
+-
+   const rawUrl = process.env.DEER_FLOW_INTERNAL_GATEWAY_BASE_URL?.trim();
+   const internalGatewayUrl =
+-    rawUrl?.replace(/\/+$/, "") ??
+-    (isDev ? "http://localhost:8001" : undefined);
++    rawUrl && rawUrl.length > 0
++      ? rawUrl.replace(/\/+$/, "")
++      : "http://127.0.0.1:8001";
+ 
+   const rawOrigins = process.env.DEER_FLOW_TRUSTED_ORIGINS?.trim();
+   const trustedOrigins = rawOrigins
+@@ -25,9 +24,7 @@ export function getGatewayConfig(): GatewayConfig {
+         .split(",")
+         .map((s) => s.trim())
+         .filter(Boolean)
+-    : isDev
+-      ? ["http://localhost:3000"]
+-      : undefined;
++    : ["http://localhost:3000"];
+ 
+   _cached = gatewayConfigSchema.parse({ internalGatewayUrl, trustedOrigins });
+   return _cached;
+diff --git a/frontend/tests/unit/core/auth/gateway-config.test.ts b/frontend/tests/unit/core/auth/gateway-config.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..4fa116a1a1f2b2d903c8fe63df5aeb72d4821ed8
+--- /dev/null
++++ b/frontend/tests/unit/core/auth/gateway-config.test.ts
+@@ -0,0 +1,111 @@
++import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
++
++const ENV_KEYS = [
++  "NODE_ENV",
++  "DEER_FLOW_INTERNAL_GATEWAY_BASE_URL",
++  "DEER_FLOW_TRUSTED_ORIGINS",
++] as const;
++
++type EnvSnapshot = Partial<
++  Record<(typeof ENV_KEYS)[number], string | undefined>
++>;
++
++function snapshotEnv(): EnvSnapshot {
++  const snapshot: EnvSnapshot = {};
++  for (const key of ENV_KEYS) {
++    snapshot[key] = process.env[key];
++  }
++  return snapshot;
++}
++
++function setEnv(key: (typeof ENV_KEYS)[number], value: string | undefined) {
++  // NODE_ENV is typed as a readonly literal union, so we go through the
++  // index signature to keep the test compiler-friendly across cases.
++  const env = process.env as Record<string, string | undefined>;
++  if (value === undefined) {
++    delete env[key];
++  } else {
++    env[key] = value;
++  }
++}
++
++function restoreEnv(snapshot: EnvSnapshot) {
++  for (const key of ENV_KEYS) {
++    setEnv(key, snapshot[key]);
++  }
++}
++
++async function loadFreshConfig() {
++  vi.resetModules();
++  return await import("@/core/auth/gateway-config");
++}
++
++describe("getGatewayConfig", () => {
++  let saved: EnvSnapshot;
++
++  beforeEach(() => {
++    saved = snapshotEnv();
++    setEnv("DEER_FLOW_INTERNAL_GATEWAY_BASE_URL", undefined);
++    setEnv("DEER_FLOW_TRUSTED_ORIGINS", undefined);
++  });
++
++  afterEach(() => {
++    restoreEnv(saved);
++  });
++
++  test("returns localhost defaults when env is unset in development", async () => {
++    setEnv("NODE_ENV", "development");
++
++    const { getGatewayConfig } = await loadFreshConfig();
++    const cfg = getGatewayConfig();
++
++    expect(cfg.internalGatewayUrl).toBe("http://127.0.0.1:8001");
++    expect(cfg.trustedOrigins).toEqual(["http://localhost:3000"]);
++  });
++
++  test("returns localhost defaults when env is unset in production (regression: issue #2705)", async () => {
++    setEnv("NODE_ENV", "production");
++
++    const { getGatewayConfig } = await loadFreshConfig();
++
++    expect(() => getGatewayConfig()).not.toThrow();
++    const cfg = getGatewayConfig();
++    expect(cfg.internalGatewayUrl).toBe("http://127.0.0.1:8001");
++    expect(cfg.trustedOrigins).toEqual(["http://localhost:3000"]);
++  });
++
++  test("uses env values verbatim when set, regardless of NODE_ENV", async () => {
++    setEnv("NODE_ENV", "production");
++    setEnv("DEER_FLOW_INTERNAL_GATEWAY_BASE_URL", "https://gw.example.com/");
++    setEnv(
++      "DEER_FLOW_TRUSTED_ORIGINS",
++      "https://app.example.com, https://admin.example.com",
++    );
++
++    const { getGatewayConfig } = await loadFreshConfig();
++    const cfg = getGatewayConfig();
++
++    expect(cfg.internalGatewayUrl).toBe("https://gw.example.com");
++    expect(cfg.trustedOrigins).toEqual([
++      "https://app.example.com",
++      "https://admin.example.com",
++    ]);
++  });
++
++  test("trims and filters empty entries in trustedOrigins", async () => {
++    setEnv("NODE_ENV", "production");
++    setEnv("DEER_FLOW_INTERNAL_GATEWAY_BASE_URL", "https://gw.example.com");
++    setEnv(
++      "DEER_FLOW_TRUSTED_ORIGINS",
++      " https://a.example , ,https://b.example ",
++    );
++
++    const { getGatewayConfig } = await loadFreshConfig();
++    const cfg = getGatewayConfig();
++
++    expect(cfg.trustedOrigins).toEqual([
++      "https://a.example",
++      "https://b.example",
++    ]);
++  });
++});

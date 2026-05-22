@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"后端规范入口，确保实现遵循项目后端约束"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"本任务涉及数据库重置与索引最小化，需要数据库规范参考"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"文件缺失与路径安全错误需要统一错误处理"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"保证后端重构代码质量与禁用模式一致"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"任务跨后端API/索引/前端契约/RAG，需跨层一致性思考"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"16工具改造需复用统一文件读写与路径守卫逻辑"}
+{"file":".trellis/tasks/04-28-novel-file-truth-16-tools/research/baseline-audit.md","reason":"实现前需要当前工具与存储链路基线审计结果"}

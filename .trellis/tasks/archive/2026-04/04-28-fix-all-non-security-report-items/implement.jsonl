@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"backend non-security fixes span novel APIs, middleware, and service-layer conventions"}
+{"file":".trellis/spec/frontend/index.md","reason":"frontend fixes touch novel query keys and stream request patterns"}

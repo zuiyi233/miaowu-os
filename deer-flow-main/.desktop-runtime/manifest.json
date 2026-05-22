@@ -1,0 +1,45 @@
+{
+    "services":  {
+                     "frontend":  {
+                                      "primary":  {
+                                                      "args":  [
+                                                                   "frontend/.next/standalone/server.js"
+                                                               ],
+                                                      "program":  "node"
+                                                  },
+                                      "cwd":  ".",
+                                      "health":  {
+                                                     "port":  3000,
+                                                     "host":  "127.0.0.1",
+                                                     "timeout_sec":  60
+                                                 }
+                                  },
+                     "gateway":  {
+                                     "fallback":  {
+                                                      "args":  [
+                                                                   "run",
+                                                                   "uvicorn",
+                                                                   "app.gateway.app:app",
+                                                                   "--host",
+                                                                   "127.0.0.1",
+                                                                   "--port",
+                                                                   "8001"
+                                                               ],
+                                                      "program":  "uv"
+                                                  },
+                                     "primary":  {
+                                                     "args":  [
+                                                                  "gateway"
+                                                              ],
+                                                     "program":  "make"
+                                                 },
+                                     "cwd":  "../backend",
+                                     "health":  {
+                                                    "port":  8001,
+                                                    "host":  "127.0.0.1",
+                                                    "timeout_sec":  60
+                                                }
+                                 }
+                 },
+    "window_url":  "http://127.0.0.1:3000"
+}

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "backend baseline contracts for auth/memory/runtime changes"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "memory queue/model cache/runtime hygiene required by current backend edits"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "loop-closed and retry contracts must remain intact while fixing memory/auth regressions"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "frontend baseline for API request and component-level fixes"}

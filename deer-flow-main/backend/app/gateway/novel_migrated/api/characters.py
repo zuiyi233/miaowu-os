@@ -1,0 +1,639 @@
+"""角色管理API - CRUD、批量生成、单个生成"""
+from __future__ import annotations
+
+import hashlib
+import json
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import AliasChoices, BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
+from app.gateway.novel_migrated.api.settings import get_user_ai_service
+from app.gateway.novel_migrated.core.database import get_db
+from app.gateway.novel_migrated.core.logger import get_logger
+from app.gateway.novel_migrated.models.career import Career
+from app.gateway.novel_migrated.models.character import Character
+from app.gateway.novel_migrated.models.project import Project
+from app.gateway.novel_migrated.models.relationship import CharacterRelationship, Organization
+from app.gateway.novel_migrated.services.ai_service import AIService
+from app.gateway.novel_migrated.services.prompt_service import PromptService
+from app.gateway.novel_migrated.services.workspace_document_service import (
+    WorkspaceSecurityError,
+    workspace_document_service,
+)
+
+logger = get_logger(__name__)
+router = APIRouter(prefix="/characters", tags=["characters"])
+
+
+class CharacterCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    is_organization: bool = False
+    role_type: str = "supporting"
+    personality: str = ""
+    background: str = ""
+    appearance: str = ""
+    age: str | None = None
+    gender: str | None = None
+    organization_type: str | None = None
+    organization_purpose: str | None = None
+    traits: list[str] | None = None
+    relationships: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("relationships", "relationships_text"),
+    )
+
+
+class CharacterUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    role_type: str | None = None
+    personality: str | None = None
+    background: str | None = None
+    appearance: str | None = None
+    age: str | None = None
+    gender: str | None = None
+    organization_type: str | None = None
+    organization_purpose: str | None = None
+    current_state: str | None = None
+    traits: list | None = None
+    relationships: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("relationships", "relationships_text"),
+    )
+
+
+class SingleGenerateRequest(BaseModel):
+    project_id: str
+    user_input: str = ""
+    is_organization: bool = False
+
+
+def _decode_traits(value: str | list | None) -> list[Any] | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, list) else [parsed]
+    except Exception:
+        return [value]
+
+
+def _character_truth_payload(character: Character) -> dict[str, Any]:
+    return {
+        "name": character.name,
+        "is_organization": bool(character.is_organization),
+        "role_type": character.role_type,
+        "personality": character.personality,
+        "background": character.background,
+        "appearance": character.appearance,
+        "age": character.age,
+        "gender": character.gender,
+        "organization_type": character.organization_type,
+        "organization_purpose": character.organization_purpose,
+        "current_state": character.current_state,
+        "traits": _decode_traits(character.traits),
+        "relationships": character.relationships,
+        "main_career_id": character.main_career_id,
+        "main_career_stage": character.main_career_stage,
+        "avatar_url": character.avatar_url,
+    }
+
+
+def _compose_character_markdown(character: Character) -> str:
+    payload = _character_truth_payload(character)
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    return f"# {character.name or '未命名角色'}\n\n```json\n{body}\n```\n"
+
+
+def _extract_character_truth_from_markdown(markdown: str) -> dict[str, Any] | None:
+    text = (markdown or "").replace("\r\n", "\n")
+    marker = "```json"
+    start = text.find(marker)
+    if start == -1:
+        return None
+    start += len(marker)
+    end = text.find("```", start)
+    if end == -1:
+        return None
+    raw_json = text[start:end].strip()
+    if not raw_json:
+        return None
+    try:
+        parsed = json.loads(raw_json)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+async def _sync_character_document(
+    *,
+    character: Character,
+    user_id: str,
+    db: AsyncSession,
+) -> dict[str, str]:
+    record = await workspace_document_service.write_document(
+        user_id=user_id,
+        project_id=character.project_id,
+        entity_type="character",
+        entity_id=character.id,
+        content=_compose_character_markdown(character),
+        title=character.name or "角色",
+        tags=["character"],
+    )
+    await workspace_document_service.sync_record_to_db(
+        db=db,
+        user_id=user_id,
+        project_id=character.project_id,
+        record=record,
+    )
+    return {
+        "doc_path": record.path,
+        "content_hash": record.content_hash,
+        "doc_updated_at": record.mtime,
+    }
+
+
+def _compose_organization_markdown_from_character(character: Character) -> str:
+    payload = {
+        "id": character.id,
+        "project_id": character.project_id,
+        "name": character.name,
+        "organization_type": character.organization_type,
+        "organization_purpose": character.organization_purpose,
+        "personality": character.personality,
+        "background": character.background,
+        "appearance": character.appearance,
+        "members": [],
+    }
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    return f"# {character.name or '未命名组织'}\n\n```json\n{body}\n```\n"
+
+
+async def _sync_organization_document_if_needed(
+    *,
+    character: Character,
+    user_id: str,
+    db: AsyncSession,
+) -> None:
+    if not character.is_organization:
+        return
+    record = await workspace_document_service.write_document(
+        user_id=user_id,
+        project_id=character.project_id,
+        entity_type="organization",
+        entity_id=character.id,
+        content=_compose_organization_markdown_from_character(character),
+        title=character.name or "组织",
+        tags=["organization"],
+    )
+    await workspace_document_service.sync_record_to_db(
+        db=db,
+        user_id=user_id,
+        project_id=character.project_id,
+        record=record,
+        status="indexed",
+    )
+
+
+@router.get("/project/{project_id}")
+async def list_characters(
+    project_id: str,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+    is_organization: bool | None = None,
+    role_type: str | None = None,
+):
+    await verify_project_access(project_id, user_id, db)
+    query = select(Character).where(Character.project_id == project_id)
+    if is_organization is not None:
+        query = query.where(Character.is_organization == is_organization)
+    if role_type:
+        query = query.where(Character.role_type == role_type)
+
+    result = await db.execute(query.order_by(Character.created_at))
+    characters = result.scalars().all()
+    return {"characters": [_serialize_character(c) for c in characters]}
+
+
+@router.get("/{character_id}")
+async def get_character(
+    character_id: str,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Character).where(Character.id == character_id))
+    character = result.scalar_one_or_none()
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    await verify_project_access(character.project_id, user_id, db)
+    try:
+        file_payload = await workspace_document_service.read_document(
+            user_id=user_id,
+            project_id=character.project_id,
+            entity_type="character",
+            entity_id=character.id,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"角色文件不存在: {exc}") from exc
+    except WorkspaceSecurityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _serialize_character(character, file_payload=file_payload)
+
+
+@router.post("/project/{project_id}")
+async def create_character(
+    project_id: str,
+    req: CharacterCreateRequest,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    await verify_project_access(project_id, user_id, db)
+
+    character = Character(
+        project_id=project_id,
+        name=req.name,
+        is_organization=req.is_organization,
+        role_type=req.role_type,
+        personality=req.personality,
+        background=req.background,
+        appearance=req.appearance,
+        age=req.age,
+        gender=req.gender,
+        organization_type=req.organization_type,
+        organization_purpose=req.organization_purpose,
+        traits=json.dumps(req.traits, ensure_ascii=False) if req.traits else None,
+        relationships=req.relationships,
+    )
+    db.add(character)
+    try:
+        await db.flush()
+        await _sync_character_document(character=character, user_id=user_id, db=db)
+        await _sync_organization_document_if_needed(character=character, user_id=user_id, db=db)
+        await db.commit()
+        await db.refresh(character)
+    except WorkspaceSecurityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        await db.rollback()
+        logger.exception("create_character file-truth sync failed: project_id=%s character_id=%s", project_id, character.id)
+        raise HTTPException(status_code=500, detail="角色落盘失败")
+    return await get_character(character.id, user_id=user_id, db=db)
+
+
+@router.put("/{character_id}")
+async def update_character(
+    character_id: str,
+    req: CharacterUpdateRequest,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Character).where(Character.id == character_id))
+    character = result.scalar_one_or_none()
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    await verify_project_access(character.project_id, user_id, db)
+
+    update_fields = ['name', 'role_type', 'personality', 'background', 'appearance',
+                      'age', 'gender', 'organization_type', 'organization_purpose',
+                      'current_state', 'relationships']
+    updates = {}
+    for field_name in update_fields:
+        value = getattr(req, field_name, None)
+        if value is not None:
+            updates[field_name] = value
+
+    if req.traits is not None:
+        updates['traits'] = json.dumps(req.traits, ensure_ascii=False)
+
+    if updates:
+        from app.gateway.novel_migrated.services.optimistic_lock import optimistic_update
+        try:
+            lock_result = await optimistic_update(
+                Character, character_id, updates, db=db
+            )
+            logger.info("Character %s updated with optimistic lock (attempts=%d)", character_id, lock_result["attempts"])
+        except ValueError as exc:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        result = await db.execute(select(Character).where(Character.id == character_id))
+        character = result.scalar_one_or_none()
+
+    try:
+        await _sync_character_document(character=character, user_id=user_id, db=db)
+        await _sync_organization_document_if_needed(character=character, user_id=user_id, db=db)
+        await db.commit()
+        await db.refresh(character)
+    except WorkspaceSecurityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        await db.rollback()
+        logger.exception("update_character file-truth sync failed: character_id=%s", character_id)
+        raise HTTPException(status_code=500, detail="角色落盘失败")
+    return await get_character(character_id, user_id=user_id, db=db)
+
+
+@router.delete("/{character_id}")
+async def delete_character(
+    character_id: str,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Character).where(Character.id == character_id))
+    character = result.scalar_one_or_none()
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    await verify_project_access(character.project_id, user_id, db)
+
+    from app.gateway.novel_migrated.models.document_index import DocumentIndex
+
+    await db.execute(
+        CharacterRelationship.__table__.delete().where(
+            (CharacterRelationship.character_from_id == character_id)
+            | (CharacterRelationship.character_to_id == character_id)
+        )
+    )
+
+    org_result = await db.execute(
+        select(Organization).where(Organization.character_id == character_id)
+    )
+    org = org_result.scalar_one_or_none()
+    if org:
+        from app.gateway.novel_migrated.models.relationship import OrganizationMember
+        await db.execute(
+            OrganizationMember.__table__.delete().where(
+                OrganizationMember.organization_id == org.id
+            )
+        )
+        await db.delete(org)
+
+    await db.execute(
+        DocumentIndex.__table__.delete().where(
+            DocumentIndex.entity_id == character_id,
+            DocumentIndex.entity_type.in_(["character", "organization"]),
+        )
+    )
+
+    project_id = character.project_id
+    is_org = character.is_organization
+    await db.delete(character)
+    await db.commit()
+
+    for entity_type in (["character", "organization"] if is_org else ["character"]):
+        try:
+            await workspace_document_service.delete_document(
+                user_id=user_id,
+                project_id=project_id,
+                entity_type=entity_type,
+                entity_id=character_id,
+            )
+        except Exception:
+            logger.warning("Failed to delete workspace document (%s) for character_id=%s", entity_type, character_id, exc_info=True)
+
+    return {"message": "Character deleted"}
+
+
+@router.post("/generate")
+async def generate_single_character(
+    req: SingleGenerateRequest,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+    ai_service: AIService = Depends(get_user_ai_service),
+):
+    await verify_project_access(req.project_id, user_id, db)
+
+    project_result = await db.execute(select(Project).where(Project.id == req.project_id))
+    project = project_result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    characters_result = await db.execute(
+        select(Character).where(Character.project_id == req.project_id))
+    characters = characters_result.scalars().all()
+
+    careers_result = await db.execute(
+        select(Career).where(Career.project_id == req.project_id))
+    careers = careers_result.scalars().all()
+
+    project_context = f"""书名：{project.title}
+类型：{project.genre or '未设定'}
+主题：{project.theme or '未设定'}
+时间背景：{project.world_time_period or '未设定'}
+地理位置：{project.world_location or '未设定'}
+氛围基调：{project.world_atmosphere or '未设定'}
+世界规则：{project.world_rules or '未设定'}
+
+已有角色：
+{chr(10).join(f'- {c.name} ({c.role_type})' for c in characters) if characters else '暂无角色'}
+
+可用主职业列表：
+{chr(10).join(f'- {c.name} (共{c.max_stage}阶)' for c in careers if c.type == 'main') if careers else '暂无职业'}
+
+可用副职业列表：
+{chr(10).join(f'- {c.name}' for c in careers if c.type == 'sub') if careers else '暂无副职业'}"""
+
+    template = PromptService.SINGLE_ORGANIZATION_GENERATION if req.is_organization else PromptService.SINGLE_CHARACTER_GENERATION
+    prompt = template.format(
+        project_context=project_context,
+        user_input=req.user_input or "请生成一个符合项目设定的角色"
+    )
+
+    chunks: list[str] = []
+    async for chunk in ai_service.generate_text_stream(prompt=prompt, temperature=0.7):
+        chunks.append(chunk)
+    accumulated = "".join(chunks)
+
+    try:
+        cleaned = AIService.clean_json_response(accumulated)
+        char_data = json.loads(cleaned)
+
+        character = Character(
+            project_id=req.project_id,
+            name=char_data.get("name", "未命名"),
+            is_organization=char_data.get("is_organization", req.is_organization),
+            role_type=char_data.get("role_type", "supporting"),
+            personality=char_data.get("personality", ""),
+            background=char_data.get("background", ""),
+            appearance=char_data.get("appearance", ""),
+            age=str(char_data.get("age", "")) if char_data.get("age") is not None else None,
+            gender=char_data.get("gender"),
+            organization_type=char_data.get("organization_type"),
+            organization_purpose=char_data.get("organization_purpose"),
+            traits=json.dumps(char_data.get("traits", []), ensure_ascii=False),
+            relationships=char_data.get("relationships") or char_data.get("relationships_text"),
+        )
+        db.add(character)
+        await db.flush()
+
+        relationships_data = char_data.get("relationships")
+        if not req.is_organization and isinstance(relationships_data, list) and relationships_data:
+            target_names: list[str] = []
+            for rel in relationships_data:
+                if not isinstance(rel, dict):
+                    continue
+                target_name = str(rel.get("target_character_name") or "").strip()
+                if target_name:
+                    target_names.append(target_name)
+
+            target_map: dict[str, Character] = {}
+            if target_names:
+                target_result = await db.execute(
+                    select(Character).where(
+                        Character.project_id == req.project_id,
+                        Character.name.in_(list(dict.fromkeys(target_names))),
+                    )
+                )
+                for target in target_result.scalars().all():
+                    target_name = str(target.name or "").strip()
+                    if target_name and target_name not in target_map:
+                        target_map[target_name] = target
+
+            for rel in relationships_data:
+                if not isinstance(rel, dict):
+                    continue
+                target_name = str(rel.get("target_character_name") or "").strip()
+                if not target_name:
+                    continue
+                target = target_map.get(target_name)
+                if target:
+                    rel_obj = CharacterRelationship(
+                        project_id=req.project_id,
+                        character_from_id=character.id,
+                        character_to_id=target.id,
+                        relationship_name=rel.get("relationship_type", "相关"),
+                        intimacy_level=rel.get("intimacy_level", 50),
+                        description=rel.get("description", ""),
+                    )
+                    db.add(rel_obj)
+
+        if req.is_organization and char_data.get("is_organization"):
+            org = Organization(
+                character_id=character.id,
+                name=character.name,
+                organization_type=char_data.get("organization_type", ""),
+                purpose=char_data.get("organization_purpose", ""),
+            )
+            db.add(org)
+
+        await _sync_character_document(character=character, user_id=user_id, db=db)
+        await _sync_organization_document_if_needed(character=character, user_id=user_id, db=db)
+        await db.commit()
+        await db.refresh(character)
+        return await get_character(character.id, user_id=user_id, db=db)
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Parse character generation failed (invalid JSON): {e}")
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=f"AI response parse error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Parse character generation failed: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=502, detail=f"AI service error: {str(e)}")
+
+
+@router.get("/project/{project_id}/summary")
+async def get_characters_summary(
+    project_id: str,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    await verify_project_access(project_id, user_id, db)
+
+    total_result = await db.execute(
+        select(func.count(Character.id)).where(Character.project_id == project_id))
+    total = total_result.scalar() or 0
+
+    char_result = await db.execute(
+        select(func.count(Character.id)).where(
+            Character.project_id == project_id, Character.is_organization.is_(False)))
+    char_count = char_result.scalar() or 0
+
+    org_result = await db.execute(
+        select(func.count(Character.id)).where(
+            Character.project_id == project_id, Character.is_organization.is_(True)))
+    org_count = org_result.scalar() or 0
+
+    role_result = await db.execute(
+        select(Character.role_type, func.count(Character.id))
+        .where(Character.project_id == project_id)
+        .group_by(Character.role_type))
+    role_distribution = {row[0]: row[1] for row in role_result.all()}
+
+    return {
+        "total": total,
+        "characters_count": char_count,
+        "organizations_count": org_count,
+        "role_distribution": role_distribution,
+    }
+
+
+def _serialize_character(c: Character, *, file_payload: dict[str, Any] | None = None) -> dict:
+    traits = None
+    if c.traits:
+        try:
+            traits = json.loads(c.traits) if isinstance(c.traits, str) else c.traits
+        except json.JSONDecodeError:
+            traits = c.traits
+
+    truth_overrides = {}
+    doc_path = f"characters/{c.id}.md"
+    doc_updated_at = c.updated_at.isoformat() if c.updated_at else None
+    if file_payload:
+        parsed_truth = _extract_character_truth_from_markdown(str(file_payload.get("content", "")))
+        if parsed_truth:
+            truth_overrides = parsed_truth
+            traits = parsed_truth.get("traits", traits)
+        content_hash = str(file_payload.get("content_hash") or "")
+        doc_path = str(file_payload.get("doc_path") or doc_path)
+        doc_updated_at = str(file_payload.get("doc_updated_at") or doc_updated_at)
+    else:
+        hash_payload = {
+            "name": c.name,
+            "personality": c.personality,
+            "background": c.background,
+            "appearance": c.appearance,
+            "current_state": c.current_state,
+        }
+        content_hash = hashlib.sha256(json.dumps(hash_payload, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+    return {
+        "id": c.id,
+        "project_id": c.project_id,
+        "name": truth_overrides.get("name", c.name),
+        "is_organization": truth_overrides.get("is_organization", c.is_organization),
+        "role_type": truth_overrides.get("role_type", c.role_type),
+        "personality": truth_overrides.get("personality", c.personality),
+        "background": truth_overrides.get("background", c.background),
+        "appearance": truth_overrides.get("appearance", c.appearance),
+        "age": truth_overrides.get("age", c.age),
+        "gender": truth_overrides.get("gender", c.gender),
+        "organization_type": truth_overrides.get("organization_type", c.organization_type),
+        "organization_purpose": truth_overrides.get("organization_purpose", c.organization_purpose),
+        "current_state": truth_overrides.get("current_state", c.current_state),
+        "traits": traits,
+        "relationships": truth_overrides.get("relationships", c.relationships),
+        "main_career_id": truth_overrides.get("main_career_id", c.main_career_id),
+        "main_career_stage": truth_overrides.get("main_career_stage", c.main_career_stage),
+        "avatar_url": truth_overrides.get("avatar_url", c.avatar_url),
+        "doc_path": doc_path,
+        "content_source": "file",
+        "content_hash": content_hash,
+        "doc_updated_at": doc_updated_at,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+    }

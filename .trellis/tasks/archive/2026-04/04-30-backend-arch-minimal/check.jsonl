@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend review checklist and scope for the verification pass"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Review cache eviction and async/runtime hygiene after refactor"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Confirm cache/fallback behavior stays aligned with runtime recovery rules"}

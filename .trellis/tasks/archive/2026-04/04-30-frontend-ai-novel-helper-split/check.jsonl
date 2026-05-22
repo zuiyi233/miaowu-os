@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend conventions needed to review the helper split"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Check linting, tests, and code-quality constraints"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Check type normalization and export stability"}

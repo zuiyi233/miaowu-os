@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend review checklist for the memory worker refactor and lifecycle protection."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Review async failure handling and exception swallowing in background tasks."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Review background task logging and exception visibility."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Review test coverage and quality standards for the refactor."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review data and control flow across queue, app lifespan, and runtime worker boundaries."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Review whether lifecycle helpers or task tracking patterns should be reused consistently."}

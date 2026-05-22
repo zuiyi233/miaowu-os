@@ -1,0 +1,29 @@
+{
+  "id": "fix-all-non-security-report-items",
+  "name": "fix-all-non-security-report-items",
+  "title": "fix all non-security issues from CODE_REVIEW_REPORT",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-04-28",
+  "completedAt": "2026-04-30",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "04-30-backend-arch-minimal",
+    "04-30-frontend-ai-novel-helper-split"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

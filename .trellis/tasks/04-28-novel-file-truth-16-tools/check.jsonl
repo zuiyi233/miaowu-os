@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/index.md","reason":"审查后端输出是否符合规范入口"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"校验数据库最小保留模型与索引字段约束"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"校验无文件回退时的错误语义与安全策略"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"校验重构质量与一致性"}
+{"file":".trellis/spec/frontend/index.md","reason":"若前端类型/响应契约受影响，需要同步校验"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"确保新增API字段在前端类型链路安全落地"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"最终检查跨层读写链路与RAG一致性"}
+{"file":".trellis/tasks/04-28-novel-file-truth-16-tools/research/baseline-audit.md","reason":"质量检查需对照基线确认所有DB正文依赖已移除"}

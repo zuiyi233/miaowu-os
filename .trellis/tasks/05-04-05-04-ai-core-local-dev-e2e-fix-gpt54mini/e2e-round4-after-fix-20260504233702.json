@@ -1,0 +1,31 @@
+{
+  "ts": "20260504233702",
+  "model": "gpt-5.4-mini",
+  "register_status": 201,
+  "register_req_id": "c77059d203994531a0dbe125412e7e11",
+  "login_status": 200,
+  "login_req_id": "35aa9e39e41b49a0b424d0e827d1e940",
+  "chat_nonstream_status": 200,
+  "chat_nonstream_req_id": "d30e9153c7eb4032b8b4e6ca8b41e079",
+  "chat_nonstream_body": "{\"content\":\"这是 round4 修复后非流式测试。\"}",
+  "chat_stream_status": 200,
+  "chat_stream_req_id": "230a71f604a64c22b24822871dc910f8",
+  "chat_stream_done_events": 1,
+  "chat_stream_data_events": 10,
+  "chat_stream_error_events": 0,
+  "thread_create_status": 200,
+  "thread_create_req_id": "19acfd9b3c194fddaaa3fd99aeff0df3",
+  "thread_id": "22ff62f5-ecff-4574-ac76-38f94d24d6a0",
+  "run_stream_status": 200,
+  "run_stream_req_id": "cc8d9d9501c74236808963046f64748c",
+  "run_stream_content_location": [
+    "/api/threads/22ff62f5-ecff-4574-ac76-38f94d24d6a0/runs/4ce41e41-9b23-4ac8-9c53-b67ecf7b310f"
+  ],
+  "run_stream_event_count": 7,
+  "run_stream_data_count": 7,
+  "run_stream_end_count": 1,
+  "run_stream_error_count": 0,
+  "suggestions_status": 200,
+  "suggestions_req_id": "bf829d5a5e8a405ab61a1febbfc7297d",
+  "suggestions_body": "{\"suggestions\":[\"主题应该怎么选？\",\"人物设定需要哪些信息？\",\"能直接帮我列章节大纲吗？\"]}"
+}

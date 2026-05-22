@@ -1,0 +1,52 @@
+Upstream sync manual conflict resolution report
+base_commit=c99865f53dc7d82a888a326463b146625d128ae2
+local_head_before_sync=320ebf2b33e6f28b3bf5385218e9ece6c8d2791c
+upstream_main=395c14357b60926a63af2142ac96bbb670ecb768
+updated_at=2026-04-28T22:25:12.6861996+08:00
+
+# resolved_by_manual_merge
+backend/app/gateway/app.py -> keep local degraded-mode startup flow; add upstream asyncio import + patchable get_app_config/get_langgraph_runtime wrappers
+backend/app/gateway/routers/suggestions.py -> keep local user-ai-service routing pipeline; discard upstream direct create_chat_model branch
+backend/app/gateway/services.py -> merge upstream context-aware agent_name injection + keep local include_novel configurable default
+backend/packages/harness/deerflow/agents/middlewares/title_middleware.py -> keep local timeout fallback; add upstream run_name config
+backend/uv.lock -> regenerated via uv lock after pyproject merge (prompt-toolkit/pytest-asyncio)
+frontend/package.json -> adopt upstream uuid@14 while preserving local zustand dependency
+frontend/src/components/ui/command.tsx -> adopt upstream sr-only dialog title/description structure
+frontend/src/components/workspace/settings/settings-dialog.tsx -> keep local layout baseline; add min-w-0 safeguards
+
+# omitted_from_patch_due_untracked_in_parent_index
+Makefile
+frontend/pnpm-lock.yaml
+skills/public/bootstrap/SKILL.md
+skills/public/chart-visualization/SKILL.md
+skills/public/data-analysis/scripts/analyze.py
+skills/public/skill-creator/eval-viewer/generate_review.py
+skills/public/skill-creator/scripts/aggregate_benchmark.py
+skills/public/skill-creator/scripts/quick_validate.py
+skills/public/skill-creator/scripts/run_loop.py
+
+# supplemental_fixes_after_sync
+backend/packages/harness/deerflow/sandbox/local/local_sandbox.py -> fix Windows reverse path mapping and output masking compatibility
+backend/app/gateway/app.py -> expose patchable lazy runtime hooks for new shutdown test contracts
+backend/tests/test_suggestions_router.py -> align assertions with local suggestions pipeline
+backend/tests/test_lead_agent_model_resolution.py -> align expected get_available_tools kwargs (include_novel)
+backend/tests/test_local_sandbox_provider_mounts.py -> Windows-safe command mock + path normalization assertion
+backend/tests/test_skills_custom_router.py -> align extensions_config.features expectation
+skills/public/bootstrap/SKILL.md -> refreshed from upstream
+skills/public/chart-visualization/SKILL.md -> refreshed from upstream
+frontend/src/components/landing/sections/core-features-section.tsx -> remove unnecessary assertions for eslint compatibility
+
+# currently_no_conflict_markers
+rg check: no <<<<<<< / ======= / >>>>>>> markers in deer-flow-main
+
+# verification_snapshot
+backend: uv sync pass
+backend: ruff check on conflict/fix scope pass
+backend: pytest changed-upstream suite pass (692 passed, 1 skipped)
+backend: compileall app+packages pass
+frontend: pnpm install --no-frozen-lockfile pass
+frontend: pnpm lint pass with warnings only (0 errors, 40 warnings)
+frontend: pnpm typecheck pass
+frontend: pnpm test pass (96 passed)
+frontend: pnpm build pass with SKIP_ENV_VALIDATION=true and BETTER_AUTH_SECRET set
+frontend e2e: playwright test blocked (Chromium binary missing / playwright install not completed in current network)

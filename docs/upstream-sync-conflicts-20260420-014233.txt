@@ -1,0 +1,19 @@
+Upstream sync manual conflict resolution report
+base_commit=a695d1c8
+local_head_before_sync=c8dabd92c40667bc7054e935f3a4814ed1f888d1
+upstream_main=c99865f53dc7d82a888a326463b146625d128ae2
+updated_at=2026-04-20T02:05:40
+
+# resolved_by_manual_merge
+backend/packages/harness/deerflow/agents/middlewares/clarification_middleware.py -> accepted upstream stable clarification message id logic
+backend/packages/harness/deerflow/sandbox/tools.py -> accepted upstream ls path masking update
+backend/packages/harness/deerflow/tools/builtins/task_tool.py -> accepted upstream tool_groups inheritance for subagent tools
+backend/packages/harness/deerflow/utils/file_conversion.py -> accepted upstream uploads config dict/attr compatibility
+backend/packages/harness/deerflow/models/factory.py -> merged upstream stream_usage fix while keeping local model selector compatibility patch
+
+# currently_no_conflict_markers
+rg check: no <<<<<<< / ======= / >>>>>>> markers in deer-flow-main
+
+# verification_snapshot
+compileall: pass
+pytest subset: 137 passed, 2 failed (tests/test_sandbox_search_tools.py path separator assertions on Windows)

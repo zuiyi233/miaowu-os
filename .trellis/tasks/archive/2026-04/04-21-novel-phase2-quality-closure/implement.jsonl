@@ -1,0 +1,7 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": "AI_Novel_Connection_Test_Report.md", "reason": "首轮联通测试基线与遗留项"}
+{"file": "Novel_Creation_Process_Assessment_Report.md", "reason": "阶段化评估与改进路线图"}
+{"file": "主项目写作流程与小说创作深度联动打通方案.md", "reason": "阶段一完成后的目标架构与Phase定义"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层改动前置检查"}

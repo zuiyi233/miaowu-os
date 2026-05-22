@@ -1,0 +1,41 @@
+{
+  "ts": "20260504233012",
+  "base_url": "http://127.0.0.1:8551",
+  "model": "gpt-5.4-mini",
+  "register_status": 201,
+  "register_body": "{\"id\":\"e9a74715-30ca-4d94-a4a4-2e0bf37fd761\",\"email\":\"codex.ai.e2e.round3.20260504233012.a10cb5db@example.com\",\"system_role\":\"user\",\"needs_setup\":false}",
+  "register_req_id": "8225d985d0264f20ba3faa1057f2b0d8",
+  "login_status": 200,
+  "login_body": "{\"expires_in\":604800,\"needs_setup\":false}",
+  "login_req_id": "28ca0bf8c79440399beb8dfe4f7a8a83",
+  "csrf_after_login": null,
+  "chat_nonstream_status": 200,
+  "chat_nonstream_body": "{\"content\":\"这是 round3 gpt-5.4-mini 非流式测试。\"}",
+  "chat_nonstream_req_id": "9f188433cc574e64899d2ffd607f7ed9",
+  "chat_stream_status": 200,
+  "chat_stream_req_id": "24531cb0e14a4341b1002b76c5e5feaa",
+  "chat_stream_content_type": [
+    "text/event-stream; charset=utf-8"
+  ],
+  "chat_stream_done_events": 1,
+  "chat_stream_data_events": 14,
+  "chat_stream_error_events": 0,
+  "chat_stream_preview": "data: {\"content\": \"这是\"}\n\ndata: {\"content\": \" round\"}\n\ndata: {\"content\": \"3\"}\n\ndata: {\"content\": \" g\"}\n\ndata: {\"content\": \"pt\"}\n\ndata: {\"content\": \"-\"}\n\ndata: {\"content\": \"5\"}\n\ndata: {\"content\": \".\"}\n\ndata: {\"content\": \"4\"}\n\ndata: {\"content\": \"-mini\"}\n\ndata: {\"content\": \" 流\"}\n\ndata: {\"content\": \"式\"}\n\ndata: {\"content\": \"测试\"}\n\ndata: {\"content\": \"。\"}\n\ndata: [DONE]\n\n",
+  "thread_create_status": 200,
+  "thread_create_req_id": "52f6f7f9a9574f008e32fb028bf2d9f4",
+  "thread_create_body": "{\"thread_id\":\"0a21005f-3022-43f4-a8db-3e233277c920\",\"status\":\"idle\",\"created_at\":\"2026-05-04T15:30:34.404626+00:00\",\"updated_at\":\"2026-05-04T15:30:34.404626+00:00\",\"metadata\":{\"model\":\"gpt-5.4-mini\",\"source\":\"codex-e2e\",\"request_id\":\"req-20260504233012-thread\",\"scenario\":\"ai-core-loop-round3\"},\"values\":{},\"interrupts\":{}}",
+  "thread_id": "0a21005f-3022-43f4-a8db-3e233277c920",
+  "run_stream_status": 200,
+  "run_stream_req_id": "9b1f8cbea1ef439cab165821b5b480b2",
+  "run_stream_content_location": [
+    "/api/threads/0a21005f-3022-43f4-a8db-3e233277c920/runs/c58ae262-586d-43af-838f-c6c81d892a54"
+  ],
+  "run_stream_event_count": 7,
+  "run_stream_data_count": 7,
+  "run_stream_end_count": 1,
+  "run_stream_error_count": 0,
+  "run_stream_preview": "event: metadata\ndata: {\"run_id\": \"c58ae262-586d-43af-838f-c6c81d892a54\", \"thread_id\": \"0a21005f-3022-43f4-a8db-3e233277c920\"}\nid: 1777908634440-0\n\nevent: values\ndata: {\"messages\": [{\"content\": \"请用一句话说明你正在使用 gpt-5.4-mini 进行 round3 运行测试。\", \"additional_kwargs\": {}, \"response_metadata\": {}, \"type\": \"human\", \"name\": null, \"id\": \"9573cc28-bce8-4eb1-82db-7ce0b2c4a02d\"}], \"artifacts\": [], \"viewed_images\": {}, \"draft_media\": {}, \"execution_gate\": {}}\nid: 1777908634842-1\n\nevent: values\ndata: {\"messages\": [{\"content\": \"请用一句话说明你正在使用 gpt-5.4-mini 进行 round3 运行测试。\", \"additional_kwargs\": {}, \"response_metadata\": {}, \"type\": \"human\", \"name\": null, \"id\": \"9573cc28-bce8-4eb1-82db-7ce0b2c4a02d\"}], \"thread_data\": {\"workspace_path\": \"D:\\\\miaowu-os\\\\deer-flow-main\\\\backend\\\\.deer-flow\\\\threads\\\\0a21005f-3022-43f4-a8db-3e233277c920\\\\user-data\\\\workspace\", \"uploads_path\": \"D:\\\\miaowu-os\\\\deer-flow-main\\\\backend\\\\.deer-flow\\\\threads\\\\0a21005f-3022-43f4-a8db-3e233277c920\\\\user-data\\\\uploads\", \"outputs_path\": \"D:\\\\miaowu-os\\\\deer-flow-main\\\\backend\\\\.deer-flow\\\\threads\\\\0a21005f-3022-43f4-a8db-3e233277c920\\\\user-data\\\\outputs\"}, \"artifacts\": [], \"viewed_images\": {}, \"draft_media\": {}, \"execution_gate\": {}}\nid",
+  "suggestions_status": 200,
+  "suggestions_req_id": "f18389a89aaa470baf9e62c4b0e25fdb",
+  "suggestions_body": "{\"suggestions\":[\"你能帮我设计人物关系吗？\",\"怎么安排章节大纲？\",\"先确定什么主题比较好？\"]}"
+}

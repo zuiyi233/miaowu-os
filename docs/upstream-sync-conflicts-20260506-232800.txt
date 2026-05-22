@@ -1,0 +1,46 @@
+upstream sync conflict report
+Timestamp: 20260506-232800
+Branch: merge/upstream-main
+Range: 8e48b7e8..1336872b15c25d45ebcb7c1cf72369c2bdd53187
+Policy: local customizations first; absorb compatible upstream fixes
+
+[1] deer-flow-main/backend/packages/harness/deerflow/agents/lead_agent/agent.py
+Conflict type: default-agent create_agent block
+Decision:
+- Keep local runtime override path (`runtime_model/runtime_base_url/runtime_api_key`) and `include_novel` pass-through.
+- Absorb upstream custom-agent self-update tool exposure (`+ extra_tools`) for non-default agents.
+- Keep local middleware wiring with `custom_middlewares` and app_config threading.
+Reason: preserve miaowu runtime/provider override behavior and novel feature surface, while taking upstream agent self-update capability.
+
+[2] deer-flow-main/backend/packages/harness/deerflow/agents/lead_agent/prompt.py
+Conflict type: prompt helper insertion
+Decision:
+- Keep upstream `_build_self_update_section` and hook it in prompt template.
+- Keep existing local deferred-tools function and app_config flow.
+Reason: upstream feature is additive and compatible; no regression to local behavior.
+
+[3] deer-flow-main/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py
+Conflict type: warning injection behavior
+Decision:
+- Take upstream workaround: append warning to current AIMessage content, do not inject HumanMessage.
+Reason: fixes tool-call/tool-message strict pairing breakage from upstream issue path; compatible with local loop safety goals.
+
+[4] deer-flow-main/backend/packages/harness/deerflow/config/app_config.py
+Conflict type: singleton reload/database defaults helper section
+Decision:
+- Take upstream helper additions (`_validate_acp_agents`, `_apply_singleton_configs`, `_apply_database_defaults`) and keep existing local surrounding config logic.
+Reason: upstream hot-reload singleton reset is required for full commit sync and compatible with local config contracts.
+
+[5] deer-flow-main/frontend/.env.example
+Conflict type: env example defaults
+Decision:
+- Keep upstream-added SSR gateway vars comments.
+- Preserve local-dev contract by setting example `DEER_FLOW_INTERNAL_GATEWAY_BASE_URL` to `http://127.0.0.1:8551`.
+- Retain local LangGraph-compat and AI encryption key guidance comments.
+Reason: maintain local-dev 8551 contract while absorbing upstream docs additions.
+
+[6] deer-flow-main/frontend/src/core/auth/gateway-config.ts
+Conflict type: fallback default url
+Decision:
+- Merge behaviors: if env set use env; if unset -> dev fallback `127.0.0.1:8551`, production fallback `127.0.0.1:8001`.
+Reason: keep local-dev 8551 hard contract and preserve upstream regression fix for production localhost fallback.

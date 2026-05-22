@@ -1,0 +1,71 @@
+{
+  "id": "novel-phase3-lifecycle-operations",
+  "name": "novel-phase3-lifecycle-operations",
+  "title": "阶段三：对话驱动小说创作稳定化与全生命周期运营",
+  "description": "围绕 NovelAction Router、技能治理、生命周期状态机、可观测回滚与测试流程代码，建设稳定可运营链路。",
+  "status": "completed",
+  "dev_type": "fullstack",
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-04-21",
+  "completedAt": "2026-04-21",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "brainstorm"
+    },
+    {
+      "phase": 2,
+      "action": "research"
+    },
+    {
+      "phase": 3,
+      "action": "implement"
+    },
+    {
+      "phase": 4,
+      "action": "check"
+    },
+    {
+      "phase": 5,
+      "action": "update-spec"
+    },
+    {
+      "phase": 6,
+      "action": "record-session"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "AI_Novel_Connection_Test_Report.md",
+    "Novel_Creation_Process_Assessment_Report.md",
+    "主项目写作流程与小说创作深度联动打通方案.md",
+    ".trellis/tasks/archive/2026-04/04-21-novel-phase2-quality-closure/prd.md",
+    ".trellis/tasks/archive/2026-04/04-21-novel-phase3-lifecycle-operations/prd.md",
+    ".trellis/tasks/archive/2026-04/04-21-novel-phase3-lifecycle-operations/test-flows/README.md"
+  ],
+  "notes": "本阶段先输出完整实现计划与测试流程代码，不执行全量测试与压测。前端依赖保持 Win-only，不在 WSL 变更依赖。",
+  "meta": {
+    "phase": "phase-3",
+    "focus": [
+      "novel-action-router",
+      "skill-governance",
+      "lifecycle-state-machine",
+      "observability-rollout",
+      "quality-gate-fusion",
+      "test-flow-code"
+    ],
+    "testing_strategy": "test-code-only-no-execution"
+  }
+}

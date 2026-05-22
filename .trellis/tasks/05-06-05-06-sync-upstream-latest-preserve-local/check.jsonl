@@ -1,0 +1,5 @@
+{"file":"docs/DEERFLOW_UPSTREAM_SYNC_RUNBOOK.md","reason":"检查阶段依据：冲突标记清零与最小验证命令结果核对"}
+{"file":"docs/upstream-sync-guide.md","reason":"检查阶段依据：已知冲突位点与二开保留点回归核验"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"后端质量核验标准"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"前端质量核验标准（若本轮触及前端）"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核验 8551 本地契约与配置一致性"}

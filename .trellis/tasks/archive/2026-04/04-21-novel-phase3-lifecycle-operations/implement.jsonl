@@ -1,0 +1,10 @@
+{"file": ".trellis/workflow.md", "reason": "Trellis workflow and task lifecycle conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend implementation guideline entry"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend implementation guideline entry"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer boundary and contract checklist"}
+{"file": "AI_Novel_Connection_Test_Report.md", "reason": "Issue baseline and historical defects"}
+{"file": "Novel_Creation_Process_Assessment_Report.md", "reason": "Phase assessment baseline"}
+{"file": "主项目写作流程与小说创作深度联动打通方案.md", "reason": "Deep integration architecture baseline"}
+{"file": ".trellis/tasks/archive/2026-04/04-21-novel-phase2-quality-closure/prd.md", "reason": "Phase-2 accepted scope and constraints for continuity"}
+{"file": ".trellis/tasks/archive/2026-04/04-21-novel-phase3-lifecycle-operations/prd.md", "reason": "Phase-3 execution plan (source of truth)"}
+{"file": ".trellis/tasks/archive/2026-04/04-21-novel-phase3-lifecycle-operations/test-flows/README.md", "reason": "Testing workflow code definition for next-stage execution"}
