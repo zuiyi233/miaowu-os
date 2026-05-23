@@ -1,5 +1,11 @@
 import Dexie, { type Table } from 'dexie';
 
+/*
+ * Local compatibility cache for reader-only/draft/offline helpers.
+ * NovelDomainService must use the backend API as the first source of truth;
+ * this Dexie database is not the SaaS canonical store.
+ */
+
 import type {
   Novel,
   Chapter,

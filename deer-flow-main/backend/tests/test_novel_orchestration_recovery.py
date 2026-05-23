@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import delete, select
 
 from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
@@ -18,6 +19,8 @@ from app.gateway.novel_migrated.models.regeneration_task import RegenerationTask
 from app.gateway.novel_migrated.services.orchestration_service import orchestration_service
 from app.gateway.novel_migrated.services.recovery_service import recovery_service
 from deerflow.config.extensions_config import ExtensionsConfig, FeatureFlagConfig
+
+pytestmark = pytest.mark.usefixtures("novel_main_sqlite_engine")
 
 
 def test_normalize_suggestions_and_build_instructions():

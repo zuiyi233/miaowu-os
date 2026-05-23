@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import sys
 import types
+from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -50,6 +51,24 @@ def _build_payload(stream: bool) -> dict:
     }
 
 
+def _mount_ai_router(ai_provider, service):
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def _inject_user(request, call_next):
+        request.state.user_id = "test-ai-user"
+        request.state.auth = SimpleNamespace(user=SimpleNamespace(id="test-ai-user"))
+        return await call_next(request)
+
+    async def _fake_db():
+        yield SimpleNamespace()
+
+    app.include_router(ai_provider.router)
+    app.dependency_overrides[ai_provider.get_user_ai_service] = lambda: service
+    app.dependency_overrides[ai_provider.get_db] = _fake_db
+    return app
+
+
 def test_messages_non_stream_error_matches_legacy_branch(monkeypatch):
     ai_provider = _load_ai_provider_module(monkeypatch)
     monkeypatch.setenv("DEERFLOW_AI_PROVIDER_API_TOKEN", "secret-token")
@@ -62,9 +81,7 @@ def test_messages_non_stream_error_matches_legacy_branch(monkeypatch):
         async def generate_text(self, *args, **kwargs):
             raise RuntimeError("internal secret details")
 
-    app = FastAPI()
-    app.include_router(ai_provider.router)
-    app.dependency_overrides[ai_provider.get_user_ai_service] = lambda: _ErrorAiService()
+    app = _mount_ai_router(ai_provider, _ErrorAiService())
 
     with TestClient(app) as client:
         monkeypatch.setenv("USE_MESSAGES_FORMAT", "1")
@@ -96,9 +113,7 @@ def test_messages_stream_error_is_sanitized(monkeypatch):
         def generate_text_stream_with_messages(self, *args, **kwargs):
             return _RaisingAsyncIterator("stream internal details")
 
-    app = FastAPI()
-    app.include_router(ai_provider.router)
-    app.dependency_overrides[ai_provider.get_user_ai_service] = lambda: _ErrorAiService()
+    app = _mount_ai_router(ai_provider, _ErrorAiService())
 
     with TestClient(app) as client:
         response = client.post(
@@ -126,9 +141,7 @@ def test_legacy_stream_error_is_sanitized_by_default(monkeypatch):
         def generate_text_stream(self, *args, **kwargs):
             return _RaisingAsyncIterator("legacy stream internal details")
 
-    app = FastAPI()
-    app.include_router(ai_provider.router)
-    app.dependency_overrides[ai_provider.get_user_ai_service] = lambda: _ErrorAiService()
+    app = _mount_ai_router(ai_provider, _ErrorAiService())
 
     with TestClient(app) as client:
         response = client.post(
@@ -155,9 +168,7 @@ def test_stream_error_can_expose_raw_details_via_env(monkeypatch):
         def generate_text_stream(self, *args, **kwargs):
             return _RaisingAsyncIterator("legacy raw details")
 
-    app = FastAPI()
-    app.include_router(ai_provider.router)
-    app.dependency_overrides[ai_provider.get_user_ai_service] = lambda: _ErrorAiService()
+    app = _mount_ai_router(ai_provider, _ErrorAiService())
 
     with TestClient(app) as client:
         monkeypatch.setenv("USE_MESSAGES_FORMAT", "1")

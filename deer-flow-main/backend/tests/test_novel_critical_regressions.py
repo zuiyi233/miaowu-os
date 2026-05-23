@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 
 import pytest
@@ -17,28 +16,14 @@ def test_database_exports_async_session_factory_alias() -> None:
 
 
 @pytest.mark.anyio
-async def test_database_wal_initialization_is_singleflight(monkeypatch: pytest.MonkeyPatch) -> None:
-    """L-07 regression: WAL pragma initialization should be concurrency-safe."""
-    monkeypatch.setattr(database, "_WAL_INITIALIZED", asyncio.Event())
-    monkeypatch.setattr(database, "_WAL_INIT_LOCK", asyncio.Lock())
+async def test_database_schema_requires_main_persistence_engine() -> None:
+    """Novel schema bootstrap must not recreate the retired private SQLite path."""
+    assert not hasattr(database, "_ensure_wal_and_pragma")
+    assert not hasattr(database, "_WAL_INITIALIZED")
+    assert not hasattr(database, "DATABASE_URL")
 
-    executed: list[str] = []
-
-    class _Conn:
-        async def execute(self, stmt) -> None:
-            executed.append(str(stmt))
-            await asyncio.sleep(0)
-
-    conn = _Conn()
-    await asyncio.gather(*(database._ensure_wal_and_pragma(conn) for _ in range(8)))
-
-    assert database._WAL_INITIALIZED.is_set()
-    assert executed == [
-        "PRAGMA journal_mode=WAL",
-        "PRAGMA synchronous=NORMAL",
-        "PRAGMA cache_size=-64000",
-        "PRAGMA foreign_keys=ON",
-    ]
+    with pytest.raises(RuntimeError, match="Main persistence engine is not initialized"):
+        await database.init_db_schema()
 
 
 @pytest.mark.anyio

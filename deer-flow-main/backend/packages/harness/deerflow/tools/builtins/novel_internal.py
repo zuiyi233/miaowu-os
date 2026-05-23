@@ -90,6 +90,11 @@ def resolve_user_id(raw_user_id: str | None) -> str:
     raise RuntimeError("Novel internal call requires explicit authenticated user_id")
 
 
+def get_authenticated_user_id() -> str:
+    """Resolve the current main-project user for internal novel tool calls."""
+    return resolve_user_id("")
+
+
 def load_attr(module_path: str, attr_name: str) -> Any | None:
     """兼容遗留点：仅通过已注册 backend 访问。
 

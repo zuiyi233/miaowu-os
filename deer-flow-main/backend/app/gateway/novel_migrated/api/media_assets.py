@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
-import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -13,14 +11,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_owned_user_resource, get_user_id, verify_project_access
 from app.gateway.novel_migrated.core.database import get_db
-from app.gateway.novel_migrated.core.object_storage import build_private_object_key, get_object_storage_config
 from app.gateway.novel_migrated.models.media_asset import MediaAsset
+from app.gateway.novel_migrated.services.media_asset_service import (
+    ACTIVE_PURPOSES,
+    media_asset_service,
+    safe_asset_filename,
+)
 from app.gateway.novel_migrated.services.object_storage_service import (
     ObjectNotFoundError,
     ObjectStorageConfigurationError,
     ObjectStorageError,
     object_storage_service,
 )
+from app.gateway.novel_migrated.utils.http_headers import safe_download_content_disposition
 
 router = APIRouter(prefix="/media-assets", tags=["media_assets"])
 
@@ -56,9 +59,7 @@ def _asset_to_dict(asset: MediaAsset) -> dict[str, Any]:
 
 
 def _safe_filename(filename: str) -> str:
-    safe_name = filename.strip().replace("\\", "/").split("/")[-1]
-    safe_name = safe_name.replace("\r", "_").replace("\n", "_").replace('"', "_")
-    return safe_name or "asset.bin"
+    return safe_asset_filename(filename)
 
 
 def _normalize_metadata_json(raw_metadata: str | None) -> str | None:
@@ -72,7 +73,6 @@ def _normalize_metadata_json(raw_metadata: str | None) -> str | None:
 
 
 async def _read_upload_bytes(file: UploadFile) -> tuple[bytes, str]:
-    hasher = hashlib.sha256()
     chunks: list[bytes] = []
     total_size = 0
 
@@ -83,12 +83,12 @@ async def _read_upload_bytes(file: UploadFile) -> tuple[bytes, str]:
         total_size += len(chunk)
         if total_size > MAX_MEDIA_ASSET_BYTES:
             raise HTTPException(status_code=413, detail="Media asset is larger than 100MB")
-        hasher.update(chunk)
         chunks.append(chunk)
 
     if total_size == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    return b"".join(chunks), hasher.hexdigest()
+    data = b"".join(chunks)
+    return data, ""
 
 
 async def _load_active_asset(asset_id: str, user_id: str, db: AsyncSession) -> MediaAsset:
@@ -123,48 +123,30 @@ async def upload_media_asset(
 ) -> dict[str, Any]:
     if not file.filename:
         raise HTTPException(status_code=400, detail="filename is required")
+    if purpose not in ACTIVE_PURPOSES:
+        raise HTTPException(status_code=422, detail=f"Unsupported media asset purpose: {purpose}")
     safe_filename = _safe_filename(file.filename)
     if project_id:
         await verify_project_access(project_id, user_id, db)
 
-    data, content_hash = await _read_upload_bytes(file)
-    config = get_object_storage_config()
-    asset_id = str(uuid.uuid4())
-    object_key = build_private_object_key(
-        user_id=user_id,
-        asset_id=asset_id,
-        filename=safe_filename,
-    )
-
+    data, _content_hash = await _read_upload_bytes(file)
     try:
-        await object_storage_service.put_object(
-            object_key=object_key,
-            data=data,
-            content_type=file.content_type or "application/octet-stream",
+        created = await media_asset_service.create_asset_from_bytes(
+            db=db,
+            user_id=user_id,
+            project_id=project_id,
+            purpose=purpose,
+            filename=safe_filename,
+            content=data,
+            mime_type=file.content_type or "application/octet-stream",
+            metadata=json.loads(_normalize_metadata_json(metadata_json) or "{}") if metadata_json else None,
+            commit=True,
+            refresh=True,
+            flush=False,
         )
     except ObjectStorageError as exc:
         raise _storage_exception_to_http(exc) from exc
-
-    asset = MediaAsset(
-        id=asset_id,
-        user_id=user_id,
-        project_id=project_id,
-        purpose=purpose.strip() or "attachment",
-        filename=safe_filename,
-        mime_type=file.content_type or "application/octet-stream",
-        size_bytes=len(data),
-        content_hash=content_hash,
-        storage_backend=config.provider,
-        endpoint=config.endpoint,
-        bucket=config.bucket,
-        object_key=object_key,
-        status="active",
-        metadata_json=_normalize_metadata_json(metadata_json),
-    )
-    db.add(asset)
-    await db.commit()
-    await db.refresh(asset)
-    return _asset_to_dict(asset)
+    return _asset_to_dict(created.asset)
 
 
 @router.get("/{asset_id}")
@@ -189,7 +171,7 @@ async def download_media_asset(
     except ObjectStorageError as exc:
         raise _storage_exception_to_http(exc) from exc
 
-    headers = {"Content-Disposition": f'attachment; filename="{_safe_filename(asset.filename)}"'}
+    headers = {"Content-Disposition": safe_download_content_disposition(_safe_filename(asset.filename))}
     return Response(
         content=stored.content,
         media_type=asset.mime_type or stored.content_type or "application/octet-stream",

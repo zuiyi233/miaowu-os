@@ -18,6 +18,8 @@ from app.gateway.novel_migrated.services.consistency_gate_service import consist
 from app.gateway.novel_migrated.services.quality_gate_fusion_service import quality_gate_fusion_service
 from deerflow.config.extensions_config import ExtensionsConfig, FeatureFlagConfig
 
+pytestmark = pytest.mark.usefixtures("novel_main_sqlite_engine")
+
 
 async def _cleanup_project(project_id: str) -> None:
     async with AsyncSessionLocal() as session:

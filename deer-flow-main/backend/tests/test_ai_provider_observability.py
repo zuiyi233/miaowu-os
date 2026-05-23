@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -51,8 +53,19 @@ def _build_payload() -> dict:
 
 def _build_app(service) -> FastAPI:
     app = FastAPI()
+
+    @app.middleware("http")
+    async def _inject_user(request, call_next):
+        request.state.user_id = "test-ai-user"
+        request.state.auth = SimpleNamespace(user=SimpleNamespace(id="test-ai-user"))
+        return await call_next(request)
+
+    async def _fake_db():
+        yield SimpleNamespace()
+
     app.include_router(ai_provider.router)
     app.dependency_overrides[ai_provider.get_user_ai_service] = lambda: service
+    app.dependency_overrides[ai_provider.get_db] = _fake_db
     return app
 
 

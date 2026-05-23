@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from deerflow.tools.builtins.novel_internal import get_internal_db, load_attr, resolve_user_id
+from deerflow.tools.builtins.novel_internal import get_authenticated_user_id, get_internal_db, load_attr
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ async def persist_workspace_documents(
         logger.warning("file-truth persistence skipped: internal db unavailable (%s)", exc)
         return []
 
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
     records: list[dict[str, Any]] = []
 
     try:

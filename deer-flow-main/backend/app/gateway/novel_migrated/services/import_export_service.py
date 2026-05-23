@@ -4,21 +4,35 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.project import Project
+from app.gateway.novel_migrated.services.media_asset_service import media_asset_service, safe_asset_filename
 from app.gateway.novel_migrated.services.workspace_document_service import workspace_document_service
 
 logger = get_logger(__name__)
 
 
+@dataclass(frozen=True)
+class ProjectExportResult:
+    content: bytes
+    media_asset_id: str | None
+    download_path: str | None
+
+
 class ImportExportService:
 
-    async def export_project(self, project_id: str, user_id: str, db: AsyncSession) -> bytes:
-        project_result = await db.execute(select(Project).where(Project.id == project_id))
+    async def export_project(self, project_id: str, user_id: str, db: AsyncSession) -> ProjectExportResult:
+        project_result = await db.execute(
+            select(Project).where(
+                Project.id == project_id,
+                Project.user_id == user_id,
+            )
+        )
         project = project_result.scalar_one_or_none()
         if not project:
             raise ValueError(f"Project {project_id} not found")
@@ -44,9 +58,40 @@ class ImportExportService:
                     continue
                 rel = path.relative_to(workspace).as_posix()
                 zf.write(path, arcname=f"workspace/{rel}")
-        return buffer.getvalue()
+        zip_bytes = buffer.getvalue()
+        created = await media_asset_service.create_asset_from_bytes(
+            db=db,
+            user_id=user_id,
+            project_id=project_id,
+            purpose="project_export",
+            filename=f"project_{project_id}.zip",
+            content=zip_bytes,
+            mime_type="application/zip",
+            metadata={
+                "source": "project_export",
+                "version": export_data["version"],
+            },
+            commit=True,
+            refresh=False,
+        )
+        return ProjectExportResult(
+            content=zip_bytes,
+            media_asset_id=created.asset.id,
+            download_path=f"/media-assets/{created.asset.id}/download",
+        )
 
-    async def import_project(self, user_id: str, zip_bytes: bytes, db: AsyncSession) -> str:
+    async def import_project(self, user_id: str, zip_bytes: bytes, db: AsyncSession, filename: str = "project.zip") -> str:
+        created = await media_asset_service.create_asset_from_bytes(
+            db=db,
+            user_id=user_id,
+            project_id=None,
+            purpose="project_import_source",
+            filename=safe_asset_filename(filename, fallback="project.zip"),
+            content=zip_bytes,
+            mime_type="application/zip",
+            metadata={"source": "project_import"},
+            commit=False,
+        )
         buffer = io.BytesIO(zip_bytes)
         with zipfile.ZipFile(buffer, "r") as zf:
             if "project_data.json" in zf.namelist():
@@ -76,6 +121,7 @@ class ImportExportService:
         )
         db.add(project)
         await db.flush()
+        created.asset.project_id = project.id
 
         await workspace_document_service.initialize_workspace(
             user_id=user_id,
@@ -107,7 +153,12 @@ class ImportExportService:
             records=records,
         )
 
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            await media_asset_service.delete_uploaded_object_best_effort(object_key=created.object_key)
+            raise
         return project.id
 
     def _serialize_model(self, model) -> dict:

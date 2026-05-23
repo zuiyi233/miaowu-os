@@ -43,9 +43,9 @@ async def _attach_workspace_meta(
 
 async def _regenerate_chapter_internal(project_id, chapter_id, modification_instructions="", custom_instructions="", target_word_count=3000, focus_areas=None, preserve_elements=None):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         get_internal_db,
         load_attr,
-        resolve_user_id,
         to_dict,
     )
 
@@ -60,7 +60,7 @@ async def _regenerate_chapter_internal(project_id, chapter_id, modification_inst
         custom_instructions=custom_instructions, target_word_count=target_word_count,
         focus_areas=focus_areas, preserve_elements=preserve_elements,
     )
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
     async with AsyncSessionLocal() as db:
         result = await regen_fn(req=req, request=None, user_id=user_id, db=db)
     return _ok(to_dict(result), source="novel_migrated.regenerate.internal")
@@ -68,10 +68,10 @@ async def _regenerate_chapter_internal(project_id, chapter_id, modification_inst
 
 async def _partial_regenerate_internal(project_id, chapter_id, selected_text, context_before="", context_after="", user_instructions=""):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         get_internal_ai_service,
         get_internal_db,
         load_attr,
-        resolve_user_id,
         to_dict,
     )
 
@@ -85,7 +85,7 @@ async def _partial_regenerate_internal(project_id, chapter_id, selected_text, co
         project_id=project_id, chapter_id=chapter_id, selected_text=selected_text,
         context_before=context_before, context_after=context_after, user_instructions=user_instructions,
     )
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
     async with AsyncSessionLocal() as db:
         result = await partial_fn(req=req, request=None, user_id=user_id, db=db, ai_service=ai_service)
     return _ok(to_dict(result), source="novel_migrated.partial_regenerate.internal")
@@ -93,14 +93,14 @@ async def _partial_regenerate_internal(project_id, chapter_id, selected_text, co
 
 async def _finalize_project_internal(project_id):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         get_internal_db,
         load_attr,
-        resolve_user_id,
         to_dict,
     )
 
     AsyncSessionLocal = await get_internal_db()
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
 
     report_fn = load_attr("app.gateway.novel_migrated.api.polish", "get_project_consistency_report")
     if callable(report_fn):
@@ -120,8 +120,8 @@ async def _finalize_project_internal(project_id):
 
 async def _import_book_internal(file_path, project_title=""):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         load_attr,
-        resolve_user_id,
         to_dict,
     )
 
@@ -131,7 +131,7 @@ async def _import_book_internal(file_path, project_title=""):
     service = load_attr("app.gateway.novel_migrated.services.book_import_service", "book_import_service")
     if service is None:
         raise RuntimeError("book_import_service unavailable")
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
     result = await service.create_task(
         user_id=user_id,
         filename=filename,
@@ -147,10 +147,10 @@ async def _import_book_internal(file_path, project_title=""):
 
 async def _update_character_states_internal(chapter_id, project_id=""):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         get_internal_ai_service,
         get_internal_db,
         load_attr,
-        resolve_user_id,
         to_dict,
     )
 
@@ -159,7 +159,7 @@ async def _update_character_states_internal(chapter_id, project_id=""):
     analyze_fn = load_attr("app.gateway.novel_migrated.api.memories", "analyze_chapter")
     if not callable(analyze_fn):
         raise RuntimeError("internal memories.analyze_chapter unavailable")
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
     async with AsyncSessionLocal() as db:
         result = await analyze_fn(
             project_id=project_id,

@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import pytest_asyncio
 from support.detectors.blocking_io import BlockingIOProbe, detect_blocking_io
 
 # Make 'app' and 'deerflow' importable from any working directory
@@ -147,6 +148,32 @@ def _blocking_io_fail_enabled(config: pytest.Config) -> bool:
 
 def _blocking_io_probe_skipped(item: pytest.Item) -> bool:
     return item.path.name == "test_blocking_io_detector.py" or item.get_closest_marker("no_blocking_io_probe") is not None
+
+
+@pytest_asyncio.fixture()
+async def novel_main_sqlite_engine(tmp_path):
+    """Initialize the shared DeerFlow persistence engine for novel ORM tests.
+
+    Novel tests that touch ``init_db_schema`` must opt in to this fixture. This
+    keeps the new contract explicit: tests use the main persistence engine, not
+    a retired private ``novel_migrated.db`` bootstrap.
+    """
+    from app.gateway.novel_migrated.core import database as novel_database
+    from deerflow.persistence.engine import close_engine, init_engine
+
+    await close_engine()
+    novel_database._schema_initialized.clear()
+    novel_database._schema_initialized_engine = None
+    novel_database._load_models_for_schema_mode("full")
+
+    db_path = tmp_path / "main.sqlite3"
+    await init_engine("sqlite", url=f"sqlite+aiosqlite:///{db_path.as_posix()}", sqlite_dir=str(tmp_path))
+    try:
+        yield db_path
+    finally:
+        await close_engine()
+        novel_database._schema_initialized.clear()
+        novel_database._schema_initialized_engine = None
 
 
 # ---------------------------------------------------------------------------

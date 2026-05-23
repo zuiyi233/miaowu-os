@@ -13,6 +13,7 @@ import inspect
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 
 def _can_import(dotted_path: str) -> bool:
@@ -109,8 +110,12 @@ class TestUserIdResolutionContract:
     def test_harness_internal_bridge_rejects_missing_runtime_user(self):
         from deerflow.tools.builtins.novel_internal import resolve_user_id
 
-        with pytest.raises(RuntimeError, match="requires explicit authenticated user_id"):
+        with pytest.raises((HTTPException, RuntimeError)) as exc_info:
             resolve_user_id(None)
+        if isinstance(exc_info.value, HTTPException):
+            assert exc_info.value.status_code == 401
+        else:
+            assert "requires explicit authenticated user_id" in str(exc_info.value)
 
 
 class TestSignatureStability:

@@ -106,10 +106,10 @@ class NovelLifecycleService:
         "published": {"finalized", "revising"},
     }
 
-    def __init__(self, *, persistence_file: str | Path | None = None) -> None:
+    def __init__(self, *, persistence_file: str | Path | None = _DEFAULT_LIFECYCLE_STATE_FILE) -> None:
         self._token_records: dict[tuple[str, str, LifecycleStatus], datetime] = {}
         self._token_lock = Lock()
-        self._persistence_file = Path(persistence_file) if persistence_file is not None else _DEFAULT_LIFECYCLE_STATE_FILE
+        self._persistence_file = Path(persistence_file) if persistence_file is not None else None
         self._load_token_records()
 
     @staticmethod
@@ -191,6 +191,8 @@ class NovelLifecycleService:
 
     def _load_token_records(self) -> None:
         path = self._persistence_file
+        if path is None:
+            return
         if not path.exists():
             return
         try:
@@ -233,6 +235,8 @@ class NovelLifecycleService:
 
     def _persist_token_records(self) -> None:
         path = self._persistence_file
+        if path is None:
+            return
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             records = sorted(

@@ -31,7 +31,7 @@ def test_lifecycle_transition_matrix_and_publish_strategy():
 
 
 def test_lifecycle_transition_feature_disabled_uses_legacy_fallback(monkeypatch):
-    service = NovelLifecycleService()
+    service = NovelLifecycleService(persistence_file=None)
     holder = _StatusHolder(status="completed")
 
     cfg = ExtensionsConfig(
@@ -59,7 +59,7 @@ def test_lifecycle_transition_feature_disabled_uses_legacy_fallback(monkeypatch)
 
 
 def test_lifecycle_transition_replay_and_multi_stage_token(monkeypatch):
-    service = NovelLifecycleService()
+    service = NovelLifecycleService(persistence_file=None)
     holder = _StatusHolder(status="draft")
 
     cfg = ExtensionsConfig(

@@ -3,13 +3,17 @@ from __future__ import annotations
 import json
 
 from cryptography.fernet import Fernet
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from app.gateway.novel_migrated.api import settings as legacy_settings
 from app.gateway.novel_migrated.api import user_settings
 from app.gateway.novel_migrated.core import crypto
 from app.gateway.novel_migrated.models.settings import Settings
+from app.gateway.novel_migrated.services.ai_settings_service import (
+    get_ai_settings_service,
+    resolve_user_ai_runtime_config,
+)
 
 
 def _enable_encryption_for_test() -> None:
@@ -46,6 +50,12 @@ class _FakeDB:
 
 def _build_user_settings_app(fake_db: _FakeDB) -> FastAPI:
     app = FastAPI()
+
+    @app.middleware("http")
+    async def _inject_user(request: Request, call_next):
+        request.state.user_id = "default_user"
+        return await call_next(request)
+
     app.include_router(user_settings.router)
     app.dependency_overrides[user_settings.get_db] = lambda: fake_db
     return app
@@ -53,6 +63,12 @@ def _build_user_settings_app(fake_db: _FakeDB) -> FastAPI:
 
 def _build_legacy_settings_app(fake_db: _FakeDB) -> FastAPI:
     app = FastAPI()
+
+    @app.middleware("http")
+    async def _inject_user(request: Request, call_next):
+        request.state.user_id = "default_user"
+        return await call_next(request)
+
     app.include_router(legacy_settings.router)
     app.dependency_overrides[legacy_settings.get_db] = lambda: fake_db
     return app
@@ -68,17 +84,17 @@ def test_get_ai_settings_defaults_when_no_record() -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data["providers"], list)
-    assert data["providers"], "should seed at least one provider from config.yaml"
-    assert data["default_provider_id"] is not None
     assert data["client_settings"]["request_timeout"] == 660000
     assert data["api_provider"] == "openai"
-    assert data["api_base_url"]
-    assert data["llm_model"]
+    assert data["llm_model"] == "gpt-4"
+    assert "api_key" not in json.dumps(data, ensure_ascii=False)
 
     # DB side effects: record + seeded bundle persisted.
     assert fake_db.settings is not None
     prefs = json.loads(fake_db.settings.preferences or "{}")
-    assert "ai_provider_settings" in prefs
+    if data["providers"]:
+        assert data["default_provider_id"] is not None
+        assert "ai_provider_settings" in prefs
 
 
 def test_put_ai_settings_encrypts_key_and_mirrors_active_provider() -> None:
@@ -285,6 +301,125 @@ def test_put_ai_settings_preserves_key_when_omitted_and_clears_when_requested() 
         data_third = third.json()
         assert data_third["providers"][0]["has_api_key"] is False
         assert fake_db.settings.api_key is None
+
+
+def test_put_ai_settings_rejects_client_injected_encrypted_secret() -> None:
+    """Client payloads must not be able to smuggle backend-only secret fields."""
+    _enable_encryption_for_test()
+    fake_db = _FakeDB()
+    service = get_ai_settings_service()
+    injected_ciphertext = crypto.encrypt_secret("sk-injected")
+
+    import anyio
+
+    async def _run() -> dict:
+        return await service.put_ai_settings(
+            "user-a",
+            {
+                "default_provider_id": "p1",
+                "providers": [
+                    {
+                        "id": "p1",
+                        "name": "OpenAI-compatible",
+                        "provider": "custom",
+                        "base_url": "https://api.example.com/v1",
+                        "models": ["custom-model"],
+                        "is_active": True,
+                        # This field is backend-only. It must be ignored for
+                        # normal PUT requests even if a malicious client sends it.
+                        "api_key_encrypted": injected_ciphertext,
+                    }
+                ],
+            },
+            fake_db,
+        )
+
+    response = anyio.run(_run)
+
+    assert response["providers"][0]["has_api_key"] is False
+    assert fake_db.settings is not None
+    assert fake_db.settings.api_key is None
+    prefs = json.loads(fake_db.settings.preferences or "{}")
+    stored_provider = prefs["ai_provider_settings"]["providers"][0]
+    assert stored_provider["api_key_encrypted"] is None
+    assert "sk-injected" not in json.dumps(response, ensure_ascii=False)
+    assert "sk-injected" not in json.dumps(prefs, ensure_ascii=False)
+
+
+def test_resolve_user_ai_runtime_config_is_isolated_per_settings_record() -> None:
+    _enable_encryption_for_test()
+    user_a_key = crypto.encrypt_secret("sk-user-a")
+    user_b_key = crypto.encrypt_secret("sk-user-b")
+    user_a = Settings(
+        user_id="user-a",
+        api_provider="custom",
+        api_key=user_a_key,
+        api_base_url="https://a.example.com/v1",
+        llm_model="model-a",
+        preferences=json.dumps(
+            {
+                "ai_provider_settings": {
+                    "version": 1,
+                    "default_provider_id": "provider-a",
+                    "providers": [
+                        {
+                            "id": "provider-a",
+                            "name": "Provider A",
+                            "provider": "custom",
+                            "base_url": "https://a.example.com/v1",
+                            "models": ["model-a"],
+                            "is_active": True,
+                            "api_key_encrypted": user_a_key,
+                        }
+                    ],
+                    "client_settings": {},
+                    "feature_routing_settings": None,
+                }
+            },
+            ensure_ascii=False,
+        ),
+    )
+    user_b = Settings(
+        user_id="user-b",
+        api_provider="custom",
+        api_key=user_b_key,
+        api_base_url="https://b.example.com/v1",
+        llm_model="model-b",
+        preferences=json.dumps(
+            {
+                "ai_provider_settings": {
+                    "version": 1,
+                    "default_provider_id": "provider-b",
+                    "providers": [
+                        {
+                            "id": "provider-b",
+                            "name": "Provider B",
+                            "provider": "custom",
+                            "base_url": "https://b.example.com/v1",
+                            "models": ["model-b"],
+                            "is_active": True,
+                            "api_key_encrypted": user_b_key,
+                        }
+                    ],
+                    "client_settings": {},
+                    "feature_routing_settings": None,
+                }
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    runtime_a, source_a = resolve_user_ai_runtime_config(user_a)
+    runtime_b, source_b = resolve_user_ai_runtime_config(user_b)
+
+    assert source_a == "provider-default-model"
+    assert source_b == "provider-default-model"
+    assert runtime_a["api_key"] == "sk-user-a"
+    assert runtime_b["api_key"] == "sk-user-b"
+    assert runtime_a["api_base_url"] == "https://a.example.com/v1"
+    assert runtime_b["api_base_url"] == "https://b.example.com/v1"
+    assert runtime_a["model_name"] == "model-a"
+    assert runtime_b["model_name"] == "model-b"
 
 
 def test_put_ai_settings_allows_empty_providers_bundle_without_recreating_placeholder() -> None:

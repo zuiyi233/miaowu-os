@@ -1,6 +1,5 @@
 import { create } from "zustand";
 
-import { decryptApiKeyWithStatus } from "./crypto";
 import type { AiFeatureRoutingState } from "./feature-routing";
 import {
   fetchUserAiSettings,
@@ -284,24 +283,13 @@ function safeParseJson(text: string): unknown {
   }
 }
 
-function readPersistedState<T = unknown>(key: string): T | null {
-  if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(key);
-  if (!raw) return null;
-  const parsed = safeParseJson(raw);
-  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-    const container = parsed as { state?: unknown };
-    if ("state" in container) {
-      return container.state as T;
-    }
-  }
-  return parsed as T;
-}
-
-function removeLocalProviderPersistenceAfterMigration(): void {
+function removeLocalProviderPersistence(): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem("ai-provider-global-settings");
+    window.localStorage.removeItem("ai_settings_migrated_v1");
+    window.localStorage.removeItem("deerflow_ai_encryption_key");
+    window.localStorage.removeItem("deerflow_ai_encryption_key_fingerprint");
   } catch (err) {
     console.warn("Failed to remove ai-provider-global-settings:", err);
   }
@@ -331,117 +319,6 @@ function removeLocalProviderPersistenceAfterMigration(): void {
   }
 }
 
-function generateMigrationProviderId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `provider-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function parseMigrationString(value: unknown, fallback: string): string {
-  return typeof value === "string" ? value : fallback;
-}
-
-function parseMigrationNumber(value: unknown, fallback: number): number {
-  return typeof value === "number" ? value : fallback;
-}
-
-function parseMigrationBoolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === "boolean" ? value : fallback;
-}
-
-function pickLegacyProviders(source: Record<string, unknown>): unknown[] {
-  if (Array.isArray(source.providers)) {
-    return source.providers;
-  }
-  if (Array.isArray(source.llmProviders)) {
-    return source.llmProviders;
-  }
-  return [];
-}
-
-function mapLegacyProviderToUpdate(provider: Record<string, unknown>): UserAiProviderRecordUpdate {
-  const id = parseMigrationString(provider.id, "").trim() || generateMigrationProviderId();
-  const apiKeyRaw = parseMigrationString(provider.apiKey ?? provider.api_key, "");
-  const decrypted = decryptApiKeyWithStatus(apiKeyRaw);
-
-  const record: UserAiProviderRecordUpdate = {
-    id,
-    name: parseMigrationString(provider.name, "Provider"),
-    provider: parseMigrationString(provider.provider, "openai"),
-    base_url: parseMigrationString(provider.baseUrl ?? provider.base_url, ""),
-    models: Array.isArray(provider.models) ? provider.models : [],
-    is_active: Boolean(provider.isActive ?? provider.is_active),
-    temperature: typeof provider.temperature === "number" ? provider.temperature : null,
-    max_tokens:
-      typeof provider.maxTokens === "number"
-        ? provider.maxTokens
-        : typeof provider.max_tokens === "number"
-          ? provider.max_tokens
-          : null,
-  };
-
-  if (decrypted.issue) {
-    console.warn(`Skipping provider apiKey migration for ${id}: ${decrypted.issue.message}`);
-  } else if (decrypted.value?.trim()) {
-    record.api_key = decrypted.value.trim();
-  }
-
-  return record;
-}
-
-export function buildMigrationPayloadFromLegacySource(
-  source: Record<string, unknown>
-): UserAiSettingsUpdate | null {
-  const rawProviders = pickLegacyProviders(source);
-  if (!rawProviders.length) {
-    return null;
-  }
-
-  const providers = rawProviders
-    .filter((provider): provider is Record<string, unknown> => Boolean(provider) && typeof provider === "object")
-    .map(mapLegacyProviderToUpdate);
-  if (!providers.length) {
-    return null;
-  }
-
-  return {
-    providers,
-    default_provider_id:
-      typeof source.defaultProviderId === "string" ? source.defaultProviderId : null,
-    client_settings: {
-      enable_stream_mode: parseMigrationBoolean(source.enableStreamMode, true),
-      request_timeout: parseMigrationNumber(source.requestTimeout, DEFAULT_SETTINGS.requestTimeout),
-      max_retries: parseMigrationNumber(source.maxRetries, DEFAULT_SETTINGS.maxRetries),
-    },
-    system_prompt: parseMigrationString(source.globalSystemPrompt, ""),
-  };
-}
-
-async function tryMigrateLocalAiSettingsToServer(): Promise<boolean> {
-  if (typeof window === "undefined") return false;
-  const migratedFlag = window.localStorage.getItem("ai_settings_migrated_v1");
-  if (migratedFlag === "true") return false;
-
-  const globalState = readPersistedState<Record<string, unknown>>("ai-provider-global-settings");
-  const novelistState = readPersistedState<Record<string, unknown>>("novelist-settings-storage");
-  const source = globalState ?? novelistState;
-  if (!source || typeof source !== "object") return false;
-
-  const payload = buildMigrationPayloadFromLegacySource(source);
-  if (!payload) return false;
-
-  try {
-    await putUserAiSettings(payload);
-    window.localStorage.setItem("ai_settings_migrated_v1", "true");
-    removeLocalProviderPersistenceAfterMigration();
-    return true;
-  } catch (err) {
-    console.warn("AI settings migration failed:", err);
-    return false;
-  }
-}
-
 let _hydrationPromise: Promise<void> | null = null;
 
 export const useAiProviderStore = create<AiSettingsState>()((set, get) => ({
@@ -459,14 +336,7 @@ export const useAiProviderStore = create<AiSettingsState>()((set, get) => ({
 
     _hydrationPromise = (async () => {
       await get().refreshFromServer();
-
-      const effectiveProviders = get().effective.providers;
-      if (effectiveProviders.length === 0) {
-        const migrated = await tryMigrateLocalAiSettingsToServer();
-        if (migrated) {
-          await get().refreshFromServer();
-        }
-      }
+      removeLocalProviderPersistence();
     })()
       .catch((err) => {
         const message = err instanceof Error ? err.message : "Failed to hydrate AI settings";

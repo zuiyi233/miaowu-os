@@ -46,6 +46,13 @@ def _build_model(
 
 def _build_app(fake_db: _FakeDB) -> FastAPI:
     app = FastAPI()
+
+    @app.middleware("http")
+    async def _inject_user(request, call_next):
+        request.state.user_id = "models-user"
+        request.state.auth = SimpleNamespace(user=SimpleNamespace(id="models-user"))
+        return await call_next(request)
+
     app.include_router(models_router.router)
     app.dependency_overrides[models_router.get_db] = lambda: fake_db
     return app

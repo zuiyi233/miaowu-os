@@ -20,6 +20,11 @@ from app.gateway.novel_migrated.schemas.book_import import (
     BookImportTaskStatusResponse,
 )
 from app.gateway.novel_migrated.services.book_import_service import book_import_service
+from app.gateway.novel_migrated.services.media_asset_service import media_asset_service, safe_asset_filename
+from app.gateway.novel_migrated.services.object_storage_service import (
+    ObjectStorageConfigurationError,
+    ObjectStorageError,
+)
 from app.gateway.novel_migrated.utils.sse_response import SSEResponse, create_sse_response
 
 router = APIRouter(prefix="/book-import", tags=["拆书导入"])
@@ -38,6 +43,7 @@ async def create_book_import_task(
     import_mode: str = Form(default="append", description="导入模式：append/overwrite"),
     extract_mode: str = Form(default="tail", description="解析范围：tail=截取末章，full=整本"),
     tail_chapter_count: int = Form(default=10, description="当 extract_mode=tail 时，截取末尾章节数，需为5的倍数；超过50按整本拆处理"),
+    db: AsyncSession = Depends(get_db),
 ):
     user_id = get_user_id(request)
 
@@ -80,6 +86,31 @@ async def create_book_import_task(
         if len(content_buffer) > MAX_TXT_SIZE:
             raise HTTPException(status_code=413, detail="文件大小超过 50MB 限制")
     content = bytes(content_buffer)
+    source_asset_id: str | None = None
+    try:
+        created_asset = await media_asset_service.create_asset_from_bytes(
+            db=db,
+            user_id=user_id,
+            project_id=None,
+            purpose="book_import_source",
+            filename=safe_asset_filename(file.filename, fallback="source.txt"),
+            content=content,
+            mime_type=file.content_type or "text/plain",
+            metadata={
+                "source": "book_import",
+                "import_mode": import_mode,
+                "extract_mode": create_payload.extract_mode,
+                "tail_chapter_count": create_payload.tail_chapter_count,
+            },
+            commit=True,
+            refresh=False,
+            flush=False,
+        )
+        source_asset_id = created_asset.asset.id
+    except ObjectStorageConfigurationError as exc:
+        raise HTTPException(status_code=503, detail="对象存储未配置，无法保存导入原文") from exc
+    except ObjectStorageError as exc:
+        raise HTTPException(status_code=502, detail="对象存储上传失败，无法保存导入原文") from exc
 
     task = await book_import_service.create_task(
         user_id=user_id,
@@ -90,6 +121,7 @@ async def create_book_import_task(
         import_mode=import_mode,
         extract_mode=create_payload.extract_mode,
         tail_chapter_count=create_payload.tail_chapter_count,
+        source_asset_id=source_asset_id,
     )
     return task
 

@@ -1,6 +1,6 @@
 import { DEFAULT_ITEM_TYPE, DEFAULT_SETTING_TYPE, type ItemType, type SettingType } from './constants';
 import { databaseService } from './database';
-import { executeRemoteFirst, isNetworkError, novelApiService } from './novel-api';
+import { executeRemoteFirst, novelApiService } from './novel-api';
 import type { FallbackMode } from './novel-api';
 import type { Novel, Chapter, Character, Setting, Faction, Item, EntityRelationship, TimelineEvent, GraphLayout, Volume } from './schemas';
 import { generateUniqueId, generateChapterId, generateCharacterId, generateSettingId } from './utils';
@@ -41,21 +41,6 @@ export class NovelDomainService {
       () => databaseService.saveNovel(novel),
       WRITE,
     );
-  }
-
-  async saveNovelWithOfflineFallback(novel: Novel): Promise<{ synced: boolean }> {
-    try {
-      await novelApiService.createNovel(novel);
-      await databaseService.saveNovel(novel);
-      return { synced: true };
-    } catch (error) {
-      if (isNetworkError(error)) {
-        console.warn('[novel] remote create failed (network error), saving as offline draft', error);
-        await databaseService.saveNovel(novel);
-        return { synced: false };
-      }
-      throw error;
-    }
   }
 
   async updateNovel(novelId: string | number, updates: Partial<Novel>): Promise<void> {
@@ -430,15 +415,20 @@ export class NovelDomainService {
   }
 
   async getDashboardStats(): Promise<{ totalWordCount: number; totalChapters: number; totalEntities: number; novelCount: number }> {
-    return databaseService.getDashboardStats();
+    return novelApiService.getDashboardStats();
   }
 
   async exportAllData(): Promise<any> {
-    return databaseService.exportAllData();
+    const novels = await this.getAllNovels();
+    return {
+      version: 'backend-saas-export-v1',
+      exportedAt: new Date().toISOString(),
+      novels,
+    };
   }
 
   async importData(data: any): Promise<void> {
-    return databaseService.importData(data);
+    throw new Error('Legacy browser imports are disabled. Use the backend ZIP import flow so imported projects are stored in the unified database and object storage.');
   }
 }
 

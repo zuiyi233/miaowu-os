@@ -167,6 +167,7 @@ class _BookImportTask:
     cancelled: bool = False
     # 导入后生成的 project_id，用于重试时定位项目
     imported_project_id: str | None = None
+    source_asset_id: str | None = None
     # 步骤级失败记录
     failed_steps: list[_StepFailure] = field(default_factory=list)
 
@@ -222,6 +223,7 @@ class BookImportService:
         import_mode: str,
         extract_mode: BookImportExtractMode = "tail",
         tail_chapter_count: int = 10,
+        source_asset_id: str | None = None,
     ) -> BookImportTaskCreateResponse:
         normalized_tail_count = max(5, int(tail_chapter_count))
         normalized_extract_mode = extract_mode
@@ -240,6 +242,7 @@ class BookImportService:
             import_mode=import_mode,
             extract_mode=normalized_extract_mode,
             tail_chapter_count=normalized_tail_count,
+            source_asset_id=source_asset_id,
         )
         async with self._tasks_lock:
             self._cleanup_expired_tasks()
@@ -2691,7 +2694,7 @@ class BookImportService:
         if not task:
             raise HTTPException(status_code=404, detail="任务不存在")
         if task.user_id != user_id:
-            raise HTTPException(status_code=403, detail="无权访问该任务")
+            raise HTTPException(status_code=404, detail="任务不存在")
         return task
 
     def _to_status(self, task: _BookImportTask) -> BookImportTaskStatusResponse:

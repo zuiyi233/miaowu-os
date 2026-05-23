@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 
 from app.gateway.novel_migrated.schemas.book_import import (
     BookImportApplyRequest,
@@ -52,6 +53,25 @@ class _FakeDB:
 
     async def flush(self):
         raise AssertionError("unexpected db.flush call in this test")
+
+
+@pytest.mark.asyncio
+async def test_book_import_task_cross_user_lookup_returns_404() -> None:
+    service = book_import_service_module.BookImportService()
+    task = book_import_service_module._BookImportTask(
+        task_id="task-owner-a",
+        user_id="owner-a",
+        filename="source.txt",
+        project_id=None,
+        create_new_project=True,
+        import_mode="append",
+    )
+    service._tasks[task.task_id] = task
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service._get_task(task_id=task.task_id, user_id="owner-b")
+
+    assert exc_info.value.status_code == 404
 
 
 @pytest.mark.asyncio

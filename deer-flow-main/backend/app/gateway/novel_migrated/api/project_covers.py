@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +12,7 @@ from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.services.cover_generation_service import (
     cover_generation_service,
 )
+from app.gateway.novel_migrated.utils.http_headers import safe_download_content_disposition
 
 router = APIRouter(prefix="/api/projects", tags=["project_covers"])
 
@@ -58,15 +59,13 @@ async def download_project_cover(
     db: AsyncSession = Depends(get_db),
 ):
     user_id = get_user_id(request)
-    project, file_path = await cover_generation_service.get_cover_download_path(
+    project, filename, content, media_type = await cover_generation_service.get_cover_download(
         db=db,
         user_id=user_id,
         project_id=project_id,
     )
-    suffix = file_path.suffix or ".png"
-    filename = f"{project.title}-cover{suffix}"
-    return FileResponse(
-        path=file_path,
-        filename=filename,
-        media_type="application/octet-stream",
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": safe_download_content_disposition(filename)},
     )

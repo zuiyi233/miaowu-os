@@ -155,8 +155,12 @@ export function AnnotationThreadPanel({ novelId, chapterId, selectedText, select
           const normalized = normalizeThread(novelId, remote as Record<string, unknown>);
           await databaseService.addAnnotationThread(normalized);
         },
-        () => databaseService.addAnnotationThread(thread),
+        async () => {
+          throw new Error('Annotation thread creation requires the backend service');
+        },
         'AnnotationThreadPanel.addThread',
+        undefined,
+        'write',
       );
     },
     onSuccess: () => {
@@ -181,8 +185,12 @@ export function AnnotationThreadPanel({ novelId, chapterId, selectedText, select
           const normalized = normalizeThread(novelId, remote as Record<string, unknown>);
           await databaseService.updateAnnotationThread(normalized);
         },
-        () => databaseService.updateAnnotationThread(merged),
+        async () => {
+          throw new Error('Annotation thread update requires the backend service');
+        },
         'AnnotationThreadPanel.updateThread',
+        undefined,
+        'write',
       );
     },
     onSuccess: () => {
@@ -196,9 +204,12 @@ export function AnnotationThreadPanel({ novelId, chapterId, selectedText, select
     mutationFn: async (id: string) => {
       await executeRemoteFirst(
         () => novelApiService.deleteInteraction(novelId, id).then(() => undefined),
-        () => databaseService.deleteAnnotationThread(id),
+        async () => {
+          throw new Error('Annotation thread deletion requires the backend service');
+        },
         'AnnotationThreadPanel.deleteThread',
         () => databaseService.deleteAnnotationThread(id),
+        'write',
       );
     },
     onSuccess: () => {
@@ -232,13 +243,12 @@ export function AnnotationThreadPanel({ novelId, chapterId, selectedText, select
       updatedAt: new Date().toISOString(),
     };
 
-    await databaseService.addAnnotationThread(thread);
+    const remoteThread = normalizeThread(
+      novelId,
+      await novelApiService.createInteraction(novelId, thread) as Record<string, unknown>,
+    );
+    await databaseService.addAnnotationThread(remoteThread);
     queryClient.invalidateQueries({ queryKey: ['annotation-threads', novelId, chapterId] });
-
-    updateThreadMutation.mutate({
-      id: thread.id,
-      updates: { aiTask: { prompt: aiTaskPrompt, status: 'running' }, status: 'in_progress' },
-    });
 
     const targetThread = threads?.find((t) => t.id === aiTaskTarget);
     const contextText = targetThread?.content || aiTaskTarget;
@@ -250,19 +260,19 @@ export function AnnotationThreadPanel({ novelId, chapterId, selectedText, select
       novelId,
     ).then((fullText) => {
       updateThreadMutation.mutate({
-        id: thread.id,
+        id: remoteThread.id,
         updates: { aiTask: { prompt: aiTaskPrompt, result: fullText, status: 'completed' }, status: 'resolved' },
       });
       emitNovelEvent('annotation_resolve', {
         novelId,
-        threadId: thread.id,
+        threadId: remoteThread.id,
         source: 'ai_task',
       });
       setAiTaskPrompt('');
       setAiTaskTarget('');
     }).catch(() => {
       updateThreadMutation.mutate({
-        id: thread.id,
+        id: remoteThread.id,
         updates: { aiTask: { prompt: aiTaskPrompt, status: 'failed' }, status: 'pending' },
       });
     });

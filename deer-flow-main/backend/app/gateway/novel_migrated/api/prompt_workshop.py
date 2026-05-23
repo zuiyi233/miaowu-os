@@ -197,7 +197,7 @@ async def _check_workshop_admin(request: Request):
     
     说明：
     - 仅在服务端模式下可用
-    - 需要用户具有 is_admin 权限
+    - 需要用户具有主项目 admin 权限
     - 适用于私有化部署的管理场景
     """
     if not _is_workshop_server():
@@ -207,7 +207,9 @@ async def _check_workshop_admin(request: Request):
     if not user:
         raise HTTPException(status_code=401, detail="未登录")
 
-    if not getattr(user, "is_admin", False):
+    system_role = getattr(user, "system_role", None)
+    is_admin = bool(getattr(user, "is_admin", False)) or system_role == "admin"
+    if not is_admin:
         raise HTTPException(status_code=403, detail="需要管理员权限")
 
     return user

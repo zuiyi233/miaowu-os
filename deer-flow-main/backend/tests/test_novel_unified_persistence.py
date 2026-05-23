@@ -300,6 +300,52 @@ async def test_media_asset_upload_uses_object_storage_and_hides_object_key(main_
 
 
 @pytest.mark.asyncio
+async def test_media_asset_upload_deletes_object_when_db_commit_fails(monkeypatch) -> None:
+    from fastapi import UploadFile
+
+    from app.gateway.novel_migrated.api.media_assets import upload_media_asset
+    from app.gateway.novel_migrated.services import object_storage_service as storage_module
+
+    uploaded_key: str | None = None
+    deleted_keys: list[str] = []
+
+    async def fake_put_object(*, object_key: str, data: bytes, content_type: str | None = None) -> dict[str, object]:
+        nonlocal uploaded_key
+        uploaded_key = object_key
+        return {"etag": '"test"', "size_bytes": len(data)}
+
+    async def fake_delete_object(*, object_key: str) -> None:
+        deleted_keys.append(object_key)
+
+    class FailingDB:
+        def add(self, _asset):
+            return None
+
+        async def commit(self):
+            raise RuntimeError("db failed")
+
+        async def rollback(self):
+            return None
+
+    monkeypatch.setattr(storage_module.object_storage_service, "put_object", fake_put_object)
+    monkeypatch.setattr(storage_module.object_storage_service, "delete_object", fake_delete_object)
+
+    file = UploadFile(filename="asset.txt", file=BytesIO(b"asset bytes"))
+    with pytest.raises(RuntimeError, match="db failed"):
+        await upload_media_asset(
+            file=file,
+            purpose="attachment",
+            project_id=None,
+            metadata_json=None,
+            user_id="owner-a",
+            db=FailingDB(),
+        )
+
+    assert uploaded_key is not None
+    assert deleted_keys == [uploaded_key]
+
+
+@pytest.mark.asyncio
 async def test_media_asset_metadata_is_user_scoped(main_sqlite_engine) -> None:
     from app.gateway.novel_migrated.api.media_assets import get_media_asset
     from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
@@ -333,6 +379,346 @@ async def test_media_asset_metadata_is_user_scoped(main_sqlite_engine) -> None:
         response = await get_media_asset("asset-owner-a", user_id="owner-a", db=session)
         assert response["id"] == "asset-owner-a"
         assert "object_key" not in response
+
+
+@pytest.mark.asyncio
+async def test_import_export_service_scopes_export_by_user(main_sqlite_engine) -> None:
+    from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+    from app.gateway.novel_migrated.models.project import Project
+    from app.gateway.novel_migrated.services.import_export_service import ImportExportService
+
+    await init_db_schema()
+
+    async with AsyncSessionLocal() as session:
+        project = Project(id="export-project-a", user_id="owner-a", title="Export Project")
+        session.add(project)
+        await session.commit()
+
+    service = ImportExportService()
+
+    async with AsyncSessionLocal() as session:
+        with pytest.raises(ValueError):
+            await service.export_project("export-project-a", "owner-b", session)
+
+
+@pytest.mark.asyncio
+async def test_import_export_service_stores_export_zip_as_media_asset(main_sqlite_engine, monkeypatch) -> None:
+    from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+    from app.gateway.novel_migrated.models.media_asset import MediaAsset
+    from app.gateway.novel_migrated.models.project import Project
+    from app.gateway.novel_migrated.services import object_storage_service as storage_module
+    from app.gateway.novel_migrated.services.import_export_service import ImportExportService
+
+    await init_db_schema()
+
+    uploaded: dict[str, object] = {}
+
+    async def fake_put_object(*, object_key: str, data: bytes, content_type: str | None = None) -> dict[str, object]:
+        uploaded.update({"object_key": object_key, "data": data, "content_type": content_type})
+        return {"etag": '"export"', "size_bytes": len(data)}
+
+    monkeypatch.setattr(storage_module.object_storage_service, "put_object", fake_put_object)
+
+    async with AsyncSessionLocal() as session:
+        session.add(Project(id="export-project-asset", user_id="owner-a", title="Export Asset"))
+        await session.commit()
+
+    service = ImportExportService()
+
+    async with AsyncSessionLocal() as session:
+        result = await service.export_project("export-project-asset", "owner-a", session)
+
+        assert result.content.startswith(b"PK")
+        assert result.media_asset_id
+        assert result.download_path == f"/media-assets/{result.media_asset_id}/download"
+        assert uploaded["content_type"] == "application/zip"
+        assert str(uploaded["object_key"]).startswith("users/owner-a/novel-assets/")
+
+        db_result = await session.execute(select(MediaAsset).where(MediaAsset.id == result.media_asset_id))
+        asset = db_result.scalar_one()
+        assert asset.project_id == "export-project-asset"
+        assert asset.user_id == "owner-a"
+        assert asset.purpose == "project_export"
+        assert asset.object_key == uploaded["object_key"]
+
+
+@pytest.mark.asyncio
+async def test_import_export_service_stores_import_zip_as_media_asset(main_sqlite_engine, monkeypatch) -> None:
+    import json
+    import zipfile
+
+    from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+    from app.gateway.novel_migrated.models.media_asset import MediaAsset
+    from app.gateway.novel_migrated.services import object_storage_service as storage_module
+    from app.gateway.novel_migrated.services.import_export_service import ImportExportService
+
+    await init_db_schema()
+
+    uploaded: dict[str, object] = {}
+
+    async def fake_put_object(*, object_key: str, data: bytes, content_type: str | None = None) -> dict[str, object]:
+        uploaded.update({"object_key": object_key, "data": data, "content_type": content_type})
+        return {"etag": '"import"', "size_bytes": len(data)}
+
+    monkeypatch.setattr(storage_module.object_storage_service, "put_object", fake_put_object)
+
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(
+            "project_data.json",
+            json.dumps({"project": {"title": "Imported Project"}}, ensure_ascii=False),
+        )
+        zf.writestr("workspace/chapters/001.md", "# chapter")
+
+    service = ImportExportService()
+
+    async with AsyncSessionLocal() as session:
+        project_id = await service.import_project("owner-a", zip_buffer.getvalue(), session, filename="imported.zip")
+
+    async with AsyncSessionLocal() as session:
+        db_result = await session.execute(select(MediaAsset).where(MediaAsset.project_id == project_id))
+        asset = db_result.scalar_one()
+        assert asset.user_id == "owner-a"
+        assert asset.purpose == "project_import_source"
+        assert asset.filename == "imported.zip"
+        assert asset.object_key == uploaded["object_key"]
+        assert uploaded["content_type"] == "application/zip"
+
+
+@pytest.mark.asyncio
+async def test_book_import_create_task_stores_source_txt_as_media_asset(main_sqlite_engine, monkeypatch) -> None:
+    from fastapi import UploadFile
+
+    from app.gateway.novel_migrated.api.book_import import create_book_import_task
+    from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+    from app.gateway.novel_migrated.models.media_asset import MediaAsset
+    from app.gateway.novel_migrated.services import object_storage_service as storage_module
+    from app.gateway.novel_migrated.services.book_import_service import book_import_service
+
+    await init_db_schema()
+
+    uploaded: dict[str, object] = {}
+    captured: dict[str, object] = {}
+
+    async def fake_put_object(*, object_key: str, data: bytes, content_type: str | None = None) -> dict[str, object]:
+        uploaded.update({"object_key": object_key, "data": data, "content_type": content_type})
+        return {"etag": '"source"', "size_bytes": len(data)}
+
+    async def fake_create_task(**kwargs):
+        captured.update(kwargs)
+        return {"task_id": "task-source", "status": "pending"}
+
+    monkeypatch.setattr(storage_module.object_storage_service, "put_object", fake_put_object)
+    monkeypatch.setattr(book_import_service, "create_task", fake_create_task)
+
+    request = SimpleNamespace(state=SimpleNamespace(user_id="owner-a"))
+    source_bytes = "第一章 开始\n正文".encode()
+    file = UploadFile(filename='source"\r\nbad.txt', file=BytesIO(source_bytes))
+
+    async with AsyncSessionLocal() as session:
+        response = await create_book_import_task(
+            request=request,
+            file=file,
+            project_id=None,
+            create_new_project=True,
+            import_mode="append",
+            extract_mode="tail",
+            tail_chapter_count=10,
+            db=session,
+        )
+
+        assert response == {"task_id": "task-source", "status": "pending"}
+        assert captured["source_asset_id"]
+        assert uploaded["data"] == source_bytes
+        assert uploaded["content_type"] == "text/plain"
+
+        db_result = await session.execute(select(MediaAsset).where(MediaAsset.id == captured["source_asset_id"]))
+        asset = db_result.scalar_one()
+        assert asset.user_id == "owner-a"
+        assert asset.project_id is None
+        assert asset.purpose == "book_import_source"
+        assert "\r" not in asset.filename
+        assert "\n" not in asset.filename
+        assert '"' not in asset.filename
+        assert asset.object_key == uploaded["object_key"]
+
+
+@pytest.mark.asyncio
+async def test_cover_generation_stores_cover_as_media_asset(main_sqlite_engine, monkeypatch) -> None:
+    from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+    from app.gateway.novel_migrated.models.media_asset import MediaAsset
+    from app.gateway.novel_migrated.models.project import Project
+    from app.gateway.novel_migrated.models.settings import Settings
+    from app.gateway.novel_migrated.services import cover_generation_service as cover_module
+
+    await init_db_schema()
+
+    uploaded: dict[str, object] = {}
+
+    async def fake_put_object(*, object_key: str, data: bytes, content_type: str | None = None) -> dict[str, object]:
+        uploaded.update({"object_key": object_key, "data": data, "content_type": content_type})
+        return {"etag": '"cover"', "size_bytes": len(data)}
+
+    class FakeProvider:
+        async def generate_cover(self, *, prompt: str, model: str, width: int, height: int) -> dict[str, object]:
+            return {
+                "content": b"cover-bytes",
+                "file_extension": "png",
+                "provider": "fake-provider",
+                "model": model,
+                "revised_prompt": prompt,
+            }
+
+    monkeypatch.setattr(cover_module.object_storage_service, "put_object", fake_put_object)
+    monkeypatch.setattr(
+        cover_module.cover_generation_service,
+        "_build_provider",
+        lambda _settings: FakeProvider(),
+    )
+
+    async with AsyncSessionLocal() as session:
+        session.add(Project(id="cover-project-a", user_id="owner-a", title="Cover Project"))
+        session.add(
+            Settings(
+                user_id="owner-a",
+                cover_enabled=True,
+                cover_api_provider="fake",
+                cover_api_key="encrypted-key",
+                cover_image_model="fake-image-model",
+            )
+        )
+        await session.commit()
+
+    async with AsyncSessionLocal() as session:
+        response = await cover_module.cover_generation_service.generate_cover(
+            db=session,
+            user_id="owner-a",
+            project_id="cover-project-a",
+        )
+
+        assert response["cover_status"] == "ready"
+        assert response["cover_image_url"].startswith("/media-assets/")
+        assert response["cover_image_url"].endswith("/download")
+        assert "object_key" not in response
+        assert uploaded["data"] == b"cover-bytes"
+        assert str(uploaded["object_key"]).startswith("users/owner-a/novel-assets/")
+
+        result = await session.execute(select(MediaAsset).where(MediaAsset.project_id == "cover-project-a"))
+        asset = result.scalar_one()
+        assert asset.user_id == "owner-a"
+        assert asset.purpose == "cover"
+        assert asset.object_key == uploaded["object_key"]
+
+
+@pytest.mark.asyncio
+async def test_cover_generation_deletes_object_when_db_commit_fails(monkeypatch) -> None:
+    from app.gateway.novel_migrated.services import cover_generation_service as cover_module
+
+    deleted_keys: list[str] = []
+
+    async def fake_put_object(*, object_key: str, data: bytes, content_type: str | None = None) -> dict[str, object]:
+        return {"etag": '"cover"', "size_bytes": len(data)}
+
+    async def fake_delete_object(*, object_key: str) -> None:
+        deleted_keys.append(object_key)
+
+    class FailingDB:
+        def add(self, _asset):
+            return None
+
+        async def rollback(self):
+            return None
+
+    monkeypatch.setattr(cover_module.object_storage_service, "put_object", fake_put_object)
+    monkeypatch.setattr(cover_module.object_storage_service, "delete_object", fake_delete_object)
+
+    db = FailingDB()
+    image_url, object_key = await cover_module.cover_generation_service._save_cover_asset(
+        db=db,
+        user_id="owner-a",
+        project_id="cover-project-a",
+        content=b"cover-bytes",
+        file_extension="png",
+        provider="fake-provider",
+        model="fake-model",
+    )
+    await cover_module.cover_generation_service._delete_uploaded_cover_object(object_key)
+
+    assert image_url.startswith("/media-assets/")
+    assert deleted_keys == [object_key]
+
+
+def test_safe_download_content_disposition_sanitizes_user_filename() -> None:
+    from app.gateway.novel_migrated.utils.http_headers import safe_download_content_disposition
+
+    header = safe_download_content_disposition('坏标题"\r\nX-Bad: 1.png')
+
+    assert "\r" not in header
+    assert "\n" not in header
+    assert "X-Bad" in header
+    assert "filename=" in header
+    assert "filename*=UTF-8''" in header
+
+
+@pytest.mark.asyncio
+async def test_delete_project_marks_media_assets_deleted(main_sqlite_engine, monkeypatch) -> None:
+    from app.gateway.novel_migrated.api.projects import delete_project
+    from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+    from app.gateway.novel_migrated.models.media_asset import MediaAsset
+    from app.gateway.novel_migrated.models.project import Project
+    from app.gateway.novel_migrated.services import memory_service as memory_module
+    from app.gateway.novel_migrated.services import object_storage_service as storage_module
+    from app.gateway.novel_migrated.services import workspace_document_service as workspace_module
+
+    await init_db_schema()
+
+    deleted_keys: list[str] = []
+
+    async def fake_delete_object(*, object_key: str) -> None:
+        deleted_keys.append(object_key)
+
+    async def fake_delete_project_memories(*_args, **_kwargs) -> bool:
+        return True
+
+    async def fake_delete_project_workspace(*_args, **_kwargs) -> bool:
+        return True
+
+    monkeypatch.setattr(storage_module.object_storage_service, "delete_object", fake_delete_object)
+    monkeypatch.setattr(memory_module.memory_service, "delete_project_memories", fake_delete_project_memories)
+    monkeypatch.setattr(
+        workspace_module.workspace_document_service,
+        "delete_project_workspace",
+        fake_delete_project_workspace,
+    )
+
+    async with AsyncSessionLocal() as session:
+        session.add(Project(id="project-delete-media", user_id="owner-a", title="Delete Media"))
+        session.add(
+            MediaAsset(
+                id="asset-delete-media",
+                user_id="owner-a",
+                project_id="project-delete-media",
+                purpose="cover",
+                filename="cover.png",
+                mime_type="image/png",
+                size_bytes=11,
+                storage_backend="s3",
+                bucket="miaowu-novel-assets",
+                object_key="users/owner-a/novel-assets/asset-delete-media/cover.png",
+                status="active",
+            )
+        )
+        await session.commit()
+
+    async with AsyncSessionLocal() as session:
+        response = await delete_project("project-delete-media", user_id="owner-a", db=session)
+        assert response == {"message": "Project deleted"}
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(MediaAsset).where(MediaAsset.id == "asset-delete-media"))
+        asset = result.scalar_one()
+        assert asset.status == "deleted"
+        assert deleted_keys == ["users/owner-a/novel-assets/asset-delete-media/cover.png"]
 
 
 @pytest.mark.asyncio

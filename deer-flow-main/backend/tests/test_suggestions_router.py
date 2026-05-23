@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import FastAPI, Request
@@ -38,8 +39,10 @@ def test_format_conversation_formats_roles():
 
 
 def _make_fake_request() -> Request:
-    scope = {"type": "http", "method": "POST"}
-    return Request(scope)
+    scope = {"type": "http", "method": "POST", "state": {"user_id": "suggestions-user"}}
+    request = Request(scope)
+    request.state.auth = SimpleNamespace(user=SimpleNamespace(id="suggestions-user"))
+    return request
 
 
 def _make_fake_db() -> AsyncSession:
@@ -267,7 +270,18 @@ def test_generate_suggestions_without_module_id_forwards_model_name(monkeypatch)
 def test_suggestions_route_integration_with_module_id():
     """Integration test: full HTTP request path with module_id."""
     app = FastAPI()
+
+    @app.middleware("http")
+    async def _inject_user(request, call_next):
+        request.state.user_id = "suggestions-user"
+        request.state.auth = SimpleNamespace(user=SimpleNamespace(id="suggestions-user"))
+        return await call_next(request)
+
+    async def _fake_db():
+        yield _make_fake_db()
+
     app.include_router(suggestions.router)
+    app.dependency_overrides[suggestions.get_db] = _fake_db
 
     fake_ai_service = MagicMock()
     fake_ai_service.generate_text_with_messages = AsyncMock(return_value={"content": '["Q1", "Q2", "Q3"]'})

@@ -1,6 +1,16 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from app.gateway.novel_migrated.services import ai_service
+
+
+def _fake_app_config() -> SimpleNamespace:
+    model = SimpleNamespace(name="openai-gpt-4o-mini", model="gpt-4o-mini")
+    return SimpleNamespace(
+        models=[model],
+        get_model_config=lambda name: model if name in {"openai-gpt-4o-mini", "gpt-4o-mini"} else None,
+    )
 
 
 def _stats_key_for(cache_key: tuple[str, ...]) -> str:
@@ -11,6 +21,7 @@ def _stats_key_for(cache_key: tuple[str, ...]) -> str:
 
 def test_model_cache_stats_track_by_cache_key(monkeypatch):
     ai_service.clear_model_cache()
+    monkeypatch.setattr(ai_service, "get_app_config", _fake_app_config)
 
     created: list[tuple[str, dict]] = []
 
@@ -40,6 +51,7 @@ def test_model_cache_stats_track_by_cache_key(monkeypatch):
 
 def test_model_cache_eviction_uses_lru_metadata(monkeypatch):
     ai_service.clear_model_cache()
+    monkeypatch.setattr(ai_service, "get_app_config", _fake_app_config)
     monkeypatch.setattr(ai_service, "_MODEL_CACHE_MAX_SIZE", 2)
     monkeypatch.setattr(
         ai_service,
@@ -65,6 +77,7 @@ def test_model_cache_eviction_uses_lru_metadata(monkeypatch):
 
 def test_clear_model_cache_clears_entries_and_models(monkeypatch):
     ai_service.clear_model_cache()
+    monkeypatch.setattr(ai_service, "get_app_config", _fake_app_config)
     monkeypatch.setattr(ai_service, "create_chat_model", lambda *, name, **overrides: object())
 
     ai_service._get_cached_model("gpt-4o-mini")
@@ -83,6 +96,7 @@ def test_clear_model_cache_clears_entries_and_models(monkeypatch):
 
 def test_model_cache_isolated_by_thread_and_loop_scope(monkeypatch):
     ai_service.clear_model_cache()
+    monkeypatch.setattr(ai_service, "get_app_config", _fake_app_config)
 
     created: list[dict] = []
 
@@ -143,6 +157,7 @@ def test_model_cache_isolated_by_thread_and_loop_scope(monkeypatch):
 
 def test_clear_model_cache_best_effort_closes_sync_and_async_models(monkeypatch):
     ai_service.clear_model_cache()
+    monkeypatch.setattr(ai_service, "get_app_config", _fake_app_config)
 
     class SyncClosableModel:
         def __init__(self) -> None:

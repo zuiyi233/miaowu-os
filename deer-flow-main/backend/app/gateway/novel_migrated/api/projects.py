@@ -18,6 +18,7 @@ from app.gateway.novel_migrated.models.character import Character
 from app.gateway.novel_migrated.models.outline import Outline
 from app.gateway.novel_migrated.models.project import Project
 from app.gateway.novel_migrated.services.ai_service import AIService
+from app.gateway.novel_migrated.services.object_storage_service import ObjectStorageError, object_storage_service
 from app.gateway.novel_migrated.services.optimistic_lock import optimistic_update
 from app.gateway.novel_migrated.services.prompt_service import PromptService
 
@@ -174,6 +175,7 @@ async def delete_project(
 
     from app.gateway.novel_migrated.models.document_index import DocumentIndex
     from app.gateway.novel_migrated.models.foreshadow import Foreshadow
+    from app.gateway.novel_migrated.models.media_asset import MediaAsset
     from app.gateway.novel_migrated.models.relationship import CharacterRelationship, Organization, OrganizationMember
     from app.gateway.novel_migrated.services.memory_service import memory_service
     from app.gateway.novel_migrated.services.workspace_document_service import workspace_document_service
@@ -204,6 +206,26 @@ async def delete_project(
     await db.execute(
         DocumentIndex.__table__.delete().where(DocumentIndex.project_id == project_id)
     )
+
+    media_result = await db.execute(
+        select(MediaAsset).where(
+            MediaAsset.project_id == project_id,
+            MediaAsset.user_id == user_id,
+            MediaAsset.status == "active",
+        )
+    )
+    for asset in media_result.scalars().all():
+        try:
+            await object_storage_service.delete_object(object_key=asset.object_key)
+            asset.status = "deleted"
+        except ObjectStorageError:
+            logger.warning(
+                "Failed to delete media asset object for project_id=%s asset_id=%s",
+                project_id,
+                asset.id,
+                exc_info=True,
+            )
+            asset.status = "delete_failed"
 
     try:
         from app.gateway.novel_migrated.models.chapter import Chapter as ChapterModel

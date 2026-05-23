@@ -6,6 +6,7 @@ import {
   Database,
   FileJson,
   FileSpreadsheet,
+  Trash2,
   AlertCircle,
   CheckCircle2,
   Loader2,
@@ -171,18 +172,18 @@ export function DataManagement() {
               {t.novel.importJsonFile}
             </Button>
             <Button
-              variant="destructive"
+              variant="secondary"
               className="w-full gap-2"
               onClick={async () => {
                 if (confirm(t.novel.clearAllDataConfirm)) {
                   await databaseService.clearAllData();
-                  toast.success(t.novel.clearAllDataSuccess);
+                  toast.success('已清空浏览器本地缓存；后端小说数据不会被删除');
                   window.location.reload();
                 }
               }}
             >
-              <AlertCircle className="h-4 w-4" />
-              {t.novel.clearAllData}
+              <Trash2 className="h-4 w-4" />
+              清空本地缓存
             </Button>
           </CardContent>
         </Card>

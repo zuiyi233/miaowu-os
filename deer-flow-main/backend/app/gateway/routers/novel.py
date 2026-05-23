@@ -22,10 +22,14 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 from sse_starlette.sse import EventSourceResponse
 
 from app.gateway.novel_migrated.api.common import get_user_id
-from app.gateway.novel_migrated.services.novel_query_service import novel_query_service
+from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
+from app.gateway.novel_migrated.models.chapter import Chapter
+from app.gateway.novel_migrated.models.character import Character
+from app.gateway.novel_migrated.models.project import Project
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["novel"])
@@ -88,23 +92,11 @@ class NovelStore:
             self._audits = {}
 
     async def _persist_locked(self) -> None:
-        payload = {
-            "novels": self._novels,
-            "chapters": self._chapters,
-            "characters": self._characters,
-            "entities": self._entities,
-            "timeline": self._timeline,
-            "graphs": self._graphs,
-            "recommendations": self._recommendations,
-            "interactions": self._interactions,
-            "quality_reports": self._quality_reports,
-            "audits": self._audits,
-        }
-        self._storage_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self._storage_path.with_suffix(".tmp")
-        serialized = json.dumps(payload, ensure_ascii=False, indent=2)
-        await asyncio.to_thread(tmp_path.write_text, serialized, encoding="utf-8")
-        await asyncio.to_thread(tmp_path.replace, self._storage_path)
+        # Legacy JSON persistence is deliberately disabled. New novel data must
+        # be written through the unified DeerFlow persistence layer; this store
+        # is retained only as a process-local compatibility cache for endpoints
+        # that have not yet gained dedicated normalized tables.
+        return
 
     @staticmethod
     def _extract_author(payload: dict[str, Any] | None) -> str | None:
@@ -914,6 +906,112 @@ def _strip_idempotency_fields(payload: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in payload.items() if k not in _IDEMPOTENCY_BODY_KEYS}
 
 
+def _serialize_modern_project(project: Project, *, chapters: list[Chapter] | None = None, characters: list[Character] | None = None) -> dict[str, Any]:
+    chapter_items = chapters or []
+    character_items = characters or []
+    return {
+        "id": project.id,
+        "title": project.title,
+        "outline": project.description or "",
+        "coverImage": project.cover_image_url,
+        "metadata": {
+            "genre": project.genre or "",
+            "theme": project.theme or "",
+            "status": project.status or "",
+            "target_words": project.target_words or 0,
+            "source": "novel_migrated.projects",
+        },
+        "chapters": [_serialize_modern_chapter(item) for item in chapter_items],
+        "characters": [_serialize_modern_character(item) for item in character_items if not item.is_organization],
+        "entities": [_serialize_modern_character(item) for item in character_items],
+        "timeline": [],
+        "graph": None,
+        "volumes": [],
+        "relationships": [],
+        "createdAt": project.created_at.isoformat() if project.created_at else None,
+        "updatedAt": project.updated_at.isoformat() if project.updated_at else None,
+    }
+
+
+def _serialize_modern_summary(project: Project, *, chapter_count: int = 0, word_count: int = 0) -> dict[str, Any]:
+    return {
+        "id": project.id,
+        "title": project.title,
+        "outline": project.description or "",
+        "coverImage": project.cover_image_url,
+        "metadata": {
+            "genre": project.genre or "",
+            "theme": project.theme or "",
+            "status": project.status or "",
+            "target_words": project.target_words or 0,
+            "source": "novel_migrated.projects",
+        },
+        "volumesCount": 0,
+        "chaptersCount": chapter_count,
+        "wordCount": word_count,
+        "createdAt": project.created_at.isoformat() if project.created_at else None,
+        "updatedAt": project.updated_at.isoformat() if project.updated_at else None,
+    }
+
+
+def _serialize_modern_chapter(chapter: Chapter) -> dict[str, Any]:
+    return {
+        "id": chapter.id,
+        "novelId": chapter.project_id,
+        "title": chapter.title,
+        "content": chapter.content or "",
+        "summary": chapter.summary or "",
+        "order": chapter.chapter_number or 0,
+        "chapterNumber": chapter.chapter_number or 0,
+        "volumeId": None,
+        "syncStatus": "synced",
+        "version": chapter.version or 1,
+        "createdAt": chapter.created_at.isoformat() if chapter.created_at else None,
+        "updatedAt": chapter.updated_at.isoformat() if chapter.updated_at else None,
+    }
+
+
+def _serialize_modern_character(character: Character) -> dict[str, Any]:
+    entity_type = "faction" if character.is_organization else "character"
+    return {
+        "id": character.id,
+        "novelId": character.project_id,
+        "name": character.name,
+        "type": entity_type,
+        "description": character.background or character.personality or "",
+        "roleType": character.role_type,
+        "isOrganization": bool(character.is_organization),
+        "properties": {
+            "age": character.age,
+            "gender": character.gender,
+            "appearance": character.appearance,
+            "organization_type": character.organization_type,
+            "organization_purpose": character.organization_purpose,
+            "traits": character.traits,
+        },
+        "syncStatus": "synced",
+        "version": character.version or 1,
+        "createdAt": character.created_at.isoformat() if character.created_at else None,
+        "updatedAt": character.updated_at.isoformat() if character.updated_at else None,
+    }
+
+
+async def _get_owned_project(db, novel_id: str, user_id: str) -> Project:
+    result = await db.execute(
+        select(Project).where(Project.id == novel_id, Project.user_id == user_id)
+    )
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail="Novel not found")
+    return project
+
+
+async def _ensure_owned_novel(novel_id: str, user_id: str) -> None:
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        await _get_owned_project(db, novel_id, user_id)
+
+
 # ---------------------------------------------------------------------------
 # Novel CRUD endpoints
 # ---------------------------------------------------------------------------
@@ -921,55 +1019,97 @@ def _strip_idempotency_fields(payload: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/novels")
 @router.get("/novel/novels", deprecated=True)
-async def list_novels(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)):
-    """List novels with pagination, merging legacy and modern store results."""
-    legacy_result = await _novel_store.list_novels(page=page, page_size=page_size)
-    return await novel_query_service.list_novels(legacy_result=legacy_result, page=page, page_size=page_size)
+async def list_novels(
+    user_id: str = Depends(get_user_id),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """List novels from the unified persistence store for the current user."""
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        total_result = await db.execute(
+            select(func.count(Project.id)).where(Project.user_id == user_id)
+        )
+        total = total_result.scalar() or 0
+        result = await db.execute(
+            select(Project)
+            .where(Project.user_id == user_id)
+            .order_by(Project.updated_at.desc(), Project.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        projects = result.scalars().all()
+        items: list[dict[str, Any]] = []
+        for project in projects:
+            stats_result = await db.execute(
+                select(func.count(Chapter.id), func.coalesce(func.sum(Chapter.word_count), 0))
+                .where(Chapter.project_id == project.id)
+            )
+            chapter_count, word_count = stats_result.one()
+            items.append(
+                _serialize_modern_summary(
+                    project,
+                    chapter_count=int(chapter_count or 0),
+                    word_count=int(word_count or 0),
+                )
+            )
+        return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/novels-dashboard/stats")
+@router.get("/novels/stats/dashboard", deprecated=True)
+async def get_novel_dashboard_stats(user_id: str = Depends(get_user_id)):
+    """Return current-user novel dashboard stats from unified persistence."""
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        novel_count_result = await db.execute(
+            select(func.count(Project.id)).where(Project.user_id == user_id)
+        )
+        chapter_count_result = await db.execute(
+            select(func.count(Chapter.id))
+            .join(Project, Chapter.project_id == Project.id)
+            .where(Project.user_id == user_id)
+        )
+        word_count_result = await db.execute(
+            select(func.coalesce(func.sum(Chapter.word_count), 0))
+            .join(Project, Chapter.project_id == Project.id)
+            .where(Project.user_id == user_id)
+        )
+        character_count_result = await db.execute(
+            select(func.count(Character.id))
+            .join(Project, Character.project_id == Project.id)
+            .where(Project.user_id == user_id)
+        )
+        return {
+            "totalWordCount": int(word_count_result.scalar() or 0),
+            "totalChapters": int(chapter_count_result.scalar() or 0),
+            "totalEntities": int(character_count_result.scalar() or 0),
+            "novelCount": int(novel_count_result.scalar() or 0),
+        }
 
 
 @router.get("/novels/{novel_id}")
 @router.get("/novel/novels/{novel_id}", deprecated=True)
-async def get_novel(novel_id: str):
+async def get_novel(novel_id: str, user_id: str = Depends(get_user_id)):
     """Get a novel with its chapters, characters, entities, timeline, graph."""
-    novel = await _novel_store.get_novel(novel_id)
-    if novel:
-        return novel
-
-    try:
-        from sqlalchemy import select
-
-        from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
-        from app.gateway.novel_migrated.models.project import Project
-
-        await init_db_schema()
-        async with AsyncSessionLocal() as modern_db:
-            result = await modern_db.execute(select(Project).where(Project.id == novel_id))
-            project = result.scalar_one_or_none()
-            if project:
-                return {
-                    "id": project.id,
-                    "title": project.title,
-                    "outline": project.description or "",
-                    "coverImage": project.cover_image_url,
-                    "metadata": {
-                        "genre": project.genre or "",
-                        "theme": project.theme or "",
-                        "status": project.status or "",
-                        "target_words": project.target_words or 0,
-                        "source": "novel_migrated.projects",
-                    },
-                    "chapters": [],
-                    "characters": [],
-                    "entities": [],
-                    "timeline": [],
-                    "graph": None,
-                    "createdAt": project.created_at.isoformat() if project.created_at else None,
-                    "updatedAt": project.updated_at.isoformat() if project.updated_at else None,
-                }
-    except Exception as exc:
-        logger.debug("get_novel: modern store fallback query skipped (%s)", exc)
-
-    raise HTTPException(status_code=404, detail="Novel not found")
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        project = await _get_owned_project(db, novel_id, user_id)
+        chapters_result = await db.execute(
+            select(Chapter)
+            .where(Chapter.project_id == project.id)
+            .order_by(Chapter.chapter_number, Chapter.sub_index)
+        )
+        characters_result = await db.execute(
+            select(Character)
+            .where(Character.project_id == project.id)
+            .order_by(Character.created_at)
+        )
+        return _serialize_modern_project(
+            project,
+            chapters=list(chapters_result.scalars().all()),
+            characters=list(characters_result.scalars().all()),
+        )
 
 
 @router.post("/novels")
@@ -977,8 +1117,24 @@ async def get_novel(novel_id: str):
 async def create_novel(request: Request, user_id: str = Depends(get_user_id)):
     """Create a new novel project."""
     data = await request.json()
-    data["user_id"] = user_id
-    return await _novel_store.create_novel(data)
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        project = Project(
+            user_id=user_id,
+            title=str(data.get("title") or "Untitled"),
+            description=str(data.get("outline") or data.get("description") or ""),
+            theme=str((data.get("metadata") or {}).get("theme") or data.get("theme") or ""),
+            genre=str((data.get("metadata") or {}).get("genre") or data.get("genre") or ""),
+            target_words=int((data.get("metadata") or {}).get("target_words") or data.get("target_words") or 100000),
+            chapter_count=int(data.get("chapter_count") or data.get("chapterCount") or 30),
+            status="created",
+            wizard_status="pending",
+            wizard_step=0,
+        )
+        db.add(project)
+        await db.commit()
+        await db.refresh(project)
+        return _serialize_modern_project(project)
 
 
 @router.put("/novels/{novel_id}")
@@ -986,11 +1142,23 @@ async def create_novel(request: Request, user_id: str = Depends(get_user_id)):
 async def update_novel(novel_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Update a novel's metadata."""
     data = await request.json()
-    data["user_id"] = user_id
-    novel = await _novel_store.update_novel(novel_id, data)
-    if not novel:
-        raise HTTPException(status_code=404, detail="Novel not found")
-    return novel
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        project = await _get_owned_project(db, novel_id, user_id)
+        if "title" in data and data["title"] is not None:
+            project.title = str(data["title"])
+        if "outline" in data and data["outline"] is not None:
+            project.description = str(data["outline"])
+        if "description" in data and data["description"] is not None:
+            project.description = str(data["description"])
+        metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        if "genre" in data or "genre" in metadata:
+            project.genre = str(data.get("genre") or metadata.get("genre") or "")
+        if "theme" in data or "theme" in metadata:
+            project.theme = str(data.get("theme") or metadata.get("theme") or "")
+        await db.commit()
+        await db.refresh(project)
+        return _serialize_modern_project(project)
 
 
 _NOVEL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
@@ -1002,42 +1170,12 @@ async def delete_novel(novel_id: str, user_id: str = Depends(get_user_id)):
     """Delete a novel and all its associated data."""
     if not _NOVEL_ID_PATTERN.match(novel_id):
         raise HTTPException(status_code=400, detail="Invalid novel_id format")
-
-    ok = await _novel_store.delete_novel(novel_id)
-    if ok:
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        project = await _get_owned_project(db, novel_id, user_id)
+        await db.delete(project)
+        await db.commit()
         return {"deleted": True}
-
-    try:
-        from sqlalchemy import delete as sa_delete
-        from sqlalchemy import select
-
-        from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
-        from app.gateway.novel_migrated.models.project import Project
-
-        await init_db_schema()
-        async with AsyncSessionLocal() as modern_db:
-            result = await modern_db.execute(select(Project).where(Project.id == novel_id))
-            project = result.scalar_one_or_none()
-            if project:
-                try:
-                    from app.gateway.novel_migrated.models.analysis_task import AnalysisTask
-                    from app.gateway.novel_migrated.models.batch_generation_task import BatchGenerationTask
-                    from app.gateway.novel_migrated.models.regeneration_task import RegenerationTask
-
-                    await modern_db.execute(sa_delete(AnalysisTask).where(AnalysisTask.project_id == novel_id))
-                    await modern_db.execute(sa_delete(BatchGenerationTask).where(BatchGenerationTask.project_id == novel_id))
-                    await modern_db.execute(sa_delete(RegenerationTask).where(RegenerationTask.project_id == novel_id))
-                except ImportError:
-                    pass
-                await modern_db.delete(project)
-                await modern_db.commit()
-                return {"deleted": True}
-    except (ImportError, OSError) as exc:
-        logger.warning("delete_novel: modern store fallback unavailable (%s)", exc)
-    except Exception as exc:
-        logger.warning("delete_novel: modern store fallback query failed (%s)", exc)
-
-    raise HTTPException(status_code=404, detail="Novel not found")
 
 
 # ---------------------------------------------------------------------------
@@ -1047,19 +1185,31 @@ async def delete_novel(novel_id: str, user_id: str = Depends(get_user_id)):
 
 @router.get("/novels/{novel_id}/chapters")
 @router.get("/novel/novels/{novel_id}/chapters", deprecated=True)
-async def list_chapters(novel_id: str, volume_id: str | None = None):
+async def list_chapters(novel_id: str, user_id: str = Depends(get_user_id), volume_id: str | None = None):
     """List chapters for a novel."""
-    return await _novel_store.list_chapters(novel_id, volume_id=volume_id)
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        await _get_owned_project(db, novel_id, user_id)
+        query = select(Chapter).where(Chapter.project_id == novel_id)
+        query = query.order_by(Chapter.chapter_number, Chapter.sub_index)
+        result = await db.execute(query)
+        return [_serialize_modern_chapter(item) for item in result.scalars().all()]
 
 
 @router.get("/novels/{novel_id}/chapters/{chapter_id}")
 @router.get("/novel/novels/{novel_id}/chapters/{chapter_id}", deprecated=True)
-async def get_chapter(novel_id: str, chapter_id: str):
+async def get_chapter(novel_id: str, chapter_id: str, user_id: str = Depends(get_user_id)):
     """Get a single chapter."""
-    chapter = await _novel_store.get_chapter(chapter_id)
-    if not chapter or chapter.get("novelId") != novel_id:
-        raise HTTPException(status_code=404, detail="Chapter not found")
-    return chapter
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        await _get_owned_project(db, novel_id, user_id)
+        result = await db.execute(
+            select(Chapter).where(Chapter.id == chapter_id, Chapter.project_id == novel_id)
+        )
+        chapter = result.scalar_one_or_none()
+        if chapter is None:
+            raise HTTPException(status_code=404, detail="Chapter not found")
+        return _serialize_modern_chapter(chapter)
 
 
 @router.post("/novels/{novel_id}/chapters")
@@ -1067,9 +1217,28 @@ async def get_chapter(novel_id: str, chapter_id: str):
 async def create_chapter(novel_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Create a new chapter."""
     data = await request.json()
-    data["user_id"] = user_id
-    idempotency_key = _extract_idempotency_key(request, data)
-    return await _novel_store.create_chapter(novel_id, _strip_idempotency_fields(data), idempotency_key=idempotency_key)
+    data = _strip_idempotency_fields(data)
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        await _get_owned_project(db, novel_id, user_id)
+        max_result = await db.execute(
+            select(func.max(Chapter.chapter_number)).where(Chapter.project_id == novel_id)
+        )
+        max_number = int(max_result.scalar() or 0)
+        content = str(data.get("content") or "")
+        chapter = Chapter(
+            project_id=novel_id,
+            chapter_number=int(data.get("chapterNumber") or data.get("chapter_number") or data.get("order") or max_number + 1),
+            title=str(data.get("title") or f"第{max_number + 1}章"),
+            content=content,
+            summary=str(data.get("summary") or ""),
+            word_count=len(content),
+            status="draft" if content else "planned",
+        )
+        db.add(chapter)
+        await db.commit()
+        await db.refresh(chapter)
+        return _serialize_modern_chapter(chapter)
 
 
 @router.put("/novels/{novel_id}/chapters/{chapter_id}")
@@ -1077,23 +1246,49 @@ async def create_chapter(novel_id: str, request: Request, user_id: str = Depends
 async def update_chapter(novel_id: str, chapter_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Update a chapter's content."""
     data = await request.json()
-    data["user_id"] = user_id
-    idempotency_key = _extract_idempotency_key(request, data)
-    chapter = await _novel_store.update_chapter(novel_id, chapter_id, _strip_idempotency_fields(data), idempotency_key=idempotency_key)
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
-    return chapter
+    data = _strip_idempotency_fields(data)
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        await _get_owned_project(db, novel_id, user_id)
+        result = await db.execute(
+            select(Chapter).where(Chapter.id == chapter_id, Chapter.project_id == novel_id)
+        )
+        chapter = result.scalar_one_or_none()
+        if chapter is None:
+            raise HTTPException(status_code=404, detail="Chapter not found")
+        if "title" in data and data["title"] is not None:
+            chapter.title = str(data["title"])
+        if "summary" in data and data["summary"] is not None:
+            chapter.summary = str(data["summary"])
+        if "content" in data and data["content"] is not None:
+            chapter.content = str(data["content"])
+            chapter.word_count = len(chapter.content)
+            if chapter.status == "planned":
+                chapter.status = "draft"
+        if "order" in data and data["order"] is not None:
+            chapter.chapter_number = int(data["order"])
+        await db.commit()
+        await db.refresh(chapter)
+        return _serialize_modern_chapter(chapter)
 
 
 @router.delete("/novels/{novel_id}/chapters/{chapter_id}")
 @router.delete("/novel/novels/{novel_id}/chapters/{chapter_id}", deprecated=True)
 async def delete_chapter(novel_id: str, chapter_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Delete a chapter."""
-    idempotency_key = _extract_idempotency_key(request)
-    ok = await _novel_store.delete_chapter(novel_id, chapter_id, idempotency_key=idempotency_key)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Chapter not found")
-    return {"deleted": True}
+    _extract_idempotency_key(request)
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        await _get_owned_project(db, novel_id, user_id)
+        result = await db.execute(
+            select(Chapter).where(Chapter.id == chapter_id, Chapter.project_id == novel_id)
+        )
+        chapter = result.scalar_one_or_none()
+        if chapter is None:
+            raise HTTPException(status_code=404, detail="Chapter not found")
+        await db.delete(chapter)
+        await db.commit()
+        return {"deleted": True}
 
 
 # ---------------------------------------------------------------------------
@@ -1103,9 +1298,18 @@ async def delete_chapter(novel_id: str, chapter_id: str, request: Request, user_
 
 @router.get("/novels/{novel_id}/entities")
 @router.get("/novel/novels/{novel_id}/entities", deprecated=True)
-async def list_entities(novel_id: str, entity_type: str | None = None):
+async def list_entities(novel_id: str, user_id: str = Depends(get_user_id), entity_type: str | None = None):
     """List entities (characters, settings, items, factions) for a novel."""
-    return await _novel_store.list_entities(novel_id, entity_type=entity_type)
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        await _get_owned_project(db, novel_id, user_id)
+        result = await db.execute(
+            select(Character).where(Character.project_id == novel_id).order_by(Character.created_at)
+        )
+        entities = [_serialize_modern_character(item) for item in result.scalars().all()]
+        if entity_type:
+            entities = [item for item in entities if item.get("type") == entity_type]
+        return entities
 
 
 @router.post("/novels/{novel_id}/entities")
@@ -1113,8 +1317,28 @@ async def list_entities(novel_id: str, entity_type: str | None = None):
 async def create_entity(novel_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Create a new entity."""
     data = await request.json()
-    data["user_id"] = user_id
-    return await _novel_store.create_entity(novel_id, data)
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        await _get_owned_project(db, novel_id, user_id)
+        entity_type = str(data.get("type") or "character")
+        properties = data.get("properties") if isinstance(data.get("properties"), dict) else {}
+        character = Character(
+            project_id=novel_id,
+            name=str(data.get("name") or ""),
+            is_organization=entity_type in {"faction", "organization", "organizations"},
+            role_type=str(data.get("roleType") or data.get("role_type") or "supporting"),
+            background=str(data.get("description") or properties.get("background") or ""),
+            personality=str(properties.get("personality") or ""),
+            appearance=str(properties.get("appearance") or ""),
+            age=str(properties.get("age") or "") or None,
+            gender=str(properties.get("gender") or "") or None,
+            organization_type=str(properties.get("organization_type") or "") or None,
+            organization_purpose=str(properties.get("organization_purpose") or "") or None,
+        )
+        db.add(character)
+        await db.commit()
+        await db.refresh(character)
+        return _serialize_modern_character(character)
 
 
 @router.put("/novels/{novel_id}/entities/{entity_id}")
@@ -1122,21 +1346,47 @@ async def create_entity(novel_id: str, request: Request, user_id: str = Depends(
 async def update_entity(novel_id: str, entity_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Update an entity."""
     data = await request.json()
-    data["user_id"] = user_id
-    entity = await _novel_store.update_entity(novel_id, entity_id, data)
-    if not entity:
-        raise HTTPException(status_code=404, detail="Entity not found")
-    return entity
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        await _get_owned_project(db, novel_id, user_id)
+        result = await db.execute(
+            select(Character).where(Character.id == entity_id, Character.project_id == novel_id)
+        )
+        character = result.scalar_one_or_none()
+        if character is None:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        properties = data.get("properties") if isinstance(data.get("properties"), dict) else {}
+        if "name" in data and data["name"] is not None:
+            character.name = str(data["name"])
+        if "description" in data and data["description"] is not None:
+            character.background = str(data["description"])
+        if "roleType" in data or "role_type" in data:
+            character.role_type = str(data.get("roleType") or data.get("role_type") or "")
+        if "appearance" in properties:
+            character.appearance = str(properties["appearance"])
+        if "personality" in properties:
+            character.personality = str(properties["personality"])
+        await db.commit()
+        await db.refresh(character)
+        return _serialize_modern_character(character)
 
 
 @router.delete("/novels/{novel_id}/entities/{entity_id}")
 @router.delete("/novel/novels/{novel_id}/entities/{entity_id}", deprecated=True)
 async def delete_entity(novel_id: str, entity_id: str, user_id: str = Depends(get_user_id)):
     """Delete an entity."""
-    ok = await _novel_store.delete_entity(novel_id, entity_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Entity not found")
-    return {"deleted": True}
+    await init_db_schema()
+    async with AsyncSessionLocal() as db:
+        await _get_owned_project(db, novel_id, user_id)
+        result = await db.execute(
+            select(Character).where(Character.id == entity_id, Character.project_id == novel_id)
+        )
+        character = result.scalar_one_or_none()
+        if character is None:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        await db.delete(character)
+        await db.commit()
+        return {"deleted": True}
 
 
 # ---------------------------------------------------------------------------
@@ -1146,8 +1396,9 @@ async def delete_entity(novel_id: str, entity_id: str, user_id: str = Depends(ge
 
 @router.get("/novels/{novel_id}/timeline")
 @router.get("/novel/novels/{novel_id}/timeline", deprecated=True)
-async def get_timeline(novel_id: str):
+async def get_timeline(novel_id: str, user_id: str = Depends(get_user_id)):
     """Get timeline events for a novel."""
+    await _ensure_owned_novel(novel_id, user_id)
     return await _novel_store.get_timeline(novel_id)
 
 
@@ -1155,6 +1406,7 @@ async def get_timeline(novel_id: str):
 @router.post("/novel/novels/{novel_id}/timeline", deprecated=True)
 async def create_timeline_event(novel_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Create a timeline event."""
+    await _ensure_owned_novel(novel_id, user_id)
     data = await request.json()
     data["user_id"] = user_id
     return await _novel_store.create_timeline_event(novel_id, data)
@@ -1164,6 +1416,7 @@ async def create_timeline_event(novel_id: str, request: Request, user_id: str = 
 @router.put("/novel/novels/{novel_id}/timeline/{event_id}", deprecated=True)
 async def update_timeline_event(novel_id: str, event_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Update a timeline event."""
+    await _ensure_owned_novel(novel_id, user_id)
     data = await request.json()
     data["user_id"] = user_id
     event = await _novel_store.update_timeline_event(novel_id, event_id, data)
@@ -1176,6 +1429,7 @@ async def update_timeline_event(novel_id: str, event_id: str, request: Request, 
 @router.delete("/novel/novels/{novel_id}/timeline/{event_id}", deprecated=True)
 async def delete_timeline_event(novel_id: str, event_id: str, user_id: str = Depends(get_user_id)):
     """Delete a timeline event."""
+    await _ensure_owned_novel(novel_id, user_id)
     ok = await _novel_store.delete_timeline_event(novel_id, event_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Timeline event not found")
@@ -1189,8 +1443,9 @@ async def delete_timeline_event(novel_id: str, event_id: str, user_id: str = Dep
 
 @router.get("/novels/{novel_id}/graph")
 @router.get("/novel/novels/{novel_id}/graph", deprecated=True)
-async def get_graph(novel_id: str):
+async def get_graph(novel_id: str, user_id: str = Depends(get_user_id)):
     """Get graph layout for a novel's relationship visualization."""
+    await _ensure_owned_novel(novel_id, user_id)
     graph = await _novel_store.get_graph(novel_id)
     if not graph:
         return {"nodePositions": {}, "isLocked": False}
@@ -1201,6 +1456,7 @@ async def get_graph(novel_id: str):
 @router.put("/novel/novels/{novel_id}/graph", deprecated=True)
 async def save_graph(novel_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Save graph layout (node positions for relationship visualization)."""
+    await _ensure_owned_novel(novel_id, user_id)
     data = await request.json()
     data["user_id"] = user_id
     return await _novel_store.save_graph(novel_id, data)
@@ -1213,15 +1469,17 @@ async def save_graph(novel_id: str, request: Request, user_id: str = Depends(get
 
 @router.get("/novels/{novel_id}/recommendations")
 @router.get("/novel/novels/{novel_id}/recommendations", deprecated=True)
-async def get_recommendations(novel_id: str):
+async def get_recommendations(novel_id: str, user_id: str = Depends(get_user_id)):
     """Get AI-generated recommendations for a novel."""
+    await _ensure_owned_novel(novel_id, user_id)
     return await _novel_store.get_recommendations(novel_id)
 
 
 @router.post("/novels/{novel_id}/recommendations/generate")
 @router.post("/novel/novels/{novel_id}/recommendations/generate", deprecated=True)
-async def generate_recommendations(novel_id: str, request: Request):
+async def generate_recommendations(novel_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Generate new recommendations based on novel context."""
+    await _ensure_owned_novel(novel_id, user_id)
     context = None
     try:
         context = await request.json()
@@ -1232,8 +1490,9 @@ async def generate_recommendations(novel_id: str, request: Request):
 
 @router.post("/novels/{novel_id}/recommendations/{rec_id}/accept")
 @router.post("/novel/novels/{novel_id}/recommendations/{rec_id}/accept", deprecated=True)
-async def accept_recommendation(novel_id: str, rec_id: str):
+async def accept_recommendation(novel_id: str, rec_id: str, user_id: str = Depends(get_user_id)):
     """Accept a recommendation and mark it as adopted."""
+    await _ensure_owned_novel(novel_id, user_id)
     rec = await _novel_store.accept_recommendation(novel_id, rec_id)
     if not rec:
         raise HTTPException(status_code=404, detail="Recommendation not found")
@@ -1242,8 +1501,9 @@ async def accept_recommendation(novel_id: str, rec_id: str):
 
 @router.post("/novels/{novel_id}/recommendations/{rec_id}/ignore")
 @router.post("/novel/novels/{novel_id}/recommendations/{rec_id}/ignore", deprecated=True)
-async def ignore_recommendation(novel_id: str, rec_id: str):
+async def ignore_recommendation(novel_id: str, rec_id: str, user_id: str = Depends(get_user_id)):
     """Ignore a recommendation and mark it as ignored."""
+    await _ensure_owned_novel(novel_id, user_id)
     rec = await _novel_store.ignore_recommendation(novel_id, rec_id)
     if not rec:
         raise HTTPException(status_code=404, detail="Recommendation not found")
@@ -1257,23 +1517,26 @@ async def ignore_recommendation(novel_id: str, rec_id: str):
 
 @router.get("/novels/{novel_id}/interactions")
 @router.get("/novel/novels/{novel_id}/interactions", deprecated=True)
-async def list_interactions(novel_id: str):
+async def list_interactions(novel_id: str, user_id: str = Depends(get_user_id)):
     """List interactions (annotations, collaboration tasks) for a novel."""
+    await _ensure_owned_novel(novel_id, user_id)
     return await _novel_store.list_interactions(novel_id)
 
 
 @router.post("/novels/{novel_id}/interactions")
 @router.post("/novel/novels/{novel_id}/interactions", deprecated=True)
-async def create_interaction(novel_id: str, request: Request):
+async def create_interaction(novel_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Create an interaction (annotation thread, AI collaboration task)."""
+    await _ensure_owned_novel(novel_id, user_id)
     data = await request.json()
     return await _novel_store.create_interaction(novel_id, data)
 
 
 @router.put("/novels/{novel_id}/interactions/{interaction_id}")
 @router.put("/novel/novels/{novel_id}/interactions/{interaction_id}", deprecated=True)
-async def update_interaction(novel_id: str, interaction_id: str, request: Request):
+async def update_interaction(novel_id: str, interaction_id: str, request: Request, user_id: str = Depends(get_user_id)):
     """Update an interaction (change status, add content, etc.)."""
+    await _ensure_owned_novel(novel_id, user_id)
     data = await request.json()
     interaction = await _novel_store.update_interaction(novel_id, interaction_id, data)
     if not interaction:
@@ -1283,8 +1546,9 @@ async def update_interaction(novel_id: str, interaction_id: str, request: Reques
 
 @router.delete("/novels/{novel_id}/interactions/{interaction_id}")
 @router.delete("/novel/novels/{novel_id}/interactions/{interaction_id}", deprecated=True)
-async def delete_interaction(novel_id: str, interaction_id: str):
+async def delete_interaction(novel_id: str, interaction_id: str, user_id: str = Depends(get_user_id)):
     """Delete an interaction."""
+    await _ensure_owned_novel(novel_id, user_id)
     ok = await _novel_store.delete_interaction(novel_id, interaction_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Interaction not found")
@@ -1298,8 +1562,9 @@ async def delete_interaction(novel_id: str, interaction_id: str):
 
 @router.get("/novels/{novel_id}/quality-report")
 @router.get("/novel/novels/{novel_id}/quality-report", deprecated=True)
-async def get_quality_report(novel_id: str):
+async def get_quality_report(novel_id: str, user_id: str = Depends(get_user_id)):
     """Get quality assessment and conflict report for a novel."""
+    await _ensure_owned_novel(novel_id, user_id)
     return await _novel_store.get_quality_report(novel_id)
 
 
@@ -1311,11 +1576,10 @@ async def get_audits(
     entity_type: str | None = Query(default=None, alias="entityType"),
     author: str | None = Query(default=None),
     limit: int = Query(200, ge=1, le=1000),
+    user_id: str = Depends(get_user_id),
 ):
     """Get normalized audit records for a novel."""
-    novel = await _novel_store.get_novel(novel_id)
-    if not novel:
-        raise HTTPException(status_code=404, detail="Novel not found")
+    await _ensure_owned_novel(novel_id, user_id)
     return await _novel_store.list_audits(
         novel_id,
         action=action,
@@ -1360,4 +1624,3 @@ async def chat(request: ChatRequest, fastapi_request: Request, novel_id: str | N
             yield {"event": "error", "data": json.dumps({"error": "Stream interrupted"})}
 
     return EventSourceResponse(event_generator())
-

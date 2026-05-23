@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import quote
 
 import httpx
 from fastapi import HTTPException
@@ -15,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.gateway.novel_migrated.core.clock import utcnow_naive
 from app.gateway.novel_migrated.core.crypto import safe_decrypt
 from app.gateway.novel_migrated.core.logger import get_logger
+from app.gateway.novel_migrated.models.media_asset import MediaAsset
 from app.gateway.novel_migrated.models.project import Project
 from app.gateway.novel_migrated.models.settings import Settings
 from app.gateway.novel_migrated.services.cover_providers.base_cover_provider import (
@@ -26,6 +26,13 @@ from app.gateway.novel_migrated.services.cover_providers.gemini_cover_provider i
 from app.gateway.novel_migrated.services.cover_providers.grok_cover_provider import (
     GrokCoverProvider,
 )
+from app.gateway.novel_migrated.services.media_asset_service import media_asset_service
+from app.gateway.novel_migrated.services.object_storage_service import (
+    ObjectNotFoundError,
+    ObjectStorageConfigurationError,
+    ObjectStorageError,
+    object_storage_service,
+)
 
 logger = get_logger(__name__)
 
@@ -34,6 +41,7 @@ COVER_WIDTH = 1024
 COVER_HEIGHT = 1536
 GENERATED_COVER_STORAGE_DIR = _BACKEND_ROOT / ".deer-flow" / "generated_covers"
 GENERATED_COVER_PUBLIC_PREFIX = "/generated-assets/covers"
+COVER_MEDIA_ASSET_PREFIX = "/media-assets"
 
 NOVEL_COVER_PROMPT_TEMPLATE = """创作一幅高质量小说封面插图，适用于竖版书籍封面。
 
@@ -103,11 +111,14 @@ class CoverGenerationService:
                 width=COVER_WIDTH,
                 height=COVER_HEIGHT,
             )
-            image_url = self._save_cover_file(
+            image_url, uploaded_object_key = await self._save_cover_asset(
+                db=db,
                 user_id=user_id,
                 project_id=project.id,
                 content=result["content"],
                 file_extension=result["file_extension"],
+                provider=result["provider"],
+                model=result["model"],
             )
 
             project.cover_image_url = image_url
@@ -115,8 +126,13 @@ class CoverGenerationService:
             project.cover_error = None
             project.cover_updated_at = utcnow_naive()
             project.cover_prompt = result.get("revised_prompt") or prompt
-            await db.commit()
-            await db.refresh(project)
+            try:
+                await db.commit()
+                await db.refresh(project)
+            except Exception:
+                await db.rollback()
+                await self._delete_uploaded_cover_object(uploaded_object_key)
+                raise
 
             return {
                 "project_id": project.id,
@@ -198,21 +214,51 @@ class CoverGenerationService:
             model=model,
         )
 
-    async def get_cover_download_path(
+    async def get_cover_download(
         self,
         *,
         db: AsyncSession,
         user_id: str,
         project_id: str,
-    ) -> tuple[Project, Path]:
+    ) -> tuple[Project, str, bytes, str]:
         project = await self._get_project(db=db, user_id=user_id, project_id=project_id)
         if project.cover_status != "ready" or not project.cover_image_url:
             raise HTTPException(status_code=404, detail="当前项目尚未生成可下载的封面")
 
-        absolute_path = self._resolve_cover_path(project.cover_image_url)
+        if project.cover_image_url.startswith(f"{COVER_MEDIA_ASSET_PREFIX}/"):
+            asset_id = project.cover_image_url.removeprefix(f"{COVER_MEDIA_ASSET_PREFIX}/")
+            asset_id = asset_id.removesuffix("/download").strip("/")
+            if not asset_id:
+                raise HTTPException(status_code=404, detail="封面文件路径无效，请重新生成")
+            result = await db.execute(
+                select(MediaAsset).where(
+                    MediaAsset.id == asset_id,
+                    MediaAsset.user_id == user_id,
+                    MediaAsset.project_id == project.id,
+                    MediaAsset.purpose == "cover",
+                    MediaAsset.status == "active",
+                )
+            )
+            asset = result.scalar_one_or_none()
+            if asset is None:
+                raise HTTPException(status_code=404, detail="封面文件不存在，请重新生成")
+            try:
+                stored = await object_storage_service.get_object(object_key=asset.object_key)
+            except ObjectNotFoundError as exc:
+                raise HTTPException(status_code=404, detail="封面文件不存在，请重新生成") from exc
+            except ObjectStorageConfigurationError as exc:
+                raise HTTPException(status_code=503, detail="对象存储未配置") from exc
+            except ObjectStorageError as exc:
+                raise HTTPException(status_code=502, detail="对象存储下载失败") from exc
+
+            return project, asset.filename, stored.content, asset.mime_type or stored.content_type or "application/octet-stream"
+
+        absolute_path = self._resolve_legacy_cover_path(project.cover_image_url)
         if not absolute_path.exists():
             raise HTTPException(status_code=404, detail="封面文件不存在，请重新生成")
-        return project, absolute_path
+        suffix = absolute_path.suffix or ".png"
+        filename = f"{project.title}-cover{suffix}"
+        return project, filename, absolute_path.read_bytes(), "application/octet-stream"
 
     async def clear_cover_metadata(self, *, db: AsyncSession, project: Project) -> None:
         project.cover_image_url = None
@@ -303,28 +349,57 @@ class CoverGenerationService:
             detail="当前版本仅支持 Gemini、Grok 或 MuMuのAPI 作为封面图片 Provider",
         )
 
-    @staticmethod
-    def _save_cover_file(
+    async def _save_cover_asset(
+        self,
         *,
+        db: AsyncSession,
         user_id: str,
         project_id: str,
         content: bytes,
         file_extension: str,
-    ) -> str:
-        user_dir = GENERATED_COVER_STORAGE_DIR / user_id
-        user_dir.mkdir(parents=True, exist_ok=True)
-
+        provider: str,
+        model: str,
+    ) -> tuple[str, str]:
         timestamp = utcnow_naive().strftime("%Y%m%d%H%M%S")
         safe_extension = (file_extension or "png").lstrip(".")
         filename = f"{project_id}_{timestamp}.{safe_extension}"
-        file_path = user_dir / filename
-        file_path.write_bytes(content)
-        logger.info("封面文件已保存: project_id=%s path=%s", project_id, file_path)
+        content_type = f"image/{'jpeg' if safe_extension.lower() in {'jpg', 'jpeg'} else safe_extension.lower()}"
 
-        return f"{GENERATED_COVER_PUBLIC_PREFIX}/{quote(user_id)}/{quote(filename)}"
+        try:
+            created = await media_asset_service.create_asset_from_bytes(
+                db=db,
+                user_id=user_id,
+                project_id=project_id,
+                purpose="cover",
+                filename=filename,
+                content=content,
+                mime_type=content_type,
+                metadata={
+                    "source": "cover_generation",
+                    "provider": provider,
+                    "model": model,
+                },
+                commit=False,
+                flush=False,
+            )
+        except ObjectStorageConfigurationError as exc:
+            raise HTTPException(status_code=503, detail="对象存储未配置，无法保存封面") from exc
+        except ObjectStorageError as exc:
+            raise HTTPException(status_code=502, detail="对象存储上传失败，无法保存封面") from exc
+
+        logger.info("封面对象已保存: project_id=%s asset_id=%s", project_id, created.asset.id)
+
+        return f"{COVER_MEDIA_ASSET_PREFIX}/{created.asset.id}/download", created.object_key
 
     @staticmethod
-    def _resolve_cover_path(cover_image_url: str | None) -> Path:
+    async def _delete_uploaded_cover_object(object_key: str) -> None:
+        try:
+            await object_storage_service.delete_object(object_key=object_key)
+        except ObjectStorageError:
+            logger.warning("封面对象补偿删除失败: object_key=%s", object_key, exc_info=True)
+
+    @staticmethod
+    def _resolve_legacy_cover_path(cover_image_url: str | None) -> Path:
         if not cover_image_url:
             raise HTTPException(status_code=404, detail="当前项目尚未生成可下载的封面")
 

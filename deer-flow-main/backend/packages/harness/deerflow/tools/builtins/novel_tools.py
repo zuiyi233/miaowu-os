@@ -460,8 +460,16 @@ async def create_novel(
             }
         progress.finish("session_gate_check", "completed", "会话检查通过。")
     else:
-        logger.warning("create_novel session gate skipped: missing user/session context (fail-open)")
-        progress.finish("session_gate_check", "skipped", "缺少用户/会话上下文，已按 fail-open 继续。")
+        logger.warning("create_novel rejected: missing authenticated user/session context")
+        progress.finish("session_gate_check", "failed", "缺少已认证用户/会话上下文，禁止匿名创建小说。")
+        progress.finish("failed", "failed", "小说创建已终止。")
+        return {
+            "success": False,
+            "source": "auth",
+            "error": "authenticated_user_required",
+            "message": "create_novel requires an authenticated main-project user context.",
+            "progress": progress.snapshot(),
+        }
 
     progress.start("validation", "正在校验创建参数…")
     normalized_title = (title or "").strip()

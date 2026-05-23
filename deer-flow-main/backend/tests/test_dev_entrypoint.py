@@ -9,6 +9,7 @@ same shape — see PR #2767 / Issue #2754.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -20,6 +21,8 @@ ENTRYPOINT = REPO_ROOT / "docker" / "dev-entrypoint.sh"
 
 def _run(uv_extras: str | None) -> subprocess.CompletedProcess[str]:
     """Invoke `dev-entrypoint.sh --print-extras` with UV_EXTRAS set."""
+    if shutil.which("sh") is None:
+        pytest.skip("POSIX sh is not available in this Windows test environment")
     env = os.environ.copy()
     env.pop("UV_EXTRAS", None)
     if uv_extras is not None:
@@ -37,6 +40,8 @@ def _run(uv_extras: str | None) -> subprocess.CompletedProcess[str]:
 
 def test_entrypoint_script_exists_and_is_posix_sh():
     assert ENTRYPOINT.is_file()
+    if shutil.which("sh") is None:
+        pytest.skip("POSIX sh is not available in this Windows test environment")
     # Catch syntax errors before runtime — `sh -n` is a parse-only check.
     proc = subprocess.run(["sh", "-n", str(ENTRYPOINT)], capture_output=True, text=True, check=False)
     assert proc.returncode == 0, proc.stderr

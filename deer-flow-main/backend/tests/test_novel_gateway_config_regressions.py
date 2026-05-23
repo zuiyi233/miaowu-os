@@ -64,7 +64,8 @@ def test_router_admin_module_disabled_by_default(monkeypatch: pytest.MonkeyPatch
     assert import_calls["count"] == 0
 
 
-def test_router_admin_module_can_be_enabled_explicitly(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_router_admin_module_stays_disabled_even_if_legacy_env_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unified SaaS mode must not re-enable the legacy novel admin router."""
     from app.gateway.routers import novel_migrated as router_module
 
     monkeypatch.setenv(router_module._ADMIN_ROUTE_SWITCH_ENV, "true")
@@ -77,8 +78,8 @@ def test_router_admin_module_can_be_enabled_explicitly(monkeypatch: pytest.Monke
     monkeypatch.setattr(router_module, "_import_router_module", _fake_import)
     monkeypatch.setattr(router_module, "router", APIRouter(tags=["novel_migrated"]))
 
-    assert router_module._include_optional_router(router_module._ADMIN_ROUTER_MODULE) is True
-    assert import_calls["count"] == 1
+    assert router_module._include_optional_router(router_module._ADMIN_ROUTER_MODULE) is False
+    assert import_calls["count"] == 0
 
 
 @pytest.mark.anyio

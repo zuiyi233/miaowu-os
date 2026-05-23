@@ -4,7 +4,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -32,7 +31,6 @@ export function NovelCreationDialog({ open, onOpenChange }: NovelCreationDialogP
   const [outline, setOutline] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isOfflineDraft, setIsOfflineDraft] = useState(false);
   const { setCurrentNovelTitle } = useNovelStore();
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -43,7 +41,6 @@ export function NovelCreationDialog({ open, onOpenChange }: NovelCreationDialogP
       setErrorMessage(null);
       setTitle('');
       setOutline('');
-      setIsOfflineDraft(false);
     }
     onOpenChange(nextOpen);
   }, [onOpenChange]);
@@ -52,21 +49,15 @@ export function NovelCreationDialog({ open, onOpenChange }: NovelCreationDialogP
     e.preventDefault();
     setIsSubmitting(true);
     setErrorMessage(null);
-    setIsOfflineDraft(false);
 
     try {
       const novelData = { id: generateUniqueId('novel'), title, outline };
-      const result = await novelDomainService.saveNovelWithOfflineFallback(novelData as any);
+      await novelDomainService.saveNovel(novelData as any);
       setCurrentNovelTitle(title);
       queryClient.invalidateQueries({ queryKey: ['novels'] });
-
-      if (!result.synced) {
-        setIsOfflineDraft(true);
-      } else {
-        onOpenChange(false);
-        setTitle('');
-        setOutline('');
-      }
+      onOpenChange(false);
+      setTitle('');
+      setOutline('');
     } catch (error) {
       const message = error instanceof Error ? error.message : t.novel.createFailed;
       setErrorMessage(message);
@@ -106,18 +97,6 @@ export function NovelCreationDialog({ open, onOpenChange }: NovelCreationDialogP
                 rows={4}
               />
             </div>
-            {isOfflineDraft && (
-              <Alert>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="border-amber-500 text-amber-600 text-xs">
-                    {t.novel.offlineDraftBadge}
-                  </Badge>
-                </div>
-                <AlertDescription className="text-xs mt-1.5">
-                  {t.novel.offlineDraftSaved}
-                </AlertDescription>
-              </Alert>
-            )}
             {errorMessage && (
               <Alert variant="destructive">
                 <AlertDescription className="text-xs">{errorMessage}</AlertDescription>

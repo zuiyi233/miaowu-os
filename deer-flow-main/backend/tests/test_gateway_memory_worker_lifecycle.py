@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -25,10 +26,11 @@ async def test_langgraph_runtime_starts_and_stops_memory_worker(monkeypatch):
 
     with (
         patch("deerflow.runtime.make_stream_bridge", return_value=_noop_async_context_manager(stream_bridge)),
-        patch("deerflow.agents.checkpointer.async_provider.make_checkpointer", return_value=_noop_async_context_manager(checkpointer)),
+        patch("deerflow.runtime.checkpointer.async_provider.make_checkpointer", return_value=_noop_async_context_manager(checkpointer)),
         patch("deerflow.runtime.make_store", return_value=_noop_async_context_manager(store)),
     ):
         app = FastAPI()
+        app.state.config = SimpleNamespace(database=SimpleNamespace(backend="memory"), run_events=None)
         async with langgraph_runtime(app):
             assert app.state.stream_bridge is stream_bridge
             assert app.state.checkpointer is checkpointer

@@ -12,6 +12,8 @@ from app.gateway.novel_migrated.api import wizard_stream
 from app.gateway.novel_migrated.core.database import AsyncSessionLocal, init_db_schema
 from app.gateway.novel_migrated.models.project import Project
 
+pytestmark = pytest.mark.usefixtures("novel_main_sqlite_engine")
+
 
 async def _clear_user_projects(user_id: str) -> None:
     async with AsyncSessionLocal() as session:

@@ -1,5 +1,4 @@
 import type { AiProviderConfig } from "./ai-provider-store";
-import { putUserAiSettings } from "./useAiSettingsApi";
 
 export type AiParallelStrategy = "compare" | "auto" | "fusion";
 
@@ -81,7 +80,6 @@ interface PersistedFeatureRoutingState {
   switchLogs?: AiSwitchLogEntry[];
 }
 
-const STORAGE_KEY = "ai-feature-routing-settings-v1";
 const MAX_SWITCH_LOGS = 40;
 
 export const BUILTIN_FEATURE_MODULES: AiFeatureModuleDefinition[] = [
@@ -412,14 +410,6 @@ function normalizeModuleRoute(
   };
 }
 
-function safeParseJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
 export function createDefaultFeatureRoutingState(
   providers: AiProviderConfig[]
 ): AiFeatureRoutingState {
@@ -578,35 +568,12 @@ export function normalizeFeatureRoutingState(
 export function loadFeatureRoutingState(
   providers: AiProviderConfig[]
 ): AiFeatureRoutingState {
-  if (typeof window === "undefined") {
-    return createDefaultFeatureRoutingState(providers);
-  }
-
-  const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    return createDefaultFeatureRoutingState(providers);
-  }
-
-  const parsed = safeParseJson(raw);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return createDefaultFeatureRoutingState(providers);
-  }
-
-  return normalizeFeatureRoutingState(parsed as PersistedFeatureRoutingState, providers);
+  return createDefaultFeatureRoutingState(providers);
 }
 
-export function saveFeatureRoutingState(state: AiFeatureRoutingState): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-
-  void putUserAiSettings({
-    feature_routing_settings: state,
-  }).catch((err) => {
-    console.warn("[FeatureRouting] saveFeatureRoutingState 回写后端失败:", err);
-  });
+export function saveFeatureRoutingState(_state: AiFeatureRoutingState): void {
+  // Feature routing is persisted through /api/user/ai-settings.
+  // Keep this no-op for older call sites; browser localStorage is not a source of truth.
 }
 
 export function buildModelTargetKey(target: AiModelTarget | null | undefined): string {

@@ -108,10 +108,10 @@ def _parse_chapter_number(raw: str) -> int:
 
 async def _analyze_chapter_internal(chapter_id, force=False):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         get_internal_ai_service,
         get_internal_db,
         load_attr,
-        resolve_user_id,
         to_dict,
     )
 
@@ -120,7 +120,7 @@ async def _analyze_chapter_internal(chapter_id, force=False):
     analyze_fn = load_attr("app.gateway.novel_migrated.api.novel_stream", "analyze_chapter")
     if not callable(analyze_fn):
         raise RuntimeError("internal analyze_chapter unavailable")
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
     async with AsyncSessionLocal() as db:
         result = await analyze_fn(
             chapter_id=chapter_id, request=None, payload=None,
@@ -137,14 +137,14 @@ async def _manage_foreshadow_internal(
     chapter_number: int | None = None,
 ):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         get_internal_db,
         load_attr,
-        resolve_user_id,
         to_dict,
     )
 
     AsyncSessionLocal = await get_internal_db()
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
 
     if action == "list":
         if not project_id:
@@ -297,9 +297,9 @@ async def _manage_foreshadow_internal(
 
 async def _search_memories_internal(project_id, query, memory_type="", limit=10):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         get_internal_db,
         load_attr,
-        resolve_user_id,
         to_dict,
     )
 
@@ -307,7 +307,7 @@ async def _search_memories_internal(project_id, query, memory_type="", limit=10)
     search_fn = load_attr("app.gateway.novel_migrated.api.memories", "search_memories")
     if not callable(search_fn):
         raise RuntimeError("internal search_memories unavailable")
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
     async with AsyncSessionLocal() as db:
         result = await search_fn(
             project_id=project_id, request=None, query=query,
@@ -319,9 +319,9 @@ async def _search_memories_internal(project_id, query, memory_type="", limit=10)
 
 async def _check_consistency_internal(project_id):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         get_internal_db,
         load_attr,
-        resolve_user_id,
         to_dict,
     )
 
@@ -329,7 +329,7 @@ async def _check_consistency_internal(project_id):
     report_fn = load_attr("app.gateway.novel_migrated.api.polish", "get_project_consistency_report")
     if not callable(report_fn):
         raise RuntimeError("internal consistency_report unavailable")
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
     async with AsyncSessionLocal() as db:
         result = await report_fn(project_id=project_id, user_id=user_id, db=db)
     return _ok(to_dict(result), source="novel_migrated.consistency_check.internal")
@@ -337,9 +337,9 @@ async def _check_consistency_internal(project_id):
 
 async def _polish_text_internal(text, style="literary", project_id=""):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         get_internal_ai_service,
         load_attr,
-        resolve_user_id,
         to_dict,
     )
 
@@ -349,7 +349,7 @@ async def _polish_text_internal(text, style="literary", project_id=""):
     if PolishRequest is None or not callable(polish_fn):
         raise RuntimeError("internal polish_text unavailable")
     req = PolishRequest(text=text, style=style)
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
     result = await polish_fn(req=req, user_id=user_id, ai_service=ai_service)
     return _ok(to_dict(result), source="novel_migrated.polish.internal")
 

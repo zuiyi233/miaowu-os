@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
-import types
 
-from deerflow.tools.builtins import novel_tools
+from deerflow.tools.builtins import novel_internal, novel_tools
 
 
 class _FakeIntentMiddleware:
@@ -28,10 +26,30 @@ class _FakeIntentMiddleware:
         return (user_id, session_key) in self._active_pairs
 
 
+class _FakeNovelBackend:
+    def __init__(self, fake_middleware: _FakeIntentMiddleware) -> None:
+        self.fake_middleware = fake_middleware
+
+    async def get_db_session_factory(self):
+        raise RuntimeError("db unavailable in this unit test")
+
+    async def get_ai_service(self, user_id: str | None, module_id: str | None):
+        raise RuntimeError("ai unavailable in this unit test")
+
+    def resolve_user_id(self, raw_user_id: str | None) -> str:
+        normalized = (raw_user_id or "").strip()
+        if normalized:
+            return normalized
+        raise RuntimeError("Novel internal call requires explicit authenticated user_id")
+
+    def load_attr(self, module_path: str, attr_name: str):
+        if module_path == "app.gateway.api.ai_provider" and attr_name == "_INTENT_RECOGNITION_MIDDLEWARE":
+            return self.fake_middleware
+        return None
+
+
 def _install_fake_ai_provider(monkeypatch, fake_middleware: _FakeIntentMiddleware) -> None:
-    fake_module = types.ModuleType("app.gateway.api.ai_provider")
-    fake_module._INTENT_RECOGNITION_MIDDLEWARE = fake_middleware
-    monkeypatch.setitem(sys.modules, "app.gateway.api.ai_provider", fake_module)
+    monkeypatch.setattr(novel_internal, "_backend", _FakeNovelBackend(fake_middleware))
 
 
 def test_create_novel_blocks_when_same_user_same_session_has_active_creation(monkeypatch):
@@ -103,7 +121,7 @@ def test_create_novel_not_blocked_for_different_user(monkeypatch):
     assert fake_middleware.check_calls == [("user-2", "user-2:thread_id:thread-1")]
 
 
-def test_create_novel_fail_open_when_missing_user_context(monkeypatch, caplog):
+def test_create_novel_rejects_missing_user_context(monkeypatch, caplog):
     fake_middleware = _FakeIntentMiddleware(active_pairs={("user-1", "user-1:thread_id:thread-1")})
     _install_fake_ai_provider(monkeypatch, fake_middleware)
 
@@ -137,11 +155,12 @@ def test_create_novel_fail_open_when_missing_user_context(monkeypatch, caplog):
         )
     )
 
-    assert result["success"] is True
-    assert result["source"] == "novel_migrated.projects"
+    assert result["success"] is False
+    assert result["source"] == "auth"
+    assert result["error"] == "authenticated_user_required"
     assert fake_middleware.check_calls == []
     assert "progress" in result
-    assert any("missing user/session context" in record.getMessage() for record in caplog.records)
+    assert any("missing authenticated user/session context" in record.getMessage() for record in caplog.records)
 
 
 def test_create_novel_resolves_context_from_helper_key_set(monkeypatch):

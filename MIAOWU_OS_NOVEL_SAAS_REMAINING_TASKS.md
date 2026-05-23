@@ -60,6 +60,12 @@ rg "select\\(Chapter\\)|select\\(Character\\)|select\\(Outline\\)|select\\(Caree
 - `deer-flow-main/backend/app/gateway/novel_migrated/api/workspace_documents.py`
 - `deer-flow-main/backend/app/gateway/novel_migrated/api/wizard_stream.py`
 
+2026-05-23 追加处理：
+
+- `services/import_export_service.py` 的导出服务层已从 `project_id` 单条件查询改为 `project_id + user_id` 查询，避免绕过路由前置校验时跨用户导出。
+- `services/book_import_service.py` 的内存任务跨用户查询从 403 收敛为 404，避免 task ID 枚举泄露存在性。
+- `api/project_covers.py` / `api/media_assets.py` / `api/import_export.py` 的下载响应已统一使用安全 `Content-Disposition` 构造，避免用户可控标题 CRLF / 引号注入。
+
 验收标准：
 
 - 用户 A 创建的资源，用户 B 用直接 ID 访问返回 404 或 403，推荐 404。
@@ -106,6 +112,8 @@ rg "resolve_user_id\\(None\\)" deer-flow-main/backend/packages/harness/deerflow/
 - `novel_extended_tools.py`
 - `novel_file_truth_bridge.py`
 
+2026-05-23 追加处理：以上文件已不再直接散落调用 `resolve_user_id(None)`；统一改为 `novel_internal.get_authenticated_user_id()`，该 helper 仍只从主项目 runtime user context / 已注册 backend 解析用户，缺用户时失败，不回退默认用户。
+
 要求：
 
 - 能从主项目 runtime context 读取用户时，正常写入该用户数据。
@@ -138,6 +146,14 @@ rg "resolve_user_id\\(None\\)" deer-flow-main/backend/packages/harness/deerflow/
 - PostgreSQL 中能看到同一库内的主项目表和小说表。
 - `novel_migrated.db` 不再作为新数据写入真源。
 - 记录实际连接串来源、启动命令和验证 SQL。
+
+2026-05-23 31 测试栈真实 smoke：
+
+- 31 测试栈 `/opt/stacks/miaowu-os-test-20260522` 已新增 PostgreSQL 容器 `miaowu-os-test-postgres-20260523`，数据库 `miaowu_os_test`；密码仅保存在远端 secret 文件，未写入文档。
+- 后端镜像 `miaowu-os-gateway:test-20260523-saas-smoke` 使用 `database.backend=postgres`、`postgres_url=$DATABASE_URL` 启动，日志显示 `Persistence engine initialized: backend=postgres`。
+- `smoke_novel_postgres_unified.py` 在 31 gateway 容器内通过：`users / runs / projects / chapters / characters / media_assets` 共用同一 PostgreSQL，并验证 owner 查询隔离。
+- PostgreSQL 实际表确认存在：`chapters`、`characters`、`media_assets`、`projects`、`runs`、`users`。
+- gateway 容器内 `/app/backend/.deer-flow/novel_migrated.db` 为 `not_present`。
 
 ### P0.5 PostgreSQL 跨用户隔离验证
 
@@ -221,16 +237,19 @@ rg "resolve_user_id\\(None\\)" deer-flow-main/backend/packages/harness/deerflow/
 - [自动化已覆盖 metadata 写入] 数据库只保存 metadata，不保存大文件内容。
 - [真实服务未验] SeaweedFS 中实际出现对象。
 - [代码已完成，真实服务未验] 删除或标记删除后，下载不可用。
+- [自动化已覆盖补偿] 上传对象成功但 DB 提交失败时会尝试删除刚上传的对象，降低孤儿对象风险。
+- [自动化已覆盖项目删除] 删除项目时会对当前用户该项目的 active `media_assets` 尝试删除对象并标记 `deleted`；对象存储删除失败时标记 `delete_failed` 以便后续清理。
 
 ### P0.8 封面、导入原文、导出包接入对象存储
 
 必须逐步接入：
 
-- 封面图
-- 导入原文
+- 封面图（2026-05-23 已接入：新生成封面写入 SeaweedFS/S3-compatible 对象存储并创建 `media_assets` 元数据，项目只保存后端下载入口；旧本地封面路径仅保留只读下载兼容，不作为新写入路径；DB 提交失败时会补偿删除已上传对象）
+- 导入原文（2026-05-23 已接入：拆书 TXT 上传后先写 `media_assets` / SeaweedFS S3-compatible，再创建内存解析任务；task 记录保留 `source_asset_id`，浏览器不拿裸 object key）
 - 附件
 - 媒体草稿
-- 导出包
+- 导出包（2026-05-23 已接入：项目导出 ZIP 写对象存储并创建 `project_export` 资产；兼容旧接口继续返回 ZIP，同时响应头给出后端授权下载入口）
+- 项目导入包（2026-05-23 已接入：项目 ZIP 导入源写对象存储并创建 `project_import_source` 资产，导入成功后回填 project_id；DB 提交失败时补偿删除对象）
 - 图片素材
 - 生成结果文件
 
@@ -304,6 +323,7 @@ rg "resolve_user_id\\(None\\)" deer-flow-main/backend/packages/harness/deerflow/
 - API Key 和模型配置保存到后端数据库。
 - 敏感字段加密存储。
 - 前端不长期保存明文 API Key。
+- 2026-05-23 已移除浏览器侧 `NEXT_PUBLIC_AI_ENCRYPTION_KEY` / localStorage 加密密钥生成脚本和旧 API Key 自动迁移路径；前端只在表单草稿内短暂持有新输入的 key，保存后以后端 `has_api_key` 状态为准。
 - AI 调用时使用当前用户的后端配置。
 - 用户 A 不能读取或使用用户 B 的 API Key。
 - 日志不能输出明文 API Key。
@@ -346,6 +366,7 @@ rg "resolve_user_id\\(None\\)" deer-flow-main/backend/packages/harness/deerflow/
 - 旧接口如必须保留，只能只读兼容或返回迁移提示。
 - 不能继续向旧库写入。
 - 旧数据导入工具以后单独做，不纳入当前阶段。
+- 2026-05-23 前端 `core/novel/database.ts` 仍作为阅读器/快照/离线草稿兼容层保留，但已标注不是 SaaS canonical store；运行域服务仍按 remote-first 访问后端。
 
 验收标准：
 
@@ -417,6 +438,17 @@ uv run pytest tests/test_novel_p2_fix.py
 - 有可重复执行步骤。
 - 记录实际端口和后端基址。
 - 本地开发后端基址使用 `http://127.0.0.1:8551`，前端使用 `4560`，禁止把 `8001` 当默认值。
+- 2026-05-23 已新增可重复脚本：
+  - `deer-flow-main/backend/scripts/smoke_novel_postgres_unified.py`：验证 users / runs / projects / chapters / characters / media_assets 在同一 PostgreSQL，且不修改 `backend/.deer-flow/novel_migrated.db`。
+  - `deer-flow-main/backend/scripts/smoke_seaweedfs_media_asset.py`：用环境变量对 SeaweedFS S3-compatible 做上传、下载、DB metadata 校验和删除。
+  - `deer-flow-main/backend/scripts/ensure_object_storage_bucket.py`：使用同一套 `MIAOWU_OBJECT_STORAGE_*` 配置准备 S3-compatible bucket。
+  - 本机未配置 PostgreSQL / SeaweedFS 凭据；真实 smoke 已迁移到 31 测试栈执行。
+  - 2026-05-23 31 结果：PostgreSQL smoke 通过；SeaweedFS 默认 bucket `miaowu-novel-assets` 上传/下载/删除通过，DB 只保存 metadata。
+
+仍未完成：
+
+- 浏览器真实登录、账号设置、普通聊天线程、小说生成流、书籍导入、封面生成、章节编辑、前端全链路 smoke 尚未跑完。
+- 前端镜像仍是 2026-05-22 测试镜像，未基于本轮前端改动重建。
 
 ---
 
@@ -502,3 +534,136 @@ ModuleNotFoundError: No module named 'common.safe_commit'
 - 不要把 IndexedDB / localStorage 当小说数据真源。
 - 不要自动迁移旧数据，旧数据导入必须单独规划。
 - 不要使用 WSL 操作前端依赖。
+
+## 2026-05-23 AI Provider 后端真源与 31 测试栈验证补充
+
+本轮新增/验证：
+
+- `deer-flow-main/backend/tests/test_user_ai_settings_contract.py` 补充后端契约：
+  - 测试请求不能通过 `api_key_encrypted` 注入后端专用密文字段。
+  - 测试 `resolve_user_ai_runtime_config()` 按不同 `Settings.user_id` 解析不同 provider/base_url/model/key，避免跨用户串用 key。
+  - 测试 app 显式注入登录态，符合缺用户 401 的新契约。
+- 新增 `deer-flow-main/backend/scripts/smoke_ai_provider_backend_truth.py`：
+  - 从环境变量读取 OpenAI-compatible `base_url` / key / model。
+  - 写入 `/api/user/ai-settings` 同一后端真源对应的 Settings/preferences 结构。
+  - 验证公开返回不包含明文 key / `api_key_encrypted`，只返回 `has_api_key=true`。
+  - 验证运行时能解析当前用户的 key/base_url/model。
+  - 可选执行 `/chat/completions` 真实上游调用。
+- 31 测试栈验证：
+  - 使用用户给定第三方 OpenAI-compatible base URL `https://token-plan-cn.xiaomimimo.com/v1` 与真实 key 做 smoke，key 只进入远端临时 env 文件/容器临时文件，未写入仓库或文档明文。
+  - 使用用户给定模型名 `MiMo-V2.5` 调用上游失败：上游返回 `HTTP 400`，错误为不支持该模型名。
+  - 查询 `/v1/models` 后确认供应商实际模型 ID 为小写 `mimo-v2.5`；改用 `mimo-v2.5` 后真实调用 `HTTP 200`。
+  - `backend_truth=ok`：PostgreSQL 中 AI provider 设置以后端为真源，公开响应不泄露 key，运行时配置解析成功。
+- NewAPI 登录创建 Miaowu 账号验证：
+  - 31 verify NewAPI 测试用户 `miaowu31test` 存在但测试密码文件与 DB hash 漂移；已只在 31 verify 隔离库重置该测试用户密码，不触碰 31 生产、161 主入口或公网流量。
+  - 脚本化走通：Miaowu `/api/v1/auth/login/newapi` -> NewAPI `/oauth/authorize` -> NewAPI `/api/user/login` -> NewAPI 授权回调 -> Miaowu `/api/v1/auth/callback/newapi`。
+  - `GET /api/v1/auth/me` 返回 `HTTP 200`，顶层包含 `newapi_account`，其中 `newapi_sub=932521`、`username=miaowu31test`、quota/balance 快照存在。
+- 前端 AI Provider 真源收敛补充：
+  - `feature-routing.ts` 不再把模型路由写入 `localStorage`，`saveFeatureRoutingState()` 保留为兼容 no-op。
+  - AI Provider 设置页保存模型路由只调用后端 `saveFeatureRoutingToServer()`。
+  - `.env.example` 已移除浏览器侧 API key 加密 key 文案。
+
+本轮验证：
+
+```text
+cd deer-flow-main/backend
+uv run pytest tests/test_user_ai_settings_contract.py -q
+# 18 passed
+uv run ruff check tests/test_user_ai_settings_contract.py scripts/smoke_ai_provider_backend_truth.py app/gateway/novel_migrated/services/ai_settings_service.py app/gateway/novel_migrated/api/user_settings.py
+# All checks passed
+uv run python -m compileall scripts/smoke_ai_provider_backend_truth.py
+# passed
+
+cd deer-flow-main/frontend
+pnpm typecheck
+# passed
+pnpm vitest run tests/unit/core/ai/ai-provider-store.test.ts
+# 1 passed
+```
+
+2026-05-23 晚间追加收口：
+
+- 前端小说创建、项目列表/详情、章节、人物、Prompt Template、Dashboard stats 默认走后端 API；写操作远端失败时不再静默落 Dexie 当真源。
+- `RecommendationPanel` / `AnnotationThreadPanel` 的生成、接受、忽略、创建、更新、删除改为后端写入成功后才刷新本地缓存；远端失败不再写本地缓存伪成功。
+- `/api/novels` 兼容路由的核心项目/章节/人物 CRUD 已改为统一 persistence + current user scope；`timeline/graph/recommendations/interactions/quality-report/audits` 等兼容入口也先校验 `Project.user_id == current_user_id`。
+- `NovelStore._persist_locked()` 已禁用旧 JSON 落盘，旧 store 只保留为进程内兼容缓存，不再继续写 `novel_store.json` 作为真源。
+- 前端生产构建默认内部网关从 `127.0.0.1:8551` 改为容器服务名 `http://gateway:8551`；本地开发仍默认 `127.0.0.1:8551`。31 前端同源 `/api/v1/auth/setup-status` 已从 500 修到 200。
+
+31 测试栈当前运行态：
+
+- 后端镜像：`miaowu-os-gateway:test-20260523-194213`。
+- 前端镜像：`miaowu-os-frontend:test-20260523-201720`。
+- Postgres：`miaowu-os-test-postgres-20260523`。
+- NewAPI verify：`newapi-verify-app-20260518-224155`，端口 `13282->3000`。
+- 只改 31 测试栈 `/opt/stacks/miaowu-os-test-20260522`，未触碰 31 生产 `new-api-31`、161 `new-api-master`、公网 `api.miaowu.bond`、FRP、Cloudflare 或 EdgeOne。
+
+31 已验证：
+
+```text
+GET http://127.0.0.1:18551/health
+# 200 {"status":"healthy", ...}
+
+GET http://127.0.0.1:14560/
+# 200 text/html
+
+GET http://127.0.0.1:14560/api/v1/auth/setup-status
+# 200 {"needs_setup":true}
+
+scripts/smoke_novel_postgres_unified.py
+# OK unified PostgreSQL smoke passed: users/runs/novel/media tables share one PostgreSQL database.
+
+scripts/smoke_seaweedfs_media_asset.py
+# OK SeaweedFS media asset smoke passed: upload/download/delete succeeded and DB stored metadata only.
+
+scripts/smoke_ai_provider_backend_truth.py
+# backend_truth=ok
+# upstream_call=ok status=200 model=mimo-v2.5
+
+NewAPI OIDC smoke
+# Miaowu login -> NewAPI authorize -> NewAPI user login -> callback -> /workspace
+# /api/v1/auth/me 200, newapi_sub=932521, username=miaowu31test
+```
+
+本地验证追加：
+
+```text
+cd deer-flow-main/backend
+uv run pytest tests/test_gateway_novel_router_medium_low_fixes.py tests/test_user_ai_settings_contract.py tests/test_novel_unified_persistence.py tests/test_novel_internal_contracts.py tests/test_novel_p2_fix.py tests/test_novel_file_truth_read_paths.py tests/test_novel_chapters_idempotency.py tests/test_novel_router_regressions.py tests/test_characters_relationships_alias.py tests/test_book_import_service_ai_overrides.py -q
+# 102 passed, 1 warning
+
+uv run ruff check app/gateway/routers/novel.py app/gateway/novel_migrated/api/projects.py app/gateway/novel_migrated/api/import_export.py app/gateway/novel_migrated/api/book_import.py app/gateway/novel_migrated/api/media_assets.py app/gateway/novel_migrated/api/project_covers.py app/gateway/novel_migrated/api/prompt_workshop.py app/gateway/novel_migrated/services/import_export_service.py app/gateway/novel_migrated/services/media_asset_service.py app/gateway/novel_migrated/services/cover_generation_service.py tests/test_gateway_novel_router_medium_low_fixes.py tests/test_user_ai_settings_contract.py tests/test_novel_unified_persistence.py
+# All checks passed
+
+uv run python -m compileall app/gateway/routers/novel.py app/gateway/novel_migrated/api/media_assets.py app/gateway/novel_migrated/api/prompt_workshop.py app/gateway/novel_migrated/services/media_asset_service.py app/gateway/novel_migrated/utils/http_headers.py scripts/smoke_ai_provider_backend_truth.py scripts/smoke_novel_postgres_unified.py scripts/smoke_seaweedfs_media_asset.py
+# passed
+
+cd deer-flow-main/frontend
+pnpm typecheck
+# passed
+
+pnpm vitest run tests/unit/core/ai/ai-provider-store.test.ts tests/unit/core/config/next-rewrites.test.ts tests/unit/core/auth/gateway-config.test.ts
+# passed
+```
+
+全后端测试现状：
+
+```text
+cd deer-flow-main/backend
+uv run pytest -q
+# 3679 passed, 62 failed, 21 skipped, 17 warnings
+```
+
+失败主要类别：
+
+- 旧/未更新测试仍直接调用 `init_db_schema()`，但未先初始化主 persistence engine，触发统一库新契约错误：`Main persistence engine is not initialized. Novel schema cannot be created outside DeerFlow persistence.`
+- `tests/e2e/novel_phase3/ws_d/test_lifecycle_e2e_flow.py` 仍缺失，`test_ws_d_required_suite_files_exist` 失败。
+- Docker E2E 需要拉 `busybox:latest`，本机 Docker 直连 Docker Hub 超时。
+- 多个 AI Provider / suggestions 单测当前仍返回 503，测试依赖覆盖方式与后端真源/当前用户 AI 设置新契约不一致，需要更新测试夹具，不应恢复浏览器或默认配置真源。
+- 少量旧小说契约测试仍要求私有 SQLite/WAL、legacy admin router、旧工具上下文等行为，需要按 SaaS 新契约改测试，而不是恢复旧行为。
+
+仍未完成/仍有缺口：
+
+- Dexie `src/core/novel/database.ts` 仍保留为本地缓存/草稿/阅读辅助层；已避免核心写入静默当真源，但尚未删除全部本地缓存 API。
+- 小说相关 localStorage 仍存在阅读设置、灵感缓存、关系图布局、AI 项目生成草稿等路径；这些看起来属于 UI 缓存/草稿，但尚未逐项写测试证明“清空缓存后后端数据仍完整”。
+- 导入原文、导出包、生成结果文件等对象存储热路径已部分接入和 smoke，但仍需要继续业务级全链路 UI 回归。
+- 普通聊天线程、小说生成流、书籍导入、封面生成、章节编辑只完成服务/接口层与 31 基础 smoke，未做完整人工浏览器业务回归。

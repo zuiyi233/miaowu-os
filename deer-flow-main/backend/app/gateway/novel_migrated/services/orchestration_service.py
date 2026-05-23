@@ -275,6 +275,14 @@ class ChapterOrchestrationService:
                 user_id=user_id,
                 action=self.ANALYSIS_ACTION,
             )
+            if not consume_ok:
+                # ``consume_idempotency_key`` rolls back on duplicate keys.
+                # SQLAlchemy expires ORM instances on rollback even when the
+                # session factory uses expire_on_commit=False; refresh the
+                # chapter before later lifecycle/status writes in the recovery
+                # path so async attribute loading does not escape greenlet
+                # context during flush.
+                await db.refresh(chapter)
 
         if not consume_ok:
             latest_task_result = await db.execute(

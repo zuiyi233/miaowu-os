@@ -31,7 +31,6 @@ try {
         NEXT_PUBLIC_DEERFLOW_DESKTOP_BUILD = [Environment]::GetEnvironmentVariable("NEXT_PUBLIC_DEERFLOW_DESKTOP_BUILD", "Process")
         NEXT_PUBLIC_BACKEND_BASE_URL = [Environment]::GetEnvironmentVariable("NEXT_PUBLIC_BACKEND_BASE_URL", "Process")
         NEXT_PUBLIC_LANGGRAPH_BASE_URL = [Environment]::GetEnvironmentVariable("NEXT_PUBLIC_LANGGRAPH_BASE_URL", "Process")
-        NEXT_PUBLIC_AI_ENCRYPTION_KEY = [Environment]::GetEnvironmentVariable("NEXT_PUBLIC_AI_ENCRYPTION_KEY", "Process")
         DEER_FLOW_INTERNAL_GATEWAY_BASE_URL = [Environment]::GetEnvironmentVariable("DEER_FLOW_INTERNAL_GATEWAY_BASE_URL", "Process")
         DEER_FLOW_INTERNAL_LANGGRAPH_BASE_URL = [Environment]::GetEnvironmentVariable("DEER_FLOW_INTERNAL_LANGGRAPH_BASE_URL", "Process")
     }
@@ -42,7 +41,6 @@ try {
         NEXT_PUBLIC_DEERFLOW_DESKTOP_BUILD = Test-Path Env:\NEXT_PUBLIC_DEERFLOW_DESKTOP_BUILD
         NEXT_PUBLIC_BACKEND_BASE_URL = Test-Path Env:\NEXT_PUBLIC_BACKEND_BASE_URL
         NEXT_PUBLIC_LANGGRAPH_BASE_URL = Test-Path Env:\NEXT_PUBLIC_LANGGRAPH_BASE_URL
-        NEXT_PUBLIC_AI_ENCRYPTION_KEY = Test-Path Env:\NEXT_PUBLIC_AI_ENCRYPTION_KEY
         DEER_FLOW_INTERNAL_GATEWAY_BASE_URL = Test-Path Env:\DEER_FLOW_INTERNAL_GATEWAY_BASE_URL
         DEER_FLOW_INTERNAL_LANGGRAPH_BASE_URL = Test-Path Env:\DEER_FLOW_INTERNAL_LANGGRAPH_BASE_URL
     }
@@ -56,10 +54,6 @@ try {
         # Keep NEXT_PUBLIC_* empty so Next.js rewrite rules stay active in standalone mode.
         $env:NEXT_PUBLIC_BACKEND_BASE_URL = ""
         $env:NEXT_PUBLIC_LANGGRAPH_BASE_URL = ""
-        # NEXT_PUBLIC_* variables are bundled into client chunks at build time.
-        # Desktop build must set this explicitly, otherwise production bundle throws
-        # "[Security Error] Production environment requires NEXT_PUBLIC_AI_ENCRYPTION_KEY".
-        $env:NEXT_PUBLIC_AI_ENCRYPTION_KEY = "deerflow-desktop-local-ai-encryption-key-2026"
         # Force LangGraph-compatible routes to gateway runtime in managed desktop mode.
         $env:DEER_FLOW_INTERNAL_GATEWAY_BASE_URL = "http://127.0.0.1:8001"
         $env:DEER_FLOW_INTERNAL_LANGGRAPH_BASE_URL = "http://127.0.0.1:8001/api"

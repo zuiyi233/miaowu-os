@@ -15,6 +15,9 @@ import nextra from "nextra";
 const withNextra = nextra({});
 const isDesktopBuild = process.env.DEERFLOW_DESKTOP_BUILD === "1";
 const forceDesktopProxy = isDesktopBuild || process.env.NEXT_PUBLIC_DEERFLOW_DESKTOP_BUILD === "1";
+const defaultGatewayURL = process.env.NODE_ENV === "production"
+  ? "http://gateway:8551"
+  : "http://127.0.0.1:8551";
 
 /** @type {import("next").NextConfig} */
 const config = {
@@ -28,7 +31,7 @@ const config = {
     const rewrites = [];
     const gatewayURL = getInternalServiceURL(
       "DEER_FLOW_INTERNAL_GATEWAY_BASE_URL",
-      "http://127.0.0.1:8551",
+      defaultGatewayURL,
     );
 
     if (forceDesktopProxy || !process.env.NEXT_PUBLIC_LANGGRAPH_BASE_URL) {

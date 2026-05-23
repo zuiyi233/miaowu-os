@@ -67,7 +67,6 @@ import {
   isFeatureModuleConfigurableInSettings,
   loadFeatureRoutingState,
   normalizeFeatureRoutingState,
-  saveFeatureRoutingState,
   type AiFeatureModuleRoute,
   type AiFeatureRoutingState,
   type AiModelTarget,
@@ -513,8 +512,8 @@ export function AiProviderSettingsPage() {
 
   useEffect(() => {
     if (!hydrated) return;
-    const backendOrLocal = draft.featureRoutingSettings ?? loadFeatureRoutingState(draft.providers);
-    const normalized = normalizeFeatureRoutingState(backendOrLocal, draft.providers);
+    const backendOrDefault = draft.featureRoutingSettings ?? loadFeatureRoutingState(draft.providers);
+    const normalized = normalizeFeatureRoutingState(backendOrDefault, draft.providers);
     setRoutingDraft((prev) => {
       if (routingDirty && prev) return normalizeFeatureRoutingState(prev, draft.providers);
       return normalized;
@@ -698,7 +697,6 @@ export function AiProviderSettingsPage() {
     setRoutingNotice(null);
     try {
       const normalized = normalizeFeatureRoutingState(routingDraft, providers);
-      saveFeatureRoutingState(normalized);
       await saveFeatureRoutingToServer(normalized);
       setRoutingDirty(false);
       setRoutingNotice({ type: "success", message: "模型配置已保存" });
@@ -931,8 +929,8 @@ export function AiProviderSettingsPage() {
             variant="outline"
             size="sm"
             onClick={() => {
-              const backendOrLocal = draft.featureRoutingSettings ?? loadFeatureRoutingState(draft.providers);
-              setRoutingDraft(normalizeFeatureRoutingState(backendOrLocal, draft.providers));
+              const backendOrDefault = draft.featureRoutingSettings ?? loadFeatureRoutingState(draft.providers);
+              setRoutingDraft(normalizeFeatureRoutingState(backendOrDefault, draft.providers));
               setRoutingDirty(false);
               setRoutingNotice(null);
             }}

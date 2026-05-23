@@ -399,17 +399,14 @@ export function useDeleteChapterMutation() {
 export function usePromptTemplatesQuery(type?: string) {
   return useQuery({
     queryKey: ['prompt-templates', type],
-    queryFn: () =>
-      type
-        ? databaseService.getPromptTemplatesByType(type)
-        : databaseService.getAllPromptTemplates(),
+    queryFn: () => novelApiService.getPromptTemplates(type),
   });
 }
 
 export function useActivePromptTemplateQuery(type: string) {
   return useQuery({
     queryKey: ['active-prompt-template', type],
-    queryFn: () => databaseService.getActivePromptTemplate(type),
+    queryFn: () => novelApiService.getActivePromptTemplate(type),
   });
 }
 
@@ -543,7 +540,7 @@ export function useUpdateVolumeMutation() {
 export function useAddPromptTemplateMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (template: PromptTemplate) => databaseService.addPromptTemplate(template),
+    mutationFn: (template: PromptTemplate) => novelApiService.addPromptTemplate(template),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['prompt-templates'] });
       queryClient.invalidateQueries({ queryKey: ['active-prompt-template'] });
@@ -554,7 +551,7 @@ export function useAddPromptTemplateMutation() {
 export function useUpdatePromptTemplateMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (template: PromptTemplate) => databaseService.updatePromptTemplate(template),
+    mutationFn: (template: PromptTemplate) => novelApiService.updatePromptTemplate(template),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['prompt-templates'] });
       queryClient.invalidateQueries({ queryKey: ['active-prompt-template'] });
@@ -565,7 +562,7 @@ export function useUpdatePromptTemplateMutation() {
 export function useDeletePromptTemplateMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (templateId: string) => databaseService.deletePromptTemplate(templateId),
+    mutationFn: (templateId: string) => novelApiService.deletePromptTemplate(templateId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['prompt-templates'] });
       queryClient.invalidateQueries({ queryKey: ['active-prompt-template'] });
@@ -577,7 +574,7 @@ export function useSetActivePromptTemplateMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ templateId, type }: { templateId: string; type: string }) =>
-      databaseService.setActivePromptTemplate(templateId, type),
+      novelApiService.setActivePromptTemplate(templateId, type),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['active-prompt-template'] });
     },

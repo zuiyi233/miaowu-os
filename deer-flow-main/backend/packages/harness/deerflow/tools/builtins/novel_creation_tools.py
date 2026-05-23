@@ -160,10 +160,10 @@ async def _consume_career_system_stream(*, base_url: str, params: dict[str, Any]
 
 async def _build_world_internal(project_id, title="", genre="", theme="", description=""):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         get_internal_ai_service,
         get_internal_db,
         load_attr,
-        resolve_user_id,
         to_dict,
     )
 
@@ -174,7 +174,7 @@ async def _build_world_internal(project_id, title="", genre="", theme="", descri
     if WorldBuildRequest is None or not callable(world_build_fn):
         raise RuntimeError("internal world_build unavailable")
     req = WorldBuildRequest(project_id=project_id)
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
     async with AsyncSessionLocal() as db:
         result = await world_build_fn(req=req, user_id=user_id, db=db, ai_service=ai_service)
     return _ok(to_dict(result), source="novel_migrated.world_build.internal")
@@ -182,10 +182,10 @@ async def _build_world_internal(project_id, title="", genre="", theme="", descri
 
 async def _generate_characters_internal(project_id, count=5, requirements=""):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         get_internal_ai_service,
         get_internal_db,
         load_attr,
-        resolve_user_id,
         to_dict,
     )
 
@@ -197,7 +197,7 @@ async def _generate_characters_internal(project_id, count=5, requirements=""):
         raise RuntimeError("internal generate_characters unavailable")
     user_input = _build_character_user_input(count=count, requirements=requirements)
     req = SingleGenerateRequest(project_id=project_id, user_input=user_input, is_organization=False)
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
     async with AsyncSessionLocal() as db:
         result = await generate_fn(req=req, user_id=user_id, db=db, ai_service=ai_service)
     return _ok(to_dict(result), source="novel_migrated.characters.internal")
@@ -205,15 +205,15 @@ async def _generate_characters_internal(project_id, count=5, requirements=""):
 
 async def _generate_outline_internal(project_id, chapter_count=10, requirements="", continue_from=""):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         get_internal_ai_service,
         get_internal_db,
         load_attr,
-        resolve_user_id,
         to_dict,
     )
 
     AsyncSessionLocal = await get_internal_db()
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
 
     if not continue_from:
         OutlineCreateRequest = load_attr("app.gateway.novel_migrated.api.outlines", "OutlineCreateRequest")
@@ -243,10 +243,10 @@ async def _generate_outline_internal(project_id, chapter_count=10, requirements=
 
 async def _expand_outline_internal(outline_id, project_id, target_chapter_count=3, strategy="single"):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         get_internal_ai_service,
         get_internal_db,
         load_attr,
-        resolve_user_id,
         to_dict,
     )
 
@@ -262,7 +262,7 @@ async def _expand_outline_internal(outline_id, project_id, target_chapter_count=
         target_chapter_count=target_chapter_count,
         expansion_strategy=strategy,
     )
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
     async with AsyncSessionLocal() as db:
         result = await expand_fn(req=req, user_id=user_id, db=db, ai_service=ai_service)
     return _ok(to_dict(result), source="novel_migrated.outline_expand.internal")
@@ -270,10 +270,10 @@ async def _expand_outline_internal(outline_id, project_id, target_chapter_count=
 
 async def _generate_chapter_internal(project_id, chapter_ids=None, outline_ids=None):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         get_internal_ai_service,
         get_internal_db,
         load_attr,
-        resolve_user_id,
         to_dict,
     )
 
@@ -284,7 +284,7 @@ async def _generate_chapter_internal(project_id, chapter_ids=None, outline_ids=N
     if BatchGenerateRequest is None or not callable(batch_fn):
         raise RuntimeError("internal batch_generate unavailable")
     req = BatchGenerateRequest(project_id=project_id, chapter_ids=chapter_ids, outline_ids=outline_ids)
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
     async with AsyncSessionLocal() as db:
         result = await batch_fn(req=req, request=None, user_id=user_id, db=db, ai_service=ai_service)
     return _ok(to_dict(result), source="novel_migrated.chapter_generate.internal")
@@ -292,15 +292,15 @@ async def _generate_chapter_internal(project_id, chapter_ids=None, outline_ids=N
 
 async def _generate_career_system_internal(project_id, main_career_count=3, sub_career_count=5):
     from deerflow.tools.builtins.novel_internal import (
+        get_authenticated_user_id,
         get_internal_ai_service,
         get_internal_db,
         load_attr,
-        resolve_user_id,
     )
 
     AsyncSessionLocal = await get_internal_db()
     ai_service = await get_internal_ai_service(module_id="novel-careers")
-    user_id = resolve_user_id(None)
+    user_id = get_authenticated_user_id()
 
     CareerService = load_attr("app.gateway.novel_migrated.services.career_service", "CareerService")
     if CareerService is None:

@@ -128,11 +128,14 @@ async function generateRecommendations(novelId: string): Promise<RecommendationI
       console.debug("[recommendation] generated %d items for novelId=%s", items.length, novelId);
       return items;
     },
-    () => databaseService.getRecommendationItems(novelId),
+    async () => {
+      throw new Error('Recommendation generation requires the backend service');
+    },
     'RecommendationPanel.generateRecommendations',
     async (items) => {
       await databaseService.batchUpdateRecommendationItems(items);
     },
+    'write',
   );
 }
 
@@ -143,40 +146,25 @@ async function acceptRecommendation(novelId: string, recId: string): Promise<Rec
       return normalizeRecommendation(novelId, remote as Record<string, unknown>);
     },
     async () => {
-      const existing = (await databaseService.getRecommendationItems(novelId)).find((item) => item.id === recId);
-      if (!existing) {
-        throw new Error('Recommendation not found in local cache');
-      }
-      const updated: RecommendationItem = {
-        ...existing,
-        status: 'accepted',
-        acceptedAt: new Date().toISOString(),
-      };
-      await databaseService.updateRecommendationItem(updated);
-      return updated;
+      throw new Error('Recommendation acceptance requires the backend service');
     },
     'RecommendationPanel.acceptRecommendation',
     async (item) => {
       await databaseService.updateRecommendationItem(item);
     },
+    'write',
   );
 }
 
 async function ignoreRecommendation(novelId: string, recId: string): Promise<void> {
-  try {
-    await novelApiService.ignoreRecommendation(novelId, recId);
-    console.debug("[recommendation] ignored remotely: novelId=%s recId=%s", novelId, recId);
-  } catch (remoteError) {
-    console.warn("[recommendation] remote ignore failed, falling back to local: novelId=%s recId=%s", novelId, recId, remoteError);
-  }
+  await novelApiService.ignoreRecommendation(novelId, recId);
   const existing = (await databaseService.getRecommendationItems(novelId)).find((item) => item.id === recId);
-  if (!existing) {
-    return;
+  if (existing) {
+    await databaseService.updateRecommendationItem({
+      ...existing,
+      status: 'ignored',
+    });
   }
-  await databaseService.updateRecommendationItem({
-    ...existing,
-    status: 'ignored',
-  });
 }
 
 export function RecommendationPanel({ novelId }: RecommendationPanelProps) {

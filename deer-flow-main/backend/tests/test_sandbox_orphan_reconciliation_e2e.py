@@ -28,6 +28,18 @@ def _docker_available() -> bool:
         return False
 
 
+def _docker_image_available(image: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", image],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
 def _container_running(container_name: str) -> bool:
     result = subprocess.run(
         ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
@@ -65,6 +77,7 @@ def cleanup_test_containers():
 
 
 @pytest.mark.skipif(not _docker_available(), reason="Docker not available")
+@pytest.mark.skipif(not _docker_image_available(E2E_TEST_IMAGE), reason=f"{E2E_TEST_IMAGE} not available locally; Docker E2E avoids network pulls")
 class TestOrphanReconciliationE2E:
     """E2E tests for orphan container reconciliation."""
 

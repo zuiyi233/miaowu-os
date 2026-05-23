@@ -16,6 +16,7 @@ import type {
   Item,
   Novel,
   Outline,
+  PromptTemplate,
   Setting,
   TimelineEvent,
   Volume,
@@ -642,6 +643,42 @@ function normalizeAuditEntries(novelId: string, raw: unknown): NovelAuditEntry[]
     .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 }
 
+function normalizePromptTemplate(raw: unknown): PromptTemplate {
+  const record = isRecord(raw) ? raw : {};
+  return {
+    id: toStringOr(record.id ?? record.template_key, `template-${Math.random().toString(36).slice(2, 10)}`),
+    name: toStringOr(record.name ?? record.template_name ?? record.template_key, '未命名模板'),
+    description: toOptionalString(record.description),
+    type: normalizePromptTemplateType(record.type ?? record.category),
+    content: toStringOr(record.content ?? record.template_content),
+    isBuiltIn: Boolean(record.isBuiltIn ?? record.is_system_default),
+    isActive: Boolean(record.isActive ?? record.is_active ?? true),
+    scope: 'global',
+  };
+}
+
+function normalizePromptTemplateType(value: unknown): PromptTemplate['type'] {
+  const raw = typeof value === 'string' ? value : '';
+  if (raw === 'outline' || raw.includes('outline')) return 'outline';
+  if (raw === 'continue' || raw.includes('continue')) return 'continue';
+  if (raw === 'polish' || raw.includes('polish')) return 'polish';
+  if (raw === 'expand' || raw.includes('expand')) return 'expand';
+  if (raw === 'chat' || raw.includes('chat')) return 'chat';
+  if (raw === 'extraction' || raw.includes('extract') || raw.includes('analysis')) return 'extraction';
+  return 'chat';
+}
+
+function promptTemplateToPayload(template: PromptTemplate) {
+  return {
+    template_key: template.id,
+    template_name: template.name,
+    template_content: template.content,
+    description: template.description,
+    category: template.type,
+    is_active: template.isActive ?? true,
+  };
+}
+
 const careerSystemResultKeys = [
   'main_careers_count',
   'mainCareersCount',
@@ -876,6 +913,19 @@ export class NovelApiService {
     return normalizeNovelSummaries(result);
   }
 
+  async getDashboardStats(): Promise<{ totalWordCount: number; totalChapters: number; totalEntities: number; novelCount: number }> {
+    const result = await request<unknown>('/novels-dashboard/stats');
+    if (!isRecord(result)) {
+      return { totalWordCount: 0, totalChapters: 0, totalEntities: 0, novelCount: 0 };
+    }
+    return {
+      totalWordCount: Number(result.totalWordCount ?? result.total_word_count ?? 0),
+      totalChapters: Number(result.totalChapters ?? result.total_chapters ?? 0),
+      totalEntities: Number(result.totalEntities ?? result.total_entities ?? 0),
+      novelCount: Number(result.novelCount ?? result.novel_count ?? 0),
+    };
+  }
+
   async createNovel(novel: Novel): Promise<Novel> {
     const result = await request<unknown>('/novels', {
       method: 'POST',
@@ -897,6 +947,57 @@ export class NovelApiService {
       method: 'DELETE',
     });
     return true;
+  }
+
+  async getPromptTemplates(type?: string): Promise<PromptTemplate[]> {
+    const result = await request<unknown>('/prompt-templates', {
+      query: type ? { category: type } : undefined,
+    });
+    const items = isRecord(result) && Array.isArray(result.templates) ? result.templates : [];
+    return items.map(normalizePromptTemplate);
+  }
+
+  async getActivePromptTemplate(type: string): Promise<PromptTemplate | null> {
+    const templates = await this.getPromptTemplates(type);
+    return templates.find((template) => template.isActive) ?? templates[0] ?? null;
+  }
+
+  async addPromptTemplate(template: PromptTemplate): Promise<PromptTemplate> {
+    const result = await request<unknown>('/prompt-templates', {
+      method: 'POST',
+      body: promptTemplateToPayload(template),
+    });
+    return normalizePromptTemplate(result);
+  }
+
+  async updatePromptTemplate(template: PromptTemplate): Promise<PromptTemplate> {
+    const result = await request<unknown>(`/prompt-templates/${encodeURIComponent(template.id)}`, {
+      method: 'PUT',
+      body: {
+        template_name: template.name,
+        template_content: template.content,
+        description: template.description,
+        category: template.type,
+        is_active: template.isActive ?? true,
+      },
+    });
+    return normalizePromptTemplate(result);
+  }
+
+  async deletePromptTemplate(templateId: string): Promise<void> {
+    await request(`/prompt-templates/${encodeURIComponent(templateId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async setActivePromptTemplate(templateId: string, type: string): Promise<void> {
+    await request(`/prompt-templates/${encodeURIComponent(templateId)}`, {
+      method: 'PUT',
+      body: {
+        category: type,
+        is_active: true,
+      },
+    });
   }
 
   async createChapter(novelId: string, chapter: Chapter): Promise<Chapter> {

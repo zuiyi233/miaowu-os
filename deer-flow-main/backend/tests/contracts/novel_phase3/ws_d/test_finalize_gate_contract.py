@@ -13,6 +13,8 @@ from app.gateway.novel_migrated.models.chapter import Chapter
 from app.gateway.novel_migrated.models.memory import PlotAnalysis
 from app.gateway.novel_migrated.models.project import Project
 
+pytestmark = pytest.mark.usefixtures("novel_main_sqlite_engine")
+
 
 async def _cleanup_project(project_id: str) -> None:
     async with AsyncSessionLocal() as session:
