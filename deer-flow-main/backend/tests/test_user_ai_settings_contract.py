@@ -97,6 +97,58 @@ def test_get_ai_settings_defaults_when_no_record() -> None:
         assert "ai_provider_settings" in prefs
 
 
+def test_get_ai_settings_injects_managed_newapi_provider(monkeypatch) -> None:
+    monkeypatch.setenv("NEWAPI_OAUTH_ENABLED", "true")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://newapi:3000/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-newapi-managed")
+    fake_db = _FakeDB()
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/user/ai-settings")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    provider = data["providers"][0]
+    assert provider["id"] == "newapi-managed"
+    assert provider["name"] == "NewAPI（默认分组）"
+    assert provider["is_managed"] is True
+    assert provider["managed_by"] == "newapi"
+    assert provider["has_api_key"] is True
+    assert provider["managed_group"] == "default"
+    assert "sk-newapi-managed" not in json.dumps(data, ensure_ascii=False)
+    assert data["default_provider_id"] == "newapi-managed"
+
+
+def test_get_ai_settings_injects_newapi_group_providers(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "MIAOWU_NEWAPI_GROUPS_JSON",
+        json.dumps(
+            [
+                {"id": "basic", "name": "基础组", "base_url": "http://newapi:3000/v1", "api_key": "sk-basic"},
+                {"id": "vip", "name": "VIP组", "base_url": "http://newapi:3000/v1", "api_key": "sk-vip"},
+            ],
+            ensure_ascii=False,
+        ),
+    )
+    fake_db = _FakeDB()
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/user/ai-settings")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    providers = {p["id"]: p for p in data["providers"]}
+    assert providers["newapi-managed-basic"]["managed_group"] == "basic"
+    assert providers["newapi-managed-vip"]["managed_group"] == "vip"
+    assert providers["newapi-managed-basic"]["name"] == "NewAPI（基础组）"
+    assert providers["newapi-managed-vip"]["name"] == "NewAPI（VIP组）"
+    dumped = json.dumps(data, ensure_ascii=False)
+    assert "sk-basic" not in dumped
+    assert "sk-vip" not in dumped
+
+
 def test_put_ai_settings_encrypts_key_and_mirrors_active_provider() -> None:
     _enable_encryption_for_test()
     fake_db = _FakeDB()
@@ -788,3 +840,31 @@ def test_fetch_provider_models_allows_public_https_and_parses_models(monkeypatch
 
     assert resp.status_code == 200
     assert resp.json()["models"] == ["model-a", "model-b"]
+
+
+def test_fetch_provider_models_uses_managed_newapi(monkeypatch) -> None:
+    app = _build_user_settings_app(_FakeDB())
+
+    async def _fake_fetch_managed_newapi_models(provider_id=None):
+        assert provider_id == "newapi-managed"
+        return ["newapi-model-a", "newapi-model-b"], {
+            "default": ["newapi-model-a"],
+            "vip": ["newapi-model-b"],
+        }
+
+    monkeypatch.setattr(user_settings, "fetch_managed_newapi_models", _fake_fetch_managed_newapi_models)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/user/fetch-provider-models",
+            json={"provider_type": "newapi", "provider_id": "newapi-managed"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "models": ["newapi-model-a", "newapi-model-b"],
+        "model_groups": {
+            "default": ["newapi-model-a"],
+            "vip": ["newapi-model-b"],
+        },
+    }

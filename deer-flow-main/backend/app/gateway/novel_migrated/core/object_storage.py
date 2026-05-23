@@ -34,14 +34,22 @@ def _env(name: str, default: str = "") -> str:
     return (os.getenv(name) or default).strip()
 
 
+def _env_first(*names: str, default: str = "") -> str:
+    for name in names:
+        value = _env(name)
+        if value:
+            return value
+    return default.strip()
+
+
 def get_object_storage_config() -> ObjectStorageConfig:
     """Read S3-compatible object storage settings from the environment."""
-    provider = _env("MIAOWU_OBJECT_STORAGE_PROVIDER", "s3")
-    endpoint = _env("MIAOWU_OBJECT_STORAGE_ENDPOINT", DEFAULT_S3_COMPATIBLE_ENDPOINT)
-    bucket = _env("MIAOWU_OBJECT_STORAGE_BUCKET", DEFAULT_BUCKET)
-    region = _env("MIAOWU_OBJECT_STORAGE_REGION", "us-east-1")
-    access_key = _env("MIAOWU_OBJECT_STORAGE_ACCESS_KEY")
-    secret_key = _env("MIAOWU_OBJECT_STORAGE_SECRET_KEY")
+    provider = _env_first("MIAOWU_OBJECT_STORAGE_PROVIDER", "STORAGE_BACKEND", default="s3")
+    endpoint = _env_first("MIAOWU_OBJECT_STORAGE_ENDPOINT", "S3_ENDPOINT", default=DEFAULT_S3_COMPATIBLE_ENDPOINT)
+    bucket = _env_first("MIAOWU_OBJECT_STORAGE_BUCKET", "S3_BUCKET_NAME", "S3_BUCKET", default=DEFAULT_BUCKET)
+    region = _env_first("MIAOWU_OBJECT_STORAGE_REGION", "S3_REGION", "AWS_REGION", default="us-east-1")
+    access_key = _env_first("MIAOWU_OBJECT_STORAGE_ACCESS_KEY", "S3_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID")
+    secret_key = _env_first("MIAOWU_OBJECT_STORAGE_SECRET_KEY", "S3_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY")
     private_raw = _env("MIAOWU_OBJECT_STORAGE_PRIVATE", "true").lower()
 
     return ObjectStorageConfig(

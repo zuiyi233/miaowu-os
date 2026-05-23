@@ -17,7 +17,13 @@ from app.gateway.auth import (
 )
 from app.gateway.auth.config import get_auth_config
 from app.gateway.auth.errors import AuthErrorCode, AuthErrorResponse
-from app.gateway.auth.newapi_oauth import NewAPIOAuthError, build_newapi_authorize_url, exchange_newapi_code_for_user
+from app.gateway.auth.newapi_oauth import (
+    NewAPIOAuthError,
+    build_frontend_redirect_url,
+    build_newapi_authorize_url,
+    exchange_newapi_code_for_user,
+    get_newapi_oauth_settings,
+)
 from app.gateway.csrf_middleware import CSRF_COOKIE_NAME, generate_csrf_token, is_secure_request
 from app.gateway.deps import get_current_user_from_request, get_local_provider
 
@@ -434,7 +440,10 @@ async def callback_newapi(
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     token = create_access_token(str(login_result.user.id), token_version=login_result.user.token_version)
-    response = RedirectResponse(login_result.next_path, status_code=status.HTTP_302_FOUND)
+    response = RedirectResponse(
+        build_frontend_redirect_url(login_result.next_path),
+        status_code=status.HTTP_302_FOUND,
+    )
     _set_session_cookie(response, token, request)
     _set_csrf_cookie(response, request)
     return response
@@ -488,7 +497,17 @@ async def setup_status(request: Request):
 
             async def _compute_setup_status() -> dict:
                 admin_count = await get_local_provider().count_admin_users()
-                return {"needs_setup": admin_count == 0}
+                newapi_settings = get_newapi_oauth_settings()
+                newapi_login_enabled = bool(
+                    newapi_settings.enabled
+                    and newapi_settings.issuer
+                    and newapi_settings.client_id
+                    and newapi_settings.client_secret
+                )
+                return {
+                    "needs_setup": admin_count == 0,
+                    "newapi_login_enabled": newapi_login_enabled,
+                }
 
             task = asyncio.create_task(_compute_setup_status())
             _SETUP_STATUS_INFLIGHT[client_ip] = task

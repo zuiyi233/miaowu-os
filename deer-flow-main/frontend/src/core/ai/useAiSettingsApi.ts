@@ -24,6 +24,10 @@ export interface UserAiProviderRecord {
   temperature: number | null;
   max_tokens: number | null;
   has_api_key: boolean;
+  is_managed?: boolean;
+  managed_by?: string | null;
+  managed_group?: string | null;
+  model_groups?: Record<string, string[]>;
 }
 
 export interface UserAiSettings {

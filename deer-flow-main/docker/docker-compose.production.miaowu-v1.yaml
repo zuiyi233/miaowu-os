@@ -1,0 +1,76 @@
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: ${MIAOWU_INSTANCE_NAME:-miaowu}-nginx
+    ports:
+      - "${PORT:-4560}:4560"
+    volumes:
+      - ./nginx/nginx.production.miaowu-v1.conf:/etc/nginx/nginx.conf.template:ro
+    command: >
+      sh -c "cp /etc/nginx/nginx.conf.template /etc/nginx/nginx.conf
+      && nginx -g 'daemon off;'"
+    depends_on:
+      - frontend
+      - gateway
+    networks:
+      - miaowu-os
+    restart: unless-stopped
+
+  frontend:
+    image: ${MIAOWU_FRONTEND_IMAGE_TAG:?set MIAOWU_FRONTEND_IMAGE_TAG to miaowu-os-frontend:<git-sha>-<yyyymmdd>}
+    container_name: ${MIAOWU_INSTANCE_NAME:-miaowu}-frontend
+    command: sh -c "cd frontend && node server.js"
+    environment:
+      - NODE_ENV=production
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
+      - DEER_FLOW_INTERNAL_GATEWAY_BASE_URL=http://gateway:8551
+      - DEER_FLOW_TRUSTED_ORIGINS=${DEER_FLOW_TRUSTED_ORIGINS:-https://xs.miaowu.bond}
+    env_file:
+      - path: .env.production
+        required: false
+    networks:
+      - miaowu-os
+    restart: unless-stopped
+
+  gateway:
+    image: ${MIAOWU_GATEWAY_IMAGE_TAG:?set MIAOWU_GATEWAY_IMAGE_TAG to miaowu-os-gateway:<git-sha>-<yyyymmdd>}
+    container_name: ${MIAOWU_INSTANCE_NAME:-miaowu}-gateway
+    command: sh -c "cd backend && PYTHONPATH=. uv run --no-sync uvicorn app.gateway.app:app --host 0.0.0.0 --port 8551 --workers ${GATEWAY_WORKERS:-4}"
+    volumes:
+      - ./config.docker.yaml:/app/backend/config.yaml:ro
+      - ./extensions_config.docker.json:/app/backend/extensions_config.json:ro
+      - ../skills:/app/skills:ro
+      - miaowu-os-runtime:/app/backend/.deer-flow
+      - /var/run/docker.sock:/var/run/docker.sock
+    working_dir: /app
+    environment:
+      - CI=true
+      - DEER_FLOW_PROJECT_ROOT=/app
+      - DEER_FLOW_HOME=/app/backend/.deer-flow
+      - DEER_FLOW_CONFIG_PATH=/app/backend/config.yaml
+      - DEER_FLOW_EXTENSIONS_CONFIG_PATH=/app/backend/extensions_config.json
+      - DEER_FLOW_CHANNELS_LANGGRAPH_URL=http://gateway:8551/api
+      - DEER_FLOW_CHANNELS_GATEWAY_URL=http://gateway:8551
+      - DEER_FLOW_SANDBOX_HOST=host.docker.internal
+    env_file:
+      - path: .env.production
+        required: false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - miaowu-os
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8551/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  # Runtime-only local state. Do not treat this as canonical production data.
+  miaowu-os-runtime:
+
+networks:
+  miaowu-os:
+    driver: bridge

@@ -1,6 +1,6 @@
 export const SUPPORTED_LOCALES = ["en-US", "zh-CN"] as const;
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
-export const DEFAULT_LOCALE: Locale = "en-US";
+export const DEFAULT_LOCALE: Locale = "zh-CN";
 
 export function isLocale(value: string): value is Locale {
   return (SUPPORTED_LOCALES as readonly string[]).includes(value);
@@ -40,15 +40,8 @@ export function normalizeLocale(locale: string | null | undefined): Locale {
   return DEFAULT_LOCALE;
 }
 
-// Helper function to detect browser locale
+// Default first-time visitors to Chinese. Manual language changes still persist
+// through the locale cookie and are handled by the i18n provider.
 export function detectLocale(): Locale {
-  if (typeof window === "undefined") {
-    return DEFAULT_LOCALE;
-  }
-
-  const browserLang =
-    navigator.language ||
-    (navigator as unknown as { userLanguage: string }).userLanguage;
-
-  return normalizeLocale(browserLang);
+  return DEFAULT_LOCALE;
 }

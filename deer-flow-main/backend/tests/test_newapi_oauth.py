@@ -15,10 +15,13 @@ from app.gateway.auth.newapi_oauth import (
     NewAPIOAuthSettings,
     NewAPIUserInfo,
     _normalize_local_email,
+    build_frontend_redirect_url,
     build_newapi_authorize_url,
     create_newapi_state,
     exchange_code_for_token,
+    newapi_user_is_admin,
     resolve_or_create_local_user,
+    sync_newapi_system_role,
     validate_newapi_state,
 )
 
@@ -36,6 +39,24 @@ def test_newapi_state_rejects_tampering(monkeypatch):
 
     with pytest.raises(NewAPIOAuthError):
         validate_newapi_state(state + "x")
+
+
+def test_build_frontend_redirect_url_defaults_to_relative(monkeypatch):
+    monkeypatch.delenv("MIAOWU_PUBLIC_FRONTEND_URL", raising=False)
+
+    assert build_frontend_redirect_url("/workspace") == "/workspace"
+
+
+def test_build_frontend_redirect_url_uses_public_frontend_base(monkeypatch):
+    monkeypatch.setenv("MIAOWU_PUBLIC_FRONTEND_URL", "http://127.0.0.1:14560/")
+
+    assert build_frontend_redirect_url("/workspace") == "http://127.0.0.1:14560/workspace"
+
+
+def test_build_frontend_redirect_url_rejects_external_next(monkeypatch):
+    monkeypatch.setenv("MIAOWU_PUBLIC_FRONTEND_URL", "http://127.0.0.1:14560")
+
+    assert build_frontend_redirect_url("https://evil.example/phish") == "http://127.0.0.1:14560/workspace"
 
 
 def test_build_newapi_authorize_url(monkeypatch):
@@ -142,6 +163,7 @@ def test_resolve_newapi_user_creates_shadow_user():
         email="newapi@example.com",
         provider=NEWAPI_PROVIDER,
         oauth_id="42",
+        system_role="user",
     )
 
 
@@ -158,6 +180,85 @@ def test_resolve_newapi_user_binds_existing_email():
     assert result.oauth_provider == NEWAPI_PROVIDER
     assert result.oauth_id == "42"
     provider.update_user.assert_awaited_once()
+
+
+def test_newapi_admin_sub_allowlist_promotes_new_shadow_user(monkeypatch):
+    monkeypatch.setenv("NEWAPI_OAUTH_ADMIN_SUBS", "42, 100")
+    provider = MagicMock()
+    provider.get_user_by_oauth = AsyncMock(return_value=None)
+    provider.get_user_by_email = AsyncMock(return_value=None)
+    created = User(
+        id=uuid4(),
+        email="newapi@example.com",
+        password_hash=None,
+        oauth_provider=NEWAPI_PROVIDER,
+        oauth_id="42",
+        system_role="admin",
+    )
+    provider.create_oauth_user = AsyncMock(return_value=created)
+    userinfo = NewAPIUserInfo(sub="42", email="newapi@example.com")
+
+    result = asyncio.run(resolve_or_create_local_user(provider, userinfo))
+
+    assert result.system_role == "admin"
+    provider.create_oauth_user.assert_awaited_once_with(
+        email="newapi@example.com",
+        provider=NEWAPI_PROVIDER,
+        oauth_id="42",
+        system_role="admin",
+    )
+
+
+def test_newapi_userinfo_claims_can_mark_admin(monkeypatch):
+    monkeypatch.delenv("NEWAPI_OAUTH_ADMIN_SUBS", raising=False)
+    monkeypatch.delenv("NEWAPI_OAUTH_ADMIN_IDENTITIES", raising=False)
+
+    assert newapi_user_is_admin(NewAPIUserInfo(sub="1", is_admin=True))
+    assert newapi_user_is_admin(NewAPIUserInfo(sub="2", role="admin"))
+    assert newapi_user_is_admin(NewAPIUserInfo(sub="3", roles=["writer", "owner"]))
+    assert newapi_user_is_admin(NewAPIUserInfo(sub="4", group="administrator"))
+    assert newapi_user_is_admin(NewAPIUserInfo(sub="5", groups="users,root"))
+    assert not newapi_user_is_admin(NewAPIUserInfo(sub="6", roles=["user"]))
+
+
+def test_sync_newapi_system_role_promotes_existing_user(monkeypatch):
+    monkeypatch.setenv("NEWAPI_OAUTH_ADMIN_SUBS", "42")
+    user = User(
+        id=uuid4(),
+        email="newapi@example.com",
+        password_hash=None,
+        oauth_provider=NEWAPI_PROVIDER,
+        oauth_id="42",
+        system_role="user",
+    )
+    promoted = user.model_copy(update={"system_role": "admin"})
+    provider = MagicMock()
+    provider.update_user = AsyncMock(return_value=promoted)
+
+    result = asyncio.run(sync_newapi_system_role(provider, user, NewAPIUserInfo(sub="42")))
+
+    assert result.system_role == "admin"
+    provider.update_user.assert_awaited_once()
+
+
+def test_sync_newapi_system_role_does_not_demote_by_default(monkeypatch):
+    monkeypatch.delenv("NEWAPI_OAUTH_ADMIN_SUBS", raising=False)
+    monkeypatch.delenv("NEWAPI_OAUTH_SYNC_ADMIN_DOWNGRADE", raising=False)
+    user = User(
+        id=uuid4(),
+        email="newapi@example.com",
+        password_hash=None,
+        oauth_provider=NEWAPI_PROVIDER,
+        oauth_id="42",
+        system_role="admin",
+    )
+    provider = MagicMock()
+    provider.update_user = AsyncMock()
+
+    result = asyncio.run(sync_newapi_system_role(provider, user, NewAPIUserInfo(sub="42")))
+
+    assert result.system_role == "admin"
+    provider.update_user.assert_not_awaited()
 
 
 def test_resolve_newapi_user_rejects_conflicting_oauth_email():

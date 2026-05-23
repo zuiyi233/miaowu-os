@@ -236,6 +236,16 @@ def test_object_storage_defaults_to_seaweedfs_s3_compatible(monkeypatch) -> None
         "MIAOWU_OBJECT_STORAGE_ACCESS_KEY",
         "MIAOWU_OBJECT_STORAGE_SECRET_KEY",
         "MIAOWU_OBJECT_STORAGE_PRIVATE",
+        "STORAGE_BACKEND",
+        "S3_ENDPOINT",
+        "S3_BUCKET_NAME",
+        "S3_BUCKET",
+        "S3_REGION",
+        "AWS_REGION",
+        "S3_ACCESS_KEY_ID",
+        "AWS_ACCESS_KEY_ID",
+        "S3_SECRET_ACCESS_KEY",
+        "AWS_SECRET_ACCESS_KEY",
     ]:
         monkeypatch.delenv(key, raising=False)
 
@@ -246,6 +256,56 @@ def test_object_storage_defaults_to_seaweedfs_s3_compatible(monkeypatch) -> None
     assert config.bucket == "miaowu-novel-assets"
     assert config.private_bucket is True
     assert "minio" not in repr(config).lower()
+
+
+def test_object_storage_accepts_generic_s3_aliases(monkeypatch) -> None:
+    from app.gateway.novel_migrated.core.object_storage import get_object_storage_config
+
+    for key in [
+        "MIAOWU_OBJECT_STORAGE_PROVIDER",
+        "MIAOWU_OBJECT_STORAGE_ENDPOINT",
+        "MIAOWU_OBJECT_STORAGE_BUCKET",
+        "MIAOWU_OBJECT_STORAGE_REGION",
+        "MIAOWU_OBJECT_STORAGE_ACCESS_KEY",
+        "MIAOWU_OBJECT_STORAGE_SECRET_KEY",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv("S3_ENDPOINT", "http://storage.example:8333")
+    monkeypatch.setenv("S3_BUCKET_NAME", "miaowu-prod")
+    monkeypatch.setenv("S3_REGION", "auto")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "alias-ak")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "alias-sk")
+
+    config = get_object_storage_config()
+
+    assert config.provider == "s3"
+    assert config.endpoint == "http://storage.example:8333"
+    assert config.bucket == "miaowu-prod"
+    assert config.region == "auto"
+    assert config.access_key == "alias-ak"
+    assert config.secret_key == "alias-sk"
+
+
+def test_object_storage_miaowu_env_takes_precedence_over_generic_aliases(monkeypatch) -> None:
+    from app.gateway.novel_migrated.core.object_storage import get_object_storage_config
+
+    monkeypatch.setenv("MIAOWU_OBJECT_STORAGE_ENDPOINT", "http://miaowu-storage:18334")
+    monkeypatch.setenv("MIAOWU_OBJECT_STORAGE_BUCKET", "miaowu-bucket")
+    monkeypatch.setenv("MIAOWU_OBJECT_STORAGE_ACCESS_KEY", "miaowu-ak")
+    monkeypatch.setenv("MIAOWU_OBJECT_STORAGE_SECRET_KEY", "miaowu-sk")
+    monkeypatch.setenv("S3_ENDPOINT", "http://generic-storage:8333")
+    monkeypatch.setenv("S3_BUCKET_NAME", "generic-bucket")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "generic-ak")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "generic-sk")
+
+    config = get_object_storage_config()
+
+    assert config.endpoint == "http://miaowu-storage:18334"
+    assert config.bucket == "miaowu-bucket"
+    assert config.access_key == "miaowu-ak"
+    assert config.secret_key == "miaowu-sk"
 
 
 @pytest.mark.asyncio

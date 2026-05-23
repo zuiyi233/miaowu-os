@@ -28,6 +28,9 @@ export default function SetupPage() {
 
   // --- Change-password mode only ---
   const [currentPassword, setCurrentPassword] = useState("");
+  const newApiLoginUrl = resolveApiUrl(
+    "/api/v1/auth/login/newapi?next=/workspace",
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -38,15 +41,21 @@ export default function SetupPage() {
       // Check if the system has no users yet
       void fetch(resolveApiUrl("/api/v1/auth/setup-status"))
         .then((r) => r.json())
-        .then((data: { needs_setup?: boolean }) => {
+        .then(
+          (data: { needs_setup?: boolean; newapi_login_enabled?: boolean }) => {
           if (cancelled) return;
+          if (data.newapi_login_enabled) {
+            window.location.href = newApiLoginUrl;
+            return;
+          }
           if (data.needs_setup) {
             setMode("init_admin");
           } else {
             // System already set up and user is not logged in — go to login
             router.push("/login");
           }
-        })
+          },
+        )
         .catch(() => {
           if (!cancelled) router.push("/login");
         });
@@ -58,7 +67,7 @@ export default function SetupPage() {
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated, user, router]);
+  }, [isAuthenticated, user, router, newApiLoginUrl]);
 
   // ── Init-admin handler ─────────────────────────────────────────────
   const handleInitAdmin = async (e: React.SubmitEvent) => {

@@ -23,7 +23,7 @@ const defaultGatewayURL = process.env.NODE_ENV === "production"
 const config = {
   i18n: {
     locales: ["en", "zh"],
-    defaultLocale: "en",
+    defaultLocale: "zh",
   },
   devIndicators: false,
   ...(isDesktopBuild ? { output: "standalone" } : {}),

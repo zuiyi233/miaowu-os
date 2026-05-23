@@ -431,24 +431,46 @@ async function fetchModelsFromProviderApi(
   baseUrl: string,
   apiKey: string,
   providerType: string,
-): Promise<string[]> {
+  providerId?: string,
+): Promise<{ models: string[]; modelGroups: Record<string, string[]> }> {
   const endpoint = `${getBackendBaseURL()}/api/user/fetch-provider-models`;
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, provider_type: providerType }),
+    body: JSON.stringify({
+      base_url: baseUrl,
+      api_key: apiKey,
+      provider_type: providerType,
+      provider_id: providerId,
+    }),
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.detail ?? `请求失败 (${response.status})`);
   }
-  const data = (await response.json()) as { models: string[] };
-  return data.models ?? [];
+  const data = (await response.json()) as {
+    models: string[];
+    model_groups?: Record<string, string[]>;
+  };
+  return {
+    models: data.models ?? [],
+    modelGroups: data.model_groups ?? {},
+  };
 }
 
 export function shouldValidateFetchModelsCredentials(providerType: string | undefined): boolean {
   return providerType === "openai" || providerType === "custom";
+}
+
+function isNewApiManagedProvider(
+  provider: Partial<Pick<AiProviderConfig, "isManaged" | "managedBy" | "id">> | undefined,
+) {
+  return (
+    Boolean(provider?.isManaged && provider.managedBy === "newapi") ||
+    provider?.id === "newapi-managed" ||
+    Boolean(provider?.id?.startsWith("newapi-managed-"))
+  );
 }
 
 export function AiProviderSettingsPage() {
@@ -746,7 +768,9 @@ export function AiProviderSettingsPage() {
   }, []);
 
   const handleFetchModels = useCallback(async () => {
+    const isManagedNewApi = isNewApiManagedProvider(formData);
     if (
+      !isManagedNewApi &&
       shouldValidateFetchModelsCredentials(formData.provider) &&
       !formData.baseUrl &&
       !formData.apiKey
@@ -757,17 +781,18 @@ export function AiProviderSettingsPage() {
     setFetchingModels(true);
     setFetchModelsError(null);
     try {
-      const models = await fetchModelsFromProviderApi(
+      const { models, modelGroups } = await fetchModelsFromProviderApi(
         formData.baseUrl ?? "",
         formData.apiKey ?? "",
-        formData.provider ?? "openai",
+        isManagedNewApi ? "newapi" : formData.provider ?? "openai",
+        formData.id,
       );
       if (models.length === 0) {
         setFetchModelsError("未获取到任何模型，请检查接口地址和 API Key");
         return;
       }
       const fetched = [...models].sort();
-      setFormData((prev) => ({ ...prev, models: fetched }));
+      setFormData((prev) => ({ ...prev, models: fetched, modelGroups }));
     } catch (err) {
       setFetchModelsError(err instanceof Error ? err.message : "获取模型列表失败");
     } finally {
@@ -806,7 +831,7 @@ export function AiProviderSettingsPage() {
         </Alert>
       )}
 
-      <SettingsSection title="AI 服务商" description="管理你的 AI 模型服务商，支持 OpenAI、Anthropic、Google 等">
+      <SettingsSection title="AI 服务商" description="NewAPI 是系统内置统一供应商；也可以按需添加 OpenAI、Anthropic、Google 或自定义第三方供应商。">
         <div className="flex items-center gap-2 mb-3">
           <Button
             variant="outline"
@@ -832,9 +857,9 @@ export function AiProviderSettingsPage() {
 
         <Alert className="mb-3">
           <CircleHelp className="h-4 w-4" />
-          <AlertTitle>配置存储说明</AlertTitle>
+          <AlertTitle>供应商来源说明</AlertTitle>
           <AlertDescription>
-            本页面保存的是用户级 AI 设置（后端数据库中的用户配置），不会直接改写
+            NewAPI 由后端统一管理模型、分组和密钥；第三方供应商配置保存到后端数据库，不会直接改写
             <code className="mx-1">config.yaml</code>
             或
             <code className="mx-1">.env</code> 文件。
@@ -1283,6 +1308,9 @@ export function ProviderCard({
     custom: "自定义",
   };
 
+  const isManagedNewApi = isNewApiManagedProvider(provider);
+  const modelGroupCount = Object.keys(provider.modelGroups ?? {}).length;
+  const newApiGroupLabel = provider.managedGroup ? `分组：${provider.managedGroup}` : "默认分组";
   const [modelInputMode, setModelInputMode] = useState<"tags" | "text">("tags");
   const [tagInput, setTagInput] = useState("");
 
@@ -1340,9 +1368,15 @@ export function ProviderCard({
               {provider.isActive && (
                 <Badge className="bg-primary text-primary-foreground text-[10px]">当前使用</Badge>
               )}
+              {isManagedNewApi && (
+                <Badge variant="secondary" className="text-[10px]">
+                  NewAPI {newApiGroupLabel}
+                </Badge>
+              )}
             </div>
             <p className="text-xs text-muted-foreground">
-              {providerTypeLabels[provider.provider]} · {provider.models.length} 个模型
+              {isManagedNewApi ? "后端托管" : providerTypeLabels[provider.provider]} · {provider.models.length} 个模型
+              {modelGroupCount > 0 ? ` · ${modelGroupCount} 个分组` : ""}
             </p>
           </div>
         </div>
@@ -1355,14 +1389,26 @@ export function ProviderCard({
           <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onEdit}>
             编辑
           </Button>
-          <Button variant="ghost" size="sm" className="h-7 text-xs text-destructive" onClick={onDelete}>
-            删除
-          </Button>
+          {!isManagedNewApi && (
+            <Button variant="ghost" size="sm" className="h-7 text-xs text-destructive" onClick={onDelete}>
+              删除
+            </Button>
+          )}
         </div>
       </div>
 
       {isEditing && (
         <div className="mt-4 pt-4 border-t space-y-3">
+          {isManagedNewApi && (
+            <Alert className="border-primary/30 bg-primary/5">
+              <Shield className="h-4 w-4 text-primary" />
+              <AlertTitle>NewAPI 由后端统一管理</AlertTitle>
+              <AlertDescription>
+                当前卡片对应 NewAPI {newApiGroupLabel}。该分组的 API Key 和接口地址来自服务端配置，不会暴露到浏览器。
+                用户选择不同 NewAPI 分组时，后端会使用该分组绑定的密钥。
+              </AlertDescription>
+            </Alert>
+          )}
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-1.5">
               <Label className="text-xs">显示名称</Label>
@@ -1370,6 +1416,7 @@ export function ProviderCard({
                 value={formData.name ?? ""}
                 onChange={(e) => onFormChange({ ...formData, name: e.target.value })}
                 placeholder="例如：OpenAI 官方"
+                disabled={isManagedNewApi}
               />
             </div>
             <div className="space-y-1.5">
@@ -1377,6 +1424,7 @@ export function ProviderCard({
               <Select
                 value={formData.provider ?? "openai"}
                 onValueChange={(v) => onFormChange({ ...formData, provider: v as AiProviderType })}
+                disabled={isManagedNewApi}
               >
                 <SelectTrigger className="h-9">
                   <SelectValue />
@@ -1389,34 +1437,38 @@ export function ProviderCard({
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5 md:col-span-2">
-              <Label className="text-xs">API Key</Label>
-              <Input
-                type="password"
-                value={formData.apiKey ?? ""}
-                onChange={(e) => onFormChange({ ...formData, apiKey: e.target.value, clearApiKey: false })}
-                placeholder="sk-..."
-              />
-              {provider.hasApiKey && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="text-xs"
-                  onClick={() => onFormChange({ ...formData, apiKey: "", clearApiKey: true })}
-                >
-                  清空已保存的 Key
-                </Button>
-              )}
-            </div>
-            <div className="space-y-1.5 md:col-span-2">
-              <Label className="text-xs">接口地址（可选）</Label>
-              <Input
-                value={formData.baseUrl ?? ""}
-                onChange={(e) => onFormChange({ ...formData, baseUrl: e.target.value })}
-                placeholder="https://api.openai.com/v1"
-              />
-            </div>
+            {!isManagedNewApi && (
+              <>
+                <div className="space-y-1.5 md:col-span-2">
+                  <Label className="text-xs">API Key</Label>
+                  <Input
+                    type="password"
+                    value={formData.apiKey ?? ""}
+                    onChange={(e) => onFormChange({ ...formData, apiKey: e.target.value, clearApiKey: false })}
+                    placeholder="sk-..."
+                  />
+                  {provider.hasApiKey && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="text-xs"
+                      onClick={() => onFormChange({ ...formData, apiKey: "", clearApiKey: true })}
+                    >
+                      清空已保存的 Key
+                    </Button>
+                  )}
+                </div>
+                <div className="space-y-1.5 md:col-span-2">
+                  <Label className="text-xs">接口地址（可选）</Label>
+                  <Input
+                    value={formData.baseUrl ?? ""}
+                    onChange={(e) => onFormChange({ ...formData, baseUrl: e.target.value })}
+                    placeholder="https://api.openai.com/v1"
+                  />
+                </div>
+              </>
+            )}
             <div className="space-y-1.5 md:col-span-2">
               <div className="flex items-center justify-between">
                 <Label className="text-xs">模型列表</Label>

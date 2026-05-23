@@ -11,6 +11,7 @@ import {
 } from "./useAiSettingsApi";
 
 export type AiProviderType = "openai" | "anthropic" | "google" | "custom";
+export type AiManagedBy = "newapi" | string;
 
 export interface AiProviderConfig {
   id: string;
@@ -29,6 +30,11 @@ export interface AiProviderConfig {
   maxTokens?: number;
   /** Backend state hint (read-only). */
   hasApiKey?: boolean;
+  /** Backend-managed provider. Secrets and endpoints are controlled server-side. */
+  isManaged?: boolean;
+  managedBy?: AiManagedBy | null;
+  managedGroup?: string | null;
+  modelGroups?: Record<string, string[]>;
   /** Draft-only. Explicitly clear backend stored key. */
   clearApiKey?: boolean;
 }
@@ -112,6 +118,10 @@ function mapServerProviderToConfig(p: UserAiProviderRecord): AiProviderConfig {
     temperature: p.temperature ?? undefined,
     maxTokens: p.max_tokens ?? undefined,
     hasApiKey: Boolean(p.has_api_key),
+    isManaged: Boolean(p.is_managed),
+    managedBy: p.managed_by ?? null,
+    managedGroup: p.managed_group ?? null,
+    modelGroups: p.model_groups ?? {},
     clearApiKey: false,
   };
 }
@@ -170,6 +180,18 @@ function isAiProviderConfigRecord(value: unknown): value is AiProviderConfig {
     return false;
   }
   if (obj.hasApiKey !== undefined && typeof obj.hasApiKey !== "boolean") {
+    return false;
+  }
+  if (obj.isManaged !== undefined && typeof obj.isManaged !== "boolean") {
+    return false;
+  }
+  if (obj.managedBy !== undefined && obj.managedBy !== null && typeof obj.managedBy !== "string") {
+    return false;
+  }
+  if (obj.managedGroup !== undefined && obj.managedGroup !== null && typeof obj.managedGroup !== "string") {
+    return false;
+  }
+  if (obj.modelGroups !== undefined && (typeof obj.modelGroups !== "object" || obj.modelGroups === null || Array.isArray(obj.modelGroups))) {
     return false;
   }
   if (obj.clearApiKey !== undefined && typeof obj.clearApiKey !== "boolean") {
@@ -244,6 +266,9 @@ function buildPutPayloadFromDraft(draft: AiGlobalSettings): UserAiSettingsUpdate
       temperature: p.temperature ?? null,
       max_tokens: p.maxTokens ?? null,
     };
+    if (p.isManaged) {
+      return payload;
+    }
     if (p.clearApiKey) {
       payload.clear_api_key = true;
     } else if (apiKey) {

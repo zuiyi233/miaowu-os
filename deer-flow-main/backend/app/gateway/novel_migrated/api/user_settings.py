@@ -19,7 +19,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.user_context import get_request_user_id
-from app.gateway.novel_migrated.services.ai_settings_service import get_ai_settings_service
+from app.gateway.novel_migrated.services.ai_settings_service import (
+    MANAGED_NEWAPI_PROVIDER_ID,
+    fetch_managed_newapi_models,
+    get_ai_settings_service,
+    get_managed_newapi_groups,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +47,10 @@ class ProviderRecordResponse(BaseModel):
     temperature: float | None = None
     max_tokens: int | None = None
     has_api_key: bool = False
+    is_managed: bool = False
+    managed_by: str | None = None
+    managed_group: str | None = None
+    model_groups: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class ProviderRecordUpdate(BaseModel):
@@ -118,10 +127,12 @@ class FetchProviderModelsRequest(BaseModel):
     base_url: str = Field(default="", description="Provider API base URL")
     api_key: str = Field(default="", description="Provider API key")
     provider_type: str = Field(default="openai", description="Provider type: openai, anthropic, google, custom")
+    provider_id: str | None = Field(default=None, description="Optional provider ID")
 
 
 class FetchProviderModelsResponse(BaseModel):
     models: list[str] = Field(default_factory=list)
+    model_groups: dict[str, list[str]] = Field(default_factory=dict)
 
 
 def _build_models_url(base_url: str, provider_type: str) -> str | None:
@@ -225,14 +236,21 @@ async def fetch_provider_models(
     provider_type = (payload.provider_type or "openai").strip().lower()
 
     if provider_type == "anthropic":
-        return FetchProviderModelsResponse(
-            models=_get_anthropic_static_models()
-        )
+        return FetchProviderModelsResponse(models=_get_anthropic_static_models())
 
     if provider_type == "google":
-        return FetchProviderModelsResponse(
-            models=_get_google_static_models()
-        )
+        return FetchProviderModelsResponse(models=_get_google_static_models())
+
+    if provider_type == "newapi" or (payload.provider_id or "").startswith(MANAGED_NEWAPI_PROVIDER_ID):
+        try:
+            models, model_groups = await fetch_managed_newapi_models(payload.provider_id)
+            return FetchProviderModelsResponse(models=models, model_groups=model_groups)
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "fetch-provider-models: managed NewAPI returned %s",
+                exc.response.status_code if exc.response else "unknown",
+            )
+            raise HTTPException(status_code=502, detail="NewAPI 模型列表获取失败") from exc
 
     safe_base_url = _validate_and_normalize_public_base_url(base_url)
     models_url = _build_models_url(safe_base_url, provider_type)
@@ -246,11 +264,42 @@ async def fetch_provider_models(
         raise HTTPException(status_code=504, detail="上游 API 请求超时")
     except httpx.ConnectError:
         raise HTTPException(status_code=502, detail="无法连接到上游 API，请检查接口地址")
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "fetch-provider-models: managed provider returned %s",
+            exc.response.status_code if exc.response else "unknown",
+        )
+        raise HTTPException(status_code=502, detail="上游 API 返回错误") from exc
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception("fetch-provider-models: unexpected error")
         raise HTTPException(status_code=500, detail=f"获取模型列表失败: {exc}") from exc
+
+
+class NewAPIProviderGroupResponse(BaseModel):
+    provider_id: str
+    group_id: str
+    name: str
+    base_url: str
+    has_api_key: bool
+
+
+@router.get("/newapi-provider-groups", response_model=list[NewAPIProviderGroupResponse])
+async def list_newapi_provider_groups(request: Request):
+    """Return server-managed NewAPI groups without exposing their keys."""
+    get_request_user_id(request)
+    groups = get_managed_newapi_groups()
+    return [
+        NewAPIProviderGroupResponse(
+            provider_id=MANAGED_NEWAPI_PROVIDER_ID if group["group_id"] == "default" else f"{MANAGED_NEWAPI_PROVIDER_ID}-{group['group_id']}",
+            group_id=group["group_id"],
+            name=group["name"],
+            base_url=group["base_url"],
+            has_api_key=bool(group["api_key"]),
+        )
+        for group in groups
+    ]
 
 
 def _get_anthropic_static_models() -> list[str]:

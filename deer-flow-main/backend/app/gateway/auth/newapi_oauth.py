@@ -11,10 +11,10 @@ import secrets
 import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin
 
 import httpx
-from pydantic import BaseModel, EmailStr, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, TypeAdapter, ValidationError
 
 from app.gateway.auth.config import get_auth_config
 from app.gateway.auth.models import NewAPIAccountSnapshot, User
@@ -24,6 +24,7 @@ _STATE_TTL_SECONDS = 10 * 60
 _DEFAULT_SCOPES = "openid profile email"
 _DEFAULT_REDIRECT_URI = "http://127.0.0.1:8551/api/v1/auth/callback/newapi"
 _EMAIL_ADAPTER = TypeAdapter(EmailStr)
+_ADMIN_ROLE_VALUES = {"admin", "administrator", "root", "owner", "super_admin", "superadmin"}
 
 
 class NewAPIOAuthError(RuntimeError):
@@ -54,6 +55,8 @@ class NewAPIOAuthSettings(BaseModel):
 
 
 class NewAPIUserInfo(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     sub: str = Field(min_length=1)
     email: str | None = None
     preferred_username: str | None = None
@@ -65,6 +68,11 @@ class NewAPIUserInfo(BaseModel):
     used_quota: int | None = None
     remain_quota: int | None = None
     balance: int | None = None
+    is_admin: bool | None = None
+    role: str | None = None
+    roles: list[str] | str | None = None
+    group: str | None = None
+    groups: list[str] | str | None = None
 
 
 @dataclass(frozen=True)
@@ -87,6 +95,68 @@ def get_newapi_oauth_settings() -> NewAPIOAuthSettings:
     )
 
 
+def _env_csv_values(name: str) -> set[str]:
+    raw = os.getenv(name, "")
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
+def _truthy_env(name: str) -> bool:
+    return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _claim_values(value: str | list[str] | None) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return {item.strip().lower() for item in value.replace(";", ",").split(",") if item.strip()}
+    return {str(item).strip().lower() for item in value if str(item).strip()}
+
+
+def newapi_user_is_admin(userinfo: NewAPIUserInfo) -> bool:
+    """Return whether the trusted NewAPI identity should be a Miaowu admin.
+
+    Prefer explicit deployment allowlists because NewAPI OIDC deployments may
+    omit admin claims from userinfo. If claims are present, accept common role
+    and group shapes used by OAuth providers.
+    """
+    if userinfo.sub.lower() in _env_csv_values("NEWAPI_OAUTH_ADMIN_SUBS"):
+        return True
+
+    identities = {
+        (userinfo.email or "").strip().lower(),
+        (userinfo.preferred_username or "").strip().lower(),
+        (userinfo.username or "").strip().lower(),
+    }
+    if identities & _env_csv_values("NEWAPI_OAUTH_ADMIN_IDENTITIES"):
+        return True
+
+    if userinfo.is_admin is True:
+        return True
+
+    role_values = (
+        _claim_values(userinfo.role)
+        | _claim_values(userinfo.roles)
+        | _claim_values(userinfo.group)
+        | _claim_values(userinfo.groups)
+    )
+    return bool(role_values & _ADMIN_ROLE_VALUES)
+
+
+async def sync_newapi_system_role(provider, user: User, userinfo: NewAPIUserInfo) -> User:
+    """Promote/demote local shadow user role from trusted NewAPI admin state."""
+    desired_role = "admin" if newapi_user_is_admin(userinfo) else "user"
+
+    if user.system_role == desired_role:
+        return user
+
+    should_update = desired_role == "admin" or _truthy_env("NEWAPI_OAUTH_SYNC_ADMIN_DOWNGRADE")
+    if not should_update:
+        return user
+
+    user.system_role = desired_role
+    return await provider.update_user(user)
+
+
 def validate_next_path(value: str | None) -> str:
     if not value:
         return "/workspace"
@@ -95,6 +165,22 @@ def validate_next_path(value: str | None) -> str:
     if ":" in value and not value.startswith("/"):
         return "/workspace"
     return value
+
+
+def build_frontend_redirect_url(next_path: str) -> str:
+    """Build the browser redirect target after backend OAuth callback.
+
+    NewAPI redirects the browser to the gateway callback endpoint. A relative
+    Location would keep the user on the gateway origin, so SaaS deployments can
+    set MIAOWU_PUBLIC_FRONTEND_URL to send the browser back to Next.js.
+    """
+    safe_next = validate_next_path(next_path)
+    frontend_base = (os.getenv("MIAOWU_PUBLIC_FRONTEND_URL") or "").strip().rstrip("/")
+    if not frontend_base:
+        return safe_next
+    if not frontend_base.startswith(("http://", "https://")):
+        return safe_next
+    return urljoin(frontend_base + "/", safe_next.lstrip("/"))
 
 
 def require_newapi_settings() -> NewAPIOAuthSettings:
@@ -211,6 +297,7 @@ async def exchange_newapi_code_for_user(code: str, state: str, provider) -> NewA
 
     userinfo = await fetch_newapi_userinfo(userinfo_endpoint, access_token)
     user = await resolve_or_create_local_user(provider, userinfo)
+    user = await sync_newapi_system_role(provider, user, userinfo)
     snapshot = await provider.upsert_newapi_snapshot(
         user_id=str(user.id),
         newapi_sub=userinfo.sub,
@@ -276,7 +363,13 @@ async def resolve_or_create_local_user(provider, userinfo: NewAPIUserInfo) -> Us
         by_email.oauth_id = userinfo.sub
         return await provider.update_user(by_email)
 
-    return await provider.create_oauth_user(email=email, provider=NEWAPI_PROVIDER, oauth_id=userinfo.sub)
+    system_role = "admin" if newapi_user_is_admin(userinfo) else "user"
+    return await provider.create_oauth_user(
+        email=email,
+        provider=NEWAPI_PROVIDER,
+        oauth_id=userinfo.sub,
+        system_role=system_role,
+    )
 
 
 def _normalize_local_email(userinfo: NewAPIUserInfo) -> str:

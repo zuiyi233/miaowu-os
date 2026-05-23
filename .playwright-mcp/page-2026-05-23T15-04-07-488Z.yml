@@ -1,0 +1,23 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - heading "DeerFlow" [level=1] [ref=e6]
+      - paragraph [ref=e7]: Sign in to your account
+    - generic [ref=e8]:
+      - generic [ref=e9]:
+        - generic [ref=e10]: Email
+        - textbox "Email" [ref=e11]:
+          - /placeholder: you@example.com
+      - generic [ref=e12]:
+        - generic [ref=e13]: Password
+        - textbox "Password" [ref=e14]:
+          - /placeholder: •••••••
+      - button "Sign In" [ref=e15] [cursor=pointer]
+    - generic [ref=e16]:
+      - generic [ref=e19]: or
+      - link "Sign in with NewAPI" [ref=e21] [cursor=pointer]:
+        - /url: /api/v1/auth/login/newapi?next=%2Fworkspace
+    - button "Don't have an account? Sign up" [ref=e23]
+    - link "← Back to home" [ref=e25] [cursor=pointer]:
+      - /url: /
+  - alert [ref=e26]

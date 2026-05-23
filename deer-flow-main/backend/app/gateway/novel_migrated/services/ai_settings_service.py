@@ -15,10 +15,13 @@ Design goals:
 from __future__ import annotations
 
 import json
+import os
+import re
 import threading
 import uuid
 from typing import Any, TypedDict
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +34,7 @@ logger = get_logger(__name__)
 
 AI_PROVIDER_SETTINGS_PREF_KEY = "ai_provider_settings"
 AI_PROVIDER_SETTINGS_VERSION = 1
+MANAGED_NEWAPI_PROVIDER_ID = "newapi-managed"
 
 DEFAULT_CLIENT_SETTINGS: ClientSettings = {
     "enable_stream_mode": True,
@@ -56,6 +60,10 @@ class ProviderRecord(TypedDict, total=False):
     max_tokens: int | None
     # Backend-only persisted secret (encrypted when possible).
     api_key_encrypted: str | None
+    is_managed: bool
+    managed_by: str | None
+    managed_group: str | None
+    model_groups: dict[str, list[str]]
 
 
 class ProviderRecordPublic(TypedDict):
@@ -68,6 +76,17 @@ class ProviderRecordPublic(TypedDict):
     temperature: float | None
     max_tokens: int | None
     has_api_key: bool
+    is_managed: bool
+    managed_by: str | None
+    managed_group: str | None
+    model_groups: dict[str, list[str]]
+
+
+class ManagedNewAPIGroup(TypedDict):
+    group_id: str
+    name: str
+    base_url: str
+    api_key: str
 
 
 class UserAIRuntimeConfig(TypedDict):
@@ -103,6 +122,303 @@ def _as_non_empty_str(value: Any) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _env_truthy(name: str) -> bool:
+    return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _first_env_value(*names: str) -> str | None:
+    for name in names:
+        value = _as_non_empty_str(os.getenv(name))
+        if value:
+            return value
+    return None
+
+
+def _normalize_openai_base_url(base_url: str) -> str:
+    cleaned = base_url.strip().rstrip("/")
+    if not cleaned:
+        return ""
+    if cleaned.endswith("/v1"):
+        return cleaned
+    if "/v1/" in cleaned:
+        return cleaned
+    return f"{cleaned}/v1"
+
+
+def _get_managed_newapi_base_url() -> str | None:
+    explicit = _first_env_value(
+        "MIAOWU_NEWAPI_BASE_URL",
+        "NEWAPI_OPENAI_BASE_URL",
+        "NEWAPI_PROVIDER_BASE_URL",
+        "NEWAPI_AI_BASE_URL",
+    )
+    if explicit:
+        return _normalize_openai_base_url(explicit)
+
+    if not _env_truthy("NEWAPI_OAUTH_ENABLED"):
+        return None
+
+    # In the SaaS deployment NewAPI is the only built-in upstream. The OpenAI
+    # compatible env names are therefore treated as the managed NewAPI gateway.
+    fallback = _first_env_value("OPENAI_BASE_URL", "OPENAI_API_BASE")
+    if fallback:
+        return _normalize_openai_base_url(fallback)
+    return None
+
+
+def _get_managed_newapi_api_key() -> str | None:
+    return _first_env_value(
+        "MIAOWU_NEWAPI_API_KEY",
+        "NEWAPI_PROVIDER_API_KEY",
+        "NEWAPI_AI_API_KEY",
+        "NEWAPI_API_KEY",
+        "OPENAI_API_KEY",
+    )
+
+
+def _safe_provider_id_part(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9_-]+", "-", value.strip().lower()).strip("-")
+    return normalized or "default"
+
+
+def _newapi_provider_id_for_group(group_id: str) -> str:
+    safe_group = _safe_provider_id_part(group_id)
+    if safe_group == "default":
+        return MANAGED_NEWAPI_PROVIDER_ID
+    return f"{MANAGED_NEWAPI_PROVIDER_ID}-{safe_group}"
+
+
+def _newapi_group_from_provider_id(provider_id: str | None) -> str | None:
+    normalized = _as_non_empty_str(provider_id)
+    if not normalized:
+        return None
+    if normalized == MANAGED_NEWAPI_PROVIDER_ID:
+        return "default"
+    prefix = f"{MANAGED_NEWAPI_PROVIDER_ID}-"
+    if normalized.startswith(prefix):
+        return normalized[len(prefix):]
+    return None
+
+
+def _parse_managed_newapi_groups_json(raw: str | None) -> list[ManagedNewAPIGroup]:
+    if not raw or not raw.strip():
+        return []
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        logger.warning("Invalid NewAPI group JSON config; falling back to single managed provider.")
+        return []
+    if not isinstance(parsed, list):
+        return []
+
+    groups: list[ManagedNewAPIGroup] = []
+    for index, item in enumerate(parsed, start=1):
+        if not isinstance(item, dict):
+            continue
+        group_id = _as_non_empty_str(item.get("id")) or _as_non_empty_str(item.get("group")) or f"group-{index}"
+        api_key = _as_non_empty_str(item.get("api_key")) or _as_non_empty_str(item.get("key"))
+        base_url = _as_non_empty_str(item.get("base_url")) or _get_managed_newapi_base_url()
+        if not api_key or not base_url:
+            continue
+        groups.append(
+            ManagedNewAPIGroup(
+                group_id=_safe_provider_id_part(group_id),
+                name=_as_non_empty_str(item.get("name")) or group_id,
+                base_url=_normalize_openai_base_url(base_url),
+                api_key=api_key,
+            )
+        )
+    return groups
+
+
+def get_managed_newapi_groups() -> list[ManagedNewAPIGroup]:
+    groups = _parse_managed_newapi_groups_json(
+        os.getenv("MIAOWU_NEWAPI_GROUPS_JSON") or os.getenv("NEWAPI_PROVIDER_GROUPS_JSON")
+    )
+    if groups:
+        return groups
+
+    base_url = _get_managed_newapi_base_url()
+    api_key = _get_managed_newapi_api_key()
+    if not base_url or not api_key:
+        return []
+    return [
+        ManagedNewAPIGroup(
+            group_id="default",
+            name="默认分组",
+            base_url=base_url,
+            api_key=api_key,
+        )
+    ]
+
+
+def _parse_newapi_models_payload(data: Any) -> tuple[list[str], dict[str, list[str]]]:
+    if not isinstance(data, dict):
+        return [], {}
+    raw_models = data.get("data") or []
+    if not isinstance(raw_models, list):
+        return [], {}
+
+    models: list[str] = []
+    groups: dict[str, list[str]] = {}
+    for item in raw_models:
+        model_id: str | None = None
+        group_name: str | None = None
+        if isinstance(item, dict):
+            model_id = _as_non_empty_str(item.get("id"))
+            group_name = (
+                _as_non_empty_str(item.get("group"))
+                or _as_non_empty_str(item.get("owned_by"))
+                or _as_non_empty_str(item.get("owner"))
+            )
+        elif isinstance(item, str):
+            model_id = _as_non_empty_str(item)
+        if not model_id:
+            continue
+        models.append(model_id)
+        if group_name:
+            groups.setdefault(group_name, []).append(model_id)
+
+    unique_models = sorted(dict.fromkeys(models))
+    unique_groups = {
+        group_name: sorted(dict.fromkeys(group_models))
+        for group_name, group_models in sorted(groups.items())
+        if group_models
+    }
+    return unique_models, unique_groups
+
+
+def _select_managed_newapi_group(provider_id: str | None = None) -> ManagedNewAPIGroup | None:
+    groups = get_managed_newapi_groups()
+    if not groups:
+        return None
+    target_group = _newapi_group_from_provider_id(provider_id)
+    if target_group:
+        for group in groups:
+            if _safe_provider_id_part(group["group_id"]) == target_group:
+                return group
+    return groups[0]
+
+
+async def fetch_managed_newapi_models(provider_id: str | None = None) -> tuple[list[str], dict[str, list[str]]]:
+    """Fetch models from the server-side NewAPI gateway without exposing keys."""
+    group = _select_managed_newapi_group(provider_id)
+    if group is None:
+        return [], {}
+
+    models_url = f"{group['base_url'].rstrip('/')}/models"
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {group['api_key']}",
+    }
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        response = await client.get(models_url, headers=headers)
+    response.raise_for_status()
+    models, upstream_groups = _parse_newapi_models_payload(response.json())
+    if not upstream_groups and models:
+        upstream_groups = {group["group_id"]: models}
+    return models, upstream_groups
+
+
+def _configured_model_names() -> list[str]:
+    try:
+        from deerflow.config.app_config import get_app_config
+
+        cfg = get_app_config()
+        names: list[str] = []
+        for model in getattr(cfg, "models", None) or []:
+            name = getattr(model, "name", None)
+            if isinstance(name, str) and name.strip():
+                names.append(name.strip())
+        return sorted(dict.fromkeys(names))
+    except Exception:
+        logger.debug("Skip reading configured model names.", exc_info=True)
+        return []
+
+
+def _build_managed_newapi_provider_record(
+    *,
+    group: ManagedNewAPIGroup,
+    previous: ProviderRecord | None = None,
+    models: list[str] | None = None,
+    model_groups: dict[str, list[str]] | None = None,
+) -> ProviderRecord | None:
+    previous_models = _normalize_models((previous or {}).get("models"))
+    provider_models = _normalize_models(models) or previous_models or _configured_model_names()
+    provider_groups = model_groups or {}
+    if not provider_groups and isinstance((previous or {}).get("model_groups"), dict):
+        provider_groups = dict((previous or {}).get("model_groups") or {})
+    if not provider_groups and provider_models:
+        provider_groups = {group["group_id"]: provider_models}
+
+    encrypted_key = encrypt_secret(group["api_key"]) if is_encryption_enabled() else group["api_key"]
+    return ProviderRecord(
+        id=_newapi_provider_id_for_group(group["group_id"]),
+        name=f"NewAPI（{group['name']}）",
+        provider="openai",
+        base_url=group["base_url"],
+        models=provider_models,
+        is_active=bool((previous or {}).get("is_active")),
+        temperature=(previous or {}).get("temperature"),
+        max_tokens=(previous or {}).get("max_tokens"),
+        api_key_encrypted=encrypted_key,
+        is_managed=True,
+        managed_by="newapi",
+        managed_group=group["group_id"],
+        model_groups=provider_groups,
+    )
+
+
+def _merge_managed_newapi_provider(
+    bundle: AIProviderSettings,
+    *,
+    models: list[str] | None = None,
+    model_groups: dict[str, list[str]] | None = None,
+) -> bool:
+    providers = bundle["providers"]
+    groups = get_managed_newapi_groups()
+    if not groups:
+        return False
+
+    previous_by_id = {
+        str(provider.get("id")): provider
+        for provider in providers
+        if provider.get("managed_by") == "newapi" and provider.get("id")
+    }
+    non_managed = [provider for provider in providers if provider.get("managed_by") != "newapi"]
+    managed_providers: list[ProviderRecord] = []
+    for group in groups:
+        provider_id = _newapi_provider_id_for_group(group["group_id"])
+        previous = previous_by_id.get(provider_id)
+        managed_models = models if len(groups) == 1 else None
+        managed_groups = model_groups if len(groups) == 1 else None
+        managed_provider = _build_managed_newapi_provider_record(
+            group=group,
+            previous=previous,
+            models=managed_models,
+            model_groups=managed_groups,
+        )
+        if managed_provider is not None:
+            managed_providers.append(managed_provider)
+
+    if not managed_providers:
+        return False
+
+    has_active = any(bool(provider.get("is_active")) for provider in non_managed + managed_providers)
+    if not has_active:
+        managed_providers[0]["is_active"] = True
+
+    providers[:] = [*managed_providers, *non_managed]
+
+    if not bundle.get("default_provider_id") or not any(
+        p.get("id") == bundle.get("default_provider_id") for p in providers
+    ):
+        bundle["default_provider_id"] = managed_providers[0].get("id")
+        for provider in providers:
+            provider["is_active"] = provider.get("id") == bundle["default_provider_id"]
+    return True
 
 
 def _try_build_seed_bundle_from_config_yaml(
@@ -161,6 +477,7 @@ def _try_build_seed_bundle_from_config_yaml(
             default_provider_id=providers[0].get("id") if providers else None,
             providers=providers,
             client_settings=client_settings,
+            feature_routing_settings=None,
         )
     except Exception:
         logger.debug("Skip seeding ai_provider_settings from config.yaml.", exc_info=True)
@@ -300,6 +617,12 @@ def _normalize_provider_record(
         temperature=temperature,
         max_tokens=max_tokens,
         api_key_encrypted=api_key_encrypted,
+        is_managed=bool(raw.get("is_managed") if "is_managed" in raw else prev.get("is_managed")),
+        managed_by=_as_non_empty_str(raw.get("managed_by") if "managed_by" in raw else prev.get("managed_by")),
+        managed_group=_as_non_empty_str(raw.get("managed_group") if "managed_group" in raw else prev.get("managed_group")),
+        model_groups=dict(raw.get("model_groups") or prev.get("model_groups") or {})
+        if isinstance(raw.get("model_groups") or prev.get("model_groups"), dict)
+        else {},
     )
 
 
@@ -314,6 +637,10 @@ def _public_provider_record(provider: ProviderRecord) -> ProviderRecordPublic:
         temperature=provider.get("temperature"),
         max_tokens=provider.get("max_tokens"),
         has_api_key=bool(_provider_secret_value(provider)),
+        is_managed=bool(provider.get("is_managed")),
+        managed_by=provider.get("managed_by") if isinstance(provider.get("managed_by"), str) else None,
+        managed_group=provider.get("managed_group") if isinstance(provider.get("managed_group"), str) else None,
+        model_groups=dict(provider.get("model_groups") or {}) if isinstance(provider.get("model_groups"), dict) else {},
     )
 
 
@@ -650,6 +977,7 @@ class AISettingsService:
 
         preferences = _load_preferences(settings)
         ai_provider_settings = _ensure_ai_provider_settings(preferences)
+        provider_bundle_changed = False
 
         # If bundle missing (uninitialized) or still at template defaults, upgrade it
         # once from config.yaml (best-effort). Do NOT override explicit empty bundle.
@@ -689,6 +1017,9 @@ class AISettingsService:
                 preferences = _load_preferences(settings)
                 ai_provider_settings = _ensure_ai_provider_settings(preferences)
 
+        if _merge_managed_newapi_provider(ai_provider_settings):
+            provider_bundle_changed = True
+
         active_provider = _select_active_provider(
             ai_provider_settings["providers"],
             default_provider_id=ai_provider_settings["default_provider_id"],
@@ -696,6 +1027,18 @@ class AISettingsService:
         effective_default_provider_id = ai_provider_settings["default_provider_id"]
         if effective_default_provider_id is None and active_provider is not None and active_provider.get("id"):
             effective_default_provider_id = active_provider["id"]
+
+        if provider_bundle_changed:
+            preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = {
+                "version": AI_PROVIDER_SETTINGS_VERSION,
+                "default_provider_id": ai_provider_settings["default_provider_id"],
+                "providers": ai_provider_settings["providers"],
+                "client_settings": ai_provider_settings["client_settings"],
+                "feature_routing_settings": ai_provider_settings.get("feature_routing_settings"),
+            }
+            _save_preferences(settings, preferences)
+            await db.commit()
+            await db.refresh(settings)
 
         runtime, _ = resolve_user_ai_runtime_config(settings)
 
@@ -753,11 +1096,13 @@ class AISettingsService:
                 )
 
             current["providers"] = next_providers
+            _merge_managed_newapi_provider(current)
             # If the default provider was deleted/changed, clear it so active selection
             # can fall back deterministically.
             default_provider_id = current.get("default_provider_id")
             if default_provider_id and not any(p.get("id") == default_provider_id for p in next_providers):
                 current["default_provider_id"] = None
+                _merge_managed_newapi_provider(current)
 
         # ---- Legacy fields: update Settings top-level directly ----
         #

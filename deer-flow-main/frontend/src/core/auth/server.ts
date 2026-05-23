@@ -49,8 +49,11 @@ export async function getServerSideUser(): Promise<AuthResult> {
       );
       clearTimeout(setupTimeout);
       if (setupRes.ok) {
-        const setupData = (await setupRes.json()) as { needs_setup?: boolean };
-        if (setupData.needs_setup) {
+        const setupData = (await setupRes.json()) as {
+          needs_setup?: boolean;
+          newapi_login_enabled?: boolean;
+        };
+        if (setupData.needs_setup && !setupData.newapi_login_enabled) {
           return { tag: "system_setup_required" };
         }
       }

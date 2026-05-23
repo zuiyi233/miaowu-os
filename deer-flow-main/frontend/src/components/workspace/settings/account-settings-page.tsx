@@ -110,13 +110,13 @@ export function AccountSettingsPage() {
       </SettingsSection>
 
       <SettingsSection
-        title="NewAPI Account"
-        description="Linked NewAPI identity and latest quota snapshot."
+        title="NewAPI 账号"
+        description="当前登录身份和额度快照来自 NewAPI。"
       >
         {newApiAccount ? (
           <div className="max-w-xl space-y-4">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="secondary">Linked</Badge>
+              <Badge variant="secondary">已绑定</Badge>
               <span className="text-muted-foreground text-sm">
                 {newApiAccount.email ?? newApiAccount.username ?? newApiAccount.newapi_sub}
               </span>
@@ -124,35 +124,33 @@ export function AccountSettingsPage() {
             {shouldWarnNewApiQuota && (
               <Alert>
                 <AlertTriangleIcon className="size-4" />
-                <AlertTitle>NewAPI quota is low</AlertTitle>
+                <AlertTitle>NewAPI 额度不足</AlertTitle>
                 <AlertDescription>
-                  Your NewAPI balance or remaining quota is zero. Miaowu will
-                  not block this session, but AI features may fail upstream
-                  until the NewAPI account is topped up.
+                  当前 NewAPI 余额或剩余额度为 0。Miaowu 不会拦截本次登录，但 AI 功能可能会被上游拒绝。
                 </AlertDescription>
               </Alert>
             )}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div className="rounded-md border p-3">
-                <div className="text-muted-foreground text-xs">Balance</div>
+                <div className="text-muted-foreground text-xs">余额</div>
                 <div className="mt-1 text-sm font-medium">
                   {formatQuotaValue(newApiAccount.balance)}
                 </div>
               </div>
               <div className="rounded-md border p-3">
-                <div className="text-muted-foreground text-xs">Remaining</div>
+                <div className="text-muted-foreground text-xs">剩余额度</div>
                 <div className="mt-1 text-sm font-medium">
                   {formatQuotaValue(newApiAccount.remain_quota)}
                 </div>
               </div>
               <div className="rounded-md border p-3">
-                <div className="text-muted-foreground text-xs">Used</div>
+                <div className="text-muted-foreground text-xs">已用额度</div>
                 <div className="mt-1 text-sm font-medium">
                   {formatQuotaValue(newApiAccount.used_quota)}
                 </div>
               </div>
               <div className="rounded-md border p-3">
-                <div className="text-muted-foreground text-xs">Quota</div>
+                <div className="text-muted-foreground text-xs">总额度</div>
                 <div className="mt-1 text-sm font-medium">
                   {formatQuotaValue(newApiAccount.quota)}
                 </div>
@@ -163,7 +161,7 @@ export function AccountSettingsPage() {
               <span className="truncate text-sm font-medium">
                 {newApiAccount.newapi_sub}
               </span>
-              <span className="text-muted-foreground text-sm">Last sync</span>
+              <span className="text-muted-foreground text-sm">最近同步</span>
               <span className="text-sm font-medium">
                 {formatSyncTime(newApiAccount.last_synced_at)}
               </span>
@@ -171,48 +169,59 @@ export function AccountSettingsPage() {
           </div>
         ) : (
           <p className="text-muted-foreground text-sm">
-            No NewAPI account is linked. Sign in with NewAPI from the login page to connect one.
+            当前没有绑定 NewAPI 账号。请从登录页使用 NewAPI 登录。
           </p>
         )}
       </SettingsSection>
 
-      <SettingsSection
-        title={t.settings.account.changePasswordTitle}
-        description={t.settings.account.changePasswordDescription}
-      >
-        <form onSubmit={handleChangePassword} className="max-w-sm space-y-3">
-          <Input
-            type="password"
-            placeholder={t.settings.account.currentPassword}
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            required
-          />
-          <Input
-            type="password"
-            placeholder={t.settings.account.newPassword}
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            required
-            minLength={8}
-          />
-          <Input
-            type="password"
-            placeholder={t.settings.account.confirmNewPassword}
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            required
-            minLength={8}
-          />
-          {error && <p className="text-sm text-red-500">{error}</p>}
-          {message && <p className="text-sm text-green-500">{message}</p>}
-          <Button type="submit" variant="outline" size="sm" disabled={loading}>
-            {loading
-              ? t.settings.account.updating
-              : t.settings.account.updatePassword}
-          </Button>
-        </form>
-      </SettingsSection>
+      {newApiAccount ? (
+        <SettingsSection
+          title="密码管理"
+          description="当前账号通过 NewAPI 登录，密码由 NewAPI 统一管理。"
+        >
+          <div className="max-w-xl rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">
+            请到 NewAPI 修改密码。Miaowu 不保存也不修改 NewAPI 密码。
+          </div>
+        </SettingsSection>
+      ) : (
+        <SettingsSection
+          title={t.settings.account.changePasswordTitle}
+          description={t.settings.account.changePasswordDescription}
+        >
+          <form onSubmit={handleChangePassword} className="max-w-sm space-y-3">
+            <Input
+              type="password"
+              placeholder={t.settings.account.currentPassword}
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              required
+            />
+            <Input
+              type="password"
+              placeholder={t.settings.account.newPassword}
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              required
+              minLength={8}
+            />
+            <Input
+              type="password"
+              placeholder={t.settings.account.confirmNewPassword}
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              required
+              minLength={8}
+            />
+            {error && <p className="text-sm text-red-500">{error}</p>}
+            {message && <p className="text-sm text-green-500">{message}</p>}
+            <Button type="submit" variant="outline" size="sm" disabled={loading}>
+              {loading
+                ? t.settings.account.updating
+                : t.settings.account.updatePassword}
+            </Button>
+          </form>
+        </SettingsSection>
+      )}
 
       <SettingsSection title="" description="">
         <Button

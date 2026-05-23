@@ -60,6 +60,9 @@ export default function LoginPage() {
   // Get next parameter for validated redirect
   const nextParam = searchParams.get("next");
   const redirectPath = validateNextParam(nextParam) ?? "/workspace";
+  const newApiLoginUrl = resolveApiUrl(
+    `/api/v1/auth/login/newapi?next=${encodeURIComponent(redirectPath)}`,
+  );
 
   // Redirect if already authenticated (client-side, post-login)
   useEffect(() => {
@@ -68,7 +71,8 @@ export default function LoginPage() {
     }
   }, [isAuthenticated, redirectPath, router]);
 
-  // Redirect to setup if the system has no users yet
+  // SaaS deployments use NewAPI as the account source. If NewAPI login is
+  // configured, send unauthenticated users there instead of local setup/login.
   useEffect(() => {
     let cancelled = false;
 
@@ -78,11 +82,22 @@ export default function LoginPage() {
         if (r.status === 429) return undefined;
         return r.json();
       })
-      .then((data: { needs_setup?: boolean } | undefined) => {
-        if (!cancelled && data?.needs_setup) {
+      .then(
+        (
+          data:
+            | { needs_setup?: boolean; newapi_login_enabled?: boolean }
+            | undefined,
+        ) => {
+          if (cancelled) return;
+          if (data?.newapi_login_enabled) {
+            window.location.href = newApiLoginUrl;
+            return;
+          }
+          if (data?.needs_setup) {
           router.push("/setup");
         }
-      })
+        },
+      )
       .catch(() => {
         // Ignore errors; user stays on login page
       });
@@ -90,7 +105,7 @@ export default function LoginPage() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [newApiLoginUrl, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -134,9 +149,6 @@ export default function LoginPage() {
   };
 
   const actualTheme = theme === "system" ? resolvedTheme : theme;
-  const newApiLoginUrl = resolveApiUrl(
-    `/api/v1/auth/login/newapi?next=${encodeURIComponent(redirectPath)}`,
-  );
 
   return (
     <div className="bg-background relative flex min-h-screen items-center justify-center overflow-x-hidden overflow-y-auto">
