@@ -44,6 +44,7 @@ _OPTIONAL_ROUTER_MODULES = (
     "app.gateway.novel_migrated.api.novel_agent_configs",
     "app.gateway.novel_migrated.api.workspace_documents",
     "app.gateway.novel_migrated.api.media_assets",
+    "app.gateway.novel_migrated.api.author_control",
 )
 
 _ADMIN_ROUTER_MODULE = "app.gateway.novel_migrated.api.admin"

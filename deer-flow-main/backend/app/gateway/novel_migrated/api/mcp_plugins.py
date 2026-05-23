@@ -1,17 +1,14 @@
-"""MCP插件管理API"""
+"""Legacy novel MCP plugin API backed by the main DeerFlow MCP config."""
 from __future__ import annotations
-
-import json
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway.novel_migrated.api.common import get_owned_user_resource, get_user_id
+from app.gateway.novel_migrated.api.common import get_user_id
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
-from app.gateway.novel_migrated.models.mcp_plugin import MCPPlugin
+from deerflow.config.extensions_config import get_extensions_config
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/mcp-plugins", tags=["mcp-plugins"])
@@ -49,12 +46,18 @@ async def list_plugins(
     db: AsyncSession = Depends(get_db),
     enabled: bool | None = None,
 ):
-    query = select(MCPPlugin).where(MCPPlugin.user_id == user_id)
-    if enabled is not None:
-        query = query.where(MCPPlugin.enabled == enabled)
-    result = await db.execute(query.order_by(MCPPlugin.created_at))
-    plugins = result.scalars().all()
-    return {"plugins": [_serialize_plugin(p) for p in plugins]}
+    del user_id, db
+    config = get_extensions_config()
+    plugins = []
+    for name, server in sorted(config.mcp_servers.items()):
+        if enabled is not None and bool(server.enabled) != enabled:
+            continue
+        plugins.append(_serialize_main_mcp_server(name, server))
+    return {
+        "plugins": plugins,
+        "source": "deerflow.extensions_config",
+        "legacy_writes": "disabled",
+    }
 
 
 @router.post("")
@@ -63,29 +66,8 @@ async def create_plugin(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    existing = await db.execute(
-        select(MCPPlugin).where(
-            MCPPlugin.user_id == user_id,
-            MCPPlugin.plugin_name == req.plugin_name))
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Plugin with this name already exists")
-
-    plugin = MCPPlugin(
-        user_id=user_id,
-        plugin_name=req.plugin_name,
-        display_name=req.display_name or req.plugin_name,
-        plugin_type=req.plugin_type,
-        server_url=req.server_url,
-        command=req.command,
-        args=req.args,
-        env=req.env,
-        enabled=req.enabled,
-        status="inactive",
-    )
-    db.add(plugin)
-    await db.commit()
-    await db.refresh(plugin)
-    return _serialize_plugin(plugin)
+    del req, user_id, db
+    raise _legacy_write_disabled()
 
 
 @router.get("/{plugin_id}")
@@ -94,10 +76,12 @@ async def get_plugin(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    plugin = await get_owned_user_resource(
-        MCPPlugin, plugin_id, user_id, db, not_found_detail="Plugin not found"
-    )
-    return _serialize_plugin(plugin)
+    del user_id, db
+    config = get_extensions_config()
+    server = config.mcp_servers.get(plugin_id)
+    if server is None:
+        raise HTTPException(status_code=404, detail="Plugin not found in main MCP configuration")
+    return _serialize_main_mcp_server(plugin_id, server)
 
 
 @router.put("/{plugin_id}")
@@ -107,19 +91,8 @@ async def update_plugin(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    plugin = await get_owned_user_resource(
-        MCPPlugin, plugin_id, user_id, db, not_found_detail="Plugin not found"
-    )
-
-    for field_name in ['display_name', 'plugin_type', 'server_url', 'command',
-                        'args', 'env', 'enabled', 'status']:
-        value = getattr(req, field_name, None)
-        if value is not None:
-            setattr(plugin, field_name, value)
-
-    await db.commit()
-    await db.refresh(plugin)
-    return _serialize_plugin(plugin)
+    del plugin_id, req, user_id, db
+    raise _legacy_write_disabled()
 
 
 @router.delete("/{plugin_id}")
@@ -128,12 +101,8 @@ async def delete_plugin(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    plugin = await get_owned_user_resource(
-        MCPPlugin, plugin_id, user_id, db, not_found_detail="Plugin not found"
-    )
-    await db.delete(plugin)
-    await db.commit()
-    return {"message": "Plugin deleted"}
+    del plugin_id, user_id, db
+    raise _legacy_write_disabled()
 
 
 @router.post("/test")
@@ -142,40 +111,43 @@ async def test_plugin(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    plugin = await get_owned_user_resource(
-        MCPPlugin, req.plugin_id, user_id, db, not_found_detail="Plugin not found"
+    del req, user_id, db
+    raise _legacy_write_disabled()
+
+
+def _legacy_write_disabled() -> HTTPException:
+    return HTTPException(
+        status_code=410,
+        detail=(
+            "Novel MCP plugin writes are deprecated. Use the main DeerFlow "
+            "/api/mcp/config endpoint; novel runtime MCP availability follows "
+            "extensions_config.json."
+        ),
     )
 
-    plugin.status = "testing"
-    await db.commit()
 
-    try:
-        from app.gateway.novel_migrated.services.mcp_tools_loader import MCPToolsLoader
-        loader = MCPToolsLoader()
-        tools = await loader.load_tools_for_plugin(plugin)
-        plugin.status = "active"
-        plugin.tools = json.dumps([t.get("name", "") for t in tools], ensure_ascii=False) if tools else "[]"
-        await db.commit()
-        return {"status": "success", "tools_count": len(tools), "tools": tools}
-    except Exception as e:
-        plugin.status = "error"
-        await db.commit()
-        return {"status": "error", "message": str(e)}
-
-
-def _serialize_plugin(p: MCPPlugin) -> dict:
-    tools = None
-    if p.tools:
-        try:
-            tools = json.loads(p.tools) if isinstance(p.tools, str) else p.tools
-        except json.JSONDecodeError:
-            tools = p.tools
+def _serialize_main_mcp_server(name: str, server) -> dict:
+    server_type = getattr(server, "type", "stdio")
+    url = getattr(server, "url", None)
+    command = getattr(server, "command", None)
+    args = getattr(server, "args", []) or []
+    env = getattr(server, "env", {}) or {}
+    headers = getattr(server, "headers", {}) or {}
     return {
-        "id": p.id, "user_id": p.user_id,
-        "plugin_name": p.plugin_name, "display_name": p.display_name,
-        "plugin_type": p.plugin_type, "server_url": p.server_url,
-        "command": p.command, "args": p.args, "env": p.env,
-        "tools": tools, "enabled": p.enabled, "status": p.status,
-        "created_at": p.created_at.isoformat() if p.created_at else None,
-        "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+        "id": name,
+        "plugin_name": name,
+        "display_name": name,
+        "plugin_type": server_type,
+        "server_url": url or "",
+        "command": command or "",
+        "args": args,
+        "env": env,
+        "headers": headers,
+        "tools": None,
+        "enabled": bool(getattr(server, "enabled", True)),
+        "status": "configured" if getattr(server, "enabled", True) else "disabled",
+        "description": getattr(server, "description", ""),
+        "source": "deerflow.extensions_config",
+        "created_at": None,
+        "updated_at": None,
     }

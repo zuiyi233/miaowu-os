@@ -30,8 +30,12 @@ from app.gateway.novel_migrated.models.project_default_style import ProjectDefau
 from app.gateway.novel_migrated.models.writing_style import WritingStyle
 from app.gateway.novel_migrated.services.ai_service import AIService
 from app.gateway.novel_migrated.services.book_import_service import book_import_service
+from app.gateway.novel_migrated.services.memory_service import memory_service
+from app.gateway.novel_migrated.services.novel_agent_run_service import NovelAgentRunService, NovelAgentTask
+from app.gateway.novel_migrated.services.novel_context_assembler import NovelContextAssembler, NovelContextRequest
 from app.gateway.novel_migrated.services.orchestration_service import orchestration_service
 from app.gateway.novel_migrated.services.recovery_service import recovery_service
+from app.gateway.novel_migrated.services.workspace_document_service import workspace_document_service
 from app.gateway.novel_migrated.utils.sse_response import SSEResponse, WizardProgressTracker, create_sse_response
 
 logger = get_logger(__name__)
@@ -41,6 +45,10 @@ _ANALYSIS_TASKS: dict[str, dict[str, Any]] = {}
 _ANALYSIS_RESULTS: dict[str, dict[str, Any]] = {}
 _STREAM_REQUEST_WINDOWS: dict[str, deque[float]] = {}
 _ANALYSIS_CACHE_CLEANER_TASK: asyncio.Task[None] | None = None
+
+
+def get_novel_agent_run_service() -> NovelAgentRunService:
+    return NovelAgentRunService()
 
 
 def _read_positive_int_env(env_name: str, default: int) -> int:
@@ -519,16 +527,51 @@ async def _persist_generated_content(
     await db.commit()
     await db.refresh(chapter)
 
+    try:
+        record = await workspace_document_service.write_document(
+            user_id=project.user_id,
+            project_id=project.id,
+            entity_type="chapter",
+            entity_id=str(chapter.chapter_number or chapter.id),
+            content=final_content,
+            title=chapter.title,
+            tags=["generated", "chapter"],
+        )
+        await workspace_document_service.sync_record_to_db(
+            db=db,
+            user_id=project.user_id,
+            project_id=project.id,
+            record=record,
+            status="pending",
+        )
+        await memory_service.sync_workspace_documents_incremental(
+            user_id=project.user_id,
+            project_id=project.id,
+            db=db,
+            limit=1,
+        )
+        await db.commit()
+    except Exception as exc:
+        logger.warning(
+            "chapter workspace/RAG sync failed project=%s chapter=%s err=%s",
+            project.id,
+            chapter.id,
+            exc,
+            exc_info=True,
+        )
+
 
 async def _generate_single_chapter_stream(
     *,
     db: AsyncSession,
     project: Project,
     chapter: Chapter,
-    ai_service: AIService,
+    ai_service: AIService | None,
     request: ChapterGenerateStreamRequest | ChapterContinueStreamRequest,
     append_mode: bool,
     continue_mode: bool,
+    http_request: Request | None = None,
+    novel_agent_run_service: NovelAgentRunService | None = None,
     style_user_id_override: str | None = None,
     emit_result: bool = True,
     emit_complete: bool = True,
@@ -543,6 +586,9 @@ async def _generate_single_chapter_stream(
     previous_chapter = await _resolve_previous_chapter(db, chapter)
     characters = await _collect_project_characters(db, project.id)
     characters_summary = _build_characters_summary(characters)
+    previous_summary = "（无前置章节）"
+    if previous_chapter and previous_chapter.content:
+        previous_summary = (previous_chapter.summary or previous_chapter.content[:180]).strip()
 
     style_content = ""
     if isinstance(request, ChapterGenerateStreamRequest):
@@ -588,22 +634,79 @@ async def _generate_single_chapter_stream(
 
     full_content = ""
     chunk_count = 0
+    run_id: str | None = None
+    thread_id: str | None = None
     yield await tracker.generating(0, max(target_word_count, 1))
 
-    async for chunk in ai_service.generate_text_stream(**generate_kwargs):
-        if not chunk:
-            continue
-        text = str(chunk)
-        if not text:
-            continue
-        full_content += text
-        chunk_count += 1
-        yield await tracker.generating_chunk(text)
-        if chunk_count % 5 == 0:
-            yield await tracker.generating(len(full_content), max(target_word_count, 1))
-        if chunk_count % 20 == 0:
-            yield await tracker.heartbeat()
-        await asyncio.sleep(0)
+    if novel_agent_run_service is not None and http_request is not None:
+        assembler = NovelContextAssembler()
+        assembled = await assembler.assemble(
+            db=db,
+            request=NovelContextRequest(
+                user_id=style_user_id_override or project.user_id,
+                project=project,
+                chapter=chapter,
+                task_type="chapter_continue" if continue_mode else "chapter_generate",
+                current_request=prompt,
+                recent_context={
+                    "previous_chapter_summary": previous_summary,
+                    "characters": characters_summary,
+                    "style_instruction": style_content,
+                },
+                rag_query=f"{project.title} {chapter.title} {requirements} {continuation_hint}".strip(),
+            ),
+        )
+        task = NovelAgentTask(
+            prompt=assembled.prompt,
+            user_id=style_user_id_override or project.user_id,
+            project_id=project.id,
+            chapter_id=chapter.id,
+            task_type="chapter_continue" if continue_mode else "chapter_generate",
+            model=getattr(request, "model", None),
+            metadata=assembled.metadata,
+            requested_skills=["novel-control-station"],
+        )
+        async for event in novel_agent_run_service.stream_task(request=http_request, task=task):
+            if event.type == "metadata":
+                run_id = event.run_id
+                thread_id = event.thread_id
+                yield await tracker.generating(
+                    len(full_content),
+                    max(target_word_count, 1),
+                    message=f"主 Agent 运行已启动 ({run_id})",
+                )
+                continue
+            if event.type == "heartbeat":
+                yield await tracker.heartbeat()
+                continue
+            if event.type != "content" or not event.content:
+                continue
+            text = event.content
+            full_content += text
+            chunk_count += 1
+            yield await tracker.generating_chunk(text)
+            if chunk_count % 5 == 0:
+                yield await tracker.generating(len(full_content), max(target_word_count, 1))
+            if chunk_count % 20 == 0:
+                yield await tracker.heartbeat()
+            await asyncio.sleep(0)
+    else:
+        if ai_service is None:
+            raise HTTPException(status_code=503, detail="小说 AI 运行服务不可用")
+        async for chunk in ai_service.generate_text_stream(**generate_kwargs):
+            if not chunk:
+                continue
+            text = str(chunk)
+            if not text:
+                continue
+            full_content += text
+            chunk_count += 1
+            yield await tracker.generating_chunk(text)
+            if chunk_count % 5 == 0:
+                yield await tracker.generating(len(full_content), max(target_word_count, 1))
+            if chunk_count % 20 == 0:
+                yield await tracker.heartbeat()
+            await asyncio.sleep(0)
 
     if not full_content.strip():
         raise HTTPException(status_code=502, detail="AI 未返回有效内容")
@@ -670,6 +773,10 @@ async def _generate_single_chapter_stream(
             "status": chapter.status,
             "action": action,
         }
+        if run_id:
+            result_payload["run_id"] = run_id
+        if thread_id:
+            result_payload["thread_id"] = thread_id
         if auto_analysis_enabled:
             result_payload["analysis"] = {
                 "enabled": True,
@@ -868,6 +975,7 @@ async def generate_chapter_stream(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_ai_service: AIService = Depends(get_user_ai_service),
+    novel_agent_run_service: NovelAgentRunService = Depends(get_novel_agent_run_service),
 ):
     project, chapter, style_user_id = await _ensure_novel_chapter(
         novel_id=novel_id,
@@ -887,7 +995,9 @@ async def generate_chapter_stream(
                 request=payload,
                 append_mode=False,
                 continue_mode=False,
-                style_user_id=style_user_id,
+                http_request=request,
+                novel_agent_run_service=novel_agent_run_service,
+                style_user_id_override=style_user_id,
             ),
         )
     )
@@ -901,6 +1011,7 @@ async def continue_chapter_stream(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_ai_service: AIService = Depends(get_user_ai_service),
+    novel_agent_run_service: NovelAgentRunService = Depends(get_novel_agent_run_service),
 ):
     project, chapter, user_id = await _ensure_novel_chapter(
         novel_id=novel_id,
@@ -920,7 +1031,9 @@ async def continue_chapter_stream(
                 request=payload,
                 append_mode=True,
                 continue_mode=True,
-                style_user_id=None,
+                http_request=request,
+                novel_agent_run_service=novel_agent_run_service,
+                style_user_id_override=user_id,
             ),
         )
     )
@@ -933,6 +1046,7 @@ async def generate_chapter_stream_alias(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_ai_service: AIService = Depends(get_user_ai_service),
+    novel_agent_run_service: NovelAgentRunService = Depends(get_novel_agent_run_service),
 ):
     user_id = get_user_id(request)
     _enforce_stream_rate_limit(user_id=user_id, action="generate_chapter_stream_alias")
@@ -954,7 +1068,9 @@ async def generate_chapter_stream_alias(
                 request=payload,
                 append_mode=False,
                 continue_mode=False,
-                style_user_id=style_user_id,
+                http_request=request,
+                novel_agent_run_service=novel_agent_run_service,
+                style_user_id_override=style_user_id,
             ),
         )
     )
@@ -967,6 +1083,7 @@ async def continue_chapter_stream_alias(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_ai_service: AIService = Depends(get_user_ai_service),
+    novel_agent_run_service: NovelAgentRunService = Depends(get_novel_agent_run_service),
 ):
     user_id = get_user_id(request)
     _enforce_stream_rate_limit(user_id=user_id, action="continue_chapter_stream_alias")
@@ -987,7 +1104,9 @@ async def continue_chapter_stream_alias(
                 request=payload,
                 append_mode=True,
                 continue_mode=True,
-                style_user_id=user_id,
+                http_request=request,
+                novel_agent_run_service=novel_agent_run_service,
+                style_user_id_override=user_id,
             ),
         )
     )
@@ -1000,6 +1119,7 @@ async def batch_generate_chapters_stream(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_ai_service: AIService = Depends(get_user_ai_service),
+    novel_agent_run_service: NovelAgentRunService = Depends(get_novel_agent_run_service),
 ):
     user_id = get_user_id(request)
     _enforce_stream_rate_limit(user_id=user_id, action="batch_generate_chapters_stream")
@@ -1131,7 +1251,9 @@ async def batch_generate_chapters_stream(
                             request=req,
                             append_mode=False,
                             continue_mode=False,
-                            style_user_id=user_id,
+                            http_request=request,
+                            novel_agent_run_service=novel_agent_run_service,
+                            style_user_id_override=user_id,
                             emit_result=False,
                             emit_complete=False,
                         ):
@@ -1557,6 +1679,7 @@ async def replay_failed_batch_chapters_stream(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_ai_service: AIService = Depends(get_user_ai_service),
+    novel_agent_run_service: NovelAgentRunService = Depends(get_novel_agent_run_service),
 ):
     payload = BatchGenerateStreamRequest(task_id=task_id, replay_failed_only=True)
     return await batch_generate_chapters_stream(
@@ -1565,4 +1688,5 @@ async def replay_failed_batch_chapters_stream(
         request=request,
         db=db,
         user_ai_service=user_ai_service,
+        novel_agent_run_service=novel_agent_run_service,
     )

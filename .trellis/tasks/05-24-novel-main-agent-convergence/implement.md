@@ -2,12 +2,12 @@
 
 ## Pre-work gates
 
-- [ ] Confirm current working tree changes are unrelated and leave them untouched.
-- [ ] Read backend guidelines before code edits:
+- [x] Confirm current working tree changes are unrelated and leave them untouched.
+- [x] Read backend guidelines before code edits:
   - `.trellis/spec/backend/quality-guidelines.md`
   - `.trellis/spec/backend/error-handling.md`
   - `.trellis/spec/backend/database-guidelines.md` if database writes are changed.
-- [ ] Re-skim relevant code before editing:
+- [x] Re-skim relevant code before editing:
   - `app/gateway/services.py`
   - `app/gateway/routers/runs.py`
   - `packages/harness/deerflow/runtime/runs/worker.py`
@@ -20,14 +20,14 @@
 
 ## Slice 1: contracts and tests
 
-- [ ] Add `NovelContextAssembler` under `app.gateway.novel_migrated.services`.
-- [ ] Add focused tests for:
+- [x] Add `NovelContextAssembler` under `app.gateway.novel_migrated.services`.
+- [x] Add focused tests for:
   - context ordering
   - truncation behavior
   - project-level RAG vs main-memory pollution boundary
   - missing project/chapter access handling
-- [ ] Add `NovelAgentRunService` under `app.gateway.novel_migrated.services`.
-- [ ] Mock `RunManager`/`StreamBridge`/Gateway run helper in tests to prove config/context metadata:
+- [x] Add `NovelAgentRunService` under `app.gateway.novel_migrated.services`.
+- [x] Mock `RunManager`/`StreamBridge`/Gateway run helper in tests to prove config/context metadata:
   - `user_id`
   - `thread_id`
   - `project_id`
@@ -38,39 +38,39 @@
 
 ## Slice 2: first streaming migration
 
-- [ ] Migrate one chapter generation or continuation stream endpoint to `NovelAgentRunService.stream_task(...)`.
-- [ ] Preserve legacy SSE event names and payload fields.
-- [ ] Include `run_id` and `thread_id` as additive fields only.
-- [ ] Write generated result and summary back to existing chapter/workspace/RAG paths.
-- [ ] Add regression test proving the route no longer calls `AIService.generate_text_stream`.
+- [x] Migrate one chapter generation or continuation stream endpoint to `NovelAgentRunService.stream_task(...)`.
+- [x] Preserve legacy SSE event names and payload fields.
+- [x] Include `run_id` and `thread_id` as additive fields only.
+- [x] Write generated result and summary back to existing chapter/workspace/RAG paths.
+- [x] Add regression test proving the route no longer calls `AIService.generate_text_stream`.
 
 ## Slice 3: first structured/non-streaming migration
 
-- [ ] Migrate one structured generation path (`polish`, `analysis`, or import-generation subtask) to `NovelAgentRunService.run_task(...)`.
-- [ ] Add structured output parsing with retry/error handling that maps failures to existing HTTP behavior.
-- [ ] Add regression test proving no direct `create_chat_model`/`AIService.ainvoke` call happens for the migrated path.
+- [x] Migrate one structured generation path (`polish`, `analysis`, or import-generation subtask) to `NovelAgentRunService.run_task(...)`.
+- [x] Add structured output parsing with retry/error handling that maps failures to existing HTTP behavior.
+- [x] Add regression test proving no direct `create_chat_model`/`AIService.ainvoke` call happens for the migrated path.
 
 ## Slice 4: MCP and skills source-of-truth cleanup
 
-- [ ] Change novel MCP listing behavior to read from main MCP config/cache, or mark legacy `MCPPlugin` CRUD as read-only/deprecated.
-- [ ] Remove or disable novel runtime dependence on `MCPPlugin` enabled/status fields.
+- [x] Change novel MCP listing behavior to read from main MCP config/cache, or mark legacy `MCPPlugin` CRUD as read-only/deprecated.
+- [x] Remove or disable novel runtime dependence on `MCPPlugin` enabled/status fields.
 - [ ] Change skill governance integration so `skill_governance_service` returns recommendation/explainability only.
-- [ ] Add tests proving main `/api/mcp` and `/api/skills` state controls novel runtime availability.
+- [x] Add tests proving main `/api/mcp` and `/api/skills` state controls novel runtime availability.
 
 ## Slice 5: memory/RAG smoke and cleanup
 
-- [ ] Add test or smoke helper for the minimum acceptance scenario:
+- [x] Add test or smoke helper for the minimum acceptance scenario:
   - main memory contains "user prefers first-person tense narration"
   - novel generation run sees the preference through main dynamic memory context
   - generated plot summary is searchable from novel RAG
   - main memory is not updated with raw chapter plot details by the novel RAG write
-- [ ] Document remaining `AIService` legacy call sites and classify each as migrated, fallback-only, or future work.
+- [x] Document remaining `AIService` legacy call sites and classify each as migrated, fallback-only, or future work.
 
 ## Slice 6: local build and staged rollout
 
-- [ ] Run local backend targeted tests and any frontend/build checks needed by touched files.
+- [x] Run local backend targeted tests and any frontend/build checks needed by touched files.
 - [ ] Run a local smoke using backend `http://127.0.0.1:8551` and frontend `4560` if the UI is involved.
-- [ ] Package or build the verified local artifact using the repo's existing deployment method.
+- [x] Package or build the verified local artifact using the repo's existing deployment method.
 - [ ] Upload to the 31-port test server and run one focused novel-generation smoke:
   - main user memory preference is visible to the generation path
   - generated chapter/summary is persisted to novel RAG/workspace document paths

@@ -62,6 +62,7 @@ def _load_models_for_schema_mode(schema_mode: str) -> None:
         from app.gateway.novel_migrated.models import (  # noqa: F401
             ai_metric,
             analysis_task,
+            author_control,
             batch_generation_task,
             document_index,
             dual_write_log,
@@ -83,6 +84,7 @@ def _load_models_for_schema_mode(schema_mode: str) -> None:
     from app.gateway.novel_migrated.models import (  # noqa: F401
         ai_metric,
         analysis_task,
+        author_control,
         batch_generation_task,
         career,
         chapter,

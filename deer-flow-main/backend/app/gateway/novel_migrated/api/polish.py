@@ -3,21 +3,24 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
-from app.gateway.novel_migrated.api.settings import get_user_ai_service
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
-from app.gateway.novel_migrated.services.ai_service import AIService
 from app.gateway.novel_migrated.services.consistency_gate_service import consistency_gate_service
+from app.gateway.novel_migrated.services.novel_agent_run_service import NovelAgentRunService, NovelAgentTask
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["polish"])
 legacy_router = APIRouter(prefix="/polish", tags=["polish"])
 api_router = APIRouter(prefix="/api/polish", tags=["polish"])
+
+
+def get_novel_agent_run_service() -> NovelAgentRunService:
+    return NovelAgentRunService()
 
 
 class PolishRequest(BaseModel):
@@ -83,8 +86,9 @@ class FinalizeActionResponse(BaseModel):
 @api_router.post("", response_model=PolishResponse)
 async def polish_text(
     req: PolishRequest,
+    request: Request,
     user_id: str = Depends(get_user_id),
-    ai_service: AIService = Depends(get_user_ai_service),
+    novel_agent_run_service: NovelAgentRunService = Depends(get_novel_agent_run_service),
 ):
     style_map = {
         "literary": "文学性润色：增强文字的文学性和艺术性，使用更优美的词汇和句式",
@@ -113,15 +117,25 @@ async def polish_text(
     if req.instructions:
         user_prompt = f"【额外润色要求】\n{req.instructions}\n\n【原文】\n{req.text}"
 
-    accumulated = ""
-    async for chunk in ai_service.generate_text_stream(
-        prompt=user_prompt, system_prompt=system_prompt, temperature=0.5
-    ):
-        accumulated += chunk
+    result = await novel_agent_run_service.run_task(
+        request=request,
+        task=NovelAgentTask(
+            prompt=f"{system_prompt}\n\n{user_prompt}",
+            user_id=user_id,
+            project_id="__ad_hoc_polish__",
+            task_type="polish",
+            module_id="novel-polish",
+            metadata={"style": req.style, "preserve_tone": req.preserve_tone},
+            requested_skills=["novel-control-station"],
+        ),
+    )
+    polished_text = result.content.strip()
+    if not polished_text:
+        raise HTTPException(status_code=502, detail="主 Agent 未返回有效润色内容")
 
     return PolishResponse(
         original_text=req.text,
-        polished_text=accumulated,
+        polished_text=polished_text,
         changes_summary="润色完成"
     )
 

@@ -24,7 +24,7 @@ import type {
 } from './schemas';
 import { parseSseStream } from './utils';
 
-type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export type { QueryValue } from '@/core/request-utils';
 
@@ -48,6 +48,75 @@ interface StreamRequestOptions {
 }
 
 export type NovelStreamEvent = Record<string, unknown>;
+
+export interface AuthorContextPreview {
+  user_memory_summary: string;
+  project_metadata: Record<string, unknown>;
+  chapter_context: Record<string, unknown>;
+  outline_context: Record<string, unknown>[];
+  character_states: Record<string, unknown>[];
+  foreshadows: Record<string, unknown>[];
+  rag_hits: Record<string, unknown>[];
+  workspace_documents: Record<string, unknown>[];
+  excluded_context_reason: string[];
+  estimated_tokens: number;
+  context_hash: string;
+  warnings: string[];
+}
+
+export interface SceneCard {
+  id: string;
+  project_id: string;
+  chapter_id: string;
+  order_index: number;
+  title: string;
+  scene_goal: string;
+  pov_character_id?: string | null;
+  location?: string | null;
+  involved_character_ids: string[];
+  conflict: string;
+  emotional_turn: string;
+  foreshadow_in: unknown[];
+  foreshadow_out: unknown[];
+  required_facts: unknown[];
+  forbidden_facts: unknown[];
+  status_delta: Record<string, unknown>;
+  target_word_count?: number | null;
+  draft_status: string;
+}
+
+export interface NovelIssue {
+  id: string;
+  project_id: string;
+  chapter_id?: string | null;
+  scene_id?: string | null;
+  issue_type: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  title: string;
+  description: string;
+  evidence_text: string;
+  evidence_location: Record<string, unknown>;
+  conflicting_fact: string;
+  suggestion: string;
+  fix_action: string;
+  status: string;
+  source_run_id?: string | null;
+}
+
+export interface NovelDraftVersion {
+  id: string;
+  project_id: string;
+  chapter_id: string;
+  scene_id?: string | null;
+  source_run_id?: string | null;
+  context_hash?: string | null;
+  base_content_hash: string;
+  new_content_hash: string;
+  diff_summary: string;
+  diff_payload: { lines?: string[]; [key: string]: unknown };
+  candidate_content: string;
+  status: string;
+}
 
 export interface NovelSummary {
   id: string | number;
@@ -1174,6 +1243,127 @@ export class NovelApiService {
     return request(`/memories/projects/${encodeURIComponent(novelId)}/analyze-chapter/${encodeURIComponent(chapterId)}`, {
       method: 'POST',
     });
+  }
+
+  async previewAuthorContext(
+    novelId: string,
+    payload: Record<string, unknown>,
+  ): Promise<AuthorContextPreview> {
+    return request<AuthorContextPreview>(
+      `/projects/${encodeURIComponent(novelId)}/author-control/context-preview`,
+      { method: 'POST', body: payload },
+    );
+  }
+
+  async getSceneCards(novelId: string, chapterId: string): Promise<SceneCard[]> {
+    const result = await request<{ items?: SceneCard[] }>(
+      `/projects/${encodeURIComponent(novelId)}/chapters/${encodeURIComponent(chapterId)}/scenes`,
+    );
+    return result.items ?? [];
+  }
+
+  async planSceneCards(
+    novelId: string,
+    chapterId: string,
+    payload: Record<string, unknown>,
+  ): Promise<{ items: SceneCard[]; context_hash?: string; run_id?: string }> {
+    return request<{ items: SceneCard[]; context_hash?: string; run_id?: string }>(
+      `/projects/${encodeURIComponent(novelId)}/chapters/${encodeURIComponent(chapterId)}/scenes/plan`,
+      { method: 'POST', body: payload },
+    );
+  }
+
+  async updateSceneCard(sceneId: string, payload: Partial<SceneCard>): Promise<SceneCard> {
+    return request<SceneCard>(`/scenes/${encodeURIComponent(sceneId)}`, {
+      method: 'PATCH',
+      body: payload,
+    });
+  }
+
+  async reorderSceneCards(items: Array<{ id: string; order_index: number }>): Promise<void> {
+    await request('/scenes/reorder', { method: 'POST', body: { items } });
+  }
+
+  async generateSceneStream(
+    sceneId: string,
+    payload: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<AsyncGenerator<NovelStreamEvent>> {
+    return requestStream<NovelStreamEvent>(`/scenes/${encodeURIComponent(sceneId)}/generate-stream`, {
+      method: 'POST',
+      body: payload,
+      signal,
+    });
+  }
+
+  async getAuthorIssues(novelId: string): Promise<NovelIssue[]> {
+    const result = await request<{ items?: NovelIssue[] }>(
+      `/projects/${encodeURIComponent(novelId)}/issues`,
+    );
+    return result.items ?? [];
+  }
+
+  async critiqueChapter(
+    novelId: string,
+    chapterId: string,
+    payload: Record<string, unknown> = {},
+  ): Promise<{ items: NovelIssue[]; run_id?: string; context_hash?: string }> {
+    return request<{ items: NovelIssue[]; run_id?: string; context_hash?: string }>(
+      `/projects/${encodeURIComponent(novelId)}/chapters/${encodeURIComponent(chapterId)}/critique`,
+      { method: 'POST', body: payload },
+    );
+  }
+
+  async updateAuthorIssue(issueId: string, payload: Partial<NovelIssue>): Promise<NovelIssue> {
+    return request<NovelIssue>(`/issues/${encodeURIComponent(issueId)}`, {
+      method: 'PATCH',
+      body: payload,
+    });
+  }
+
+  async fixAuthorIssue(issueId: string, payload: Record<string, unknown>): Promise<{ version: NovelDraftVersion }> {
+    return request<{ version: NovelDraftVersion }>(`/issues/${encodeURIComponent(issueId)}/fix`, {
+      method: 'POST',
+      body: payload,
+    });
+  }
+
+  async getDraftVersions(chapterId: string): Promise<NovelDraftVersion[]> {
+    const result = await request<{ items?: NovelDraftVersion[] }>(
+      `/chapters/${encodeURIComponent(chapterId)}/versions`,
+    );
+    return result.items ?? [];
+  }
+
+  async reviseChapter(
+    chapterId: string,
+    payload: Record<string, unknown>,
+  ): Promise<{ version: NovelDraftVersion; run_id?: string; context_hash?: string }> {
+    return request<{ version: NovelDraftVersion; run_id?: string; context_hash?: string }>(
+      `/chapters/${encodeURIComponent(chapterId)}/revise`,
+      { method: 'POST', body: payload },
+    );
+  }
+
+  async acceptDraftVersion(versionId: string): Promise<{ version: NovelDraftVersion; chapter_id: string }> {
+    return request<{ version: NovelDraftVersion; chapter_id: string }>(
+      `/versions/${encodeURIComponent(versionId)}/accept`,
+      { method: 'POST' },
+    );
+  }
+
+  async rejectDraftVersion(versionId: string): Promise<{ version: NovelDraftVersion }> {
+    return request<{ version: NovelDraftVersion }>(
+      `/versions/${encodeURIComponent(versionId)}/reject`,
+      { method: 'POST' },
+    );
+  }
+
+  async rollbackDraftVersion(versionId: string): Promise<{ version: NovelDraftVersion; chapter_id: string }> {
+    return request<{ version: NovelDraftVersion; chapter_id: string }>(
+      `/versions/${encodeURIComponent(versionId)}/rollback`,
+      { method: 'POST' },
+    );
   }
 
   async createCharacter(novelId: string, character: Character): Promise<Character> {

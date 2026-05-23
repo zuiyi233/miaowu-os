@@ -1,6 +1,6 @@
 'use client';
 
-import { BookOpen, Building2, Compass, FileInput, Flag, GitBranch, PencilLine, Settings, Sparkles, Users } from 'lucide-react';
+import { BookOpen, Building2, Compass, FileInput, Flag, GitBranch, PencilLine, Settings, Sparkles, Users, Workflow } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useMemo } from 'react';
@@ -102,6 +102,7 @@ export function ProjectWorkspaceLayout({ novelId, children }: ProjectWorkspaceLa
       title: t.novel.coreContent,
       items: [
         { title: t.novel.chapterManagement, href: `${basePath}/chapters`, icon: <BookOpen className="h-4 w-4" />, matchMode: 'prefix' },
+        { title: '作者控制台', href: `${basePath}/author-control`, icon: <Workflow className="h-4 w-4" /> },
         { title: t.novel.worldSetting, href: `${basePath}/world-setting`, icon: <Compass className="h-4 w-4" /> },
         { title: t.novel.characters, href: `${basePath}/characters`, icon: <Users className="h-4 w-4" /> },
         { title: t.novel.outline, href: `${basePath}/outline`, icon: <PencilLine className="h-4 w-4" /> },
