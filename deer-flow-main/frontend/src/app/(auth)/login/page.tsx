@@ -1,47 +1,29 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { FlickeringGrid } from "@/components/ui/flickering-grid";
-import { Input } from "@/components/ui/input";
 import { resolveApiUrl } from "@/core/api/fetcher";
 import { useAuth } from "@/core/auth/AuthProvider";
-import { parseAuthError } from "@/core/auth/types";
 
 /**
- * Validate next parameter
- * Prevent open redirect attacks
- * Per RFC-001: Only allow relative paths starting with /
+ * Validate next parameter.
+ * Prevent open redirect attacks by allowing only relative paths.
  */
 function validateNextParam(next: string | null): string | null {
   if (!next) {
     return null;
   }
 
-  // Need start with / (relative path)
-  if (!next.startsWith("/")) {
+  if (!next.startsWith("/") || next.startsWith("//")) {
     return null;
   }
 
-  // Disallow protocol-relative URLs
-  if (
-    next.startsWith("//") ||
-    next.startsWith("http://") ||
-    next.startsWith("https://")
-  ) {
-    return null;
-  }
-
-  // Disallow URLs with different protocols (e.g., javascript:, data:, etc)
   if (next.includes(":") && !next.startsWith("/")) {
     return null;
   }
 
-  // Valid relative path
   return next;
 }
 
@@ -49,199 +31,55 @@ export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { isAuthenticated } = useAuth();
-  const { theme, resolvedTheme } = useTheme();
+  const [redirectFailed, setRedirectFailed] = useState(false);
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [isLogin, setIsLogin] = useState(true);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  // Get next parameter for validated redirect
-  const nextParam = searchParams.get("next");
-  const redirectPath = validateNextParam(nextParam) ?? "/workspace";
-  const newApiLoginUrl = resolveApiUrl(
-    `/api/v1/auth/login/newapi?next=${encodeURIComponent(redirectPath)}`,
+  const redirectPath =
+    validateNextParam(searchParams.get("next")) ?? "/workspace";
+  const newApiLoginUrl = useMemo(
+    () =>
+      resolveApiUrl(
+        `/api/v1/auth/login/newapi?next=${encodeURIComponent(redirectPath)}`,
+      ),
+    [redirectPath],
   );
 
-  // Redirect if already authenticated (client-side, post-login)
   useEffect(() => {
     if (isAuthenticated) {
-      router.push(redirectPath);
+      router.replace(redirectPath);
+      return;
     }
-  }, [isAuthenticated, redirectPath, router]);
 
-  // SaaS deployments use NewAPI as the account source. If NewAPI login is
-  // configured, send unauthenticated users there instead of local setup/login.
-  useEffect(() => {
-    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      setRedirectFailed(true);
+    }, 3000);
 
-    void fetch(resolveApiUrl("/api/v1/auth/setup-status"))
-      .then((r) => {
-        // 429 rate-limited — silently skip, retry on next render cycle
-        if (r.status === 429) return undefined;
-        return r.json();
-      })
-      .then(
-        (
-          data:
-            | { needs_setup?: boolean; newapi_login_enabled?: boolean }
-            | undefined,
-        ) => {
-          if (cancelled) return;
-          if (data?.newapi_login_enabled) {
-            window.location.href = newApiLoginUrl;
-            return;
-          }
-          if (data?.needs_setup) {
-          router.push("/setup");
-        }
-        },
-      )
-      .catch(() => {
-        // Ignore errors; user stays on login page
-      });
+    window.location.replace(newApiLoginUrl);
 
     return () => {
-      cancelled = true;
+      window.clearTimeout(timeout);
     };
-  }, [newApiLoginUrl, router]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-
-    try {
-      const path = isLogin
-        ? "/api/v1/auth/login/local"
-        : "/api/v1/auth/register";
-      const endpoint = resolveApiUrl(path);
-      const body = isLogin
-        ? `username=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`
-        : JSON.stringify({ email, password });
-
-      const headers: HeadersInit = isLogin
-        ? { "Content-Type": "application/x-www-form-urlencoded" }
-        : { "Content-Type": "application/json" };
-
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers,
-        body,
-        credentials: "include", // Important: include HttpOnly cookie
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        const authError = parseAuthError(data);
-        setError(authError.message);
-        return;
-      }
-
-      // Both login and register set a cookie — redirect to workspace
-      router.push(redirectPath);
-    } catch {
-      setError("Network error. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const actualTheme = theme === "system" ? resolvedTheme : theme;
+  }, [isAuthenticated, newApiLoginUrl, redirectPath, router]);
 
   return (
-    <div className="bg-background relative flex min-h-screen items-center justify-center overflow-x-hidden overflow-y-auto">
-      <FlickeringGrid
-        className="absolute inset-0 z-0 mask-[url(/images/deer.svg)] mask-size-[100vw] mask-center mask-no-repeat md:mask-size-[72vh]"
-        squareSize={4}
-        gridGap={4}
-        color={actualTheme === "dark" ? "white" : "black"}
-        maxOpacity={0.3}
-        flickerChance={0.25}
-      />
-      <div className="border-border/20 bg-background/5 w-full max-w-md space-y-6 rounded-3xl border p-8 backdrop-blur-sm">
-        <div className="text-center">
-          <h1 className="text-foreground font-serif text-3xl">DeerFlow</h1>
-          <p className="text-muted-foreground mt-2">
-            {isLogin ? "Sign in to your account" : "Create a new account"}
+    <main className="bg-background flex min-h-screen items-center justify-center px-6">
+      <div className="w-full max-w-sm space-y-5 text-center">
+        <div className="space-y-2">
+          <h1 className="font-serif text-3xl">Miaowu OS</h1>
+          <p className="text-muted-foreground text-sm">
+            正在前往 NewAPI 账号登录。
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-2">
-          <div className="flex flex-col space-y-1">
-            <label htmlFor="email" className="text-sm font-medium">
-              Email
-            </label>
-            <Input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              required
-            />
-          </div>
-          <div className="flex flex-col space-y-1">
-            <label htmlFor="password" className="text-sm font-medium">
-              Password
-            </label>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="•••••••"
-              required
-              minLength={isLogin ? 6 : 8}
-            />
-          </div>
-
-          {error && <p className="text-sm text-red-500">{error}</p>}
-
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading
-              ? "Please wait..."
-              : isLogin
-                ? "Sign In"
-                : "Create Account"}
-          </Button>
-        </form>
-
-        {isLogin && (
-          <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              <div className="bg-border h-px flex-1" />
-              <span className="text-muted-foreground text-xs">or</span>
-              <div className="bg-border h-px flex-1" />
-            </div>
-            <Button asChild variant="outline" className="w-full">
-              <a href={newApiLoginUrl}>Sign in with NewAPI</a>
-            </Button>
-          </div>
+        {redirectFailed && (
+          <p className="text-muted-foreground text-sm">
+            如果浏览器没有自动跳转，请手动继续登录。
+          </p>
         )}
 
-        <div className="text-center text-sm">
-          <button
-            type="button"
-            onClick={() => {
-              setIsLogin(!isLogin);
-              setError("");
-            }}
-            className="text-blue-500 hover:underline"
-          >
-            {isLogin
-              ? "Don't have an account? Sign up"
-              : "Already have an account? Sign in"}
-          </button>
-        </div>
-
-        <div className="text-muted-foreground text-center text-xs">
-          <Link href="/" className="hover:underline">
-            ← Back to home
-          </Link>
-        </div>
+        <Button asChild className="w-full">
+          <a href={newApiLoginUrl}>使用 NewAPI 登录</a>
+        </Button>
       </div>
-    </div>
+    </main>
   );
 }

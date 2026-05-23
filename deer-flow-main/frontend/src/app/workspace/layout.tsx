@@ -1,10 +1,10 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { AuthProvider } from "@/core/auth/AuthProvider";
 import { getServerSideUser } from "@/core/auth/server";
 import { assertNever } from "@/core/auth/types";
 
+import { SessionRecoveryActions } from "./session-recovery-actions";
 import { WorkspaceContent } from "./workspace-content";
 
 export const dynamic = "force-dynamic";
@@ -29,27 +29,16 @@ export default async function WorkspaceLayout({
       redirect("/login");
     case "gateway_unavailable":
       return (
-        <div className="flex h-screen flex-col items-center justify-center gap-4">
-          <p className="text-muted-foreground">
-            Service temporarily unavailable.
-          </p>
-          <p className="text-muted-foreground text-xs">
-            The backend may be restarting. Please wait a moment and try again.
-          </p>
-          <div className="flex gap-3">
-            <Link
-              href="/workspace"
-              className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-4 py-2 text-sm"
-            >
-              Retry
-            </Link>
-            <Link
-              href="/api/v1/auth/logout"
-              className="text-muted-foreground hover:bg-muted rounded-md border px-4 py-2 text-sm"
-            >
-              Logout &amp; Reset
-            </Link>
+        <div className="flex h-screen flex-col items-center justify-center gap-5 px-6 text-center">
+          <div className="space-y-2">
+            <p className="text-foreground text-lg font-medium">
+              NewAPI 会话暂时无法确认
+            </p>
+            <p className="text-muted-foreground max-w-md text-sm">
+              可能是登录回调后的本地会话未写入，或浏览器里的旧会话已经失效。
+            </p>
           </div>
+          <SessionRecoveryActions loginUrl="/login?next=%2Fworkspace" />
         </div>
       );
     case "config_error":

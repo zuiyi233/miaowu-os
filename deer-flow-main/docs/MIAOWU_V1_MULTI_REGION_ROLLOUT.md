@@ -2,6 +2,38 @@
 
 更新时间：2026-05-23
 
+## 2026-05-24 实际上线状态
+
+`xs.miaowu.bond` 已完成正式入口试运行上线，并已从 Cloudflare 橙云切到腾讯 EdgeOne：
+
+- Cloudflare DNS：`CNAME xs.miaowu.bond -> xs.miaowu.bond.eo.dnse3.com`，`proxied=false`。
+- 腾讯 EdgeOne：`xs.miaowu.bond.eo.dnse3.com` 回源到东京入口，再转 31 Miaowu 栈。
+- 东京 Nginx：`/etc/nginx/conf.d/xs-miaowu-bond.conf`。
+- 31 FRP：`14560 -> 57030` frontend，`18551 -> 57031` gateway。
+- Miaowu 栈：`/opt/stacks/miaowu-os-test-20260522`，frontend 镜像 `miaowu-os-frontend:test-20260523-225251`，gateway 镜像 `miaowu-os-gateway:test-20260523-225251-pg`。
+- NewAPI OIDC：正式库 `oauth_clients` 已注册 `miaowu-os-xs-prod`，redirect URI 为 `https://xs.miaowu.bond/api/v1/auth/callback/newapi`。
+- NewAPI 快速通道：Miaowu 当前 `NEWAPI_OAUTH_ISSUER` / `NEWAPI_OAUTH_PUBLIC_ISSUER` 使用 `https://xg.miaowu.bond`；NewAPI OpenAI-compatible base URL 使用 `https://xg.miaowu.bond/v1`。
+- 对象存储：31 Miaowu env 使用 `MIAOWU_OBJECT_STORAGE_PROVIDER=s3`、endpoint `http://172.22.22.170:18334`、bucket `miaowu-novel-assets`。
+
+已通过的公网 smoke：
+
+- `GET https://xs.miaowu.bond/` -> `HTTP 200 text/html`。
+- `GET https://xs.miaowu.bond/health` -> `HTTP 200 application/json`。
+- `GET https://xs.miaowu.bond/api/v1/auth/setup-status` -> `HTTP 200 {"needs_setup":false,"newapi_login_enabled":true}`。
+- `GET https://xs.miaowu.bond/api/v1/auth/login/newapi?next=/workspace` -> `HTTP 302` 到快速入口 `https://xg.miaowu.bond/oauth/authorize`，包含 `client_id=miaowu-os-xs-prod`。
+- 直接访问 `https://xg.miaowu.bond/.well-known/openid-configuration` 返回 `issuer=https://xg.miaowu.bond`，authorization/token/userinfo endpoint 均为 `xg`。
+- 直接访问 NewAPI authorize 返回登录跳转，不是 `unknown_client`。
+- `scripts/smoke-miaowu-multiregion.ps1` 未登录 smoke 通过。
+
+仍未完成的生产验收：
+
+- 浏览器真人登录完成 callback 后进入 `/workspace`。
+- 登录态小说项目、章节、媒体资产、AI settings、导入/生成流、跨用户隔离的完整业务 smoke。
+- 本地磁盘状态审计仍有启动日志证据需要收口：legacy `novel_store.json` 和 LangGraph `InMemoryStore`。
+- Windows PowerShell smoke 对当前 EdgeOne/源站证书链会报 TLS 信任错误；本轮用 `curl -k` 验证 HTTP 层，浏览器侧以 EdgeOne 证书实际信任状态为准。
+
+本次未修改 `xg.miaowu.bond`、`api.miaowu.bond`、`1.miaowu.bond`、`2.miaowu.bond` 的既有角色。
+
 ## 结论
 
 Miaowu v1 可以进入正式多地部署准备，但第一版只部署为：
@@ -92,9 +124,31 @@ docker compose --env-file .env.production -f docker-compose.production.miaowu-v1
 1. 在 31 启动 verify/candidate 栈，连接 31 PostgreSQL 候选主库和 161/162 VIP-backed SeaweedFS。
 2. 对 31 跑基础 smoke、业务 smoke、对象存储 smoke、NewAPI OIDC smoke。
 3. 用同一个镜像 tag 发布 161 frontend/gateway，仍连 31 PostgreSQL 和统一对象存储。
-4. 161 smoke 全部通过后，将 `xs.miaowu.bond` 指到 Miaowu 入口。不要碰 `xg.miaowu.bond`。
+4. 161 smoke 全部通过后，将 `xs.miaowu.bond` 指到 Miaowu 入口。`xg.miaowu.bond` 仍保持 NewAPI 快速入口语义，不允许改成 Miaowu。
 5. 发布 162 standby，验证 161 写入后 162 可读，162 写入后 161 可读。
 6. 发布东京和美西副本，验证 token、AI settings、media asset、小说数据跨节点一致。
+
+### 2026-05-24 当前入口状态
+
+- `xs.miaowu.bond` 已是 Cloudflare DNS-only CNAME 到 `xs.miaowu.bond.eo.dnse3.com`，不走 Cloudflare 橙云。
+- 公网 `xs` 不应再回源 `xg`；已为 `xs.miaowu.bond` 创建独立 MEFrp 隧道 `xs-miaowu`，EdgeOne 应回源 `hk1.mefrp.hoshino2.top` 或 `103.24.219.160`。
+- Miaowu 的 NewAPI/OIDC/API base 已切到快速入口 `xg.miaowu.bond`：
+  - `NEWAPI_OAUTH_ISSUER=https://xg.miaowu.bond`
+  - `NEWAPI_OAUTH_PUBLIC_ISSUER=https://xg.miaowu.bond`
+  - `MIAOWU_NEWAPI_BASE_URL=https://xg.miaowu.bond/v1`
+  - `NEWAPI_OPENAI_BASE_URL=https://xg.miaowu.bond/v1`
+  - `OPENAI_BASE_URL=https://xg.miaowu.bond/v1`
+- 161 已部署 `miaowu-xs-host-router` 并接入 `xg-mefrp-web`：
+  - `Host: xg.miaowu.bond` -> `127.0.0.1:3000` NewAPI。
+  - `Host: xs.miaowu.bond` -> `10.200.31.6:14560/18551` Miaowu。
+- `xg-mefrp-web` 目前已回滚为只注册 `xg.miaowu.bond`，证书也只覆盖 `xg.miaowu.bond`，以保证 NewAPI 快速入口稳定。
+- 已尝试双域 SAN 证书加 `customDomains = ['xg.miaowu.bond', 'xs.miaowu.bond']`，但 MEFrp 侧状态不稳定并出现离线/禁用；该方案已回滚。
+- 新增独立 `xs-miaowu` 隧道：
+  - 161 栈：`/opt/xs-miaowu-mefrp-web`
+  - 供应商节点：`hk1.mefrp.hoshino2.top:2888`
+  - 绑定域名：`xs.miaowu.bond`
+  - 源站：`127.0.0.1:13003`，经 161 Host router 到 31 Miaowu
+  - 直连验证：`--resolve xs.miaowu.bond:443:103.24.219.160` 下 `/health` 返回 `HTTP 200`，上游为 `10.200.31.6:18551`。
 
 镜像 tag 规则：
 

@@ -43,21 +43,20 @@ export default function SetupPage() {
         .then((r) => r.json())
         .then(
           (data: { needs_setup?: boolean; newapi_login_enabled?: boolean }) => {
-          if (cancelled) return;
-          if (data.newapi_login_enabled) {
-            window.location.href = newApiLoginUrl;
-            return;
-          }
-          if (data.needs_setup) {
-            setMode("init_admin");
-          } else {
-            // System already set up and user is not logged in — go to login
-            router.push("/login");
-          }
+            if (cancelled) return;
+            if (data.newapi_login_enabled) {
+              window.location.replace(newApiLoginUrl);
+              return;
+            }
+            if (data.needs_setup) {
+              setMode("init_admin");
+            } else {
+              window.location.replace(newApiLoginUrl);
+            }
           },
         )
         .catch(() => {
-          if (!cancelled) router.push("/login");
+          if (!cancelled) window.location.replace(newApiLoginUrl);
         });
     } else {
       // Authenticated but needs_setup is false — already set up
