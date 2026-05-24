@@ -45,18 +45,18 @@ export default function SetupPage() {
           (data: { needs_setup?: boolean; newapi_login_enabled?: boolean }) => {
             if (cancelled) return;
             if (data.newapi_login_enabled) {
-              window.location.replace(newApiLoginUrl);
+              router.replace("/login?next=%2Fworkspace");
               return;
             }
             if (data.needs_setup) {
               setMode("init_admin");
             } else {
-              window.location.replace(newApiLoginUrl);
+              router.replace("/login?next=%2Fworkspace");
             }
           },
         )
         .catch(() => {
-          if (!cancelled) window.location.replace(newApiLoginUrl);
+          if (!cancelled) router.replace("/login?next=%2Fworkspace");
         });
     } else {
       // Authenticated but needs_setup is false — already set up
@@ -165,7 +165,7 @@ export default function SetupPage() {
     return (
       <div className="bg-background flex min-h-screen items-center justify-center">
         <FlickeringGrid
-          className="absolute inset-0 z-0 mask-[url(/images/deer.svg)] mask-size-[100vw] mask-center mask-no-repeat md:mask-size-[72vh]"
+          className="absolute inset-0 z-0 mask-[url(/brand/miaowu-logo.webp)] mask-size-[100vw] mask-center mask-no-repeat md:mask-size-[72vh]"
           squareSize={4}
           gridGap={4}
           color={actualTheme === "dark" ? "white" : "black"}
@@ -174,7 +174,12 @@ export default function SetupPage() {
         />
         <div className="border-border/20 bg-background/5 w-full max-w-md space-y-6 rounded-3xl border p-8 backdrop-blur-sm">
           <div className="text-center">
-            <h1 className="font-serif text-3xl">DeerFlow</h1>
+            <img
+              src="/brand/miaowu-logo.webp"
+              alt="Miaowu OS"
+              className="mx-auto mb-3 size-16 rounded-2xl object-cover"
+            />
+            <h1 className="font-serif text-3xl">Miaowu OS</h1>
             <p className="text-muted-foreground mt-2">Create admin account</p>
             <p className="text-muted-foreground mt-1 text-xs">
               Set up the administrator account to get started.
@@ -236,7 +241,7 @@ export default function SetupPage() {
   return (
     <div className="bg-background flex min-h-screen items-center justify-center">
       <FlickeringGrid
-        className="absolute inset-0 z-0 mask-[url(/images/deer.svg)] mask-size-[100vw] mask-center mask-no-repeat md:mask-size-[72vh]"
+        className="absolute inset-0 z-0 mask-[url(/brand/miaowu-logo.webp)] mask-size-[100vw] mask-center mask-no-repeat md:mask-size-[72vh]"
         squareSize={4}
         gridGap={4}
         color={actualTheme === "dark" ? "white" : "black"}
@@ -245,7 +250,12 @@ export default function SetupPage() {
       />
       <div className="border-border/20 bg-background/5 w-full max-w-md space-y-6 rounded-3xl border p-8 backdrop-blur-sm">
         <div className="text-center">
-          <h1 className="font-serif text-3xl">DeerFlow</h1>
+          <img
+            src="/brand/miaowu-logo.webp"
+            alt="Miaowu OS"
+            className="mx-auto mb-3 size-16 rounded-2xl object-cover"
+          />
+          <h1 className="font-serif text-3xl">Miaowu OS</h1>
           <p className="text-muted-foreground mt-2">
             Complete admin account setup
           </p>

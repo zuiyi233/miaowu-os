@@ -17,7 +17,7 @@ import {
   animate,
 } from "@/lib/anime";
 
-const deerFlowFeatures = [
+const agentRuntimeFeatures = [
   {
     icon: Brain,
     title: "超级智能体框架",
@@ -106,7 +106,7 @@ const novelFeatures = [
 function FeatureCard({
   feature,
 }: {
-  feature: (typeof deerFlowFeatures)[0];
+  feature: (typeof agentRuntimeFeatures)[0];
 }) {
   const Icon = feature.icon;
 
@@ -186,7 +186,7 @@ export function CoreFeaturesSection() {
       <div className="container-md relative mx-auto max-w-[1200px] px-4 md:px-8">
         <div className="mb-4 text-center" data-animate style={{ opacity: 0 }}>
           <span className="text-sm font-medium uppercase tracking-wider text-white/40">
-            DeerFlow 核心
+            Miaowu OS 核心
           </span>
         </div>
         <h2
@@ -203,7 +203,7 @@ export function CoreFeaturesSection() {
         </p>
 
         <div ref={cardsRef} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {deerFlowFeatures.map((feature) => (
+          {agentRuntimeFeatures.map((feature) => (
             <FeatureCard key={feature.title} feature={feature} />
           ))}
         </div>

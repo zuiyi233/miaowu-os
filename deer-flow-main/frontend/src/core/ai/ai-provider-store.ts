@@ -35,6 +35,8 @@ export interface AiProviderConfig {
   managedBy?: AiManagedBy | null;
   managedGroup?: string | null;
   modelGroups?: Record<string, string[]>;
+  modelSyncStatus?: string | null;
+  modelSyncError?: string | null;
   /** Draft-only. Explicitly clear backend stored key. */
   clearApiKey?: boolean;
 }
@@ -122,6 +124,8 @@ function mapServerProviderToConfig(p: UserAiProviderRecord): AiProviderConfig {
     managedBy: p.managed_by ?? null,
     managedGroup: p.managed_group ?? null,
     modelGroups: p.model_groups ?? {},
+    modelSyncStatus: p.model_sync_status ?? null,
+    modelSyncError: p.model_sync_error ?? null,
     clearApiKey: false,
   };
 }
@@ -192,6 +196,12 @@ function isAiProviderConfigRecord(value: unknown): value is AiProviderConfig {
     return false;
   }
   if (obj.modelGroups !== undefined && (typeof obj.modelGroups !== "object" || obj.modelGroups === null || Array.isArray(obj.modelGroups))) {
+    return false;
+  }
+  if (obj.modelSyncStatus !== undefined && obj.modelSyncStatus !== null && typeof obj.modelSyncStatus !== "string") {
+    return false;
+  }
+  if (obj.modelSyncError !== undefined && obj.modelSyncError !== null && typeof obj.modelSyncError !== "string") {
     return false;
   }
   if (obj.clearApiKey !== undefined && typeof obj.clearApiKey !== "boolean") {

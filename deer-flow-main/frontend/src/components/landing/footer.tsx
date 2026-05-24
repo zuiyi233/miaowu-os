@@ -22,8 +22,8 @@ export function Footer({ className }: FooterProps) {
         </p>
       </div>
       <div className="text-muted-foreground container mb-8 flex flex-col items-center justify-center text-xs">
-        <p>MiaoWu Novel - AI 驱动的小说创作与阅读平台</p>
-        <p>&copy; {year} MiaoWu Novel</p>
+        <p>Miaowu OS - AI 小说创作工作台</p>
+        <p>&copy; {year} Miaowu OS</p>
       </div>
     </footer>
   );

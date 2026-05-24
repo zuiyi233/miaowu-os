@@ -130,7 +130,7 @@ export function TechStackSection() {
           data-animate style={{ opacity: 0 }}
         >
           <p className="mb-4 text-white/30">
-            基于 <span className="text-amber-400/80">DeerFlow 2.0</span> 超级智能体框架二次开发
+            为长篇小说创作、审校、修订与版本管理设计的本地优先工作台
           </p>
           <div
             className="inline-flex items-center gap-2 rounded-full border border-white/5 bg-white/[0.02] px-4 py-2 text-xs text-white/20"

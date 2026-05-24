@@ -1311,6 +1311,7 @@ export function ProviderCard({
   const isManagedNewApi = isNewApiManagedProvider(provider);
   const modelGroupCount = Object.keys(provider.modelGroups ?? {}).length;
   const newApiGroupLabel = provider.managedGroup ? `分组：${provider.managedGroup}` : "默认分组";
+  const syncError = provider.modelSyncError || (provider.models.length === 0 ? "未从 NewAPI 同步到可用模型" : "");
   const [modelInputMode, setModelInputMode] = useState<"tags" | "text">("tags");
   const [tagInput, setTagInput] = useState("");
 
@@ -1377,7 +1378,11 @@ export function ProviderCard({
             <p className="text-xs text-muted-foreground">
               {isManagedNewApi ? "后端托管" : providerTypeLabels[provider.provider]} · {provider.models.length} 个模型
               {modelGroupCount > 0 ? ` · ${modelGroupCount} 个分组` : ""}
+              {isManagedNewApi && provider.modelSyncStatus ? ` · ${provider.modelSyncStatus}` : ""}
             </p>
+            {isManagedNewApi && syncError && (
+              <p className="mt-1 text-xs text-destructive line-clamp-2">{syncError}</p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
@@ -1406,6 +1411,7 @@ export function ProviderCard({
               <AlertDescription>
                 当前卡片对应 NewAPI {newApiGroupLabel}。该分组的 API Key 和接口地址来自服务端配置，不会暴露到浏览器。
                 用户选择不同 NewAPI 分组时，后端会使用该分组绑定的密钥。
+                {syncError ? ` 当前模型同步状态：${syncError}` : ""}
               </AlertDescription>
             </Alert>
           )}

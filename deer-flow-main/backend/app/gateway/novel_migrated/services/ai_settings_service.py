@@ -64,6 +64,8 @@ class ProviderRecord(TypedDict, total=False):
     managed_by: str | None
     managed_group: str | None
     model_groups: dict[str, list[str]]
+    model_sync_status: str | None
+    model_sync_error: str | None
 
 
 class ProviderRecordPublic(TypedDict):
@@ -80,6 +82,8 @@ class ProviderRecordPublic(TypedDict):
     managed_by: str | None
     managed_group: str | None
     model_groups: dict[str, list[str]]
+    model_sync_status: str | None
+    model_sync_error: str | None
 
 
 class ManagedNewAPIGroup(TypedDict):
@@ -368,6 +372,8 @@ def _build_managed_newapi_provider_record(
         managed_by="newapi",
         managed_group=group["group_id"],
         model_groups=provider_groups,
+        model_sync_status=(previous or {}).get("model_sync_status"),
+        model_sync_error=(previous or {}).get("model_sync_error"),
     )
 
 
@@ -419,6 +425,80 @@ def _merge_managed_newapi_provider(
         for provider in providers:
             provider["is_active"] = provider.get("id") == bundle["default_provider_id"]
     return True
+
+
+async def _refresh_managed_newapi_provider_models(bundle: AIProviderSettings) -> bool:
+    """Best-effort sync of server-managed NewAPI model lists.
+
+    The managed provider is still rendered when sync fails, but the frontend gets
+    an explicit sync status instead of a misleading "0 models" success state.
+    """
+    if not _merge_managed_newapi_provider(bundle):
+        return False
+
+    changed = False
+    providers_by_id = {
+        str(provider.get("id")): provider
+        for provider in bundle["providers"]
+        if provider.get("managed_by") == "newapi" and provider.get("id")
+    }
+
+    for group in get_managed_newapi_groups():
+        provider_id = _newapi_provider_id_for_group(group["group_id"])
+        provider = providers_by_id.get(provider_id)
+        if provider is None:
+            continue
+
+        try:
+            models, model_groups = await fetch_managed_newapi_models(provider_id)
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code if exc.response is not None else "unknown"
+            next_error = f"NewAPI 模型同步失败：上游返回 {status}"
+            if provider.get("model_sync_status") != "error" or provider.get("model_sync_error") != next_error:
+                provider["model_sync_status"] = "error"
+                provider["model_sync_error"] = next_error
+                changed = True
+            logger.warning("Managed NewAPI model sync failed for provider %s: upstream returned %s", provider_id, status)
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            next_error = "NewAPI 模型同步失败：无法连接或请求超时"
+            if provider.get("model_sync_status") != "error" or provider.get("model_sync_error") != next_error:
+                provider["model_sync_status"] = "error"
+                provider["model_sync_error"] = next_error
+                changed = True
+            logger.warning("Managed NewAPI model sync failed for provider %s: %s", provider_id, exc.__class__.__name__)
+        except Exception:
+            next_error = "NewAPI 模型同步失败：后端同步异常"
+            if provider.get("model_sync_status") != "error" or provider.get("model_sync_error") != next_error:
+                provider["model_sync_status"] = "error"
+                provider["model_sync_error"] = next_error
+                changed = True
+            logger.warning("Managed NewAPI model sync failed for provider %s.", provider_id, exc_info=True)
+        else:
+            normalized_models = _normalize_models(models)
+            if normalized_models:
+                normalized_groups = {
+                    str(group_name): _normalize_models(group_models)
+                    for group_name, group_models in (model_groups or {}).items()
+                    if _normalize_models(group_models)
+                }
+                if provider.get("models") != normalized_models:
+                    provider["models"] = normalized_models
+                    changed = True
+                if provider.get("model_groups") != normalized_groups:
+                    provider["model_groups"] = normalized_groups or {group["group_id"]: normalized_models}
+                    changed = True
+                if provider.get("model_sync_status") != "synced" or provider.get("model_sync_error") is not None:
+                    provider["model_sync_status"] = "synced"
+                    provider["model_sync_error"] = None
+                    changed = True
+            else:
+                next_error = "NewAPI 已连接，但该分组没有返回可用模型"
+                if provider.get("model_sync_status") != "empty" or provider.get("model_sync_error") != next_error:
+                    provider["model_sync_status"] = "empty"
+                    provider["model_sync_error"] = next_error
+                    changed = True
+
+    return changed
 
 
 def _try_build_seed_bundle_from_config_yaml(
@@ -623,6 +703,8 @@ def _normalize_provider_record(
         model_groups=dict(raw.get("model_groups") or prev.get("model_groups") or {})
         if isinstance(raw.get("model_groups") or prev.get("model_groups"), dict)
         else {},
+        model_sync_status=_as_non_empty_str(raw.get("model_sync_status") if "model_sync_status" in raw else prev.get("model_sync_status")),
+        model_sync_error=_as_non_empty_str(raw.get("model_sync_error") if "model_sync_error" in raw else prev.get("model_sync_error")),
     )
 
 
@@ -641,6 +723,8 @@ def _public_provider_record(provider: ProviderRecord) -> ProviderRecordPublic:
         managed_by=provider.get("managed_by") if isinstance(provider.get("managed_by"), str) else None,
         managed_group=provider.get("managed_group") if isinstance(provider.get("managed_group"), str) else None,
         model_groups=dict(provider.get("model_groups") or {}) if isinstance(provider.get("model_groups"), dict) else {},
+        model_sync_status=provider.get("model_sync_status") if isinstance(provider.get("model_sync_status"), str) else None,
+        model_sync_error=provider.get("model_sync_error") if isinstance(provider.get("model_sync_error"), str) else None,
     )
 
 
@@ -1017,7 +1101,7 @@ class AISettingsService:
                 preferences = _load_preferences(settings)
                 ai_provider_settings = _ensure_ai_provider_settings(preferences)
 
-        if _merge_managed_newapi_provider(ai_provider_settings):
+        if await _refresh_managed_newapi_provider_models(ai_provider_settings):
             provider_bundle_changed = True
 
         active_provider = _select_active_provider(

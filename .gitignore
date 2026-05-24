@@ -259,6 +259,9 @@ dist-ssr
 # Gatsby files
 **/.cache/
 **/public
+!deer-flow-main/frontend/public/
+!deer-flow-main/frontend/public/brand/
+!deer-flow-main/frontend/public/brand/miaowu-logo.webp
 
 # Vue.js
 **/dist/

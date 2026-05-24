@@ -8,8 +8,14 @@ import { I18nProvider } from "@/core/i18n/context";
 import { detectLocaleServer } from "@/core/i18n/server";
 
 export const metadata: Metadata = {
-  title: "MiaoWu Novel - AI 驱动的小说创作与阅读平台",
-  description: "MiaoWu Novel 是一个 AI 驱动的小说创作与阅读平台，提供海量小说资源和智能创作辅助。",
+  title: "Miaowu OS - AI 小说创作工作台",
+  description:
+    "Miaowu OS 是面向小说作者的 AI 创作工作台，提供作品管理、智能续写、审校修订与沉浸式阅读体验。",
+  icons: {
+    icon: "/brand/miaowu-logo.webp",
+    shortcut: "/brand/miaowu-logo.webp",
+    apple: "/brand/miaowu-logo.webp",
+  },
 };
 
 export default async function RootLayout({

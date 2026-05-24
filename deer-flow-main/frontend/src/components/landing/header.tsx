@@ -1,4 +1,4 @@
-import { BookOpenIcon, LibraryIcon } from "lucide-react";
+import { LibraryIcon } from "lucide-react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,7 @@ export type HeaderProps = {
 };
 
 export async function Header({ className, homeURL, locale }: HeaderProps) {
-  const { locale: resolvedLocale, t } = await getI18n(locale);
-  const lang = resolvedLocale.substring(0, 2);
+  const { t } = await getI18n(locale);
   return (
     <header
       className={cn(
@@ -25,9 +24,13 @@ export async function Header({ className, homeURL, locale }: HeaderProps) {
       <div className="flex items-center gap-6">
         <Link href={homeURL ?? "/"}>
           <h1 className="flex items-center gap-2 text-xl font-bold">
-            <BookOpenIcon className="size-5 text-amber-400" />
+            <img
+              src="/brand/miaowu-logo.webp"
+              alt="Miaowu OS"
+              className="size-8 rounded-lg object-cover"
+            />
             <span className="bg-linear-to-r from-amber-300 via-orange-300 to-amber-400 bg-clip-text text-transparent">
-              MiaoWu Novel
+              Miaowu OS
             </span>
           </h1>
         </Link>
@@ -35,21 +38,17 @@ export async function Header({ className, homeURL, locale }: HeaderProps) {
       <nav className="mr-8 ml-auto flex items-center gap-8 text-sm font-medium">
         <Link
           href="/workspace/novel"
+          prefetch={false}
           className="text-secondary-foreground hover:text-foreground transition-colors"
         >
           {t.sidebar.novel}
         </Link>
         <Link
-          href={`/${lang}/docs`}
+          href="/workspace/novel/author-control"
+          prefetch={false}
           className="text-secondary-foreground hover:text-foreground transition-colors"
         >
-          {t.home.docs}
-        </Link>
-        <Link
-          href="/blog/posts"
-          className="text-secondary-foreground hover:text-foreground transition-colors"
-        >
-          {t.home.blog}
+          作者控制台
         </Link>
       </nav>
       <div className="relative">
@@ -66,7 +65,7 @@ export async function Header({ className, homeURL, locale }: HeaderProps) {
           asChild
           className="group relative z-10"
         >
-          <Link href="/workspace/novel">
+          <Link href="/workspace/novel" prefetch={false}>
             <LibraryIcon className="size-4" />
             我的书架
           </Link>

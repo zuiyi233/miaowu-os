@@ -51,6 +51,8 @@ class ProviderRecordResponse(BaseModel):
     managed_by: str | None = None
     managed_group: str | None = None
     model_groups: dict[str, list[str]] = Field(default_factory=dict)
+    model_sync_status: str | None = None
+    model_sync_error: str | None = None
 
 
 class ProviderRecordUpdate(BaseModel):

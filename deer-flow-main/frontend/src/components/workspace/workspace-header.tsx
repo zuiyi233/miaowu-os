@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageSquarePlus, BookOpen } from "lucide-react";
+import { MessageSquarePlus } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -30,7 +30,11 @@ export function WorkspaceHeader({ className }: { className?: string }) {
         {state === "collapsed" ? (
           <div className="group-has-data-[collapsible=icon]/sidebar-wrapper:-translate-y flex w-full cursor-pointer items-center justify-center">
             <div className="text-primary block pt-1 font-serif group-hover/workspace-header:hidden">
-              <BookOpen className="size-5 text-amber-400" />
+              <img
+                src="/brand/miaowu-logo.webp"
+                alt="Miaowu OS"
+                className="size-6 rounded-md object-cover"
+              />
             </div>
             <SidebarTrigger className="hidden pl-2 group-hover/workspace-header:block" />
           </div>
@@ -38,16 +42,24 @@ export function WorkspaceHeader({ className }: { className?: string }) {
           <div className="flex items-center justify-between gap-2">
             {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ? (
               <Link href="/" className="text-primary ml-2 flex items-center gap-2 font-serif">
-                <BookOpen className="size-5 text-amber-400" />
+                <img
+                  src="/brand/miaowu-logo.webp"
+                  alt="Miaowu OS"
+                  className="size-7 rounded-md object-cover"
+                />
                 <span className="bg-linear-to-r from-amber-300 to-orange-300 bg-clip-text text-transparent">
-                  MiaoWu
+                  Miaowu OS
                 </span>
               </Link>
             ) : (
               <div className="text-primary ml-2 flex cursor-default items-center gap-2 font-serif">
-                <BookOpen className="size-5 text-amber-400" />
+                <img
+                  src="/brand/miaowu-logo.webp"
+                  alt="Miaowu OS"
+                  className="size-7 rounded-md object-cover"
+                />
                 <span className="bg-linear-to-r from-amber-300 to-orange-300 bg-clip-text text-transparent">
-                  MiaoWu
+                  Miaowu OS
                 </span>
               </div>
             )}
@@ -61,7 +73,11 @@ export function WorkspaceHeader({ className }: { className?: string }) {
             isActive={pathname === "/workspace/chats/new"}
             asChild
           >
-            <Link className="text-muted-foreground" href="/workspace/chats/new">
+            <Link
+              className="text-muted-foreground"
+              href="/workspace/chats/new"
+              prefetch={false}
+            >
               <MessageSquarePlus size={16} />
               <span>{t.sidebar.newChat}</span>
             </Link>

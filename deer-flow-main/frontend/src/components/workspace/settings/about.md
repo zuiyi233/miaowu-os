@@ -1,55 +1,17 @@
-# 🦌 [About DeerFlow 2.0](https://github.com/bytedance/deer-flow)
+# 关于 Miaowu OS
 
-> **From Open Source, Back to Open Source**
+**Miaowu OS** 是面向小说作者的 AI 创作工作台，围绕作品管理、作者控制台、智能续写、证据化审校、可控修订、版本回滚和本地优先部署进行二次开发。
 
-**DeerFlow** (**D**eep **E**xploration and **E**fficient **R**esearch **Flow**) is a community-driven SuperAgent harness that researches, codes, and creates.
-With the help of sandboxes, memories, tools and skills, it handles
-different levels of tasks that could take minutes to hours.
+## 品牌与定位
 
----
+Miaowu OS 的产品界面、工作区、小说功能和本地开发体验均以 Miaowu 品牌交付。默认入口聚焦作者创作闭环，而不是通用演示页或上游项目展示页。
 
-## 🌟 GitHub Repository
+## 开源基础
 
-Explore DeerFlow on GitHub: [github.com/bytedance/deer-flow](https://github.com/bytedance/deer-flow)
+Miaowu OS 基于开源项目 **DeerFlow** 改造。DeerFlow 是一个开放的智能体运行时与应用框架，项目采用 MIT License，允许在遵守许可条款的前提下进行使用、修改和再分发。
 
-## 🌐 Official Website
+上游项目地址：[github.com/bytedance/deer-flow](https://github.com/bytedance/deer-flow)
 
-Visit the official website of DeerFlow: [deerflow.tech](https://deerflow.tech/)
+## 致谢
 
-## 📧 Support
-
-If you have any questions or need help, please contact us at [support@deerflow.tech](mailto:support@deerflow.tech).
-
----
-
-## 📜 License
-
-DeerFlow is proudly open source and distributed under the **MIT License**.
-
----
-
-## 🙌 Acknowledgments
-
-We extend our heartfelt gratitude to the open source projects and contributors who have made DeerFlow a reality. We truly stand on the shoulders of giants.
-
-### Core Frameworks
-
-- **[LangChain](https://github.com/langchain-ai/langchain)**: A phenomenal framework that powers our LLM interactions and chains.
-- **[LangGraph](https://github.com/langchain-ai/langgraph)**: Enabling sophisticated multi-agent orchestration.
-- **[Next.js](https://nextjs.org/)**: A cutting-edge framework for building web applications.
-
-### UI Libraries
-
-- **[Shadcn](https://ui.shadcn.com/)**: Minimalistic components that power our UI.
-- **[SToneX](https://github.com/stonexer)**: For his invaluable contribution to token-by-token visual effects.
-
-These outstanding projects form the backbone of DeerFlow and exemplify the transformative power of open source collaboration.
-
-### Special Thanks
-
-Finally, we want to express our heartfelt gratitude to the core authors of DeerFlow 1.0 and 2.0:
-
-- **[Daniel Walnut](https://github.com/hetaoBackend/)**
-- **[Henry Li](https://github.com/magiccube/)**
-
-Without their vision, passion and dedication, `DeerFlow` would not be what it is today.
+感谢 DeerFlow、LangGraph、LangChain、Next.js、shadcn/ui 以及相关开源社区提供的基础能力。Miaowu OS 在此基础上加入面向小说创作的产品化流程、数据边界和作者交互闭环。

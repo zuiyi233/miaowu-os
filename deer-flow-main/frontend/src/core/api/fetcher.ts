@@ -26,6 +26,8 @@ export function isStateChangingMethod(method: string): boolean {
 }
 
 const CSRF_COOKIE_PREFIX = "csrf_token=";
+const AUTH_REDIRECT_DEBOUNCE_MS = 2_000;
+let lastAuthRedirectAt = 0;
 
 /**
  * Read the ``csrf_token`` cookie set by the gateway at login.
@@ -92,7 +94,15 @@ export async function fetch(
   });
 
   if (res.status === 401) {
-    window.location.href = buildLoginUrl(window.location.pathname);
+    const now = Date.now();
+    const pathname = window.location.pathname;
+    if (
+      pathname !== "/login" &&
+      now - lastAuthRedirectAt > AUTH_REDIRECT_DEBOUNCE_MS
+    ) {
+      lastAuthRedirectAt = now;
+      window.location.assign(buildLoginUrl(pathname));
+    }
     throw new Error("Unauthorized");
   }
 

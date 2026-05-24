@@ -28,6 +28,8 @@ export interface UserAiProviderRecord {
   managed_by?: string | null;
   managed_group?: string | null;
   model_groups?: Record<string, string[]>;
+  model_sync_status?: string | null;
+  model_sync_error?: string | null;
 }
 
 export interface UserAiSettings {

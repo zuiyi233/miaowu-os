@@ -120,6 +120,64 @@ def test_get_ai_settings_injects_managed_newapi_provider(monkeypatch) -> None:
     assert data["default_provider_id"] == "newapi-managed"
 
 
+def test_get_ai_settings_auto_syncs_managed_newapi_models(monkeypatch) -> None:
+    monkeypatch.setenv("NEWAPI_OAUTH_ENABLED", "true")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://newapi:3000/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-newapi-managed")
+
+    async def _fake_fetch_managed_newapi_models(provider_id=None):
+        assert provider_id == "newapi-managed"
+        return ["newapi-model-a", "newapi-model-b"], {
+            "default": ["newapi-model-a", "newapi-model-b"],
+        }
+
+    monkeypatch.setattr(
+        "app.gateway.novel_migrated.services.ai_settings_service.fetch_managed_newapi_models",
+        _fake_fetch_managed_newapi_models,
+    )
+
+    fake_db = _FakeDB()
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/user/ai-settings")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    provider = data["providers"][0]
+    assert provider["id"] == "newapi-managed"
+    assert provider["models"] == ["newapi-model-a", "newapi-model-b"]
+    assert provider["model_groups"] == {"default": ["newapi-model-a", "newapi-model-b"]}
+    assert provider["model_sync_status"] == "synced"
+    assert provider["model_sync_error"] is None
+
+
+def test_get_ai_settings_reports_managed_newapi_model_sync_empty(monkeypatch) -> None:
+    monkeypatch.setenv("NEWAPI_OAUTH_ENABLED", "true")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://newapi:3000/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-newapi-managed")
+
+    async def _fake_fetch_managed_newapi_models(provider_id=None):
+        return [], {}
+
+    monkeypatch.setattr(
+        "app.gateway.novel_migrated.services.ai_settings_service.fetch_managed_newapi_models",
+        _fake_fetch_managed_newapi_models,
+    )
+
+    fake_db = _FakeDB()
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/user/ai-settings")
+
+    assert resp.status_code == 200
+    provider = resp.json()["providers"][0]
+    assert provider["models"] == []
+    assert provider["model_sync_status"] == "empty"
+    assert "没有返回可用模型" in provider["model_sync_error"]
+
+
 def test_get_ai_settings_injects_newapi_group_providers(monkeypatch) -> None:
     monkeypatch.setenv(
         "MIAOWU_NEWAPI_GROUPS_JSON",

@@ -139,7 +139,7 @@ export function Hero({ className }: { className?: string }) {
           className="text-muted-foreground mt-8 max-w-2xl scale-105 text-center text-xl text-shadow-sm"
           style={{ opacity: 0 }}
         >
-          <KineticTagline text="MiaoWu Novel 基于 DeerFlow 超级智能体框架，提供专业级 AI 辅助小说创作与沉浸式阅读体验。" />
+          <KineticTagline text="Miaowu OS 提供专业级 AI 辅助小说创作、作者控制台与沉浸式阅读体验。" />
         </p>
 
         <div
@@ -148,7 +148,7 @@ export function Hero({ className }: { className?: string }) {
           style={{ opacity: 0 }}
           data-hero-btn
         >
-          <Link href="/workspace/novel" data-magnetic>
+          <Link href="/workspace/novel" data-magnetic prefetch={false}>
             <Button className="size-lg bg-amber-500 hover:bg-amber-600 group relative overflow-hidden" size="lg">
               <span className="pointer-events-none absolute inset-0 bg-gradient-to-r from-amber-400/0 via-white/20 to-amber-400/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
               <BookOpen className="size-4" />
@@ -156,7 +156,7 @@ export function Hero({ className }: { className?: string }) {
               <ChevronRightIcon className="size-4" />
             </Button>
           </Link>
-          <Link href="/workspace/novel" data-magnetic>
+          <Link href="/workspace/novel" data-magnetic prefetch={false}>
             <Button variant="outline" className="size-lg border-white/20 bg-white/5 backdrop-blur-sm hover:bg-white/10 hover:border-amber-500/30 group" size="lg">
               <PenTool className="size-4" />
               <span className="text-md">AI 创作</span>

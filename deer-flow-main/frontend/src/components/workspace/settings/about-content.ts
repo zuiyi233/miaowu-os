@@ -1,67 +1,34 @@
 /**
- * About DeerFlow markdown content. Inlined to avoid raw-loader dependency
+ * About Miaowu OS markdown content. Inlined to avoid raw-loader dependency
  * (Turbopack cannot resolve raw-loader for .md imports).
  */
-export const aboutMarkdown = `# 🦌 [About DeerFlow 2.0](https://github.com/bytedance/deer-flow)
+export const aboutMarkdown = `# 关于 Miaowu OS
 
-> **From Open Source, Back to Open Source**
+> 面向小说作者的 AI 创作工作台
 
-DeerFlow (**D**eep **E**xploration and **E**fficient **R**esearch **Flow**) is an open-source **super agent harness** that orchestrates **sub-agents**, **memory**, and **sandboxes** to do almost anything — powered by **extensible skills**.
-
----
-
-## 🚀 Core Features
-
-* **Skills & Tools**: With built-in and extensible skills and tools, DeerFlow can do almost anything.
-* **Sub-Agents**: Sub-Agents help the main agent to do the tasks that are too complex to be done by the main agent.
-* **Sandbox & File System**: Safely execute code and manipulate files in the sandbox.
-* **Context Engineering**: Isolated sub-agent context, summarization to keep the context window sharp.
-* **Long-Term Memory**: Keep recording the user's profile, top of mind, and conversation history.
+**Miaowu OS** 是围绕长篇小说创作流程构建的本地优先工作台。它把作品管理、作者控制台、场景计划、智能续写、证据化审校、可控修订、版本回滚和 Novel RAG 写回放在同一个作者闭环中，而不是只提供零散的 AI 调用按钮。
 
 ---
 
-## 🌟 GitHub Repository
+## 核心能力
 
-![Star History Chart](https://api.star-history.com/svg?repos=bytedance/deer-flow&type=Date)
-
-Explore DeerFlow on GitHub: [github.com/bytedance/deer-flow](https://github.com/bytedance/deer-flow)
-
-## 🌐 Official Website
-
-Visit the official website of DeerFlow: [deerflow.tech](https://deerflow.tech/)
-
-## 📧 Support
-
-If you have any questions or need help, please contact us at [support@deerflow.tech](mailto:support@deerflow.tech).
+* **小说工作室**：管理作品、章节、大纲、角色、关系、伏笔、世界设定和写作风格。
+* **作者控制台**：从上下文预览、场景计划、生成候选、审校 issue 到版本 diff/回滚，形成可确认的创作闭环。
+* **主运行时集成**：小说 AI 任务默认走 Miaowu OS 的 Gateway / RunManager / LangGraph 主运行路径，继承 skills、memory、thread isolation、日志与 token usage。
+* **上下文边界**：作品剧情事实、章节正文、角色状态和伏笔进入 Novel RAG / workspace documents；用户长期偏好进入主 memory，避免互相污染。
+* **本地开发契约**：本地后端固定使用 \`http://127.0.0.1:8551\`，前端使用 4560 或当前 Windows 可用端口，不把 8001 当默认本地地址。
 
 ---
 
-## 📜 License
+## 开源基础
 
-DeerFlow is proudly open source and distributed under the **MIT License**.
+Miaowu OS 基于开源项目 **DeerFlow** 改造。DeerFlow 采用 MIT License，允许在遵守许可条款的前提下使用、修改和再分发。
+
+原版官方仓库：[github.com/bytedance/deer-flow](https://github.com/bytedance/deer-flow)
 
 ---
 
-## 🙌 Acknowledgments
+## 致谢
 
-We extend our heartfelt gratitude to the open source projects and contributors who have made DeerFlow a reality. We truly stand on the shoulders of giants.
-
-### Core Frameworks
-- **[LangChain](https://github.com/langchain-ai/langchain)**: A phenomenal framework that powers our LLM interactions and chains.
-- **[LangGraph](https://github.com/langchain-ai/langgraph)**: Enabling sophisticated multi-agent orchestration.
-- **[Next.js](https://nextjs.org/)**: A cutting-edge framework for building web applications.
-
-### UI Libraries
-- **[Shadcn](https://ui.shadcn.com/)**: Minimalistic components that power our UI.
-- **[SToneX](https://github.com/stonexer)**: For his invaluable contribution to token-by-token visual effects.
-
-These outstanding projects form the backbone of DeerFlow and exemplify the transformative power of open source collaboration.
-
-### Special Thanks
-Finally, we want to express our heartfelt gratitude to the core authors of DeerFlow 1.0 and 2.0:
-
-- **[Daniel Walnut](https://github.com/hetaoBackend/)**
-- **[Henry Li](https://github.com/magiccube/)**
-
-Without their vision, passion and dedication, \`DeerFlow\` would not be what it is today.
+感谢 DeerFlow、LangGraph、LangChain、Next.js、shadcn/ui 以及相关开源社区提供的基础能力。Miaowu OS 在此基础上继续面向中文长篇小说创作、作者控制台和本地部署体验做产品化改造。
 `;

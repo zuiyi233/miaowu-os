@@ -22,6 +22,13 @@ export class AgentsApiDisabledError extends Error {
   }
 }
 
+export class AgentsApiForbiddenError extends AgentsApiDisabledError {
+  constructor(message?: string) {
+    super(message ?? "Agents API is not available for this session.");
+    this.name = "AgentsApiForbiddenError";
+  }
+}
+
 function isAgentsApiDisabledDetail(detail: string | undefined): boolean {
   return typeof detail === "string" && detail.includes("agents_api.enabled");
 }
@@ -50,8 +57,11 @@ export async function listAgents(): Promise<Agent[]> {
   const res = await fetch(`${getBackendBaseURL()}/api/agents`);
   if (!res.ok) {
     const detail = await readErrorDetail(res);
-    if (isAgentsApiDisabledDetail(detail)) {
+    if (res.status === 403 && isAgentsApiDisabledDetail(detail)) {
       throw new AgentsApiDisabledError(detail);
+    }
+    if (res.status === 403) {
+      throw new AgentsApiForbiddenError(detail);
     }
     throw new Error(
       detail ?? `Failed to load agents: ${res.status} ${res.statusText}`,
@@ -75,8 +85,11 @@ export async function createAgent(request: CreateAgentRequest): Promise<Agent> {
   });
   if (!res.ok) {
     const detail = await readErrorDetail(res);
-    if (isAgentsApiDisabledDetail(detail)) {
+    if (res.status === 403 && isAgentsApiDisabledDetail(detail)) {
       throw new AgentsApiDisabledError(detail);
+    }
+    if (res.status === 403) {
+      throw new AgentsApiForbiddenError(detail);
     }
     throw new Error(detail ?? `Failed to create agent: ${res.statusText}`);
   }
@@ -116,19 +129,22 @@ export async function checkAgentName(
     );
   } catch {
     throw new AgentNameCheckError(
-      "Could not reach the DeerFlow backend.",
+      "Could not reach the Miaowu OS backend.",
       "backend_unreachable",
     );
   }
 
   if (!res.ok) {
     const detail = await readErrorDetail(res);
-    if (isAgentsApiDisabledDetail(detail)) {
+    if (res.status === 403 && isAgentsApiDisabledDetail(detail)) {
       throw new AgentsApiDisabledError(detail);
+    }
+    if (res.status === 403) {
+      throw new AgentsApiForbiddenError(detail);
     }
     if (BACKEND_UNAVAILABLE_STATUSES.has(res.status)) {
       throw new AgentNameCheckError(
-        "Could not reach the DeerFlow backend.",
+        "Could not reach the Miaowu OS backend.",
         "backend_unreachable",
       );
     }

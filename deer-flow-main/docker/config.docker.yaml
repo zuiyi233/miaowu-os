@@ -115,7 +115,7 @@ memory:
   max_injection_tokens: 2000
 
 agents_api:
-  enabled: false
+  enabled: true
 
 skill_evolution:
   enabled: false
