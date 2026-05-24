@@ -30,6 +30,25 @@ Questions to answer:
 
 ## Required Patterns
 
+### HyperFrames Render Toolchain
+
+- Trigger: creating or updating HyperFrames compositions under `deer-flow-main/hyperframes/*`.
+- Contract: `npm run check` must pass after HTML composition edits. `npm run render` must run with FFmpeg available on the same process `PATH` used by npm/HyperFrames.
+- Required pattern:
+  - install missing FFmpeg on Windows with winget or an equivalent Windows-native installer
+  - if the current shell does not see the new binary, prepend the FFmpeg `bin` directory to `$env:PATH` before `npm run render`
+  - verify rendered MP4 metadata with FFprobe or equivalent because HyperFrames console summaries can display misleading total time while the actual stream duration is correct
+  - extract representative frames for visual QA when subtitles, transitions, or scene timing changed
+- Forbidden pattern: assuming a successful winget install updates the current shell `PATH`, or trusting only the HyperFrames render summary for final duration.
+- Verify: run `npm run check`, render the MP4, then inspect duration, dimensions, frame rate, and audio stream metadata.
+
+Example:
+
+```powershell
+$env:PATH = "C:\Users\Administrator\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin;" + $env:PATH
+npm run render
+```
+
 ### Novel i18n Defaults
 
 - Trigger: adding keys to `NovelTranslations` or adding novel UI that reads `t.novel.*`.

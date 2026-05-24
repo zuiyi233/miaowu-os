@@ -1,0 +1,12 @@
+node_modules/
+.hyperframes/
+
+assets/*response.json
+assets/*raw.wav
+assets/moss-tts-test.wav
+
+renders/*
+!renders/miaowu-product-video_2026-05-24_23-00-43.mp4
+!renders/verify-final/
+renders/verify-final/*
+!renders/verify-final/contact-sheet.jpg

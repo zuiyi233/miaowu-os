@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: #f6f1e8;
+        color: #17140f;
+        font-family: sans-serif;
+      }
+
+      #root {
+        position: relative;
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background:
+          linear-gradient(90deg, rgba(31, 28, 23, 0.055) 2px, transparent 2px) 0 0 / 96px 96px,
+          linear-gradient(0deg, rgba(31, 28, 23, 0.045) 2px, transparent 2px) 0 0 / 96px 96px,
+          #f6f1e8;
+      }
+
+      .scene {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background:
+          linear-gradient(180deg, rgba(255, 253, 247, 0.92), rgba(246, 241, 232, 0.96)),
+          #f6f1e8;
+      }
+
+      .scene::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        opacity: 0.72;
+        background:
+          linear-gradient(90deg, rgba(216, 70, 47, 0.11) 0 8px, transparent 8px 100%) 64px 0 / 216px 100%,
+          linear-gradient(0deg, rgba(38, 79, 67, 0.1) 0 6px, transparent 6px 100%) 0 94px / 100% 260px;
+      }
+
+      .scene-content {
+        position: relative;
+        z-index: 2;
+        display: flex;
+        width: 100%;
+        height: 100%;
+        flex-direction: column;
+        justify-content: center;
+        gap: 42px;
+        padding: 106px 74px 270px;
+      }
+
+      .topline {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        color: #61594f;
+        font-size: 25px;
+        font-weight: 800;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 14px;
+        border: 3px solid #17140f;
+        border-radius: 999px;
+        padding: 14px 22px;
+        background: #fffdf7;
+        color: #17140f;
+        box-shadow: 10px 10px 0 rgba(38, 79, 67, 0.18);
+      }
+
+      .brand-mark {
+        display: grid;
+        width: 36px;
+        height: 36px;
+        place-items: center;
+        border-radius: 10px;
+        background: #d8462f;
+        color: #fffdf7;
+        font-size: 22px;
+        font-weight: 900;
+      }
+
+      .kicker {
+        color: #d8462f;
+        font-size: 34px;
+        font-weight: 900;
+      }
+
+      .headline {
+        max-width: 930px;
+        color: #17140f;
+        font-size: 92px;
+        font-weight: 900;
+        letter-spacing: 0;
+        line-height: 1.04;
+      }
+
+      .headline strong {
+        color: #d8462f;
+        font-weight: 900;
+      }
+
+      .subline {
+        max-width: 890px;
+        color: #3d362f;
+        font-size: 37px;
+        font-weight: 700;
+        line-height: 1.45;
+      }
+
+      .watermark {
+        position: absolute;
+        left: 48px;
+        right: 48px;
+        bottom: 106px;
+        z-index: 1;
+        color: rgba(23, 20, 15, 0.06);
+        font-size: 86px;
+        font-weight: 900;
+        letter-spacing: 0;
+        line-height: 1;
+        white-space: nowrap;
+      }
+
+      .pain-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 22px;
+      }
+
+      .pain-item,
+      .feature-item,
+      .workflow-item,
+      .value-item {
+        border: 4px solid #17140f;
+        border-radius: 8px;
+        background: #fffdf7;
+        box-shadow: 12px 12px 0 rgba(216, 70, 47, 0.18);
+      }
+
+      .pain-item {
+        min-height: 210px;
+        padding: 28px;
+      }
+
+      .pain-item strong,
+      .feature-item strong,
+      .workflow-item strong,
+      .value-item strong {
+        display: block;
+        color: #17140f;
+        font-size: 38px;
+        font-weight: 900;
+        line-height: 1.18;
+      }
+
+      .pain-item span,
+      .feature-item span,
+      .workflow-item span,
+      .value-item span {
+        display: block;
+        margin-top: 12px;
+        color: #5b534a;
+        font-size: 26px;
+        font-weight: 700;
+        line-height: 1.34;
+      }
+
+      .product-board {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 22px;
+        border: 5px solid #17140f;
+        border-radius: 10px;
+        background: #fffdf7;
+        padding: 34px;
+        box-shadow: 18px 18px 0 rgba(38, 79, 67, 0.2);
+      }
+
+      .board-row {
+        display: grid;
+        grid-template-columns: 88px 1fr;
+        align-items: center;
+        gap: 22px;
+        min-height: 116px;
+        border-bottom: 3px solid rgba(23, 20, 15, 0.16);
+      }
+
+      .board-row:last-child {
+        border-bottom: 0;
+      }
+
+      .icon-box {
+        display: grid;
+        width: 72px;
+        height: 72px;
+        place-items: center;
+        border: 3px solid #17140f;
+        border-radius: 8px;
+        background: #264f43;
+        color: #fffdf7;
+        font-size: 34px;
+        font-weight: 900;
+      }
+
+      .board-row strong {
+        display: block;
+        font-size: 34px;
+        font-weight: 900;
+      }
+
+      .board-row span {
+        display: block;
+        margin-top: 8px;
+        color: #5b534a;
+        font-size: 24px;
+        font-weight: 700;
+        line-height: 1.32;
+      }
+
+      .feature-list {
+        display: grid;
+        gap: 22px;
+      }
+
+      .feature-item {
+        display: grid;
+        grid-template-columns: 110px 1fr;
+        gap: 24px;
+        align-items: start;
+        min-height: 162px;
+        padding: 26px;
+      }
+
+      .feature-index {
+        display: grid;
+        width: 88px;
+        height: 88px;
+        place-items: center;
+        border-radius: 50%;
+        background: #d8462f;
+        color: #fffdf7;
+        font-size: 34px;
+        font-weight: 900;
+      }
+
+      .flow-line {
+        display: grid;
+        gap: 18px;
+      }
+
+      .workflow-item {
+        min-height: 126px;
+        padding: 24px 28px 24px 34px;
+        border-left-width: 14px;
+      }
+
+      .workflow-item:nth-child(1) {
+        border-left-color: #d8462f;
+      }
+
+      .workflow-item:nth-child(2) {
+        border-left-color: #264f43;
+      }
+
+      .workflow-item:nth-child(3) {
+        border-left-color: #b07c24;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 22px;
+      }
+
+      .value-item {
+        display: grid;
+        grid-template-columns: 132px 1fr;
+        align-items: center;
+        gap: 24px;
+        min-height: 160px;
+        padding: 26px;
+      }
+
+      .value-word {
+        display: grid;
+        width: 116px;
+        height: 116px;
+        place-items: center;
+        border-radius: 8px;
+        background: #17140f;
+        color: #fffdf7;
+        font-size: 44px;
+        font-weight: 900;
+      }
+
+      .cta-wrap {
+        justify-content: flex-end;
+      }
+
+      .logo-block {
+        display: grid;
+        width: 150px;
+        height: 150px;
+        place-items: center;
+        border: 5px solid #17140f;
+        border-radius: 18px;
+        background: #d8462f;
+        color: #fffdf7;
+        font-size: 68px;
+        font-weight: 900;
+        box-shadow: 18px 18px 0 rgba(23, 20, 15, 0.18);
+      }
+
+      .tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+      }
+
+      .tags span {
+        border: 3px solid #17140f;
+        border-radius: 999px;
+        padding: 14px 22px;
+        background: #fffdf7;
+        color: #17140f;
+        font-size: 28px;
+        font-weight: 900;
+      }
+
+      .caption-layer {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 180px;
+        z-index: 40;
+        min-height: 190px;
+        padding: 0 70px;
+        pointer-events: none;
+      }
+
+      .caption-group {
+        position: absolute;
+        left: 50%;
+        bottom: 0;
+        width: min(910px, calc(100% - 140px));
+        border: 3px solid rgba(23, 20, 15, 0.9);
+        border-radius: 8px;
+        background: rgba(23, 20, 15, 0.9);
+        color: #fffdf7;
+        padding: 22px 28px;
+        text-align: center;
+        font-size: 37px;
+        font-weight: 900;
+        line-height: 1.28;
+        box-shadow: 0 18px 42px rgba(23, 20, 15, 0.22);
+        opacity: 0;
+        transform: translateX(-50%);
+        visibility: hidden;
+      }
+
+      .caption-group strong {
+        color: #ffd2a1;
+        font-weight: 900;
+      }
+
+      .transition-band {
+        position: absolute;
+        inset: 0;
+        z-index: 32;
+        pointer-events: none;
+        background:
+          linear-gradient(90deg, #d8462f 0 24%, #fffdf7 24% 34%, #264f43 34% 100%);
+        transform: translateX(-120%);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="146" data-width="1080" data-height="1920">
+      <audio
+        id="narration"
+        data-start="0"
+        data-duration="144.8"
+        data-track-index="20"
+        src="assets/narration.wav"
+        data-volume="1"
+      ></audio>
+
+      <section id="scene-1" class="clip scene" data-start="0" data-duration="11" data-track-index="1">
+        <div class="watermark">AI WRITING</div>
+        <div class="scene-content">
+          <div class="topline"><div class="brand"><span class="brand-mark">M</span><span>Miaowu OS</span></div><span>00-11s / Hook</span></div>
+          <p class="kicker">普通 AI 写小说的真实问题</p>
+          <h1 class="headline">一开始很快，<strong>写长就失控</strong></h1>
+          <p class="subline">灵感、扩写、推进剧情都很快，但一进入中长篇，创作开始散掉。</p>
+        </div>
+      </section>
+
+      <section id="scene-2" class="clip scene" data-start="11" data-duration="17" data-track-index="2">
+        <div class="watermark">BROKEN CANON</div>
+        <div class="scene-content">
+          <div class="topline"><div class="brand"><span class="brand-mark">痛</span><span>长篇断裂</span></div><span>11-28s / Pain</span></div>
+          <h2 class="headline">最痛的不是慢，<strong>是不连续</strong></h2>
+          <div class="pain-grid">
+            <div class="pain-item"><strong>角色漂移</strong><span>主角写到后面像换了一个人。</span></div>
+            <div class="pain-item"><strong>规则冲突</strong><span>世界观今天推翻昨天的设定。</span></div>
+            <div class="pain-item"><strong>伏笔遗忘</strong><span>埋下的线索后续无人接住。</span></div>
+            <div class="pain-item"><strong>重复解释</strong><span>每次对话都要重新讲背景。</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-3" class="clip scene" data-start="28" data-duration="20.2" data-track-index="3">
+        <div class="watermark">WORKSPACE</div>
+        <div class="scene-content">
+          <div class="topline"><div class="brand"><span class="brand-mark">OS</span><span>产品定位</span></div><span>28-48s / Position</span></div>
+          <p class="kicker">不是聊天机器人</p>
+          <h2 class="headline">而是围绕长篇创作运转的<strong>项目工作台</strong></h2>
+          <div class="product-board">
+            <div class="board-row"><div class="icon-box">角</div><div><strong>角色</strong><span>设定、关系、职业、动机和成长轨迹。</span></div></div>
+            <div class="board-row"><div class="icon-box">世</div><div><strong>世界观</strong><span>地点、组织、规则、历史和能力体系。</span></div></div>
+            <div class="board-row"><div class="icon-box">章</div><div><strong>章节状态</strong><span>大纲、剧情线、正文和当前创作进度。</span></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-4" class="clip scene" data-start="48.2" data-duration="10.3" data-track-index="4">
+        <div class="watermark">CHARACTER</div>
+        <div class="scene-content">
+          <div class="topline"><div class="brand"><span class="brand-mark">1</span><span>角色管理</span></div><span>48-58s / Character</span></div>
+          <h2 class="headline">角色不再只是<strong>一段提示词</strong></h2>
+          <div class="feature-list">
+            <div class="feature-item"><div class="feature-index">设</div><div><strong>人物设定长期沉淀</strong><span>身份、性格、动机、目标和成长变化，不靠临时记忆。</span></div></div>
+            <div class="feature-item"><div class="feature-index">网</div><div><strong>关系网络持续参与创作</strong><span>角色关系、职业能力和冲突方向，能进入后续章节上下文。</span></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-5" class="clip scene" data-start="58.5" data-duration="12.2" data-track-index="5">
+        <div class="watermark">WORLD</div>
+        <div class="scene-content">
+          <div class="topline"><div class="brand"><span class="brand-mark">2</span><span>世界观沉淀</span></div><span>58-70s / World</span></div>
+          <h2 class="headline">世界观不再散落在<strong>聊天记录</strong></h2>
+          <div class="feature-list">
+            <div class="feature-item"><div class="feature-index">规</div><div><strong>规则体系结构化</strong><span>地点、组织、历史、能力体系和禁忌规则统一管理。</span></div></div>
+            <div class="feature-item"><div class="feature-index">用</div><div><strong>后续创作随时调用</strong><span>AI 写新章节时，不再凭空编设定或覆盖旧规则。</span></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-6" class="clip scene" data-start="70.8" data-duration="16" data-track-index="6">
+        <div class="watermark">CHAPTER FLOW</div>
+        <div class="scene-content">
+          <div class="topline"><div class="brand"><span class="brand-mark">3</span><span>章节推进</span></div><span>70-86s / Flow</span></div>
+          <h2 class="headline">从大纲到正文，<strong>连续推进</strong></h2>
+          <div class="flow-line">
+            <div class="workflow-item"><strong>大纲与分卷</strong><span>先确定结构，再进入章节执行。</span></div>
+            <div class="workflow-item"><strong>章节生成与改写</strong><span>围绕角色、规则、剧情线和当前目标写作。</span></div>
+            <div class="workflow-item"><strong>润色与回看</strong><span>修改不脱离项目上下文，减少跑偏。</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-7" class="clip scene" data-start="87" data-duration="14.5" data-track-index="7">
+        <div class="watermark">AUTHOR LOOP</div>
+        <div class="scene-content">
+          <div class="topline"><div class="brand"><span class="brand-mark">4</span><span>作者控制台</span></div><span>87-101s / Control</span></div>
+          <h2 class="headline">把 AI 生成变成<strong>可迭代流程</strong></h2>
+          <div class="product-board">
+            <div class="board-row"><div class="icon-box">析</div><div><strong>章节分析</strong><span>回看人物状态、剧情线索和潜在矛盾。</span></div></div>
+            <div class="board-row"><div class="icon-box">灵</div><div><strong>灵感模式</strong><span>卡文时补充转折、场景和对话方向。</span></div></div>
+            <div class="board-row"><div class="icon-box">控</div><div><strong>作者控制</strong><span>记忆、结构和生成过程收拢到同一套工作流。</span></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-8" class="clip scene" data-start="103" data-duration="21.1" data-track-index="8">
+        <div class="watermark">VALUE</div>
+        <div class="scene-content">
+          <div class="topline"><div class="brand"><span class="brand-mark">值</span><span>核心价值</span></div><span>103-124s / Value</span></div>
+          <h2 class="headline">长篇创作需要三件事</h2>
+          <div class="metric-grid">
+            <div class="value-item"><div class="value-word">记</div><div><strong>记得住</strong><span>设定、人物和前文状态，不再全靠作者自己背。</span></div></div>
+            <div class="value-item"><div class="value-word">接</div><div><strong>接得上</strong><span>章节围绕同一套大纲、剧情线和上下文推进。</span></div></div>
+            <div class="value-item"><div class="value-word">控</div><div><strong>控得住</strong><span>AI 被约束在你的故事体系里，而不是随意跑偏。</span></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-9" class="clip scene" data-start="124" data-duration="22" data-track-index="9">
+        <div class="watermark">MIAOWU OS</div>
+        <div class="scene-content cta-wrap">
+          <div class="topline"><div class="brand"><span class="brand-mark">M</span><span>Miaowu OS</span></div><span>124-146s / CTA</span></div>
+          <div class="logo-block">M</div>
+          <p class="kicker">开源 AI 小说创作系统</p>
+          <h2 class="headline">从灵感、大纲、第一章，<strong>走到大结局</strong></h2>
+          <div class="tags">
+            <span>角色库</span>
+            <span>世界观</span>
+            <span>剧情线</span>
+            <span>章节推进</span>
+            <span>作者控制</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="caption-layer" aria-label="中文字幕">
+        <div id="cap-0" class="caption-group">很多作者都试过用 AI 写小说。</div>
+        <div id="cap-1" class="caption-group">一开始，它很快。</div>
+        <div id="cap-2" class="caption-group">能给灵感，能扩写段落，也能帮你推进剧情。</div>
+        <div id="cap-3" class="caption-group">但写到中长篇，问题就变了。</div>
+        <div id="cap-4" class="caption-group">角色性格开始漂移，世界观规则前后打架。</div>
+        <div id="cap-5" class="caption-group">埋下的伏笔没人记得，章节之间也越来越接不上。</div>
+        <div id="cap-6" class="caption-group">每次打开 AI，你都要重新解释人物关系、前文事件和当前目标。</div>
+        <div id="cap-7" class="caption-group">你缺的不是一个更会聊天的机器人。</div>
+        <div id="cap-8" class="caption-group">你缺的是一个真正围绕长篇创作运转的系统。</div>
+        <div id="cap-9" class="caption-group">这就是喵呜 OS。</div>
+        <div id="cap-10" class="caption-group">喵呜 OS 是为小说作者打造的开源 AI 创作工作台。</div>
+        <div id="cap-11" class="caption-group">它把角色、世界观、剧情线、章节内容和创作状态，放进同一个可管理的项目里。</div>
+        <div id="cap-12" class="caption-group">角色不再只是一段提示词。</div>
+        <div id="cap-13" class="caption-group">人物设定、关系网络、职业能力、性格动机和成长轨迹，都可以长期沉淀。</div>
+        <div id="cap-14" class="caption-group">世界观也不再散落在聊天记录里。</div>
+        <div id="cap-15" class="caption-group">地点、组织、规则体系、历史背景和能力设定，可以结构化管理，持续参与后续创作。</div>
+        <div id="cap-16" class="caption-group">当你推进剧情时，喵呜 OS 不是只回答这一句话。</div>
+        <div id="cap-17" class="caption-group">它会围绕项目上下文，从大纲、分卷、章节，到正文生成、改写和润色，连续协作。</div>
+        <div id="cap-18" class="caption-group">章节分析可以帮助你回看人物状态、剧情线索和潜在矛盾。</div>
+        <div id="cap-19" class="caption-group">灵感模式可以在卡文时补充转折、场景和对话方向。</div>
+        <div id="cap-20" class="caption-group">作者控制台则把记忆、结构和生成过程收拢到同一套工作流里。</div>
+        <div id="cap-21" class="caption-group">所以它解决的核心问题很明确。</div>
+        <div id="cap-22" class="caption-group"><strong>第一，记得住。</strong></div>
+        <div id="cap-23" class="caption-group">设定、人物和前文状态，不再全靠作者自己背。</div>
+        <div id="cap-24" class="caption-group"><strong>第二，接得上。</strong></div>
+        <div id="cap-25" class="caption-group">章节推进围绕同一套大纲、剧情线和上下文，不轻易断裂。</div>
+        <div id="cap-26" class="caption-group"><strong>第三，控得住。</strong></div>
+        <div id="cap-27" class="caption-group">AI 的输出被约束在你的故事体系里，而不是随意跑偏。</div>
+        <div id="cap-28" class="caption-group">对于短篇创作，普通 AI 聊天也许够用。</div>
+        <div id="cap-29" class="caption-group">但如果你要写十万字、几十万字，甚至更长的系列作品，</div>
+        <div id="cap-30" class="caption-group">你需要的不只是生成能力。</div>
+        <div id="cap-31" class="caption-group">你需要可靠的记忆、清晰的结构、连续的章节推进，以及作者自己的控制权。</div>
+        <div id="cap-32" class="caption-group">喵呜 OS，让 AI 不再只是临时工具。</div>
+        <div id="cap-33" class="caption-group">而是陪你从灵感、大纲、第一章，一直走到大结局的创作伙伴。</div>
+      </div>
+
+      <div id="transition-band" class="transition-band"></div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      var tl = gsap.timeline({ paused: true });
+
+      var scenes = [
+        { id: "#scene-1", start: 0 },
+        { id: "#scene-2", start: 11 },
+        { id: "#scene-3", start: 28 },
+        { id: "#scene-4", start: 48.2 },
+        { id: "#scene-5", start: 58.5 },
+        { id: "#scene-6", start: 70.8 },
+        { id: "#scene-7", start: 87 },
+        { id: "#scene-8", start: 103 },
+        { id: "#scene-9", start: 124 },
+      ];
+
+      function tweenFromTo(selector, fromVars, toVars, position) {
+        var targets = document.querySelectorAll(selector);
+        if (targets.length > 0) {
+          tl.fromTo(targets, fromVars, toVars, position);
+        }
+      }
+
+      function tweenTo(selector, vars, position) {
+        var targets = document.querySelectorAll(selector);
+        if (targets.length > 0) {
+          tl.to(targets, vars, position);
+        }
+      }
+
+      scenes.forEach(function (scene, index) {
+        var start = scene.start;
+        tweenFromTo(scene.id, { y: index === 0 ? 0 : 130, opacity: index === 0 ? 1 : 0 }, { y: 0, opacity: 1, duration: index === 0 ? 0.01 : 0.5, ease: "power3.out" }, start + 0.03);
+        tweenFromTo(scene.id + " .brand", { x: -70, opacity: 0 }, { x: 0, opacity: 1, duration: 0.46, ease: "power3.out" }, start + 0.15);
+        tweenFromTo(scene.id + " .kicker", { y: 34, opacity: 0 }, { y: 0, opacity: 1, duration: 0.42, ease: "power2.out" }, start + 0.28);
+        tweenFromTo(scene.id + " .headline", { x: -54, opacity: 0 }, { x: 0, opacity: 1, duration: 0.58, ease: "power4.out" }, start + 0.38);
+        tweenFromTo(scene.id + " .subline", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.48, ease: "sine.out" }, start + 0.72);
+        tweenFromTo(scene.id + " .watermark", { x: -70, opacity: 0 }, { x: 0, opacity: 1, duration: 0.8, ease: "power2.out" }, start + 0.1);
+      });
+
+      tl.fromTo("#scene-2 .pain-item", { y: 62, opacity: 0 }, { y: 0, opacity: 1, duration: 0.44, stagger: 0.12, ease: "back.out(1.2)" }, 12.05);
+      tl.fromTo("#scene-3 .board-row", { x: 68, opacity: 0 }, { x: 0, opacity: 1, duration: 0.42, stagger: 0.12, ease: "power3.out" }, 30.2);
+      tl.fromTo("#scene-4 .feature-item", { x: -70, opacity: 0 }, { x: 0, opacity: 1, duration: 0.48, stagger: 0.18, ease: "power3.out" }, 50.4);
+      tl.fromTo("#scene-5 .feature-item", { x: 70, opacity: 0 }, { x: 0, opacity: 1, duration: 0.48, stagger: 0.18, ease: "power3.out" }, 60.7);
+      tl.fromTo("#scene-6 .workflow-item", { x: -64, opacity: 0 }, { x: 0, opacity: 1, duration: 0.36, stagger: 0.12, ease: "power3.out" }, 72.1);
+      tl.fromTo("#scene-7 .board-row", { x: 68, opacity: 0 }, { x: 0, opacity: 1, duration: 0.42, stagger: 0.13, ease: "power3.out" }, 89.1);
+      tl.fromTo("#scene-8 .value-item", { y: 56, opacity: 0 }, { y: 0, opacity: 1, duration: 0.42, stagger: 0.14, ease: "back.out(1.15)" }, 105.1);
+      tl.fromTo("#scene-9 .logo-block", { scale: 0.72, rotate: -8, opacity: 0 }, { scale: 1, rotate: 0, opacity: 1, duration: 0.5, ease: "back.out(1.5)" }, 125.0);
+      tl.fromTo("#scene-9 .tags span", { y: 36, opacity: 0 }, { y: 0, opacity: 1, duration: 0.34, stagger: 0.07, ease: "power3.out" }, 128.2);
+
+      [10.75, 27.75, 47.95, 58.25, 70.55, 86.75, 102.75, 123.75].forEach(function (time) {
+        tl.fromTo("#transition-band", { x: "-120%" }, { x: "120%", duration: 0.54, ease: "power3.inOut" }, time);
+      });
+
+      var captions = [
+        { id: "#cap-0", start: 0.4, end: 3.5 },
+        { id: "#cap-1", start: 3.6, end: 5.7 },
+        { id: "#cap-2", start: 5.8, end: 9.6 },
+        { id: "#cap-3", start: 9.7, end: 12.6 },
+        { id: "#cap-4", start: 12.8, end: 17.2 },
+        { id: "#cap-5", start: 17.4, end: 21.6 },
+        { id: "#cap-6", start: 21.8, end: 27.4 },
+        { id: "#cap-7", start: 28.1, end: 31.5 },
+        { id: "#cap-8", start: 31.7, end: 35.4 },
+        { id: "#cap-9", start: 35.6, end: 37.6 },
+        { id: "#cap-10", start: 37.7, end: 40.7 },
+        { id: "#cap-11", start: 40.9, end: 48.0 },
+        { id: "#cap-12", start: 48.2, end: 50.8 },
+        { id: "#cap-13", start: 51.0, end: 58.3 },
+        { id: "#cap-14", start: 58.5, end: 62.0 },
+        { id: "#cap-15", start: 62.2, end: 70.5 },
+        { id: "#cap-16", start: 70.8, end: 75.0 },
+        { id: "#cap-17", start: 75.2, end: 84.2 },
+        { id: "#cap-18", start: 87.2, end: 91.3 },
+        { id: "#cap-19", start: 91.5, end: 95.5 },
+        { id: "#cap-20", start: 95.7, end: 101.2 },
+        { id: "#cap-21", start: 103.2, end: 105.9 },
+        { id: "#cap-22", start: 106.0, end: 108.0 },
+        { id: "#cap-23", start: 108.1, end: 112.2 },
+        { id: "#cap-24", start: 112.4, end: 114.3 },
+        { id: "#cap-25", start: 114.4, end: 118.7 },
+        { id: "#cap-26", start: 118.9, end: 120.8 },
+        { id: "#cap-27", start: 120.9, end: 124.0 },
+        { id: "#cap-28", start: 124.2, end: 127.0 },
+        { id: "#cap-29", start: 127.1, end: 131.5 },
+        { id: "#cap-30", start: 131.7, end: 133.9 },
+        { id: "#cap-31", start: 134.0, end: 138.2 },
+        { id: "#cap-32", start: 138.4, end: 141.2 },
+        { id: "#cap-33", start: 141.4, end: 144.5 },
+      ];
+
+      captions.forEach(function (group) {
+        tl.set(group.id, { visibility: "visible" }, group.start);
+        tl.fromTo(group.id, { opacity: 0, y: 26, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.18, ease: "power3.out" }, group.start);
+        tl.to(group.id, { opacity: 0, scale: 0.97, duration: 0.14, ease: "power2.in" }, group.end - 0.14);
+        tl.set(group.id, { opacity: 0, visibility: "hidden" }, group.end);
+      });
+
+      tl.to("#scene-9 .scene-content", { opacity: 0, y: -24, duration: 0.6, ease: "power2.in" }, 144.8);
+      tl.to("#root", { backgroundColor: "#17140f", duration: 0.6, ease: "sine.inOut" }, 144.8);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>
