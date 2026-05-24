@@ -468,6 +468,10 @@ class ProductEntitlementService:
         if current_count >= limit:
             raise plan_limit_http_error(limit_type="max_projects", limit=limit, used=current_count)
 
+    async def ensure_project_create_allowed_for_user(self, db: AsyncSession, *, user_id: str) -> None:
+        current_count = await self.count_projects(db, user_id)
+        await self.ensure_project_create_allowed(db, user_id=user_id, current_count=current_count)
+
     async def ensure_run_create_allowed(self, db: AsyncSession, *, user_id: str) -> None:
         entitlement = await self.get_effective_entitlement(db, user_id)
         monthly_limit = _coerce_int(

@@ -170,3 +170,83 @@ async def test_public_entitlement_payload_filters_browser_quota(tmp_path):
     assert public["entitlements"]["backend_storage_quota_bytes"] == 2048
     assert "browser_storage_quota_bytes" not in public["entitlements"]
     await close_engine()
+
+
+def test_parse_newapi_hub_direct_product_payload_filters_browser_quota():
+    entitlement = product_entitlement_service._parse_upstream_payload(
+        "u1",
+        {
+            "success": True,
+            "data": {
+                "product_key": "novel_product",
+                "plan_key": "pro",
+                "status": "active",
+                "expires_at": 0,
+                "source_type": "subscription",
+                "source_id": 5,
+                "entitlements": {
+                    "backend_storage_quota_bytes": 20 * 1024 * 1024 * 1024,
+                    "browser_storage_quota_bytes": 100 * 1024 * 1024,
+                    "max_projects": 1000,
+                    "monthly_agent_runs": 3000,
+                    "max_concurrent_runs": 5,
+                    "chapter_history_limit": 500,
+                    "priority_queue": True,
+                    "features": ["advanced_memory", "long_context_planning"],
+                },
+            },
+        },
+    )
+
+    assert entitlement.product_key == "novel_product"
+    assert entitlement.plan_key == "pro"
+    assert entitlement.source == "auth_hub"
+    assert entitlement.entitlements["backend_storage_quota_bytes"] == 20 * 1024 * 1024 * 1024
+    assert entitlement.entitlements["max_concurrent_runs"] == 5
+    public = entitlement.public_dict()
+    assert "browser_storage_quota_bytes" not in public["entitlements"]
+
+
+@pytest.mark.anyio
+async def test_project_create_limit_counts_existing_projects(tmp_path):
+    sf = await _init_db(tmp_path)
+    from app.gateway.novel_migrated.core.database import init_db_schema
+    from app.gateway.novel_migrated.models.project import Project
+
+    await init_db_schema()
+    async with sf() as db:
+        db.add(UserRow(id="u1", email="u1@example.com", password_hash="x"))
+        db.add(Project(user_id="u1", title="p1"))
+        db.add(Project(user_id="u1", title="p2"))
+        await db.flush()
+        with pytest.raises(HTTPException) as exc_info:
+            await product_entitlement_service.ensure_project_create_allowed_for_user(db, user_id="u1")
+
+    assert exc_info.value.detail["code"] == "plan_limit_exceeded"
+    assert exc_info.value.detail["limit_type"] == "max_projects"
+    assert exc_info.value.detail["used"] == 2
+    await close_engine()
+
+
+@pytest.mark.anyio
+async def test_feature_gate_requires_entitled_feature(tmp_path):
+    sf = await _init_db(tmp_path)
+    async with sf() as db:
+        db.add(
+            UserProductEntitlementCacheRow(
+                user_id="u1",
+                product_key="novel_product",
+                plan_key="creator",
+                status="active",
+                entitlements_json=json.dumps({"features": ["chapter_planning"]}),
+                synced_at=datetime.now(UTC),
+            )
+        )
+        await db.flush()
+        await product_entitlement_service.require_feature(db, user_id="u1", feature="chapter_planning")
+        with pytest.raises(HTTPException) as exc_info:
+            await product_entitlement_service.require_feature(db, user_id="u1", feature="long_context_planning")
+
+    assert exc_info.value.detail["code"] == "product_entitlement_required"
+    assert exc_info.value.detail["feature"] == "long_context_planning"
+    await close_engine()

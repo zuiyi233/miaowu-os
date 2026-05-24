@@ -9,6 +9,7 @@ from pydantic import AliasChoices, BaseModel, Field
 from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.product_entitlements import product_entitlement_service
 from app.gateway.novel_migrated.api.common import (
     get_owned_project_resource,
     get_user_id,
@@ -514,6 +515,11 @@ async def batch_generate_chapters(
     _bind_idempotency_context(request, req)
     effective_user_id = require_authenticated_user(user_id, request)
     await verify_project_access(req.project_id, effective_user_id, db)
+    await product_entitlement_service.require_feature(
+        db,
+        user_id=effective_user_id,
+        feature="long_context_planning",
+    )
 
     chapter_ids: list[str] = []
     start_chapter_number = max(1, int(req.start_chapter_number or 1))

@@ -99,12 +99,7 @@ async def create_project(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    current_count = await db.scalar(select(func.count(Project.id)).where(Project.user_id == user_id)) or 0
-    await product_entitlement_service.ensure_project_create_allowed(
-        db,
-        user_id=user_id,
-        current_count=int(current_count),
-    )
+    await product_entitlement_service.ensure_project_create_allowed_for_user(db, user_id=user_id)
     project = Project(
         user_id=user_id,
         title=req.title,

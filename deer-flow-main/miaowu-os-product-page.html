@@ -1,0 +1,1176 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Miaowu OS 是面向长篇小说作者的 AI 创作工作台，把作品事实库、作者控制、Agent 续写、审校修订和模型中枢整合到一个可持续写作系统。"
+    />
+    <title>Miaowu OS | AI 小说创作工作台</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #17140f;
+        --muted: #645f55;
+        --paper: #f7f4ee;
+        --surface: #fffdf7;
+        --line: #d8d0c4;
+        --vermilion: #d8462f;
+        --forest: #264f43;
+        --brass: #b9852c;
+        --plum: #67384f;
+        --sky: #dbe9ee;
+        --shadow: 0 28px 70px rgba(23, 20, 15, 0.12);
+        --content: min(1160px, calc(100vw - 40px));
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background:
+          linear-gradient(90deg, rgba(216, 208, 196, 0.46) 1px, transparent 1px) 0 0 / 92px 92px,
+          linear-gradient(0deg, rgba(216, 208, 196, 0.34) 1px, transparent 1px) 0 0 / 92px 92px,
+          radial-gradient(circle at 20% 0%, rgba(216, 70, 47, 0.13), transparent 30%),
+          linear-gradient(145deg, #fbfaf5 0%, var(--paper) 45%, #eef3f1 100%);
+        color: var(--ink);
+        font-family:
+          "Noto Sans SC",
+          "Microsoft YaHei",
+          "PingFang SC",
+          "Hiragino Sans GB",
+          sans-serif;
+        line-height: 1.55;
+      }
+
+      img {
+        display: block;
+        max-width: 100%;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      a:focus-visible,
+      button:focus-visible {
+        outline: 3px solid color-mix(in srgb, var(--vermilion), white 28%);
+        outline-offset: 4px;
+      }
+
+      .nav {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        backdrop-filter: blur(18px);
+        background: color-mix(in srgb, var(--surface), transparent 18%);
+        border-bottom: 1px solid rgba(216, 208, 196, 0.74);
+      }
+
+      .nav-inner {
+        width: var(--content);
+        min-height: 72px;
+        margin: 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 800;
+        letter-spacing: 0;
+      }
+
+      .brand-mark {
+        width: 38px;
+        height: 38px;
+        border-radius: 8px;
+        background: var(--ink);
+        padding: 5px;
+      }
+
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .nav-links a {
+        padding: 10px 12px;
+        border-radius: 6px;
+      }
+
+      .nav-links a:hover {
+        background: rgba(216, 70, 47, 0.08);
+        color: var(--ink);
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 0 18px;
+        border: 1px solid var(--ink);
+        border-radius: 6px;
+        font-weight: 800;
+        transition:
+          transform 180ms ease,
+          box-shadow 180ms ease,
+          background 180ms ease;
+      }
+
+      .button:hover {
+        transform: translateY(-2px);
+      }
+
+      .button-primary {
+        color: #fffaf1;
+        background: var(--ink);
+        box-shadow: 8px 8px 0 var(--vermilion);
+      }
+
+      .button-primary:hover {
+        box-shadow: 5px 5px 0 var(--vermilion);
+      }
+
+      .button-secondary {
+        background: transparent;
+      }
+
+      main {
+        overflow: hidden;
+      }
+
+      .hero {
+        width: var(--content);
+        min-height: calc(100svh - 72px);
+        margin: 0 auto;
+        padding: clamp(48px, 7vw, 96px) 0 clamp(36px, 5vw, 72px);
+        display: grid;
+        grid-template-columns: minmax(0, 1.02fr) minmax(360px, 0.98fr);
+        align-items: center;
+        gap: clamp(32px, 5vw, 74px);
+      }
+
+      .eyebrow {
+        width: fit-content;
+        margin: 0 0 20px;
+        padding: 8px 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 253, 247, 0.78);
+        color: var(--forest);
+        font-size: 14px;
+        font-weight: 800;
+      }
+
+      h1,
+      h2,
+      h3,
+      .display {
+        margin: 0;
+        font-family:
+          "Noto Serif SC",
+          "Source Han Serif SC",
+          "Songti SC",
+          "SimSun",
+          serif;
+        font-weight: 900;
+        letter-spacing: 0;
+      }
+
+      h1 {
+        max-width: 860px;
+        font-size: clamp(46px, 8.6vw, 112px);
+        line-height: 0.92;
+      }
+
+      .hero-title-line {
+        display: block;
+      }
+
+      .hero-title-accent {
+        color: var(--vermilion);
+      }
+
+      .lead {
+        max-width: 710px;
+        margin: 26px 0 0;
+        color: #3f3930;
+        font-size: clamp(18px, 2.2vw, 24px);
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        margin-top: 34px;
+      }
+
+      .proof-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 38px;
+      }
+
+      .proof-strip span {
+        padding: 9px 11px;
+        border: 1px solid rgba(38, 79, 67, 0.2);
+        border-radius: 6px;
+        background: rgba(38, 79, 67, 0.07);
+        color: var(--forest);
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .product-visual {
+        position: relative;
+        min-height: 610px;
+        display: grid;
+        align-items: center;
+      }
+
+      .workspace-shot {
+        position: relative;
+        border: 1px solid var(--ink);
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .workspace-shot::before {
+        content: "";
+        display: block;
+        height: 38px;
+        background:
+          radial-gradient(circle, var(--vermilion) 0 5px, transparent 6px) 16px 19px / 18px 18px no-repeat,
+          radial-gradient(circle, var(--brass) 0 5px, transparent 6px) 42px 19px / 18px 18px no-repeat,
+          radial-gradient(circle, var(--forest) 0 5px, transparent 6px) 68px 19px / 18px 18px no-repeat,
+          #27221b;
+      }
+
+      .workspace-grid {
+        display: grid;
+        grid-template-columns: 30% 1fr 28%;
+        min-height: 510px;
+      }
+
+      .pane {
+        padding: 18px;
+        border-right: 1px solid var(--line);
+      }
+
+      .pane:last-child {
+        border-right: 0;
+      }
+
+      .pane-title {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+
+      .chapter-list {
+        display: grid;
+        gap: 9px;
+      }
+
+      .chapter-item {
+        display: grid;
+        gap: 5px;
+        padding: 11px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #fbf7ed;
+      }
+
+      .chapter-item.active {
+        border-color: var(--vermilion);
+        background: rgba(216, 70, 47, 0.08);
+      }
+
+      .chapter-item strong {
+        font-size: 14px;
+      }
+
+      .chapter-item span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .editor-pane {
+        background:
+          linear-gradient(rgba(216, 208, 196, 0.28) 1px, transparent 1px) 0 51px / 100% 34px,
+          #fffdf8;
+      }
+
+      .editor-pane h3 {
+        margin-bottom: 14px;
+        font-size: 24px;
+      }
+
+      .editor-pane p {
+        color: #3e392f;
+      }
+
+      .inline-mark {
+        border-bottom: 3px solid rgba(216, 70, 47, 0.42);
+        font-weight: 800;
+      }
+
+      .agent-note {
+        margin-top: 24px;
+        padding: 14px;
+        border-left: 4px solid var(--forest);
+        background: rgba(38, 79, 67, 0.08);
+        color: #26453d;
+        font-size: 14px;
+      }
+
+      .state-stack {
+        display: grid;
+        gap: 10px;
+      }
+
+      .state-pill {
+        padding: 10px;
+        border-radius: 6px;
+        background: rgba(219, 233, 238, 0.86);
+        color: #243f47;
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .floating-card {
+        position: absolute;
+        right: 0;
+        bottom: 36px;
+        width: min(270px, 58%);
+        padding: 18px;
+        border: 1px solid var(--ink);
+        border-radius: 8px;
+        background: var(--vermilion);
+        color: #fffaf1;
+        box-shadow: 14px 14px 0 rgba(23, 20, 15, 0.16);
+      }
+
+      .floating-card strong {
+        display: block;
+        font-size: 34px;
+        line-height: 1;
+      }
+
+      .floating-card span {
+        display: block;
+        margin-top: 8px;
+        font-size: 13px;
+      }
+
+      section {
+        padding: clamp(58px, 7vw, 110px) 0;
+      }
+
+      .section-inner {
+        width: var(--content);
+        margin: 0 auto;
+      }
+
+      .section-kicker {
+        margin: 0 0 12px;
+        color: var(--vermilion);
+        font-size: 14px;
+        font-weight: 900;
+      }
+
+      h2 {
+        max-width: 880px;
+        font-size: clamp(34px, 5.4vw, 72px);
+        line-height: 1;
+      }
+
+      .section-lead {
+        max-width: 760px;
+        margin: 20px 0 0;
+        color: var(--muted);
+        font-size: clamp(17px, 1.8vw, 21px);
+      }
+
+      .pain-layout {
+        margin-top: 42px;
+        display: grid;
+        grid-template-columns: 0.92fr 1.08fr;
+        gap: clamp(26px, 4vw, 50px);
+        align-items: start;
+      }
+
+      .quote-block {
+        padding: clamp(26px, 4vw, 42px);
+        border: 1px solid var(--ink);
+        border-radius: 8px;
+        background: #202720;
+        color: #f8f1e4;
+      }
+
+      .quote-block p {
+        margin: 0;
+        font-family:
+          "Noto Serif SC",
+          "Source Han Serif SC",
+          "Songti SC",
+          serif;
+        font-size: clamp(24px, 3.4vw, 43px);
+        font-weight: 900;
+        line-height: 1.1;
+      }
+
+      .quote-block span {
+        display: block;
+        margin-top: 22px;
+        color: #c7d6d0;
+      }
+
+      .pain-list {
+        display: grid;
+        gap: 14px;
+      }
+
+      .pain-item {
+        display: grid;
+        grid-template-columns: 42px 1fr;
+        gap: 16px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 253, 247, 0.72);
+      }
+
+      .pain-item b {
+        display: grid;
+        place-items: center;
+        width: 42px;
+        height: 42px;
+        border-radius: 50%;
+        background: var(--ink);
+        color: #fffaf1;
+      }
+
+      .pain-item h3 {
+        font-size: 21px;
+      }
+
+      .pain-item p {
+        margin: 6px 0 0;
+        color: var(--muted);
+      }
+
+      .solution {
+        background: #17221d;
+        color: #f9f4e9;
+      }
+
+      .solution .section-kicker {
+        color: #eeb95e;
+      }
+
+      .solution .section-lead {
+        color: #cdd9d2;
+      }
+
+      .system-map {
+        margin-top: 46px;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 1px;
+        border: 1px solid rgba(249, 244, 233, 0.28);
+        background: rgba(249, 244, 233, 0.28);
+      }
+
+      .system-cell {
+        min-height: 250px;
+        padding: 24px;
+        background: #17221d;
+      }
+
+      .system-cell:nth-child(2) {
+        background: #24312a;
+      }
+
+      .system-cell:nth-child(3) {
+        background: #2e251e;
+      }
+
+      .system-cell:nth-child(4) {
+        background: #2d1f28;
+      }
+
+      .system-cell .num {
+        display: block;
+        color: #eeb95e;
+        font-weight: 900;
+      }
+
+      .system-cell h3 {
+        margin-top: 34px;
+        font-size: 25px;
+      }
+
+      .system-cell p {
+        margin: 14px 0 0;
+        color: #d9d2c6;
+      }
+
+      .features-grid {
+        margin-top: 46px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .feature {
+        min-height: 260px;
+        padding: 24px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 253, 247, 0.84);
+      }
+
+      .feature:nth-child(2n) {
+        background: rgba(219, 233, 238, 0.54);
+      }
+
+      .feature:nth-child(3n) {
+        background: rgba(216, 70, 47, 0.08);
+      }
+
+      .feature small {
+        color: var(--vermilion);
+        font-weight: 900;
+      }
+
+      .feature h3 {
+        margin-top: 42px;
+        font-size: 27px;
+      }
+
+      .feature p {
+        color: var(--muted);
+      }
+
+      .audience {
+        background:
+          linear-gradient(90deg, transparent 0 58%, rgba(216, 70, 47, 0.1) 58% 100%),
+          #fffdf7;
+      }
+
+      .audience-layout {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: clamp(28px, 5vw, 70px);
+        align-items: start;
+      }
+
+      .audience-list {
+        display: grid;
+        gap: 12px;
+        margin-top: 8px;
+      }
+
+      .audience-row {
+        padding: 18px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .audience-row strong {
+        display: block;
+        font-size: 22px;
+      }
+
+      .audience-row span {
+        display: block;
+        margin-top: 6px;
+        color: var(--muted);
+      }
+
+      .proof-board {
+        border: 1px solid var(--ink);
+        border-radius: 8px;
+        background: var(--paper);
+        overflow: hidden;
+      }
+
+      .proof-board header {
+        padding: 18px;
+        background: var(--ink);
+        color: #fffaf1;
+        font-weight: 900;
+      }
+
+      .proof-board dl {
+        margin: 0;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .proof-board div {
+        padding: 20px;
+        border-top: 1px solid var(--line);
+      }
+
+      .proof-board div:nth-child(odd) {
+        border-right: 1px solid var(--line);
+      }
+
+      .proof-board dt {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 900;
+      }
+
+      .proof-board dd {
+        margin: 8px 0 0;
+        font-size: 22px;
+        font-weight: 900;
+      }
+
+      .sources {
+        background: #ece6dc;
+      }
+
+      .source-grid {
+        margin-top: 36px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .source-link {
+        display: grid;
+        gap: 8px;
+        min-height: 132px;
+        padding: 18px;
+        border: 1px solid rgba(23, 20, 15, 0.18);
+        border-radius: 8px;
+        background: rgba(255, 253, 247, 0.7);
+      }
+
+      .source-link:hover {
+        border-color: var(--vermilion);
+      }
+
+      .source-link strong {
+        font-size: 18px;
+      }
+
+      .source-link span {
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .cta {
+        padding-bottom: clamp(76px, 9vw, 130px);
+      }
+
+      .cta-panel {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 26px;
+        align-items: center;
+        padding: clamp(28px, 5vw, 54px);
+        border: 1px solid var(--ink);
+        border-radius: 8px;
+        background:
+          linear-gradient(135deg, rgba(216, 70, 47, 0.12), transparent 36%),
+          var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .cta-panel h2 {
+        max-width: 760px;
+      }
+
+      .cta-panel p {
+        max-width: 700px;
+        margin: 18px 0 0;
+        color: var(--muted);
+        font-size: 19px;
+      }
+
+      footer {
+        padding: 30px 0;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+      }
+
+      .footer-inner {
+        width: var(--content);
+        margin: 0 auto;
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        font-size: 14px;
+      }
+
+      .reveal {
+        opacity: 0;
+        transform: translateY(20px);
+        transition:
+          opacity 700ms ease,
+          transform 700ms ease;
+      }
+
+      .reveal.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      @media (max-width: 960px) {
+        .nav-inner {
+          min-height: 64px;
+        }
+
+        .nav-links {
+          display: none;
+        }
+
+        .hero,
+        .pain-layout,
+        .audience-layout,
+        .cta-panel {
+          grid-template-columns: 1fr;
+        }
+
+        .hero {
+          min-height: auto;
+        }
+
+        .product-visual {
+          min-height: auto;
+        }
+
+        .workspace-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .pane {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .pane:last-child {
+          border-bottom: 0;
+        }
+
+        .floating-card {
+          position: relative;
+          right: auto;
+          bottom: auto;
+          width: 100%;
+          margin-top: 16px;
+        }
+
+        .system-map,
+        .features-grid,
+        .source-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .audience {
+          background: #fffdf7;
+        }
+      }
+
+      @media (max-width: 560px) {
+        :root {
+          --content: min(100vw - 28px, 1160px);
+        }
+
+        .hero-actions,
+        .button {
+          width: 100%;
+        }
+
+        .pain-item {
+          grid-template-columns: 1fr;
+        }
+
+        .proof-board dl {
+          grid-template-columns: 1fr;
+        }
+
+        .proof-board div:nth-child(odd) {
+          border-right: 0;
+        }
+
+        .footer-inner {
+          flex-direction: column;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition-duration: 1ms !important;
+          animation-duration: 1ms !important;
+          animation-iteration-count: 1 !important;
+        }
+
+        .reveal {
+          opacity: 1;
+          transform: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="nav" aria-label="主导航">
+      <div class="nav-inner">
+        <a class="brand" href="#top" aria-label="Miaowu OS 首页">
+          <img class="brand-mark" src="frontend/public/brand/miaowu-logo.webp" alt="" />
+          <span>Miaowu OS</span>
+        </a>
+        <div class="nav-links" aria-label="页面章节">
+          <a href="#pain">痛点</a>
+          <a href="#solution">方案</a>
+          <a href="#features">能力</a>
+          <a href="#audience">适合谁</a>
+          <a href="#sources">依据</a>
+        </div>
+      </div>
+    </nav>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="reveal">
+          <p class="eyebrow">作者主导的 AI 长篇小说工作台</p>
+          <h1 id="hero-title">
+            <span class="hero-title-line">让 AI</span>
+            <span class="hero-title-line hero-title-accent">写得下去</span>
+            <span class="hero-title-line">也记得住</span>
+          </h1>
+          <p class="lead">
+            Miaowu OS 不是把聊天框包装成写作软件，而是把作品事实库、章节状态、角色关系、作者指令和多 Agent 生成链路放进同一个工作台。它解决的是长篇小说最难的部分：连续性、可控性和可维护性。
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#solution">查看解决方案</a>
+            <a class="button button-secondary" href="#features">浏览核心能力</a>
+          </div>
+          <div class="proof-strip" aria-label="产品关键词">
+            <span>作品事实库</span>
+            <span>作者控制台</span>
+            <span>Agent 续写</span>
+            <span>审校修订</span>
+            <span>模型网关</span>
+          </div>
+        </div>
+
+        <div class="product-visual reveal" aria-label="Miaowu OS 工作台示意图">
+          <div class="workspace-shot">
+            <div class="workspace-grid">
+              <aside class="pane">
+                <p class="pane-title">章节编排</p>
+                <div class="chapter-list">
+                  <div class="chapter-item">
+                    <strong>第 01 章 雨夜来信</strong>
+                    <span>伏笔：旧城钟楼</span>
+                  </div>
+                  <div class="chapter-item active">
+                    <strong>第 07 章 失踪的证人</strong>
+                    <span>当前生成目标</span>
+                  </div>
+                  <div class="chapter-item">
+                    <strong>第 12 章 双重身份</strong>
+                    <span>等待承接</span>
+                  </div>
+                </div>
+              </aside>
+              <article class="pane editor-pane">
+                <p class="pane-title">作者草稿</p>
+                <h3>她在钟楼下停住脚步。</h3>
+                <p>
+                  AI 继续写作前，会先读取角色已知信息、时间线位置、世界观规则和章节目的。
+                  <span class="inline-mark">不是自由发挥，而是沿着作品事实前进。</span>
+                </p>
+                <div class="agent-note">
+                  Agent 建议：本章不应提前透露“证人已死亡”，角色林澈此时只知道证人失联。
+                </div>
+              </article>
+              <aside class="pane">
+                <p class="pane-title">作品状态</p>
+                <div class="state-stack">
+                  <span class="state-pill">角色知识边界已锁定</span>
+                  <span class="state-pill">时间线冲突 0 个</span>
+                  <span class="state-pill">伏笔待回收 4 个</span>
+                  <span class="state-pill">本章语气：冷静悬疑</span>
+                </div>
+              </aside>
+            </div>
+          </div>
+          <div class="floating-card">
+            <strong>从一章到一部书</strong>
+            <span>把提示词管理变成可追踪的创作系统。</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="pain" aria-labelledby="pain-title">
+        <div class="section-inner">
+          <p class="section-kicker">痛点</p>
+          <h2 id="pain-title">普通 AI 可以写一段，但很难稳定写完一本长篇。</h2>
+          <p class="section-lead">
+            联网调研和长篇故事生成研究都指向同一个问题：当项目变大，真正崩掉的不是文采，而是上下文治理、角色状态和章节之间的因果连续。
+          </p>
+
+          <div class="pain-layout">
+            <div class="quote-block reveal">
+              <p>长篇小说的瓶颈，不是“再生成一段”，而是“这一段是否仍属于同一本书”。</p>
+              <span>这正是 Miaowu OS 要解决的问题。</span>
+            </div>
+            <div class="pain-list">
+              <article class="pain-item reveal">
+                <b>1</b>
+                <div>
+                  <h3>角色会漂移</h3>
+                  <p>人物性格、说话方式、已知信息和情绪状态会在多章之后变形，作者只能靠人工检查补救。</p>
+                </div>
+              </article>
+              <article class="pain-item reveal">
+                <b>2</b>
+                <div>
+                  <h3>世界观会自相矛盾</h3>
+                  <p>规则、地点、组织、物品和历史事件一旦散落在聊天记录里，后续生成很容易覆盖旧设定。</p>
+                </div>
+              </article>
+              <article class="pain-item reveal">
+                <b>3</b>
+                <div>
+                  <h3>作者被迫维护提示词</h3>
+                  <p>每次续写都要复制人物卡、章节梗概、前文摘要和禁忌事项，创作变成上下文搬运。</p>
+                </div>
+              </article>
+              <article class="pain-item reveal">
+                <b>4</b>
+                <div>
+                  <h3>改稿没有工程化证据</h3>
+                  <p>哪里改过、为什么改、是否破坏前文、能否回退，普通聊天工具无法形成稳定记录。</p>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="solution" class="solution" aria-labelledby="solution-title">
+        <div class="section-inner">
+          <p class="section-kicker">解决方案</p>
+          <h2 id="solution-title">把 AI 写作从一次性生成，升级为可控的创作流水线。</h2>
+          <p class="section-lead">
+            Miaowu OS 基于 DeerFlow 的 Agent 能力体系做小说二开：让作品事实、章节目标、作者偏好和工具调用成为一等对象，而不是散在对话里的临时文本。
+          </p>
+
+          <div class="system-map">
+            <article class="system-cell reveal">
+              <span class="num">01</span>
+              <h3>作品事实库</h3>
+              <p>集中管理角色、势力、设定、物品、时间线、卷章和章节状态，让 AI 每次写作都有明确依据。</p>
+            </article>
+            <article class="system-cell reveal">
+              <span class="num">02</span>
+              <h3>作者控制台</h3>
+              <p>作者决定方向、风格、禁区、修改边界和验收标准，AI 作为创作助手执行，而不是替代作者判断。</p>
+            </article>
+            <article class="system-cell reveal">
+              <span class="num">03</span>
+              <h3>多 Agent 协作</h3>
+              <p>将大纲、计划、续写、审校、修订、推荐拆成可组合流程，减少单一模型自由发挥带来的漂移。</p>
+            </article>
+            <article class="system-cell reveal">
+              <span class="num">04</span>
+              <h3>账号与模型中枢</h3>
+              <p>通过统一登录、注册码、产品权益和 AI gateway 管理模型调用，适合个人创作与产品化交付。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="features" aria-labelledby="features-title">
+        <div class="section-inner">
+          <p class="section-kicker">核心能力</p>
+          <h2 id="features-title">从灵感、编排、续写到审校，覆盖长篇创作的关键环节。</h2>
+          <p class="section-lead">
+            页面文案聚焦当前产品定位，不夸大为“自动写书机器”。Miaowu OS 的价值是把作者的设定、判断和反馈变成 AI 可持续使用的创作上下文。
+          </p>
+
+          <div class="features-grid">
+            <article class="feature reveal">
+              <small>Canon</small>
+              <h3>角色与世界观常驻</h3>
+              <p>角色、关系、组织、地点、物品和规则不再埋在聊天记录里，后续生成围绕作品事实展开。</p>
+            </article>
+            <article class="feature reveal">
+              <small>Outline</small>
+              <h3>卷章编排和章节目标</h3>
+              <p>按作品结构规划卷、章、场景和事件，让 AI 知道当前章节负责推进什么、不能提前泄露什么。</p>
+            </article>
+            <article class="feature reveal">
+              <small>Draft</small>
+              <h3>受控续写与重写</h3>
+              <p>续写不是盲目扩写，而是结合前文摘要、当前角色状态、目标节奏和作者指令生成候选稿。</p>
+            </article>
+            <article class="feature reveal">
+              <small>Review</small>
+              <h3>一致性审校</h3>
+              <p>针对角色知识边界、时间线、伏笔、世界规则和章节衔接做检查，先发现问题再进入精修。</p>
+            </article>
+            <article class="feature reveal">
+              <small>Version</small>
+              <h3>版本、审计和回退</h3>
+              <p>重要改动留下记录，便于比较、追踪、撤销和复盘，减少“越改越乱”的长篇写作风险。</p>
+            </article>
+            <article class="feature reveal">
+              <small>Gateway</small>
+              <h3>多模型与权限管理</h3>
+              <p>统一接入不同 AI Provider，配合账号、注册码和产品权益，形成可运营的小说创作产品。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="audience" class="audience" aria-labelledby="audience-title">
+        <div class="section-inner audience-layout">
+          <div>
+            <p class="section-kicker">适合谁</p>
+            <h2 id="audience-title">给认真写长篇的人，而不是只想要一段灵感的人。</h2>
+            <p class="section-lead">
+              如果你的作品已经有多卷、多角色、多线索、多设定，Miaowu OS 的价值会明显高于普通聊天式写作。
+            </p>
+            <div class="audience-list">
+              <div class="audience-row reveal">
+                <strong>网文作者</strong>
+                <span>需要稳定产出、快速回顾前情、维护设定和避免章节断裂。</span>
+              </div>
+              <div class="audience-row reveal">
+                <strong>工作室与小团队</strong>
+                <span>需要统一作品资料、版本记录、协作边界和 AI 调用管理。</span>
+              </div>
+              <div class="audience-row reveal">
+                <strong>AI 写作产品运营者</strong>
+                <span>需要账号、产品权益、注册码、模型网关和可复制的交付路径。</span>
+              </div>
+            </div>
+          </div>
+
+          <aside class="proof-board reveal" aria-label="定位说明">
+            <header>产品定位</header>
+            <dl>
+              <div>
+                <dt>不是</dt>
+                <dd>一次性文本生成器</dd>
+              </div>
+              <div>
+                <dt>而是</dt>
+                <dd>长篇创作系统</dd>
+              </div>
+              <div>
+                <dt>核心对象</dt>
+                <dd>作品事实和作者意图</dd>
+              </div>
+              <div>
+                <dt>技术底座</dt>
+                <dd>Agent、Memory、Skills</dd>
+              </div>
+            </dl>
+          </aside>
+        </div>
+      </section>
+
+      <section id="sources" class="sources" aria-labelledby="sources-title">
+        <div class="section-inner">
+          <p class="section-kicker">调研依据</p>
+          <h2 id="sources-title">痛点来自公开资料、论文和现有 AI 写作工具反馈。</h2>
+          <p class="section-lead">
+            本页把外部调研转译为产品表达：长篇写作的核心难点是连续性、规划、上下文压缩、角色状态和作者控制。
+          </p>
+
+          <div class="source-grid">
+            <a class="source-link reveal" href="https://arxiv.org/abs/2603.05890" target="_blank" rel="noreferrer">
+              <strong>Lost in Stories</strong>
+              <span>长篇生成会出现事实、角色特征和世界规则自相矛盾的问题。</span>
+            </a>
+            <a class="source-link reveal" href="https://arxiv.org/abs/2506.16445" target="_blank" rel="noreferrer">
+              <strong>StoryWriter</strong>
+              <span>长故事生成需要大纲、规划、写作和历史压缩等多模块协作。</span>
+            </a>
+            <a class="source-link reveal" href="https://feedback.sudowrite.com/p/ai-consistency-and-workflow-limitations-overview" target="_blank" rel="noreferrer">
+              <strong>Sudowrite 反馈</strong>
+              <span>长篇创作用户集中反馈连续性、工作流和一致性检查问题。</span>
+            </a>
+            <a class="source-link reveal" href="https://github.com/bytedance/deer-flow" target="_blank" rel="noreferrer">
+              <strong>DeerFlow 2.0</strong>
+              <span>开源 Agent harness，提供 sub-agents、memory、sandbox 和 skills 基础。</span>
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section class="cta" aria-labelledby="cta-title">
+        <div class="section-inner">
+          <div class="cta-panel reveal">
+            <div>
+              <p class="section-kicker">Miaowu OS</p>
+              <h2 id="cta-title">把作者的设定、判断和审美，变成 AI 可以持续遵守的创作系统。</h2>
+              <p>
+                从今天开始，不再把长篇小说交给一段临时提示词。让每次续写、审校和修订都能回到同一个作品事实源。
+              </p>
+            </div>
+            <a class="button button-primary" href="#top">回到顶部</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="footer-inner">
+        <span>Miaowu OS | AI 小说创作工作台</span>
+        <span>独立静态宣传页，可直接用浏览器打开。</span>
+      </div>
+    </footer>
+
+    <script>
+      const observer = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("visible");
+              observer.unobserve(entry.target);
+            }
+          }
+        },
+        { threshold: 0.16 },
+      );
+
+      document.querySelectorAll(".reveal").forEach((element) => observer.observe(element));
+    </script>
+  </body>
+</html>

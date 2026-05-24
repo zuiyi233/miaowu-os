@@ -1,0 +1,258 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e6]:
+      - banner:
+        - navigation [ref=e8]:
+          - link [ref=e9] [cursor=pointer]:
+            - /url: /
+            - img [ref=e11]
+            - generic [ref=e12]: New API
+          - generic [ref=e13]:
+            - link [ref=e14] [cursor=pointer]:
+              - /url: /
+              - text: 主页
+            - link [ref=e15] [cursor=pointer]:
+              - /url: /dashboard
+              - text: 控制台
+            - link [ref=e16] [cursor=pointer]:
+              - /url: /pricing
+              - text: 模型广场
+            - link [ref=e17] [cursor=pointer]:
+              - /url: /rankings
+              - text: 排行榜
+            - link [ref=e18] [cursor=pointer]:
+              - /url: https://docs.newapi.pro
+              - text: 文档
+            - link [ref=e19] [cursor=pointer]:
+              - /url: /about
+              - text: 关于
+            - button [ref=e21] [cursor=pointer]:
+              - img
+              - generic [ref=e22]: 更改语言
+            - button [ref=e23] [cursor=pointer]:
+              - img
+              - generic [ref=e24]: 切换主题
+            - generic [ref=e25]:
+              - button [ref=e26] [cursor=pointer]:
+                - img
+              - generic [ref=e27]: "1"
+            - button [ref=e29] [cursor=pointer]: 登录
+      - region [ref=e31]:
+        - button [ref=e32] [cursor=pointer]:
+          - img [ref=e33]
+          - generic [ref=e40]: Claude opus 4.6 官方直连 兼容Cursor Windsurf等软件 刚更新的 Claude opus 4.7、Sonnet 4.6，这里已经可以直接用了 官方直连，新模型上线即可用，不用等第三方适配 别人还在等适配，你已经用上了
+          - time [ref=e41]: 2026-05-15 17:30:03
+      - generic [ref=e42]:
+        - generic [ref=e44]:
+          - heading [level=1] [ref=e45]: 统一 API 网关，服务于 所有 AI 模型
+          - paragraph [ref=e46]: 承载 AI 应用，管理数字资产，连接未来
+          - generic [ref=e47]:
+            - button [ref=e48] [cursor=pointer]:
+              - text: 开始使用
+              - img
+            - button [ref=e49] [cursor=pointer]: 查看定价
+        - generic [ref=e52]:
+          - generic [ref=e53]:
+            - button [ref=e54] [cursor=pointer]: Chat
+            - button [ref=e55] [cursor=pointer]: Responses
+            - button [ref=e56] [cursor=pointer]: Claude
+            - button [ref=e57] [cursor=pointer]: Gemini
+            - generic [ref=e60]: 200 ok
+          - generic [ref=e61]:
+            - generic [ref=e62]: POST
+            - code [ref=e63]: /v1/chat/completions
+          - generic [ref=e64]:
+            - generic [ref=e65]:
+              - text: Request
+              - generic [ref=e66]:
+                - generic [ref=e67]:
+                  - text: curl -X POST
+                  - generic [ref=e68]: "\"/v1/chat/completions\""
+                  - text: \
+                - generic [ref=e69]: "-H \"Authorization: Bearer sk-••••\" \\"
+                - generic [ref=e70]:
+                  - text: "-d"
+                  - generic [ref=e71]: "'{"
+                - generic [ref=e72]: "\"model\": \"your-model\","
+                - generic [ref=e73]: "\"messages\": ["
+                - generic [ref=e74]: "{ \"role\": \"user\", \"content\": \"...\" }"
+                - generic [ref=e75]: "]"
+                - generic [ref=e77]: "}'"
+            - generic [ref=e78]:
+              - text: Response
+              - generic [ref=e79]:
+                - generic [ref=e80]: "{"
+                - generic [ref=e81]:
+                  - generic [ref=e82]: "\"choices\": [{ \"message\": { \"content\":"
+                  - text: "\"Chat request routed.\""
+                  - generic [ref=e83]: "} }],"
+                - generic [ref=e84]:
+                  - generic [ref=e85]: "\"usage\": { \"total_tokens\":"
+                  - text: "27"
+                  - generic [ref=e86]: "}"
+                - generic [ref=e87]: "}"
+          - generic [ref=e88]:
+            - generic [ref=e89]:
+              - generic [ref=e90]:
+                - generic [ref=e91]: "142"
+                - generic [ref=e92]: ms
+              - generic [ref=e94]:
+                - generic [ref=e95]: "27"
+                - generic [ref=e96]: tokens
+              - generic [ref=e98]:
+                - generic [ref=e99]: cost
+                - generic [ref=e100]: $0.00081
+            - generic [ref=e101]: stream · sse
+      - generic [ref=e104]:
+        - generic [ref=e105]:
+          - generic [ref=e107]: 0+
+          - generic [ref=e108]: 上游服务适配
+        - generic [ref=e109]:
+          - generic [ref=e111]: 0+
+          - generic [ref=e112]: 模型计费支持
+        - generic [ref=e113]:
+          - generic [ref=e115]: 0+
+          - generic [ref=e116]: 兼容 API 路由
+        - generic [ref=e117]:
+          - generic [ref=e119]: 0+
+          - generic [ref=e120]: 调度控制能力
+      - generic [ref=e122]:
+        - generic [ref=e123]:
+          - paragraph [ref=e124]: 核心功能
+          - heading [level=2] [ref=e125]: 为开发者打造， 为规模而设计
+        - generic [ref=e126]:
+          - generic [ref=e127]:
+            - generic [ref=e128]:
+              - generic [ref=e129]: "01"
+              - heading [level=3] [ref=e130]: 极速
+            - paragraph [ref=e131]: 优化的网络架构，确保毫秒级响应时间
+            - generic [ref=e132]:
+              - generic [ref=e133]: OpenAI
+              - generic [ref=e134]: Claude
+              - generic [ref=e135]: Gemini
+              - generic [ref=e136]: DeepSeek
+              - generic [ref=e137]: Qwen
+              - generic [ref=e138]: Llama
+          - generic [ref=e139]:
+            - generic [ref=e140]:
+              - generic [ref=e141]: "02"
+              - heading [level=3] [ref=e142]: 安全可靠
+            - paragraph [ref=e143]: 企业级安全性，提供全面的权限管理
+            - generic [ref=e145]:
+              - img [ref=e147]
+              - img [ref=e150]
+          - generic [ref=e152]:
+            - generic [ref=e153]:
+              - generic [ref=e154]: "03"
+              - heading [level=3] [ref=e155]: 全球覆盖
+            - paragraph [ref=e156]: 多区域部署，实现稳定的全球访问
+            - generic [ref=e157]:
+              - generic [ref=e158]:
+                - generic [ref=e159]: "1"
+                - generic [ref=e161]: 负载均衡
+              - generic [ref=e162]:
+                - generic [ref=e163]: "2"
+                - generic [ref=e165]: 速率限制
+              - generic [ref=e166]:
+                - generic [ref=e167]: "3"
+                - generic [ref=e169]: 成本跟踪
+          - generic [ref=e170]:
+            - generic [ref=e171]:
+              - generic [ref=e172]: "04"
+              - heading [level=3] [ref=e173]: 开发者友好
+            - paragraph [ref=e174]: 兼容常见 AI 应用工作流的 API 路由
+            - generic [ref=e175]:
+              - generic [ref=e176]:
+                - generic [ref=e177]: API
+                - generic [ref=e178]: SDK
+                - generic [ref=e179]: CLI
+                - generic [ref=e180]: Docs
+              - generic [ref=e181]:
+                - img [ref=e182]
+                - text: 兼容多协议
+        - generic [ref=e185]:
+          - generic [ref=e186]:
+            - img [ref=e188]
+            - heading [level=3] [ref=e191]: 高性能
+            - paragraph [ref=e192]: 支持高并发和自动负载均衡
+          - generic [ref=e193]:
+            - img [ref=e195]
+            - heading [level=3] [ref=e197]: 透明计费
+            - paragraph [ref=e198]: 按量付费，实时监控使用情况
+          - generic [ref=e199]:
+            - img [ref=e201]
+            - heading [level=3] [ref=e206]: 团队协作
+            - paragraph [ref=e207]: 多用户管理，灵活分配权限
+          - generic [ref=e208]:
+            - img [ref=e210]
+            - heading [level=3] [ref=e212]: 开源项目
+            - paragraph [ref=e213]: 社区驱动、可自托管、易于扩展
+      - generic [ref=e215]:
+        - generic [ref=e216]:
+          - paragraph [ref=e217]: 工作流程
+          - heading [level=2] [ref=e218]: 三步快速上手
+        - generic [ref=e219]:
+          - generic [ref=e220]:
+            - generic [ref=e221]:
+              - img [ref=e223]
+              - generic [ref=e226]: "1"
+            - heading [level=3] [ref=e227]: 配置
+            - paragraph [ref=e228]: 添加 API 密钥，设置渠道并配置访问权限
+          - generic [ref=e229]:
+            - generic [ref=e230]:
+              - img [ref=e232]
+              - generic [ref=e234]: "2"
+            - heading [level=3] [ref=e235]: 连接
+            - paragraph [ref=e236]: 通过 OpenAI、Claude、Gemini 以及其他兼容 API 路由接入
+          - generic [ref=e237]:
+            - generic [ref=e238]:
+              - img [ref=e240]
+              - generic [ref=e242]: "3"
+            - heading [level=3] [ref=e243]: 监控
+            - paragraph [ref=e244]: 通过实时分析跟踪用量、成本和性能
+      - generic [ref=e247]:
+        - heading [level=2] [ref=e248]: 准备好简化 你的 AI 集成了吗？
+        - paragraph [ref=e249]: 部署你自己的网关，并通过已配置的上游服务开始转发请求。
+        - generic [ref=e250]:
+          - button [ref=e251] [cursor=pointer]:
+            - text: 开始使用
+            - img
+          - button [ref=e252] [cursor=pointer]: 查看定价
+      - contentinfo [ref=e253]:
+        - generic [ref=e254]:
+          - generic [ref=e256]:
+            - link [ref=e257] [cursor=pointer]:
+              - /url: /
+              - img [ref=e258]
+              - generic [ref=e259]: New API
+            - paragraph [ref=e260]: 强大的 API 管理平台
+          - generic [ref=e261]:
+            - generic [ref=e263]: © 2026 New API. 版权所有。
+            - generic [ref=e265]:
+              - text: © 2026
+              - link [ref=e266] [cursor=pointer]:
+                - /url: https://github.com/QuantumNous/new-api
+                - text: New API
+              - text: . 版权所有，由项目贡献者设计与开发。
+    - region "Notifications alt+T"
+  - dialog "系统公告" [ref=e270]:
+    - heading "系统公告" [level=2] [ref=e272]
+    - generic [ref=e273]:
+      - tablist [ref=e274]:
+        - tab "通知" [active] [selected] [ref=e275] [cursor=pointer]:
+          - img
+          - text: 通知
+        - tab "时间线" [ref=e276] [cursor=pointer]:
+          - img
+          - text: 时间线
+      - tabpanel "通知" [ref=e277]:
+        - generic [ref=e279]:
+          - paragraph [ref=e280]: Claude opus 4.6 官方直连 兼容Cursor Windsurf等软件 刚更新的 Claude opus 4.7、Sonnet 4.6，这里已经可以直接用了 官方直连，新模型上线即可用，不用等第三方适配 别人还在等适配，你已经用上了
+          - paragraph [ref=e281]: 【官方渠道 原生体验】 官方接口，延迟低响应快 稳定运行，不掉线、不报错、不限速
+          - paragraph [ref=e282]: 市面上很多线路不稳定 ‍、模型阉割 、响应慢 这里全部官方原生，Opus/Sonnet 全系列模型该有的能力一个不少
+    - generic [ref=e283]:
+      - button "今日关闭" [ref=e284] [cursor=pointer]
+      - button "关闭" [ref=e285] [cursor=pointer]
+    - button "Close" [ref=e286] [cursor=pointer]:
+      - img
+      - generic [ref=e287]: Close

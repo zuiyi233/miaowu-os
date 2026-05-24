@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.product_entitlements import product_entitlement_service
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
@@ -68,6 +69,7 @@ async def import_project(
 ):
     if not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="仅支持 .zip 文件")
+    await product_entitlement_service.ensure_project_create_allowed_for_user(db, user_id=user_id)
 
     try:
         zip_bytes = await file.read()

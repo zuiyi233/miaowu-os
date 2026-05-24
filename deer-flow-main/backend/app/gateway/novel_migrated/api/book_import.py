@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.product_entitlements import product_entitlement_service
 from app.gateway.novel_migrated.api.common import get_user_id
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
@@ -148,6 +149,7 @@ async def apply_book_import(
     db: AsyncSession = Depends(get_db),
 ):
     user_id = get_user_id(request)
+    await product_entitlement_service.ensure_project_create_allowed_for_user(db, user_id=user_id)
 
     return await book_import_service.apply_import(
         task_id=task_id,
@@ -179,6 +181,7 @@ async def apply_book_import_stream(
     使用 asyncio.Queue 在服务与 SSE 生成器之间传递进度消息。
     """
     user_id = get_user_id(request)
+    await product_entitlement_service.ensure_project_create_allowed_for_user(db, user_id=user_id)
 
     # 使用 asyncio.Queue 实现实时进度推送
     progress_queue: asyncio.Queue[str | None] = asyncio.Queue()

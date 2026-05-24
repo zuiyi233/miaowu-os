@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.product_entitlements import product_entitlement_service
 from app.gateway.novel_migrated.api.common import get_owned_project_resource, get_user_id, verify_project_access
 from app.gateway.novel_migrated.api.settings import get_user_ai_service
 from app.gateway.novel_migrated.core.database import get_db
@@ -287,6 +288,7 @@ async def continue_outlines(
     ai_service: AIService = Depends(get_user_ai_service),
 ):
     await verify_project_access(req.project_id, user_id, db)
+    await product_entitlement_service.require_feature(db, user_id=user_id, feature="chapter_planning")
 
     project_result = await db.execute(select(Project).where(Project.id == req.project_id))
     project = project_result.scalar_one_or_none()
@@ -385,6 +387,7 @@ async def expand_outline(
     ai_service: AIService = Depends(get_user_ai_service),
 ):
     await verify_project_access(req.project_id, user_id, db)
+    await product_entitlement_service.require_feature(db, user_id=user_id, feature="long_context_planning")
 
     from app.gateway.novel_migrated.services.plot_expansion_service import PlotExpansionService
     service = PlotExpansionService(ai_service)

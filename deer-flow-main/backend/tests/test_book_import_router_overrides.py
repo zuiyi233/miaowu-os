@@ -40,6 +40,11 @@ def test_apply_book_import_forwards_override_fields(monkeypatch):
 
     monkeypatch.setattr(book_import, "get_user_id", lambda _req: "u-1")
     monkeypatch.setattr(book_import.book_import_service, "apply_import", _fake_apply_import)
+    monkeypatch.setattr(
+        book_import.product_entitlement_service,
+        "ensure_project_create_allowed_for_user",
+        AsyncMock(),
+    )
 
     result = asyncio.run(
         book_import.apply_book_import(
