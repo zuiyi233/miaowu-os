@@ -4,6 +4,7 @@ import {
   BookOpenIcon,
   BotIcon,
   ClipboardCheckIcon,
+  ImageIcon,
   MessagesSquare,
   Sparkles,
   Upload,
@@ -69,6 +70,17 @@ export function WorkspaceNavChatList() {
             <Link className="text-muted-foreground" href="/workspace/novel/book-import" prefetch={false}>
               <Upload />
               <span>拆书导入</span>
+            </Link>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            isActive={pathname.startsWith("/workspace/images")}
+            asChild
+          >
+            <Link className="text-muted-foreground" href="/workspace/images" prefetch={false}>
+              <ImageIcon />
+              <span>图片生成</span>
             </Link>
           </SidebarMenuButton>
         </SidebarMenuItem>

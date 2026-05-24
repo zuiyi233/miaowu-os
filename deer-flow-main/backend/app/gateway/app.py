@@ -121,6 +121,7 @@ CORE_ROUTER_MODULES = (
     "app.gateway.routers.novel",
     "app.gateway.routers.novel_migrated",
     "app.gateway.api.ai_provider",
+    "app.gateway.routers.images",
 )
 langgraph_runtime = None
 

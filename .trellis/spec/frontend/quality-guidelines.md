@@ -69,6 +69,40 @@ novel: withNovelDefaults({
 }, "en"),
 ```
 
+### Workspace image generation contract
+
+- Trigger: adding or changing `/workspace/images`, `src/core/images/*`, or any workspace-side image generation workflow that calls the gateway directly.
+- Contract:
+  - browser requests must continue through `fetcher.ts` + `getBackendBaseURL()`, so local-dev stays aligned with the existing `127.0.0.1:8551` gateway profile
+  - API helpers must normalize backend-relative file URLs into gateway URLs before the page renders them
+  - page components must treat `size` and `aspect_ratio` as mutually exclusive UI inputs and avoid sending both together
+  - request/response normalization belongs in `src/core/images/api.ts`, not duplicated in page components
+- Required pattern:
+  - keep the page layer focused on form state, history selection, and display
+  - normalize status strings and structured backend errors in the core API layer
+  - show history/detail views from the same normalized `ImageJob` shape rather than parsing raw payloads in multiple components
+- Forbidden pattern:
+  - calling `window.fetch` directly from the page for image generation
+  - rendering provider URLs or raw response payloads without gateway URL normalization
+  - duplicating error parsing or image URL fallback logic inside multiple components
+- Verify:
+  - `pnpm typecheck`
+  - `pnpm test -- --run tests/unit/core/images/api.test.ts`
+  - targeted eslint on `src/core/images`, `src/app/workspace/images/page.tsx`, and the workspace nav entry
+
+Example:
+
+```typescript
+const res = await authFetch(imagesApiUrl("/generate"), {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    prompt,
+    aspect_ratio: "16:9",
+  }),
+});
+```
+
 ---
 
 ## Testing Requirements

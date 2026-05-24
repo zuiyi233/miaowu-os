@@ -140,6 +140,125 @@ future.add_done_callback(_consume_result)
 
 ---
 
+## Scenario: Gateway image generation module contract
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing `/api/v1/images/*` gateway routes, the image provider bridge, or the controlled `.deer-flow/images` persistence layout.
+- Applies to:
+  - `app/gateway/app.py`
+  - `app/gateway/routers/images.py`
+  - `app/gateway/routers/images_support/service.py`
+  - backend tests that cover image router registration and contract behavior
+
+### 2. Signatures
+
+- `POST /api/v1/images/generate`
+- `GET /api/v1/images/jobs`
+- `GET /api/v1/images/jobs/{job_id}`
+- `GET /api/v1/images/files/{image_id}`
+- `generate_images(req: ImageGenerateRequest, *, user_id: str, db: AsyncSession | None = None) -> ImageJobResponse`
+- `list_image_jobs(*, user_id: str) -> ImageJobListResponse`
+- `get_image_job(job_id: str, *, user_id: str) -> ImageJobResponse`
+- `read_image_file(*, image_id: str, user_id: str) -> ImageFilePayload`
+
+### 3. Contracts
+
+- Authentication:
+  - **Must** reuse `app.gateway.novel_migrated.api.common.get_user_id`
+  - **Must** fail closed with `401` when the main-project user context is missing
+  - **Must not** add `local_single_user`, passphrase, or anonymous fallbacks
+- Provider/runtime resolution:
+  - **Must** prefer `resolve_user_ai_runtime_config(settings, ai_model=..., module_id="images")`
+  - **May** fall back to env only when DB/settings are unavailable
+  - **Must** keep local-dev routing aligned with the existing gateway profile; do not introduce a separate image service port
+- Request validation:
+  - `prompt`: required, trimmed non-empty
+  - `n`: integer `1..10`
+  - `size` and `aspect_ratio`: mutually exclusive
+  - `size`, `aspect_ratio`, `quality`: explicit allowlists
+- Provider payload:
+  - **Must** call OpenAI-compatible `/images/generations`
+  - **Must** request `response_format="b64_json"` by default
+  - **Must** preserve request-vs-response metadata for debugging
+  - **Must** support provider adapters that map `quality` into `thinking` when the upstream contract requires it
+- Persistence:
+  - **Must** store generated files and JSON metadata under backend-controlled `.deer-flow/images`
+  - **Must** isolate job/file records by authenticated user
+  - **Must not** introduce a new SQL table, SQLite sidecar, or standalone generated/uploads/jobs service layout
+
+### 4. Validation & Error Matrix
+
+| Case | Must happen | Must not happen | Verification |
+| --- | --- | --- | --- |
+| Missing user context | `401 Authentication required` | Silent fallback to local user | Router tests for generate/jobs/detail/file |
+| Missing runtime config | `503` with stable `missing_config` error body and failed job record | Upstream call attempt | `test_generate_images_returns_503_when_config_missing` |
+| Invalid `prompt` / `n` / `size` / `aspect_ratio` / `size+aspect_ratio` | `422` from request validation | Provider call or partial job write | `test_generate_images_validates_request_payload` |
+| Upstream returns `b64_json` | Decode, persist image, return controlled file URL | Return raw base64 to frontend | success contract test |
+| Upstream returns `url` | Best-effort download, persist image, return controlled file URL | Leak upstream temporary URL as the only artifact | env fallback / URL test |
+| Degraded gateway mode | Images router still registers under `CORE_ROUTER_MODULES` | Router only available in full DeerFlow mode | degraded router registration test |
+
+### 5. Good / Base / Bad Cases
+
+- Good:
+  - The frontend only sees controlled gateway file URLs like `/api/v1/images/files/{image_id}`
+  - Job history survives process restarts through the JSON metadata files
+  - Provider-specific quality/thinking adaptation stays inside the backend bridge
+- Base:
+  - The module ships only user-facing generate/history/file access for MVP
+  - Image files are stored locally when object/media-asset integration is not yet required
+- Bad:
+  - Adding `/admin/*`, quota bookkeeping, passphrase owners, or SQLite sidecars
+  - Returning provider URLs directly without controlled persistence
+  - Re-introducing `8001`, `30116`, or a second image server in local-dev assumptions
+
+### 6. Tests Required
+
+- `backend/tests/test_image_generation_router.py`
+  - success path with `b64_json`
+  - env fallback path with provider `url`
+  - missing config -> failed job with readable error
+  - invalid request payload matrix
+  - strict `401` for generate/jobs/detail/file without authenticated user
+- `backend/tests/test_images_router_registration.py`
+  - degraded gateway still registers `/api/v1/images/jobs`
+  - internal-auth read succeeds in degraded mode
+- Assertion points:
+  - controlled file URL shape
+  - request payload fields sent upstream
+  - config source metadata
+  - user isolation on job/file lookup
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+# 1) Public fallback identity
+user_id = request.query_params.get("user_id") or "local-user"
+
+# 2) Hand provider URLs back to the page
+return {"image_urls": [item["url"] for item in data["data"]]}
+```
+
+#### Correct
+
+```python
+user_id = Depends(get_user_id)
+runtime, source = resolve_user_ai_runtime_config(
+    settings,
+    ai_model=requested_model,
+    module_id="images",
+)
+image = _store_image_file(...)
+return ImageJobResponse.model_validate({
+    "images": [image.model_dump()],
+    "image_urls": [image.url],
+})
+```
+
+---
+
 ## Scenario: Local sandbox virtual path command execution
 
 ### 1. Scope / Trigger
