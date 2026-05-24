@@ -273,6 +273,7 @@ function buildPutPayloadFromDraft(draft: AiGlobalSettings): UserAiSettingsUpdate
       provider: p.provider,
       base_url: p.baseUrl ?? "",
       models: Array.isArray(p.models) ? p.models : [],
+      model_groups: p.modelGroups ?? {},
       is_active: Boolean(p.isActive),
       temperature: p.temperature ?? null,
       max_tokens: p.maxTokens ?? null,

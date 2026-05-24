@@ -27,6 +27,12 @@ interface AdminUserRow {
   browser_reported_used_bytes: number;
   browser_quota_bytes: number;
   browser_quota_source: string;
+  product_entitlement?: {
+    plan_key?: string;
+    status?: string;
+    synced_at?: string | null;
+    sync_error?: string | null;
+  };
 }
 
 interface StorageOverview {
@@ -63,6 +69,19 @@ function formatBytes(value: number | null | undefined): string {
 function parseBytes(value: string): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
+}
+
+function formatPlanName(planKey: string | null | undefined): string {
+  switch ((planKey ?? "free").toLowerCase()) {
+    case "creator":
+      return "Creator";
+    case "pro":
+      return "Pro";
+    case "studio":
+      return "Studio";
+    default:
+      return "Free";
+  }
 }
 
 export function AdminSettingsPage() {
@@ -204,6 +223,21 @@ export function AdminSettingsPage() {
       await load();
     } catch {
       setError("用户配额保存失败");
+    }
+  };
+
+  const refreshUserEntitlement = async (userId: string) => {
+    setMessage("");
+    setError("");
+    try {
+      const res = await fetch(resolveApiUrl(`/api/admin/users/${userId}/product-entitlement/refresh`), {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("entitlement_refresh_failed");
+      setMessage("用户权益已刷新");
+      await load();
+    } catch {
+      setError("用户权益刷新失败");
     }
   };
 
@@ -359,11 +393,13 @@ export function AdminSettingsPage() {
 
       <SettingsSection title="用户空间">
         <div className="overflow-x-auto rounded-md border">
-          <table className="w-full min-w-[760px] text-sm">
+          <table className="w-full min-w-[980px] text-sm">
             <thead className="bg-muted/50 text-left">
               <tr>
                 <th className="p-3 font-medium">用户</th>
                 <th className="p-3 font-medium">角色</th>
+                <th className="p-3 font-medium">套餐</th>
+                <th className="p-3 font-medium">权益同步</th>
                 <th className="p-3 font-medium">后端占用</th>
                 <th className="p-3 font-medium">后端额度 bytes</th>
                 <th className="p-3 font-medium">浏览器上报</th>
@@ -376,6 +412,25 @@ export function AdminSettingsPage() {
                 <tr key={user.id} className="border-t">
                   <td className="p-3">{user.email}</td>
                   <td className="p-3">{user.system_role}</td>
+                  <td className="p-3">
+                    {formatPlanName(user.product_entitlement?.plan_key)}
+                  </td>
+                  <td className="p-3">
+                    <div className="space-y-1">
+                      <div>{user.product_entitlement?.status ?? "fallback"}</div>
+                      {user.product_entitlement?.sync_error ? (
+                        <div className="max-w-40 truncate text-xs text-red-600">
+                          {user.product_entitlement.sync_error}
+                        </div>
+                      ) : (
+                        <div className="text-muted-foreground text-xs">
+                          {user.product_entitlement?.synced_at
+                            ? new Date(user.product_entitlement.synced_at).toLocaleString()
+                            : "未同步"}
+                        </div>
+                      )}
+                    </div>
+                  </td>
                   <td className="p-3">{formatBytes(user.backend_used_bytes)}</td>
                   <td className="p-3">
                     <Input
@@ -430,6 +485,15 @@ export function AdminSettingsPage() {
                     >
                       <RefreshCcwIcon className="size-4" />
                       重算
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => refreshUserEntitlement(user.id)}
+                    >
+                      <RefreshCcwIcon className="size-4" />
+                      权益
                     </Button>
                   </td>
                 </tr>

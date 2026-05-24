@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.auth.models import User
 from app.gateway.deps import get_current_user_from_request
+from app.gateway.product_entitlements import product_entitlement_service
 from app.gateway.storage_quota import storage_quota_service
 from deerflow.persistence.engine import get_session_factory
 
@@ -49,3 +50,27 @@ async def report_browser_storage_usage(
     usage = await storage_quota_service.report_browser_usage(db, user_id=str(user.id), used_bytes=body.used_bytes)
     await db.commit()
     return usage
+
+
+@router.get("/product-entitlement")
+async def get_product_entitlement(
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_main_db),
+) -> dict[str, Any]:
+    user_id = str(user.id)
+    storage_usage = await storage_quota_service.get_account_usage(db, user_id)
+    payload = await product_entitlement_service.account_payload(db, user_id=user_id, storage_usage=storage_usage)
+    return payload
+
+
+@router.post("/product-entitlement/refresh")
+async def refresh_product_entitlement(
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_main_db),
+) -> dict[str, Any]:
+    entitlement = await product_entitlement_service.refresh_from_auth_hub(db, user_id=str(user.id))
+    await db.commit()
+    storage_usage = await storage_quota_service.get_account_usage(db, str(user.id))
+    payload = await product_entitlement_service.account_payload(db, user_id=str(user.id), storage_usage=storage_usage)
+    payload["product"] = entitlement.public_dict()
+    return payload

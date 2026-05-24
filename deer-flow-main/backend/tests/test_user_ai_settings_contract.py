@@ -481,6 +481,47 @@ def test_put_ai_settings_encrypts_key_and_mirrors_active_provider() -> None:
     assert prefs["ai_provider_settings"]["feature_routing_settings"] == payload["feature_routing_settings"]
 
 
+def test_put_ai_settings_persists_provider_model_groups() -> None:
+    fake_db = _FakeDB()
+    app = _build_user_settings_app(fake_db)
+
+    payload = {
+        "default_provider_id": "newapi-managed",
+        "providers": [
+            {
+                "id": "newapi-managed",
+                "name": "NewAPI",
+                "provider": "newapi",
+                "base_url": "http://127.0.0.1:3000/v1",
+                "models": ["default-model", "vip-model"],
+                "model_groups": {
+                    "default": ["default-model"],
+                    "vip": ["vip-model"],
+                },
+                "is_active": True,
+            }
+        ],
+    }
+
+    with TestClient(app) as client:
+        resp = client.put("/api/user/ai-settings", json=payload)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    provider = data["providers"][0]
+    assert provider["model_groups"] == {
+        "default": ["default-model"],
+        "vip": ["vip-model"],
+    }
+
+    prefs = json.loads(fake_db.settings.preferences or "{}")
+    stored = prefs["ai_provider_settings"]["providers"][0]
+    assert stored["model_groups"] == {
+        "default": ["default-model"],
+        "vip": ["vip-model"],
+    }
+
+
 def test_put_ai_settings_keeps_feature_routing_settings_when_omitted() -> None:
     fake_db = _FakeDB()
     app = _build_user_settings_app(fake_db)

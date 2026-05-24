@@ -54,6 +54,7 @@ export interface UserAiProviderRecordUpdate {
   provider: string;
   base_url: string;
   models: string[];
+  model_groups?: Record<string, string[]>;
   is_active: boolean;
   temperature?: number | null;
   max_tokens?: number | null;

@@ -11,14 +11,17 @@ import pytest
 from app.gateway.auth.models import User
 from app.gateway.auth.newapi_oauth import (
     NEWAPI_PROVIDER,
+    NewAPIBootstrapResult,
     NewAPIOAuthError,
     NewAPIOAuthSettings,
     NewAPIUserInfo,
     _normalize_local_email,
+    bootstrap_user_ai_settings_from_newapi,
     build_frontend_redirect_url,
     build_newapi_authorize_url,
     create_newapi_state,
     exchange_code_for_token,
+    exchange_newapi_code_for_user,
     newapi_user_is_admin,
     resolve_or_create_local_user,
     sync_newapi_system_role,
@@ -284,3 +287,91 @@ def test_normalize_local_email_falls_back_for_reserved_provider_domain():
     userinfo = NewAPIUserInfo(sub="932521", email="miaowu31test@example.invalid")
 
     assert _normalize_local_email(userinfo) == "newapi-932521@newapi.miaowu.bond"
+
+
+def test_bootstrap_user_ai_settings_reports_hub_bootstrap_failure(monkeypatch):
+    class FakeResponse:
+        status_code = 500
+
+        def json(self):
+            return {"success": False}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    import app.gateway.auth.newapi_oauth as newapi_oauth
+
+    monkeypatch.setattr(newapi_oauth.httpx, "AsyncClient", FakeClient)
+
+    result = asyncio.run(
+        bootstrap_user_ai_settings_from_newapi(
+            user_id="user-1",
+            settings=NewAPIOAuthSettings(
+                enabled=True,
+                issuer="https://newapi.example",
+                client_id="oidc_client",
+                client_secret="oidc_secret",
+            ),
+            access_token="oidc-token",
+            preferred_group="default",
+        )
+    )
+
+    assert result.success is False
+    assert "HTTP 500" in (result.message or "")
+
+
+def test_exchange_newapi_code_fails_when_ai_settings_bootstrap_fails(monkeypatch):
+    import app.gateway.auth.newapi_oauth as newapi_oauth
+
+    settings = NewAPIOAuthSettings(
+        enabled=True,
+        issuer="https://newapi.example",
+        client_id="oidc_client",
+        client_secret="oidc_secret",
+    )
+    user = User(
+        id=uuid4(),
+        email="newapi@example.com",
+        password_hash=None,
+        oauth_provider=NEWAPI_PROVIDER,
+        oauth_id="42",
+    )
+    provider = MagicMock()
+    provider.upsert_newapi_snapshot = AsyncMock(return_value=None)
+
+    monkeypatch.setattr(newapi_oauth, "require_newapi_settings", lambda: settings)
+    monkeypatch.setattr(newapi_oauth, "validate_newapi_state", lambda _state: "/workspace")
+    monkeypatch.setattr(
+        newapi_oauth,
+        "fetch_newapi_discovery",
+        AsyncMock(return_value={"token_endpoint": "https://newapi.example/oauth/token"}),
+    )
+    monkeypatch.setattr(newapi_oauth, "exchange_code_for_token", AsyncMock(return_value={"access_token": "oidc-token"}))
+    monkeypatch.setattr(
+        newapi_oauth,
+        "fetch_newapi_userinfo",
+        AsyncMock(return_value=NewAPIUserInfo(sub="42", email="newapi@example.com", group="default")),
+    )
+    monkeypatch.setattr(newapi_oauth, "resolve_or_create_local_user", AsyncMock(return_value=user))
+    monkeypatch.setattr(newapi_oauth, "sync_newapi_system_role", AsyncMock(return_value=user))
+    monkeypatch.setattr(
+        newapi_oauth,
+        "bootstrap_user_ai_settings_from_newapi",
+        AsyncMock(return_value=NewAPIBootstrapResult(success=False, message="bootstrap failed")),
+    )
+
+    with pytest.raises(NewAPIOAuthError) as exc:
+        asyncio.run(exchange_newapi_code_for_user("code", "state", provider))
+
+    assert "bootstrap failed" in exc.value.message

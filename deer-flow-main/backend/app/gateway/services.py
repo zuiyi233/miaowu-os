@@ -24,6 +24,7 @@ from app.gateway.novel_migrated.core.database import AsyncSessionLocal
 from app.gateway.novel_migrated.core.user_context import get_request_user_id
 from app.gateway.novel_migrated.models.settings import Settings
 from app.gateway.novel_migrated.services.ai_settings_service import resolve_user_ai_runtime_config
+from app.gateway.product_entitlements import product_entitlement_service
 from app.gateway.utils import sanitize_log_param
 from deerflow.runtime import (
     END_SENTINEL,
@@ -37,6 +38,7 @@ from deerflow.runtime import (
     UnsupportedStrategyError,
     run_agent,
 )
+from deerflow.persistence.engine import get_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -525,6 +527,13 @@ async def start_run(
     bridge = get_stream_bridge(request)
     run_mgr = get_run_manager(request)
     run_ctx = get_run_context(request)
+    user_id = get_request_user_id(request)
+
+    sf = get_session_factory()
+    if sf is None:
+        raise HTTPException(status_code=503, detail="Database is not available")
+    async with sf() as db:
+        await product_entitlement_service.ensure_run_create_allowed(db, user_id=user_id)
 
     disconnect = DisconnectMode.cancel if body.on_disconnect == "cancel" else DisconnectMode.continue_
 
@@ -541,6 +550,10 @@ async def start_run(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except UnsupportedStrategyError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
+
+    async with sf() as db:
+        await product_entitlement_service.increment_agent_run_usage(db, user_id)
+        await db.commit()
 
     # Upsert thread metadata so the thread appears in /threads/search,
     # even for threads that were never explicitly created via POST /threads

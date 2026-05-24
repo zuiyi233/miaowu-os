@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import time
@@ -22,6 +23,7 @@ from app.gateway.auth.models import NewAPIAccountSnapshot, User
 from app.gateway.novel_migrated.core.database import AsyncSessionLocal
 from app.gateway.novel_migrated.models.settings import Settings
 from app.gateway.novel_migrated.services.ai_settings_service import get_ai_settings_service
+from app.gateway.product_entitlements import product_entitlement_service
 
 NEWAPI_PROVIDER = "newapi"
 _STATE_TTL_SECONDS = 10 * 60
@@ -29,6 +31,7 @@ _DEFAULT_SCOPES = "openid profile email"
 _DEFAULT_REDIRECT_URI = "http://127.0.0.1:8551/api/v1/auth/callback/newapi"
 _EMAIL_ADAPTER = TypeAdapter(EmailStr)
 _ADMIN_ROLE_VALUES = {"admin", "administrator", "root", "owner", "super_admin", "superadmin"}
+logger = logging.getLogger(__name__)
 
 
 class NewAPIOAuthError(RuntimeError):
@@ -77,6 +80,15 @@ class NewAPIUserInfo(BaseModel):
     roles: list[str] | str | None = None
     group: str | None = None
     groups: list[str] | str | None = None
+
+
+@dataclass(frozen=True)
+class NewAPIBootstrapResult:
+    success: bool
+    group_count: int = 0
+    groups_with_key_count: int = 0
+    managed_groups: tuple[str, ...] = ()
+    message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -314,12 +326,29 @@ async def exchange_newapi_code_for_user(code: str, state: str, provider) -> NewA
         remain_quota=userinfo.remain_quota,
         balance=userinfo.balance,
     )
-    await bootstrap_user_ai_settings_from_newapi(
+    bootstrap_result = await bootstrap_user_ai_settings_from_newapi(
         user_id=str(user.id),
         settings=settings,
         access_token=access_token,
         preferred_group=userinfo.group,
     )
+    if not bootstrap_result.success:
+        raise NewAPIOAuthError(
+            bootstrap_result.message or "NewAPI login succeeded, but AI group/key sync failed.",
+            status_code=502,
+        )
+    try:
+        async with AsyncSessionLocal() as db:
+            await product_entitlement_service.refresh_from_auth_hub(
+                db,
+                user_id=str(user.id),
+                access_token=access_token,
+            )
+            await db.commit()
+    except Exception:
+        # Entitlement sync is retried from account/admin pages; login itself
+        # must remain usable and will fall back to Free if no cache exists.
+        pass
     return NewAPILoginResult(user=user, snapshot=snapshot, next_path=next_path)
 
 
@@ -329,8 +358,8 @@ async def bootstrap_user_ai_settings_from_newapi(
     settings: NewAPIOAuthSettings,
     access_token: str,
     preferred_group: str | None,
-) -> None:
-    """Best-effort sync of the signed-in NewAPI user's usable models."""
+) -> NewAPIBootstrapResult:
+    """Sync the signed-in NewAPI user's usable model groups into Miaowu settings."""
     bootstrap_url = f"{settings.issuer.rstrip('/')}/api/hub/session/bootstrap"
     relay_base_url = f"{settings.issuer.rstrip('/')}/v1"
     payload: dict[str, Any] = {
@@ -349,13 +378,17 @@ async def bootstrap_user_ai_settings_from_newapi(
                 headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
             )
         if response.status_code != 200:
-            return
+            message = f"NewAPI Hub bootstrap failed: HTTP {response.status_code}"
+            logger.warning("NewAPI bootstrap failed user_id=%s status=%s", user_id, response.status_code)
+            return NewAPIBootstrapResult(success=False, message=message)
         data = response.json()
         if not isinstance(data, dict) or data.get("success") is False:
-            return
+            logger.warning("NewAPI bootstrap returned unsuccessful payload user_id=%s", user_id)
+            return NewAPIBootstrapResult(success=False, message="NewAPI Hub bootstrap returned unsuccessful payload.")
         result = data.get("data") if isinstance(data.get("data"), dict) else data
         if not isinstance(result, dict):
-            return
+            logger.warning("NewAPI bootstrap returned malformed payload user_id=%s", user_id)
+            return NewAPIBootstrapResult(success=False, message="NewAPI Hub bootstrap returned malformed payload.")
 
         quick_start = result.get("quick_start")
         if isinstance(quick_start, dict):
@@ -394,7 +427,8 @@ async def bootstrap_user_ai_settings_from_newapi(
             group_items = [legacy_item] if legacy_item is not None else []
 
         if not group_items:
-            return
+            logger.warning("NewAPI bootstrap produced no managed group items user_id=%s", user_id)
+            return NewAPIBootstrapResult(success=False, message="NewAPI Hub did not return any usable group or token.")
 
         async with AsyncSessionLocal() as db:
             existing = await db.execute(select(Settings).where(Settings.user_id == user_id))
@@ -406,8 +440,24 @@ async def bootstrap_user_ai_settings_from_newapi(
                 groups=group_items,
                 db=db,
             )
+        managed_groups = tuple(str(item.get("group_id") or "").strip() for item in group_items if item.get("group_id"))
+        groups_with_key_count = sum(1 for item in group_items if isinstance(item.get("api_key"), str) and item["api_key"])
+        logger.info(
+            "NewAPI bootstrap synced user_id=%s groups=%d groups_with_key=%d managed_groups=%s",
+            user_id,
+            len(group_items),
+            groups_with_key_count,
+            list(managed_groups),
+        )
+        return NewAPIBootstrapResult(
+            success=True,
+            group_count=len(group_items),
+            groups_with_key_count=groups_with_key_count,
+            managed_groups=managed_groups,
+        )
     except Exception:
-        return
+        logger.exception("NewAPI bootstrap failed user_id=%s", user_id)
+        return NewAPIBootstrapResult(success=False, message="NewAPI Hub bootstrap failed unexpectedly.")
 
 
 def _extract_newapi_system_access_token(result: dict[str, Any]) -> str | None:

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.product_entitlements import product_entitlement_service
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
 from app.gateway.novel_migrated.api.settings import get_user_ai_service
 from app.gateway.novel_migrated.core.database import get_db
@@ -98,6 +99,12 @@ async def create_project(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
+    current_count = await db.scalar(select(func.count(Project.id)).where(Project.user_id == user_id)) or 0
+    await product_entitlement_service.ensure_project_create_allowed(
+        db,
+        user_id=user_id,
+        current_count=int(current_count),
+    )
     project = Project(
         user_id=user_id,
         title=req.title,

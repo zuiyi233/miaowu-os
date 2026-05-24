@@ -93,3 +93,39 @@ class StorageRecalculateTaskRow(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now, onupdate=_utc_now)
+
+
+class UserProductEntitlementCacheRow(Base):
+    __tablename__ = "user_product_entitlement_cache"
+
+    user_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    product_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    plan_key: Mapped[str] = mapped_column(String(64), nullable=False, default="free")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="fallback")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    entitlements_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    source_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now, onupdate=_utc_now)
+
+    __table_args__ = (
+        Index("idx_user_product_entitlement_cache_status", "user_id", "product_key", "status"),
+    )
+
+
+class UserAgentRunUsageRow(Base):
+    __tablename__ = "user_agent_run_usage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now, onupdate=_utc_now)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "period_start", "period_end", name="uq_user_agent_run_usage_period"),
+    )

@@ -27,6 +27,7 @@ from deerflow.persistence.storage_quota.model import (
 from deerflow.persistence.user.model import UserRow
 from deerflow.config.paths import get_paths
 from deerflow.persistence.engine import get_session_factory
+from app.gateway.product_entitlements import product_entitlement_service
 
 DEFAULT_STORAGE_QUOTA_BYTES = 100 * 1024 * 1024
 BACKEND_QUOTA_BYTES_KEY = "backend_storage_quota_bytes"
@@ -177,6 +178,10 @@ class StorageQuotaService:
         browser_quota = settings["browser_storage_quota_bytes"]
         backend_source = "system"
         browser_source = "system"
+        entitlement_backend_quota = await product_entitlement_service.get_backend_storage_quota_bytes(db, user_id)
+        if entitlement_backend_quota is not None:
+            backend_quota = entitlement_backend_quota
+            backend_source = "product_entitlement"
         if override and override.backend_quota_bytes is not None:
             backend_quota = max(0, int(override.backend_quota_bytes))
             backend_source = "user_override"

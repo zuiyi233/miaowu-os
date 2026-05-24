@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.product_entitlements import product_entitlement_service
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.logger import get_logger
@@ -149,6 +150,7 @@ async def get_project_consistency_report(
 ):
     """获取项目级跨章一致性报告（角色/物品/时间线快照与冲突）。"""
     await verify_project_access(project_id, user_id, db)
+    await product_entitlement_service.require_feature(db, user_id=user_id, feature="consistency_check")
     return await consistency_gate_service.build_consistency_report(db, project_id)
 
 
@@ -162,6 +164,7 @@ async def check_finalize_gate(
 ):
     """执行定稿门禁检查，返回标准化三级结果（pass/warn/block）。"""
     await verify_project_access(project_id, user_id, db)
+    await product_entitlement_service.require_feature(db, user_id=user_id, feature="consistency_check")
     config = req.model_dump(exclude_none=True) if req else None
     return await consistency_gate_service.build_finalize_gate_report(
         db=db,
@@ -180,6 +183,7 @@ async def finalize_project(
 ):
     """执行定稿：若门禁结果为 block 则返回 409 并阻断定稿。"""
     await verify_project_access(project_id, user_id, db)
+    await product_entitlement_service.require_feature(db, user_id=user_id, feature="consistency_check")
     config = req.model_dump(exclude_none=True) if req else None
     passed, gate_report = await consistency_gate_service.finalize_project(
         db=db,

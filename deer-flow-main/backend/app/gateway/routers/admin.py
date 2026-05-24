@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.auth.models import User
 from app.gateway.deps import get_current_user_from_request
+from app.gateway.product_entitlements import product_entitlement_service
 from app.gateway.storage_quota import create_recalculate_all_task, get_recalculate_task, run_recalculate_all_task, storage_quota_service
 from deerflow.persistence.engine import get_session_factory
 
@@ -77,7 +78,33 @@ async def list_users(
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     users = await storage_quota_service.list_admin_users(db, search=search, limit=limit, offset=offset)
-    return {"users": users}
+    enriched = []
+    for user in users:
+        entitlement = await product_entitlement_service.get_effective_entitlement(db, str(user["id"]))
+        enriched.append({**user, "product_entitlement": entitlement.public_dict()})
+    return {"users": enriched}
+
+
+@router.get("/users/{user_id}/product-entitlement")
+async def get_user_product_entitlement(
+    user_id: str,
+    _: User = Depends(require_admin_user),
+    db: AsyncSession = Depends(get_main_db),
+) -> dict[str, Any]:
+    entitlement = await product_entitlement_service.get_effective_entitlement(db, user_id)
+    storage_usage = await storage_quota_service.get_account_usage(db, user_id)
+    return await product_entitlement_service.account_payload(db, user_id=user_id, storage_usage=storage_usage)
+
+
+@router.post("/users/{user_id}/product-entitlement/refresh")
+async def refresh_user_product_entitlement(
+    user_id: str,
+    _: User = Depends(require_admin_user),
+    db: AsyncSession = Depends(get_main_db),
+) -> dict[str, Any]:
+    entitlement = await product_entitlement_service.refresh_from_auth_hub(db, user_id=user_id)
+    await db.commit()
+    return {"user_id": user_id, "product_entitlement": entitlement.public_dict()}
 
 
 @router.patch("/users/{user_id}/quota")

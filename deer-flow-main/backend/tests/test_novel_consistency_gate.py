@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import uuid
+import json
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -17,6 +19,7 @@ from app.gateway.novel_migrated.models.project import Project
 from app.gateway.novel_migrated.services.consistency_gate_service import consistency_gate_service
 from app.gateway.novel_migrated.services.quality_gate_fusion_service import quality_gate_fusion_service
 from deerflow.config.extensions_config import ExtensionsConfig, FeatureFlagConfig
+from deerflow.persistence.storage_quota.model import UserProductEntitlementCacheRow
 
 pytestmark = pytest.mark.usefixtures("novel_main_sqlite_engine")
 
@@ -25,6 +28,27 @@ async def _cleanup_project(project_id: str) -> None:
     async with AsyncSessionLocal() as session:
         await session.execute(delete(Project).where(Project.id == project_id))
         await session.commit()
+
+
+async def _grant_consistency_feature(session, user_id: str) -> None:
+    session.add(
+        UserProductEntitlementCacheRow(
+            user_id=user_id,
+            product_key="novel_product",
+            plan_key="pro",
+            status="active",
+            entitlements_json=json.dumps(
+                {
+                    "backend_storage_quota_bytes": 20 * 1024 * 1024 * 1024,
+                    "max_projects": 1000,
+                    "monthly_agent_runs": 3000,
+                    "max_concurrent_runs": 5,
+                    "features": ["consistency_check"],
+                }
+            ),
+            synced_at=datetime.now(UTC),
+        )
+    )
 
 
 @pytest.mark.anyio
@@ -151,6 +175,7 @@ async def test_finalize_gate_blocks_and_finalize_endpoint_rejects() -> None:
     user_id = f"gate-block-user-{uuid.uuid4()}"
 
     async with AsyncSessionLocal() as session:
+        await _grant_consistency_feature(session, user_id)
         project = Project(user_id=user_id, title="阻断定稿测试")
         session.add(project)
         await session.flush()
@@ -230,6 +255,7 @@ async def test_finalize_endpoint_allows_warn_result() -> None:
     chapter_content = "夜色压城，江面风浪翻涌。主角沿着旧码头缓慢前行，回想前夜与师父的争执。他在仓库里找到遗失的线索，却仍无法确认幕后之人。章节暂时收束在新的疑问上。远处汽笛再度响起，他决定连夜追查旧案卷宗，给下一章留下明确行动目标。"
 
     async with AsyncSessionLocal() as session:
+        await _grant_consistency_feature(session, user_id)
         project = Project(user_id=user_id, title="告警可放行测试")
         session.add(project)
         await session.flush()

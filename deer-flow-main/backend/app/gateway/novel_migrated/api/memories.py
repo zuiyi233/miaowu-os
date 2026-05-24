@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.product_entitlements import product_entitlement_service
 from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
 from app.gateway.novel_migrated.api.settings import get_user_ai_service_with_overrides
 from app.gateway.novel_migrated.core.database import get_db
@@ -104,6 +105,7 @@ async def analyze_chapter(
         
         # 验证用户权限
         await verify_project_access(project_id, effective_user_id, db)
+        await product_entitlement_service.require_feature(db, user_id=effective_user_id, feature="advanced_memory")
         
         # 获取章节内容
         result = await db.execute(

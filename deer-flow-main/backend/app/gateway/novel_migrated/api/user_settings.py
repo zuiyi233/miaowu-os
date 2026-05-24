@@ -61,6 +61,7 @@ class ProviderRecordUpdate(BaseModel):
     provider: str
     base_url: str = ""
     models: list[str] = Field(default_factory=list)
+    model_groups: dict[str, list[str]] = Field(default_factory=dict)
     is_active: bool = False
     temperature: float | None = None
     max_tokens: int | None = None
@@ -109,7 +110,20 @@ async def get_ai_settings(
     """Get current user's AI settings."""
     user_id = get_request_user_id(request)
     service = get_ai_settings_service()
-    return await service.get_ai_settings(user_id, db)
+    result = await service.get_ai_settings(user_id, db)
+    providers = result.get("providers") if isinstance(result, dict) else []
+    managed_groups = [
+        provider.get("managed_group")
+        for provider in providers
+        if isinstance(provider, dict) and provider.get("managed_by") == "newapi"
+    ]
+    logger.info(
+        "AI settings fetched user_id=%s providers=%d managed_newapi_groups=%s",
+        user_id,
+        len(providers) if isinstance(providers, list) else 0,
+        [group for group in managed_groups if group],
+    )
+    return result
 
 
 @router.put("/ai-settings")
@@ -122,6 +136,18 @@ async def update_ai_settings(
     user_id = get_request_user_id(request)
     service = get_ai_settings_service()
     updated = await service.put_ai_settings(user_id, payload.model_dump(exclude_unset=True), db)
+    providers = updated.get("providers") if isinstance(updated, dict) else []
+    managed_groups = [
+        provider.get("managed_group")
+        for provider in providers
+        if isinstance(provider, dict) and provider.get("managed_by") == "newapi"
+    ]
+    logger.info(
+        "AI settings updated user_id=%s providers=%d managed_newapi_groups=%s",
+        user_id,
+        len(providers) if isinstance(providers, list) else 0,
+        [group for group in managed_groups if group],
+    )
     return updated
 
 
