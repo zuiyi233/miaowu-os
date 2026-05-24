@@ -1,4 +1,4 @@
-# API-only Novel TTS Buildout Implementation Plan
+# Hybrid Novel TTS Buildout Implementation Plan
 
 ## Phase 0 - Baseline And Safety
 
@@ -41,6 +41,18 @@ Invoke-RestMethod http://127.0.0.1:8551/api/tts/smoke -Method Post -Body ($form 
 
 ## Phase 2 - P1 Models, Voices, Instructions, And Cache
 
+- Add a frontend-only client native TTS engine under `frontend/src/core/tts`:
+  - feature detection for `speechSynthesis` and `SpeechSynthesisUtterance`
+  - local voice loading with `getVoices()` and `voiceschanged`
+  - long-text chunking into utterance queue
+  - play/pause/resume/stop controls
+  - rate, pitch, and local voice selection
+  - mobile-safe user-gesture start and cleanup on chapter changes
+- Add a reader UI mode toggle:
+  - client native read-aloud for immediate zero-server-cost playback
+  - server API audiobook for generated/cached/downloadable audio
+- Persist only local native TTS preferences in browser/client settings; do not store native playback output as MediaAsset.
+- Add unit tests with mocked `window.speechSynthesis` for supported, unsupported, voiceschanged, queue completion, cancellation, and chapter-change cleanup paths.
 - Change OpenAI-compatible default model to `gpt-4o-mini-tts` when supported, retaining configured overrides.
 - Refresh provider/model voice metadata and make `/api/tts/voices` model-aware.
 - Add `instructions` to request/response contracts and frontend controls for narration style.

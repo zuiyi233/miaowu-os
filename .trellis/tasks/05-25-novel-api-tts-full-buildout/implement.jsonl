@@ -1,1 +1,15 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"type":"task","path":".trellis/tasks/05-25-novel-api-tts-full-buildout/prd.md","note":"Requirements and acceptance criteria for API-only novel TTS full buildout."}
+{"type":"task","path":".trellis/tasks/05-25-novel-api-tts-full-buildout/design.md","note":"Architecture, provider contracts, storage/cache design, error handling, and compatibility constraints."}
+{"type":"task","path":".trellis/tasks/05-25-novel-api-tts-full-buildout/implement.md","note":"Phase-by-phase implementation and validation plan."}
+{"type":"spec","path":".trellis/spec/backend/error-handling.md","note":"Backend error normalization and user-facing fallback constraints."}
+{"type":"spec","path":".trellis/spec/backend/quality-guidelines.md","note":"Async/background work and fire-and-forget hygiene constraints."}
+{"type":"spec","path":".trellis/spec/frontend/index.md","note":"Frontend guideline entrypoint."}
+{"type":"spec","path":".trellis/spec/guides/cross-layer-thinking-guide.md","note":"Cross-layer feature contract and local-dev 8551 constraint."}
+{"type":"code","path":"deer-flow-main/backend/app/gateway/routers/tts.py","note":"Existing backend TTS router to evolve into provider-backed API."}
+{"type":"code","path":"deer-flow-main/backend/app/gateway/app.py","note":"Gateway router registration location."}
+{"type":"code","path":"deer-flow-main/frontend/src/core/tts","note":"Existing frontend TTS API/hook code."}
+{"type":"code","path":"deer-flow-main/frontend/src/components/novel/reader","note":"Novel reader TTS UI integration points."}
+{"type":"code","path":"deer-flow-main/backend/app/gateway/novel_migrated/models/media_asset.py","note":"Existing media asset metadata for persisted audio."}
+{"type":"code","path":"deer-flow-main/backend/app/gateway/novel_migrated/api/media_assets.py","note":"Existing media asset download/upload API patterns."}
+{"type":"code","path":"deer-flow-main/backend/app/gateway/novel_migrated/services/media_asset_service.py","note":"Existing media asset creation service to reuse for generated audio."}
+{"type":"external","path":"D:/MOSS-TTS-Nano","note":"Local offline MOSS-TTS-Nano service; verified http://localhost:18083 health and /api/generate smoke."}

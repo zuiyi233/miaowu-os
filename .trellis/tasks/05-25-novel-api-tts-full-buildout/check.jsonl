@@ -1,1 +1,11 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"type":"task","path":".trellis/tasks/05-25-novel-api-tts-full-buildout/prd.md","note":"Check implementation against all P0/P1/P2 acceptance criteria."}
+{"type":"task","path":".trellis/tasks/05-25-novel-api-tts-full-buildout/design.md","note":"Check API/provider/storage/frontend contracts match design."}
+{"type":"task","path":".trellis/tasks/05-25-novel-api-tts-full-buildout/implement.md","note":"Check phase validation commands and rollback constraints."}
+{"type":"spec","path":".trellis/spec/backend/error-handling.md","note":"Check backend errors map to stable categories without leaking internals/secrets."}
+{"type":"spec","path":".trellis/spec/backend/quality-guidelines.md","note":"Check background jobs/tasks consume exceptions and avoid event-loop misuse."}
+{"type":"spec","path":".trellis/spec/guides/cross-layer-thinking-guide.md","note":"Check frontend/backend config and local-dev 8551 flow stay aligned."}
+{"type":"test","path":"deer-flow-main/backend/tests/test_tts_router.py","note":"Existing backend TTS router tests."}
+{"type":"test","path":"deer-flow-main/frontend/tests/unit/core/tts/useTts.test.ts","note":"Existing frontend TTS hook test."}
+{"type":"test","path":"deer-flow-main/frontend/tests/unit/components/novel/reader/TtsPlayer.test.tsx","note":"Existing TTS player i18n test."}
+{"type":"runtime","path":"http://localhost:18083/health","note":"MOSS-TTS-Nano local provider health endpoint."}
+{"type":"runtime","path":"http://127.0.0.1:8551/api/tts/config","note":"Miaowu gateway local-dev TTS config smoke endpoint after implementation."}

@@ -38,3 +38,36 @@ Rebuilt the HyperFrames vertical product video with a longer Miaowu OS narration
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Image generation module MVP
+
+**Date**: 2026-05-25
+**Task**: Image generation module MVP
+**Branch**: `merge/upstream-main`
+
+### Summary
+
+Implemented the miaowu-os internal image generation MVP: gateway /api/v1/images routes, controlled .deer-flow image persistence, workspace images page, sidebar entry, targeted backend/frontend tests, and image module code-spec updates.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4943771` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

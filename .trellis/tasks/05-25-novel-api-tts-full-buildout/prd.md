@@ -2,11 +2,16 @@
 
 ## Goal
 
-Build a complete API-only TTS system for Miaowu-OS novel reading and audiobook workflows.
+Build a complete hybrid TTS system for Miaowu-OS novel reading and audiobook workflows.
 
 The feature must make the existing TTS code usable in normal local-dev/runtime mode, integrate with the existing NewAPI / AI Provider configuration path, and then grow from basic chapter playback into a production-grade audiobook pipeline with chunking, caching, persisted audio assets, batch generation, and advanced narration controls.
 
-The implementation must not depend on browser `speechSynthesis`, local TTS engines, WSL frontend dependency flows, or non-API-only audio generation.
+The system has two explicit runtime modes:
+
+- **Client native read-aloud mode**: use the browser/device `speechSynthesis` API for immediate reading on desktop and mobile, without generating audio on Miaowu servers. This mode is best-effort, device/browser-dependent, non-exportable, and must never receive provider API keys.
+- **Server API audiobook mode**: use Miaowu gateway `/api/tts/*` to call OpenAI-compatible/NewAPI, Volcengine, or server-side MOSS providers, then persist/generated audio for reuse, download, multi-role narration, and MP3 export.
+
+The implementation must not let browsers call OpenAI/Volcengine/MOSS provider APIs directly and must not expose provider API keys. Browser-native `speechSynthesis` is allowed only as an optional local playback engine, not as the only TTS path.
 
 ## Requirements
 
@@ -35,6 +40,10 @@ The implementation must not depend on browser `speechSynthesis`, local TTS engin
 
 ### P1 - Production Audiobook Experience
 
+- Add client native read-aloud mode using `window.speechSynthesis` and `SpeechSynthesisUtterance` for zero-server-cost immediate playback.
+- Detect browser support at runtime and expose local device voices when available.
+- Support mobile-safe controls for client native mode: play, pause, resume, stop, rate, pitch, voice, chunked utterance queue, and user-gesture-first start.
+- Keep client native mode separate from generated audio: it must not create downloadable MP3 assets, must not claim provider-grade multi-role output, and must fall back visibly to server API mode when unsupported.
 - Update OpenAI-compatible defaults to current API expectations, including `gpt-4o-mini-tts` as the preferred default model when the selected provider supports it.
 - Refresh OpenAI-compatible voice metadata to include current voices and make the voice list provider/model aware.
 - Add `instructions` / narration style controls for tone, emotion, pace, accent, and narrator direction when supported by the provider.
@@ -60,6 +69,8 @@ The implementation must not depend on browser `speechSynthesis`, local TTS engin
 - [ ] `/api/tts/config`, `/api/tts/voices`, `/api/tts/synthesize`, and TTS health/smoke endpoints are reachable from the normal gateway app on `127.0.0.1:8551`.
 - [ ] TTS can synthesize and play a short sample through an OpenAI-compatible/NewAPI provider without exposing API keys to the browser.
 - [ ] TTS can synthesize and play a short sample through local `moss-local` at `http://localhost:18083` without browser-to-MOSS direct calls.
+- [ ] TTS can read a chapter through browser/device native speech synthesis on supported desktop and mobile browsers without generating server-side audio.
+- [ ] Client native read-aloud mode and server API audiobook mode are visibly distinct in the UI so users understand quality/export/resource tradeoffs.
 - [ ] TTS uses existing user/provider settings when available and clearly reports unsupported or unconfigured providers.
 - [ ] A novel chapter longer than the upstream provider's practical request size can be generated through chunking and replayed without repeating provider calls when unchanged.
 - [ ] Generated chapter audio is persisted as media assets with user/project ownership, downloadable by authorized users, and reusable by the reader UI.
