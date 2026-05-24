@@ -169,12 +169,36 @@ class FileMemoryStorage(MemoryStorage):
             # mutated as a side-effect, and the cache reference is not silently
             # updated before the file write succeeds.
             memory_data = {**memory_data, "lastUpdated": utc_now_iso_z()}
+            encoded = json.dumps(memory_data, indent=2, ensure_ascii=False)
+            reservation = None
+            if user_id is not None:
+                try:
+                    from app.gateway.storage_quota import reserve_file_bytes_sync
+
+                    source = "agent_memory" if agent_name is not None else "user_memory"
+                    resource_id = f"{agent_name}:memory.json" if agent_name is not None else "memory:memory.json"
+                    reservation = reserve_file_bytes_sync(
+                        user_id=user_id,
+                        source=source,
+                        resource_id=resource_id,
+                        incoming_bytes=len(encoded.encode("utf-8")),
+                    )
+                except Exception:
+                    logger.exception("Memory save rejected by storage quota")
+                    return False
 
             temp_path = file_path.with_suffix(f".{uuid.uuid4().hex}.tmp")
             with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump(memory_data, f, indent=2, ensure_ascii=False)
+                f.write(encoded)
 
             temp_path.replace(file_path)
+            if user_id is not None and reservation is not None:
+                try:
+                    from app.gateway.storage_quota import commit_file_bytes_sync
+
+                    commit_file_bytes_sync(reservation, storage_path=str(file_path))
+                except Exception:
+                    logger.warning("Failed to commit memory storage quota for %s", file_path, exc_info=True)
 
             try:
                 mtime = file_path.stat().st_mtime

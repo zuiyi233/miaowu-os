@@ -145,6 +145,7 @@ async def write_document(
     await verify_project_access(project_id, user_id, db)
     try:
         record = await workspace_document_service.write_document(
+            db=db,
             user_id=user_id,
             project_id=project_id,
             entity_type=entity_type,

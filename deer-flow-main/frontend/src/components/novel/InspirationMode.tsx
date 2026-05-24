@@ -13,6 +13,7 @@ import { useAiProviderStore } from '@/core/ai/ai-provider-store';
 import { loadFeatureRoutingState, normalizeFeatureRoutingState, resolveModuleRoutingTarget } from '@/core/ai/feature-routing';
 import { novelApiService, type AiModelRoutingPayload } from '@/core/novel/novel-api';
 import type { InspirationOption, InspirationWizardData } from '@/core/novel/schemas';
+import { browserStorageQuotaService } from '@/core/storage/browser-quota';
 import { cn } from '@/lib/utils';
 
 import { AIProjectGenerator } from './AIProjectGenerator';
@@ -126,7 +127,7 @@ export function InspirationMode() {
 
     const timer = window.setTimeout(() => {
       try {
-        localStorage.setItem(
+        void browserStorageQuotaService.setLocalItem(
           INSPIRATION_CACHE_KEY,
           JSON.stringify({
             messages,

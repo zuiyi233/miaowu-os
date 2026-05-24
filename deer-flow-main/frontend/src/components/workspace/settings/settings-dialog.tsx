@@ -10,6 +10,7 @@ import {
   UserIcon,
   WrenchIcon,
   ClockIcon,
+  ShieldIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -22,6 +23,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AboutSettingsPage } from "@/components/workspace/settings/about-settings-page";
 import { AccountSettingsPage } from "@/components/workspace/settings/account-settings-page";
+import { AdminSettingsPage } from "@/components/workspace/settings/admin-settings-page";
 import { AiProviderSettingsPage } from "@/components/workspace/settings/ai-provider-settings-page";
 import { AppearanceSettingsPage } from "@/components/workspace/settings/appearance-settings-page";
 import { DraftSettingsPage } from "@/components/workspace/settings/draft-settings-page";
@@ -29,6 +31,7 @@ import { MemorySettingsPage } from "@/components/workspace/settings/memory-setti
 import { NotificationSettingsPage } from "@/components/workspace/settings/notification-settings-page";
 import { SkillSettingsPage } from "@/components/workspace/settings/skill-settings-page";
 import { ToolSettingsPage } from "@/components/workspace/settings/tool-settings-page";
+import { useAuth } from "@/core/auth/AuthProvider";
 import { useI18n } from "@/core/i18n/hooks";
 import { cn } from "@/lib/utils";
 
@@ -40,6 +43,7 @@ type SettingsSection =
   | "drafts"
   | "skills"
   | "ai-providers"
+  | "admin"
   | "notification"
   | "about";
 
@@ -50,6 +54,7 @@ type SettingsDialogProps = React.ComponentProps<typeof Dialog> & {
 export function SettingsDialog(props: SettingsDialogProps) {
   const { defaultSection = "appearance", ...dialogProps } = props;
   const { t } = useI18n();
+  const { user } = useAuth();
   const [activeSection, setActiveSection] =
     useState<SettingsSection>(defaultSection);
 
@@ -95,6 +100,9 @@ export function SettingsDialog(props: SettingsDialogProps) {
       },
       { id: "tools", label: t.settings.sections.tools, icon: WrenchIcon },
       { id: "skills", label: t.settings.sections.skills, icon: SparklesIcon },
+      ...(user?.system_role === "admin"
+        ? [{ id: "admin", label: "管理后台", icon: ShieldIcon }]
+        : []),
       { id: "about", label: t.settings.sections.about, icon: InfoIcon },
     ],
     [
@@ -105,6 +113,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
       t.settings.sections.skills,
       t.settings.sections.notification,
       t.settings.sections.about,
+      user?.system_role,
     ],
   );
   return (
@@ -160,6 +169,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   onClose={() => props.onOpenChange?.(false)}
                 />
               )}
+              {activeSection === "admin" && <AdminSettingsPage />}
               {activeSection === "notification" && <NotificationSettingsPage />}
               {activeSection === "about" && <AboutSettingsPage />}
             </div>

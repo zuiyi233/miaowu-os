@@ -16,6 +16,7 @@ from app.gateway.novel_migrated.services.object_storage_service import (
     ObjectStorageError,
     object_storage_service,
 )
+from app.gateway.storage_quota import storage_quota_service
 
 ACTIVE_PURPOSES = {
     "cover",
@@ -48,6 +49,10 @@ class CreatedMediaAsset:
 
 
 class MediaAssetService:
+    @staticmethod
+    def _supports_quota(db: AsyncSession) -> bool:
+        return all(hasattr(db, name) for name in ("get", "execute", "flush"))
+
     async def create_asset_from_bytes(
         self,
         *,
@@ -68,6 +73,15 @@ class MediaAssetService:
         asset_id = str(uuid.uuid4())
         object_key = build_private_object_key(user_id=user_id, asset_id=asset_id, filename=safe_filename)
         config = get_object_storage_config()
+        reservation = None
+        if self._supports_quota(db):
+            reservation = await storage_quota_service.reserve(
+                db,
+                user_id=user_id,
+                source="media_asset",
+                resource_id=asset_id,
+                incoming_bytes=len(content),
+            )
 
         await object_storage_service.put_object(
             object_key=object_key,
@@ -97,12 +111,19 @@ class MediaAssetService:
         )
         db.add(asset)
         try:
-            if commit:
+            if hasattr(db, "flush") and (commit or flush):
+                await db.flush()
+            if reservation is not None:
+                await storage_quota_service.commit_reservation(
+                    db,
+                    reservation,
+                    storage_path=object_key,
+                    content_hash=asset.content_hash,
+                )
+            if commit and hasattr(db, "commit"):
                 await db.commit()
                 if refresh:
                     await db.refresh(asset)
-            elif flush:
-                await db.flush()
         except Exception:
             await db.rollback()
             await self.delete_uploaded_object_best_effort(object_key=object_key)

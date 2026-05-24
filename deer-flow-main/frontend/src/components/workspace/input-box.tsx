@@ -86,17 +86,8 @@ import { Tooltip } from "./tooltip";
 
 type InputMode = "flash" | "thinking" | "pro" | "ultra";
 
-function getResolvedMode(
-  mode: InputMode | undefined,
-  supportsThinking: boolean,
-): InputMode {
-  if (!supportsThinking && mode !== "flash") {
-    return "flash";
-  }
-  if (mode) {
-    return mode;
-  }
-  return supportsThinking ? "pro" : "flash";
+function getResolvedMode(mode: InputMode | undefined): InputMode {
+  return mode ?? "flash";
 }
 
 export function InputBox({
@@ -173,9 +164,8 @@ export function InputBox({
     }
     const currentModel = models.find((m) => m.name === context.model_name);
     const fallbackModel = currentModel ?? models[0]!;
-    const supportsThinking = fallbackModel.supports_thinking ?? false;
     const nextModelName = fallbackModel.name;
-    const nextMode = getResolvedMode(context.mode, supportsThinking);
+    const nextMode = getResolvedMode(context.mode);
 
     if (context.model_name === nextModelName && context.mode === nextMode) {
       return;
@@ -197,15 +187,7 @@ export function InputBox({
 
   const resolvedModelName = selectedModel?.name;
 
-  const supportThinking = useMemo(
-    () => selectedModel?.supports_thinking ?? false,
-    [selectedModel],
-  );
-
-  const supportReasoningEffort = useMemo(
-    () => selectedModel?.supports_reasoning_effort ?? false,
-    [selectedModel],
-  );
+  const supportReasoningEffort = true;
 
   const handleModelSelect = useCallback(
     (model_name: string) => {
@@ -216,7 +198,7 @@ export function InputBox({
       onContextChange?.({
         ...context,
         model_name,
-        mode: getResolvedMode(context.mode, model.supports_thinking ?? false),
+        mode: getResolvedMode(context.mode),
         reasoning_effort: context.reasoning_effort,
       });
       setModelDialogOpen(false);
@@ -228,7 +210,7 @@ export function InputBox({
     (mode: InputMode) => {
       onContextChange?.({
         ...context,
-        mode: getResolvedMode(mode, supportThinking),
+        mode: getResolvedMode(mode),
         reasoning_effort:
           mode === "ultra"
             ? "high"
@@ -239,7 +221,7 @@ export function InputBox({
                 : "minimal",
       });
     },
-    [onContextChange, context, supportThinking],
+    [onContextChange, context],
   );
 
   const handleReasoningEffortSelect = useCallback(
@@ -271,10 +253,7 @@ export function InputBox({
         onContextChange?.({
           ...context,
           model_name: resolvedModelName,
-          mode: getResolvedMode(
-            context.mode,
-            selectedModel?.supports_thinking ?? false,
-          ),
+          mode: getResolvedMode(context.mode),
         });
         return new Promise<void>((resolve, reject) => {
           setTimeout(() => {
@@ -291,7 +270,6 @@ export function InputBox({
       onSubmit,
       onStop,
       resolvedModelName,
-      selectedModel?.supports_thinking,
       status,
     ],
   );
@@ -593,37 +571,35 @@ export function InputBox({
                         <div className="ml-auto size-4" />
                       )}
                     </PromptInputActionMenuItem>
-                    {supportThinking && (
-                      <PromptInputActionMenuItem
-                        className={cn(
-                          context.mode === "thinking"
-                            ? "text-accent-foreground"
-                            : "text-muted-foreground/65",
-                        )}
-                        onSelect={() => handleModeSelect("thinking")}
-                      >
-                        <div className="flex flex-col gap-2">
-                          <div className="flex items-center gap-1 font-bold">
-                            <LightbulbIcon
-                              className={cn(
-                                "mr-2 size-4",
-                                context.mode === "thinking" &&
-                                  "text-accent-foreground",
-                              )}
-                            />
-                            {t.inputBox.reasoningMode}
-                          </div>
-                          <div className="pl-7 text-xs">
-                            {t.inputBox.reasoningModeDescription}
-                          </div>
+                    <PromptInputActionMenuItem
+                      className={cn(
+                        context.mode === "thinking"
+                          ? "text-accent-foreground"
+                          : "text-muted-foreground/65",
+                      )}
+                      onSelect={() => handleModeSelect("thinking")}
+                    >
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center gap-1 font-bold">
+                          <LightbulbIcon
+                            className={cn(
+                              "mr-2 size-4",
+                              context.mode === "thinking" &&
+                                "text-accent-foreground",
+                            )}
+                          />
+                          {t.inputBox.reasoningMode}
                         </div>
-                        {context.mode === "thinking" ? (
-                          <CheckIcon className="ml-auto size-4" />
-                        ) : (
-                          <div className="ml-auto size-4" />
-                        )}
-                      </PromptInputActionMenuItem>
-                    )}
+                        <div className="pl-7 text-xs">
+                          {t.inputBox.reasoningModeDescription}
+                        </div>
+                      </div>
+                      {context.mode === "thinking" ? (
+                        <CheckIcon className="ml-auto size-4" />
+                      ) : (
+                        <div className="ml-auto size-4" />
+                      )}
+                    </PromptInputActionMenuItem>
                     <PromptInputActionMenuItem
                       className={cn(
                         context.mode === "pro"

@@ -9,6 +9,7 @@ import {
   CircleHelp,
   Clock,
   Download,
+  ExternalLink,
   Globe,
   Plus,
   RefreshCw,
@@ -73,11 +74,14 @@ import {
   type AiParallelStrategy,
 } from "@/core/ai/feature-routing";
 import { getBackendBaseURL } from "@/core/config";
+import { browserStorageQuotaService } from "@/core/storage/browser-quota";
 import { cn } from "@/lib/utils";
 
 import { SettingsSection } from "./settings-section";
 
 const NONE_VALUE = "__none__";
+const NEWAPI_SYNC_NEXT_PATH = "/workspace";
+const NEWAPI_SYNC_PENDING_KEY = "miaowu.newapi-sync.pending";
 
 const CATEGORY_LABELS: Record<AiFeatureModuleRoute["category"], string> = {
   workspace: "主项目",
@@ -139,7 +143,10 @@ function saveRecentModel(modelName: string) {
   try {
     const recent = loadRecentModels().filter((m) => m !== modelName);
     recent.unshift(modelName);
-    window.localStorage.setItem(RECENT_MODELS_KEY, JSON.stringify(recent.slice(0, MAX_RECENT_MODELS)));
+    void browserStorageQuotaService.setLocalItem(
+      RECENT_MODELS_KEY,
+      JSON.stringify(recent.slice(0, MAX_RECENT_MODELS)),
+    );
   } catch {
     // ignore
   }
@@ -463,6 +470,10 @@ export function shouldValidateFetchModelsCredentials(providerType: string | unde
   return providerType === "openai" || providerType === "custom";
 }
 
+function buildNewApiResyncUrl(): string {
+  return `${getBackendBaseURL()}/api/v1/auth/login/newapi?next=${encodeURIComponent(NEWAPI_SYNC_NEXT_PATH)}`;
+}
+
 function isNewApiManagedProvider(
   provider: Partial<Pick<AiProviderConfig, "isManaged" | "managedBy" | "id">> | undefined,
 ) {
@@ -513,6 +524,7 @@ export function AiProviderSettingsPage() {
 
   const [fetchingModels, setFetchingModels] = useState(false);
   const [fetchModelsError, setFetchModelsError] = useState<string | null>(null);
+  const [newApiSyncPending, setNewApiSyncPending] = useState(false);
 
   useEffect(() => {
     if (routingNotice) {
@@ -531,6 +543,39 @@ export function AiProviderSettingsPage() {
   useEffect(() => {
     ensureHydrated().catch(() => undefined);
   }, [ensureHydrated]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const pending = window.localStorage.getItem(NEWAPI_SYNC_PENDING_KEY) === "1";
+    setNewApiSyncPending(pending);
+  }, []);
+
+  useEffect(() => {
+    if (!newApiSyncPending || typeof window === "undefined") return;
+
+    const refreshAfterSync = () => {
+      if (document.visibilityState === "hidden") return;
+      refreshFromServer()
+        .then(() => {
+          window.localStorage.removeItem(NEWAPI_SYNC_PENDING_KEY);
+          setNewApiSyncPending(false);
+          setSaveSuccess("已重新拉取 NewAPI 分组和模型配置。");
+        })
+        .catch((err) => {
+          setSaveError(err instanceof Error ? err.message : "NewAPI 同步后刷新失败");
+        });
+    };
+
+    window.addEventListener("focus", refreshAfterSync);
+    document.addEventListener("visibilitychange", refreshAfterSync);
+    const timer = window.setTimeout(refreshAfterSync, 1500);
+
+    return () => {
+      window.removeEventListener("focus", refreshAfterSync);
+      document.removeEventListener("visibilitychange", refreshAfterSync);
+      window.clearTimeout(timer);
+    };
+  }, [newApiSyncPending, refreshFromServer]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -804,6 +849,15 @@ export function AiProviderSettingsPage() {
   const configurableRoutingModules = routingModules.filter((moduleRoute) =>
     isFeatureModuleConfigurableInSettings(moduleRoute.moduleId),
   );
+  const managedNewApiProviders = providers.filter((provider) => isNewApiManagedProvider(provider));
+
+  const handleOpenNewApiResync = useCallback(() => {
+    window.localStorage.setItem(NEWAPI_SYNC_PENDING_KEY, "1");
+    setNewApiSyncPending(true);
+    setSaveError(null);
+    setSaveSuccess("已打开 NewAPI 同步窗口；完成登录后回到本页会自动刷新。");
+    window.open(buildNewApiResyncUrl(), "_blank", "noopener,noreferrer");
+  }, []);
 
   return (
     <div className="space-y-8">
@@ -853,6 +907,10 @@ export function AiProviderSettingsPage() {
             <Plus className="h-4 w-4 mr-1" />
             添加服务商
           </Button>
+          <Button variant="outline" size="sm" onClick={handleOpenNewApiResync} disabled={saving}>
+            <ExternalLink className="h-4 w-4 mr-1" />
+            {newApiSyncPending ? "等待 NewAPI 同步" : "同步 NewAPI 分组/密钥"}
+          </Button>
         </div>
 
         <Alert className="mb-3">
@@ -863,6 +921,7 @@ export function AiProviderSettingsPage() {
             <code className="mx-1">config.yaml</code>
             或
             <code className="mx-1">.env</code> 文件。
+            {managedNewApiProviders.length > 0 ? ` 当前已同步 ${managedNewApiProviders.length} 个 NewAPI 分组。` : ""}
           </AlertDescription>
         </Alert>
 

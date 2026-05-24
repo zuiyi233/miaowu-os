@@ -578,7 +578,7 @@ class TestJsonlRunEventStore:
 
         s = JsonlRunEventStore(base_dir=tmp_path / "jsonl")
         await s.put(thread_id="t1", run_id="r1", event_type="human_message", category="message")
-        assert (tmp_path / "jsonl" / "threads" / "t1" / "runs" / "r1.jsonl").exists()
+        assert (tmp_path / "jsonl" / "users" / "test-user-autouse" / "threads" / "t1" / "runs" / "r1.jsonl").exists()
 
     @pytest.mark.anyio
     async def test_cross_run_messages(self, tmp_path):
@@ -600,5 +600,5 @@ class TestJsonlRunEventStore:
         await s.put(thread_id="t1", run_id="r2", event_type="human_message", category="message")
         c = await s.delete_by_run("t1", "r2")
         assert c == 1
-        assert not (tmp_path / "jsonl" / "threads" / "t1" / "runs" / "r2.jsonl").exists()
+        assert not (tmp_path / "jsonl" / "users" / "test-user-autouse" / "threads" / "t1" / "runs" / "r2.jsonl").exists()
         assert await s.count_messages("t1") == 1

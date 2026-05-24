@@ -375,6 +375,23 @@ async def run_agent(
             except Exception:
                 logger.debug("Failed to update thread_meta status for %s (non-fatal)", thread_id)
 
+        try:
+            from app.gateway.storage_quota import storage_quota_service
+            from deerflow.persistence.engine import get_session_factory
+            from deerflow.runtime.user_context import get_effective_user_id
+
+            sf = get_session_factory()
+            if sf is not None:
+                async with sf() as db:
+                    await storage_quota_service.scan_thread_storage(
+                        db,
+                        user_id=get_effective_user_id(),
+                        thread_id=thread_id,
+                    )
+                    await db.commit()
+        except Exception:
+            logger.debug("Failed to scan storage quota for thread %s (non-fatal)", thread_id, exc_info=True)
+
         await bridge.publish_end(run_id)
         asyncio.create_task(bridge.cleanup(run_id, delay=60))
 

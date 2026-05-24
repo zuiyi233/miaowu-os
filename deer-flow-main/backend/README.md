@@ -321,7 +321,7 @@ Scope:
 - Compatibility aliases: `POST /api/chapters/{chapter_id}/generate-stream|continue-stream|analyze`, `GET /api/chapters/{chapter_id}/analysis|analysis/status`, `POST /api/chapters/{chapter_id}/revision/confirm`.
 - Batch resume/replay endpoints: `GET /api/novels/{novel_id}/chapters/batch-generate-tasks/{task_id}`, `POST /api/novels/{novel_id}/chapters/batch-generate-tasks/{task_id}/replay-failed-stream`, `GET /chapters/project/{project_id}/batch-generate/active`.
 - Memory retrieval priority: local vector (when available) -> cloud embedding (OpenAI-compatible `/v1/embeddings`) -> keyword fallback.
-- Single-user fallback: `novel_migrated` routes resolve `request.state.user_id` first, then fallback to `local_single_user` (override via `NOVEL_MIGRATED_DEFAULT_USER_ID`).
+- Authenticated-user contract: `novel_migrated` routes require a real Miaowu user context. Missing users return 401; `local_single_user` / `NOVEL_MIGRATED_DEFAULT_USER_ID` are not runtime fallbacks.
 - `novel_stream` endpoints now include in-process request throttling (default `30` req/min per user+action, configurable via `NOVEL_STREAM_RATE_LIMIT_PER_MINUTE`).
 - Chapter analysis in-memory cache (`_ANALYSIS_TASKS` / `_ANALYSIS_RESULTS`) now performs TTL + size cleanup (`NOVEL_ANALYSIS_CACHE_TTL_SECONDS`, `NOVEL_ANALYSIS_CACHE_MAX_ENTRIES`).
 - Batch/analyze/regeneration long tasks now expose timeout auto-recovery + compensation metadata (`failed_chapters[].compensation`) for replayable recovery flows.

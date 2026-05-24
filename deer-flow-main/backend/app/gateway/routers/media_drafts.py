@@ -12,8 +12,10 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.authz import require_auth, require_permission
 from app.gateway.deps import get_checkpointer
 from app.gateway.novel_migrated.core.database import get_db
+from deerflow.runtime.user_context import get_effective_user_id
 from deerflow.media import draft_media_store
 
 logger = logging.getLogger(__name__)
@@ -116,9 +118,11 @@ async def _patch_thread_draft_media(
 
 
 @router.get("/threads/{thread_id}/media/drafts/{draft_id}/content", response_model=None, response_class=Response)
+@require_permission("threads", "read", owner_check=True, require_existing=True)
 async def get_draft_content(thread_id: str, draft_id: str, request: Request) -> Response:
     _increment_metric("content_requests_total")
-    meta = draft_media_store.load_metadata(thread_id=thread_id, draft_id=draft_id)
+    user_id = get_effective_user_id()
+    meta = draft_media_store.load_metadata(thread_id=thread_id, draft_id=draft_id, user_id=user_id)
     if meta is None:
         _increment_metric("content_not_found_total")
         raise HTTPException(status_code=404, detail="Draft not found")
@@ -132,7 +136,7 @@ async def get_draft_content(thread_id: str, draft_id: str, request: Request) -> 
                 parsed = parsed.replace(tzinfo=UTC)
             if parsed.timestamp() <= time.time():
                 _increment_metric("content_expired_total")
-                draft_media_store.delete_draft(thread_id=thread_id, draft_id=draft_id)
+                draft_media_store.delete_draft(thread_id=thread_id, draft_id=draft_id, user_id=user_id)
                 try:
                     await _patch_thread_draft_media(
                         request=request,
@@ -166,9 +170,10 @@ async def get_draft_content(thread_id: str, draft_id: str, request: Request) -> 
 
 
 @router.delete("/threads/{thread_id}/media/drafts/{draft_id}")
+@require_permission("threads", "delete", owner_check=True, require_existing=True)
 async def delete_draft(thread_id: str, draft_id: str, request: Request) -> dict:
     _increment_metric("delete_requests_total")
-    deleted = draft_media_store.delete_draft(thread_id=thread_id, draft_id=draft_id)
+    deleted = draft_media_store.delete_draft(thread_id=thread_id, draft_id=draft_id, user_id=get_effective_user_id())
     try:
         await _patch_thread_draft_media(
             request=request,
@@ -186,6 +191,7 @@ async def delete_draft(thread_id: str, draft_id: str, request: Request) -> dict:
 
 
 @router.post("/threads/{thread_id}/media/drafts/{draft_id}/attach", response_model=DraftAttachResponse)
+@require_permission("threads", "write", owner_check=True, require_existing=True)
 async def attach_draft(
     thread_id: str,
     draft_id: str,
@@ -197,6 +203,7 @@ async def attach_draft(
     from sqlalchemy import select
 
     from app.gateway.novel_migrated.api.common import get_user_id, verify_project_access
+    from app.gateway.novel_migrated.models import career as _career_model  # noqa: F401
     from app.gateway.novel_migrated.models.character import Character
     from app.gateway.novel_migrated.models.project import Project
     from app.gateway.routers.novel import get_legacy_entity_by_id, update_legacy_entity_by_id
@@ -237,6 +244,7 @@ async def attach_draft(
             draft_id=draft_id,
             target_type=body.target_type,
             target_id=body.target_id,
+            user_id=get_effective_user_id(),
         )
     except TimeoutError:
         _increment_metric("attach_expired_total")
@@ -336,8 +344,9 @@ async def get_media_draft_metrics() -> MediaDraftMetricsResponse:
 
 
 @router.get("/media/assets/{asset_id}/content", response_model=None, response_class=FileResponse)
+@require_auth
 async def get_asset_content(asset_id: str) -> Response:
-    paths = draft_media_store.load_asset_paths(asset_id=asset_id)
+    paths = draft_media_store.load_asset_paths(asset_id=asset_id, user_id=get_effective_user_id())
     if paths is None:
         raise HTTPException(status_code=404, detail="Asset not found")
 

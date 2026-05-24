@@ -22,6 +22,7 @@ import type {
   AnnotationThread,
   RecommendationItem,
 } from './schemas';
+import { browserStorageQuotaService } from '@/core/storage/browser-quota';
 import { generateUniqueId } from './utils/id';
 
 export interface AuditEntry {
@@ -173,7 +174,18 @@ export class DatabaseService {
     this.db = database;
   }
 
+  private async assertDexieWriteBudget(payload: unknown): Promise<void> {
+    if (typeof window === 'undefined') return;
+    void payload;
+    await browserStorageQuotaService.assertBrowserWriteBudget();
+  }
+
+  private reportDexieUsage(): void {
+    void browserStorageQuotaService.reportUsage();
+  }
+
   async saveNovel(novel: Novel): Promise<void> {
+    await this.assertDexieWriteBudget(novel);
     await this.db.transaction(
       'rw',
       [this.db.novels, this.db.volumes, this.db.chapters, this.db.characters, this.db.settings, this.db.factions, this.db.items],
@@ -223,6 +235,7 @@ export class DatabaseService {
         }
       }
     );
+    this.reportDexieUsage();
   }
 
   async loadNovel(novelIdOrTitle: string): Promise<Novel | null> {
@@ -260,6 +273,7 @@ export class DatabaseService {
   }
 
   async updateNovel(novelId: string | number, updates: Partial<Novel>): Promise<void> {
+    await this.assertDexieWriteBudget(updates);
     const key = typeof novelId === 'string' ? (novelId as any) : novelId;
     const existingNovel = await this.db.novels.get(key);
     if (!existingNovel) throw new Error(`Novel not found: ${novelId}`);
@@ -269,14 +283,19 @@ export class DatabaseService {
       version: ((existingNovel as any)?.version || 0) + 1,
     };
     await this.db.novels.update(key, updatePayload);
+    this.reportDexieUsage();
   }
 
   async addCharacter(character: Character, novelId: string): Promise<void> {
+    await this.assertDexieWriteBudget(character);
     await this.db.characters.put({ ...character, novelId });
+    this.reportDexieUsage();
   }
 
   async updateCharacter(character: Character): Promise<void> {
+    await this.assertDexieWriteBudget(character);
     await this.db.characters.put(character);
+    this.reportDexieUsage();
   }
 
   async deleteCharacter(characterId: string): Promise<void> {
@@ -289,11 +308,15 @@ export class DatabaseService {
   }
 
   async addFaction(faction: Faction, novelId: string): Promise<void> {
+    await this.assertDexieWriteBudget(faction);
     await this.db.factions.put({ ...faction, novelId });
+    this.reportDexieUsage();
   }
 
   async updateFaction(faction: Faction): Promise<void> {
+    await this.assertDexieWriteBudget(faction);
     await this.db.factions.put(faction);
+    this.reportDexieUsage();
   }
 
   async deleteFaction(factionId: string): Promise<void> {
@@ -305,11 +328,15 @@ export class DatabaseService {
   }
 
   async addSetting(setting: Setting, novelId: string): Promise<void> {
+    await this.assertDexieWriteBudget(setting);
     await this.db.settings.put({ ...setting, novelId });
+    this.reportDexieUsage();
   }
 
   async updateSetting(setting: Setting): Promise<void> {
+    await this.assertDexieWriteBudget(setting);
     await this.db.settings.put(setting);
+    this.reportDexieUsage();
   }
 
   async deleteSetting(settingId: string): Promise<void> {
@@ -317,11 +344,15 @@ export class DatabaseService {
   }
 
   async addItem(item: Item, novelId: string): Promise<void> {
+    await this.assertDexieWriteBudget(item);
     await this.db.items.put({ ...item, novelId });
+    this.reportDexieUsage();
   }
 
   async updateItem(item: Item): Promise<void> {
+    await this.assertDexieWriteBudget(item);
     await this.db.items.put(item);
+    this.reportDexieUsage();
   }
 
   async deleteItem(itemId: string): Promise<void> {
@@ -329,11 +360,15 @@ export class DatabaseService {
   }
 
   async addVolume(volume: Volume, novelId: string): Promise<void> {
+    await this.assertDexieWriteBudget(volume);
     await this.db.volumes.put({ ...volume, novelId });
+    this.reportDexieUsage();
   }
 
   async updateVolume(volume: Volume): Promise<void> {
+    await this.assertDexieWriteBudget(volume);
     await this.db.volumes.put(volume);
+    this.reportDexieUsage();
   }
 
   async deleteVolume(volumeId: string): Promise<void> {
@@ -344,15 +379,21 @@ export class DatabaseService {
   }
 
   async addChapter(chapter: Chapter, novelId: string, volumeId?: string): Promise<void> {
+    await this.assertDexieWriteBudget(chapter);
     await this.db.chapters.put({ ...chapter, novelId, volumeId });
+    this.reportDexieUsage();
   }
 
   async updateChapterContent(chapterId: string, content: string): Promise<void> {
+    await this.assertDexieWriteBudget(content);
     await this.db.chapters.update(chapterId, { content });
+    this.reportDexieUsage();
   }
 
   async updateChapter(chapter: Chapter): Promise<void> {
+    await this.assertDexieWriteBudget(chapter);
     await this.db.chapters.put(chapter);
+    this.reportDexieUsage();
   }
 
   async deleteChapter(chapterId: string): Promise<void> {
@@ -360,11 +401,15 @@ export class DatabaseService {
   }
 
   async addPromptTemplate(template: PromptTemplate): Promise<void> {
+    await this.assertDexieWriteBudget(template);
     await this.db.promptTemplates.put(template);
+    this.reportDexieUsage();
   }
 
   async updatePromptTemplate(template: PromptTemplate): Promise<void> {
+    await this.assertDexieWriteBudget(template);
     await this.db.promptTemplates.put(template);
+    this.reportDexieUsage();
   }
 
   async deletePromptTemplate(templateId: string): Promise<void> {
@@ -392,11 +437,15 @@ export class DatabaseService {
   }
 
   async addRelationship(relationship: EntityRelationship, novelId: string): Promise<void> {
+    await this.assertDexieWriteBudget(relationship);
     await this.db.relationships.put({ ...relationship, novelId });
+    this.reportDexieUsage();
   }
 
   async updateRelationship(relationship: EntityRelationship): Promise<void> {
+    await this.assertDexieWriteBudget(relationship);
     await this.db.relationships.put(relationship);
+    this.reportDexieUsage();
   }
 
   async deleteRelationship(relationshipId: string): Promise<void> {
@@ -415,11 +464,15 @@ export class DatabaseService {
   }
 
   async addTimelineEvent(event: TimelineEvent, novelId: string): Promise<void> {
+    await this.assertDexieWriteBudget(event);
     await this.db.timelineEvents.put({ ...event, novelId });
+    this.reportDexieUsage();
   }
 
   async updateTimelineEvent(event: TimelineEvent): Promise<void> {
+    await this.assertDexieWriteBudget(event);
     await this.db.timelineEvents.put(event);
+    this.reportDexieUsage();
   }
 
   async deleteTimelineEvent(eventId: string): Promise<void> {
@@ -431,7 +484,9 @@ export class DatabaseService {
   }
 
   async saveGraphLayout(layout: GraphLayout): Promise<void> {
+    await this.assertDexieWriteBudget(layout);
     await this.db.graphLayouts.put(layout);
+    this.reportDexieUsage();
   }
 
   async getGraphLayout(novelId: string): Promise<GraphLayout | null> {
@@ -554,6 +609,7 @@ export class DatabaseService {
   }
 
   async importData(data: any): Promise<void> {
+    await this.assertDexieWriteBudget(data);
     if (data.novels) {
       for (const novel of data.novels) {
         await this.saveNovel(novel);
@@ -564,6 +620,7 @@ export class DatabaseService {
     if (data.relationships) await this.db.relationships.bulkPut(data.relationships);
     if (data.items) await this.db.items.bulkPut(data.items);
     if (data.graphLayouts) await this.db.graphLayouts.bulkPut(data.graphLayouts);
+    this.reportDexieUsage();
   }
 
   async clearAllData(): Promise<void> {
@@ -584,11 +641,15 @@ export class DatabaseService {
   }
 
   async createChatSession(session: ChatSession): Promise<void> {
+    await this.assertDexieWriteBudget(session);
     await this.db.chatSessions.put(session);
+    this.reportDexieUsage();
   }
 
   async updateChatSession(session: ChatSession): Promise<void> {
+    await this.assertDexieWriteBudget(session);
     await this.db.chatSessions.put(session);
+    this.reportDexieUsage();
   }
 
   async deleteChatSession(id: string): Promise<void> {
@@ -607,7 +668,11 @@ export class DatabaseService {
   }
 
   async createSnapshot(chapterId: string, content: string, description?: string): Promise<number> {
-    return await this.db.createSnapshot(chapterId, content, description);
+    const snapshot = { chapterId, content, timestamp: new Date(), description };
+    await this.assertDexieWriteBudget(snapshot);
+    const id = await this.db.createSnapshot(chapterId, content, description);
+    this.reportDexieUsage();
+    return id;
   }
 
   async createVersionedSnapshot(
@@ -618,7 +683,7 @@ export class DatabaseService {
     const snapshots = await this.getChapterSnapshots(chapterId);
     const nextVersion = options?.version ?? (snapshots.length > 0 ? Math.max(...snapshots.map((s) => s.version || 1)) + 1 : 1);
 
-    return await this.db.snapshots.add({
+    const snapshot = {
       chapterId,
       content,
       timestamp: new Date(),
@@ -627,7 +692,11 @@ export class DatabaseService {
       workflowState: options?.workflowState || 'draft',
       author: options?.author,
       changeReason: options?.changeReason,
-    });
+    };
+    await this.assertDexieWriteBudget(snapshot);
+    const id = await this.db.snapshots.add(snapshot);
+    this.reportDexieUsage();
+    return id;
   }
 
   async getChapterSnapshots(chapterId: string): Promise<ChapterSnapshot[]> {
@@ -647,11 +716,15 @@ export class DatabaseService {
   }
 
   async addAnnotationThread(thread: AnnotationThread): Promise<void> {
+    await this.assertDexieWriteBudget(thread);
     await this.db.annotationThreads.put(thread);
+    this.reportDexieUsage();
   }
 
   async updateAnnotationThread(thread: AnnotationThread): Promise<void> {
+    await this.assertDexieWriteBudget(thread);
     await this.db.annotationThreads.put(thread);
+    this.reportDexieUsage();
   }
 
   async deleteAnnotationThread(id: string): Promise<void> {
@@ -670,15 +743,21 @@ export class DatabaseService {
   }
 
   async addRecommendationItem(item: RecommendationItem): Promise<void> {
+    await this.assertDexieWriteBudget(item);
     await this.db.recommendationItems.put(item);
+    this.reportDexieUsage();
   }
 
   async updateRecommendationItem(item: RecommendationItem): Promise<void> {
+    await this.assertDexieWriteBudget(item);
     await this.db.recommendationItems.put(item);
+    this.reportDexieUsage();
   }
 
   async batchUpdateRecommendationItems(items: RecommendationItem[]): Promise<void> {
+    await this.assertDexieWriteBudget(items);
     await this.db.recommendationItems.bulkPut(items);
+    this.reportDexieUsage();
   }
 
   async deleteRecommendationItem(id: string): Promise<void> {
@@ -697,11 +776,14 @@ export class DatabaseService {
   }
 
   async addAuditEntry(entry: Omit<AuditEntry, 'id' | 'timestamp'>): Promise<void> {
-    await this.db.auditLog.add({
+    const auditEntry = {
       ...entry,
       id: `audit-${crypto.randomUUID().slice(0, 12)}`,
       timestamp: new Date(),
-    });
+    };
+    await this.assertDexieWriteBudget(auditEntry);
+    await this.db.auditLog.add(auditEntry);
+    this.reportDexieUsage();
   }
 
   async getAuditEntries(limit?: number): Promise<AuditEntry[]> {

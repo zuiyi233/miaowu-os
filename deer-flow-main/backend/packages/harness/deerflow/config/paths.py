@@ -66,7 +66,7 @@ class Paths:
     Directory layout (host side):
         {base_dir}/
         ├── memory.json
-        ├── USER.md          <-- global user profile (injected into all agents)
+        ├── USER.md          <-- legacy global user profile
         ├── agents/
         │   └── {agent_name}/
         │       ├── config.yaml
@@ -127,7 +127,7 @@ class Paths:
 
     @property
     def user_md_file(self) -> Path:
-        """Path to the global user profile file: `{base_dir}/USER.md`."""
+        """Legacy path to the global user profile file: `{base_dir}/USER.md`."""
         return self.base_dir / "USER.md"
 
     @property
@@ -155,6 +155,10 @@ class Paths:
     def user_memory_file(self, user_id: str) -> Path:
         """Per-user memory file: `{base_dir}/users/{user_id}/memory.json`."""
         return self.user_dir(user_id) / "memory.json"
+
+    def user_profile_file(self, user_id: str) -> Path:
+        """Per-user profile file: `{base_dir}/users/{user_id}/USER.md`."""
+        return self.user_dir(user_id) / "USER.md"
 
     def user_agents_dir(self, user_id: str) -> Path:
         """Per-user root for that user's custom agents: `{base_dir}/users/{user_id}/agents/`."""

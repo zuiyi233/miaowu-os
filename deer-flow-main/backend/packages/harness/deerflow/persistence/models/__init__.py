@@ -17,7 +17,28 @@ there is no matching entity directory.
 from deerflow.persistence.feedback.model import FeedbackRow
 from deerflow.persistence.models.run_event import RunEventRow
 from deerflow.persistence.run.model import RunRow
+from deerflow.persistence.storage_quota.model import (
+    AdminAuditLogRow,
+    StorageRecalculateTaskRow,
+    SystemSettingRow,
+    UserQuotaOverrideRow,
+    UserStorageObjectRow,
+    UserStorageUsageRow,
+)
 from deerflow.persistence.thread_meta.model import ThreadMetaRow
 from deerflow.persistence.user.model import NewAPIAccountSnapshotRow, UserRow
 
-__all__ = ["FeedbackRow", "NewAPIAccountSnapshotRow", "RunEventRow", "RunRow", "ThreadMetaRow", "UserRow"]
+__all__ = [
+    "AdminAuditLogRow",
+    "FeedbackRow",
+    "NewAPIAccountSnapshotRow",
+    "RunEventRow",
+    "RunRow",
+    "StorageRecalculateTaskRow",
+    "SystemSettingRow",
+    "ThreadMetaRow",
+    "UserQuotaOverrideRow",
+    "UserRow",
+    "UserStorageObjectRow",
+    "UserStorageUsageRow",
+]

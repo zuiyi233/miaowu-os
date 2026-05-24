@@ -24,6 +24,7 @@ from app.gateway.novel_migrated.services.object_storage_service import (
     object_storage_service,
 )
 from app.gateway.novel_migrated.utils.http_headers import safe_download_content_disposition
+from app.gateway.storage_quota import storage_quota_service
 
 router = APIRouter(prefix="/media-assets", tags=["media_assets"])
 
@@ -192,5 +193,11 @@ async def delete_media_asset(
         raise _storage_exception_to_http(exc) from exc
 
     asset.status = "deleted"
+    await storage_quota_service.release_object(
+        db,
+        user_id=user_id,
+        source="media_asset",
+        resource_id=asset_id,
+    )
     await db.commit()
     return {"success": True, "id": asset_id, "status": "deleted"}

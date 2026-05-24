@@ -16,6 +16,7 @@ import httpx
 
 from deerflow.config import get_app_config
 from deerflow.config.paths import Paths, get_paths
+from deerflow.runtime.user_context import get_effective_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -129,38 +130,43 @@ class DraftMediaStore:
     def __init__(self, paths: Paths | None = None) -> None:
         self._paths = paths or get_paths()
 
-    def _draft_dir(self, thread_id: str) -> Path:
-        return self._paths.thread_dir(thread_id) / "draft-media"
+    @staticmethod
+    def _resolve_user_id(user_id: str | None) -> str:
+        return user_id or get_effective_user_id()
 
-    def _asset_dir(self) -> Path:
-        return self._paths.base_dir / "media-assets"
+    def _draft_dir(self, thread_id: str, *, user_id: str | None = None) -> Path:
+        return self._paths.thread_dir(thread_id, user_id=self._resolve_user_id(user_id)) / "draft-media"
 
-    def _draft_paths(self, thread_id: str, draft_id: str, ext: str) -> DraftPaths:
+    def _asset_dir(self, *, user_id: str | None = None) -> Path:
+        return self._paths.user_dir(self._resolve_user_id(user_id)) / "media-assets"
+
+    def _draft_paths(self, thread_id: str, draft_id: str, ext: str, *, user_id: str | None = None) -> DraftPaths:
         safe_id = _safe_filename(draft_id)
         safe_ext = _safe_filename(ext.lstrip(".")) or "bin"
-        d = self._draft_dir(thread_id)
+        d = self._draft_dir(thread_id, user_id=user_id)
         return DraftPaths(
             content_path=d / f"{safe_id}.{safe_ext}",
             meta_path=d / f"{safe_id}.json",
         )
 
-    def _asset_paths(self, asset_id: str, ext: str) -> DraftPaths:
+    def _asset_paths(self, asset_id: str, ext: str, *, user_id: str | None = None) -> DraftPaths:
         safe_id = _safe_filename(asset_id)
         safe_ext = _safe_filename(ext.lstrip(".")) or "bin"
-        d = self._asset_dir()
+        d = self._asset_dir(user_id=user_id)
         return DraftPaths(
             content_path=d / f"{safe_id}.{safe_ext}",
             meta_path=d / f"{safe_id}.json",
         )
 
-    def _ensure_thread_dir(self, thread_id: str) -> None:
-        self._paths.ensure_thread_dirs(thread_id)
-        draft_dir = self._draft_dir(thread_id)
+    def _ensure_thread_dir(self, thread_id: str, *, user_id: str | None = None) -> None:
+        resolved_user_id = self._resolve_user_id(user_id)
+        self._paths.ensure_thread_dirs(thread_id, user_id=resolved_user_id)
+        draft_dir = self._draft_dir(thread_id, user_id=resolved_user_id)
         draft_dir.mkdir(parents=True, exist_ok=True)
         draft_dir.chmod(0o777)
 
-    def _ensure_asset_dir(self) -> None:
-        asset_dir = self._asset_dir()
+    def _ensure_asset_dir(self, *, user_id: str | None = None) -> None:
+        asset_dir = self._asset_dir(user_id=user_id)
         asset_dir.mkdir(parents=True, exist_ok=True)
         asset_dir.chmod(0o777)
 
@@ -170,8 +176,8 @@ class DraftMediaStore:
     def _build_asset_url(self, asset_id: str) -> str:
         return f"/api/media/assets/{asset_id}/content"
 
-    def load_metadata(self, *, thread_id: str, draft_id: str) -> DraftMediaItem | None:
-        meta_path = self._draft_dir(thread_id) / f"{_safe_filename(draft_id)}.json"
+    def load_metadata(self, *, thread_id: str, draft_id: str, user_id: str | None = None) -> DraftMediaItem | None:
+        meta_path = self._draft_dir(thread_id, user_id=user_id) / f"{_safe_filename(draft_id)}.json"
         if not meta_path.exists():
             return None
         try:
@@ -183,8 +189,9 @@ class DraftMediaStore:
             return None
         return data  # type: ignore[return-value]
 
-    def delete_draft(self, *, thread_id: str, draft_id: str) -> bool:
-        meta_path = self._draft_dir(thread_id) / f"{_safe_filename(draft_id)}.json"
+    def delete_draft(self, *, thread_id: str, draft_id: str, user_id: str | None = None) -> bool:
+        draft_dir = self._draft_dir(thread_id, user_id=user_id)
+        meta_path = draft_dir / f"{_safe_filename(draft_id)}.json"
         existed = meta_path.exists()
         content_path: Path | None = None
         try:
@@ -209,7 +216,7 @@ class DraftMediaStore:
                 logger.debug("Failed to delete draft content %s", content_path, exc_info=True)
         else:
             # Fallback: delete any matching content file with unknown extension.
-            for candidate in self._draft_dir(thread_id).glob(f"{_safe_filename(draft_id)}.*"):
+            for candidate in draft_dir.glob(f"{_safe_filename(draft_id)}.*"):
                 if candidate.suffix == ".json":
                     continue
                 try:
@@ -219,9 +226,9 @@ class DraftMediaStore:
 
         return existed
 
-    def cleanup_expired(self, *, thread_id: str) -> list[str]:
+    def cleanup_expired(self, *, thread_id: str, user_id: str | None = None) -> list[str]:
         """Remove expired drafts on disk. Returns removed draft IDs."""
-        draft_dir = self._draft_dir(thread_id)
+        draft_dir = self._draft_dir(thread_id, user_id=user_id)
         if not draft_dir.exists():
             return []
 
@@ -244,7 +251,7 @@ class DraftMediaStore:
             if expires_ts > now:
                 continue
 
-            self.delete_draft(thread_id=thread_id, draft_id=draft_id)
+            self.delete_draft(thread_id=thread_id, draft_id=draft_id, user_id=user_id)
             removed.append(draft_id)
         return removed
 
@@ -261,12 +268,14 @@ class DraftMediaStore:
         model: str | None = None,
         voice: str | None = None,
         fmt: str | None = None,
+        user_id: str | None = None,
     ) -> DraftMediaItem:
-        self._ensure_thread_dir(thread_id)
+        resolved_user_id = self._resolve_user_id(user_id)
+        self._ensure_thread_dir(thread_id, user_id=resolved_user_id)
 
         draft_id = uuid.uuid4().hex
         ext = _mime_to_ext(mime_type, fallback="bin")
-        paths = self._draft_paths(thread_id, draft_id, ext)
+        paths = self._draft_paths(thread_id, draft_id, ext, user_id=resolved_user_id)
 
         created_at = _utc_now_iso()
         expires_at: str | None = None
@@ -319,6 +328,7 @@ class DraftMediaStore:
         prompt: str,
         model: str | None,
         retention: DraftMediaRetention | str | None,
+        user_id: str | None = None,
     ) -> DraftMediaItem:
         ttl_seconds = _retention_to_ttl_seconds(retention)
 
@@ -390,6 +400,7 @@ class DraftMediaStore:
             ttl_seconds=ttl_seconds,
             prompt=revised_prompt or prompt,
             model=model,
+            user_id=user_id,
         )
 
     async def generate_openai_tts_draft(
@@ -403,6 +414,7 @@ class DraftMediaStore:
         voice: str | None,
         fmt: str | None,
         retention: DraftMediaRetention | str | None,
+        user_id: str | None = None,
     ) -> DraftMediaItem:
         ttl_seconds = _retention_to_ttl_seconds(retention)
         mime_type, ext = _tts_format_to_mime_and_ext(fmt)
@@ -442,6 +454,7 @@ class DraftMediaStore:
             model=model,
             voice=voice,
             fmt=fmt,
+            user_id=user_id,
         )
 
     def attach_draft_to_asset(
@@ -451,16 +464,18 @@ class DraftMediaStore:
         draft_id: str,
         target_type: Literal["project", "character", "scene"],
         target_id: str,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
         """Move draft content into the global asset store and return asset info."""
-        meta = self.load_metadata(thread_id=thread_id, draft_id=draft_id)
+        resolved_user_id = self._resolve_user_id(user_id)
+        meta = self.load_metadata(thread_id=thread_id, draft_id=draft_id, user_id=resolved_user_id)
         if meta is None:
             raise FileNotFoundError("draft not found")
 
         expires_ts = _parse_iso_to_ts(meta.get("expires_at"))
         if expires_ts is not None and expires_ts <= time.time():
             # Expired: delete and treat as gone.
-            self.delete_draft(thread_id=thread_id, draft_id=draft_id)
+            self.delete_draft(thread_id=thread_id, draft_id=draft_id, user_id=resolved_user_id)
             raise TimeoutError("draft expired")
 
         content_path_str = meta.get("content_path")
@@ -468,20 +483,20 @@ class DraftMediaStore:
             raise ValueError("draft content_path missing")
         content_path = Path(content_path_str)
         if not content_path.exists():
-            self.delete_draft(thread_id=thread_id, draft_id=draft_id)
+            self.delete_draft(thread_id=thread_id, draft_id=draft_id, user_id=resolved_user_id)
             raise FileNotFoundError("draft content missing")
 
         mime_type = str(meta.get("mime_type") or "application/octet-stream")
         ext = _mime_to_ext(mime_type, fallback=content_path.suffix.lstrip(".") or "bin")
 
-        self._ensure_asset_dir()
+        self._ensure_asset_dir(user_id=resolved_user_id)
         asset_id = uuid.uuid4().hex
-        asset_paths = self._asset_paths(asset_id, ext)
+        asset_paths = self._asset_paths(asset_id, ext, user_id=resolved_user_id)
 
         # Move the content file; delete draft metadata.
         content_path.replace(asset_paths.content_path)
         try:
-            (self._draft_dir(thread_id) / f"{_safe_filename(draft_id)}.json").unlink(missing_ok=True)
+            (self._draft_dir(thread_id, user_id=resolved_user_id) / f"{_safe_filename(draft_id)}.json").unlink(missing_ok=True)
         except Exception:
             logger.debug("Failed to delete draft metadata after attach: %s", draft_id, exc_info=True)
 
@@ -506,8 +521,8 @@ class DraftMediaStore:
             "target_id": target_id,
         }
 
-    def load_asset_paths(self, *, asset_id: str) -> DraftPaths | None:
-        meta_path = self._asset_dir() / f"{_safe_filename(asset_id)}.json"
+    def load_asset_paths(self, *, asset_id: str, user_id: str | None = None) -> DraftPaths | None:
+        meta_path = self._asset_dir(user_id=user_id) / f"{_safe_filename(asset_id)}.json"
         if not meta_path.exists():
             return None
         try:

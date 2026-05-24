@@ -93,6 +93,17 @@ class ManagedNewAPIGroup(TypedDict):
     api_key: str
 
 
+class ManagedNewAPIBootstrapGroup(TypedDict, total=False):
+    group_id: str
+    name: str
+    base_url: str
+    api_key: str | None
+    models: list[str]
+    model_groups: dict[str, list[str]]
+    model_sync_status: str | None
+    model_sync_error: str | None
+
+
 class UserAIRuntimeConfig(TypedDict):
     api_provider: str
     api_key: str
@@ -357,7 +368,8 @@ def _build_managed_newapi_provider_record(
     if not provider_groups and provider_models:
         provider_groups = {group["group_id"]: provider_models}
 
-    encrypted_key = encrypt_secret(group["api_key"]) if is_encryption_enabled() else group["api_key"]
+    previous_secret = _provider_secret_value(previous or {})
+    encrypted_key = previous_secret or (encrypt_secret(group["api_key"]) if is_encryption_enabled() else group["api_key"])
     return ProviderRecord(
         id=_newapi_provider_id_for_group(group["group_id"]),
         name=f"NewAPI（{group['name']}）",
@@ -374,6 +386,55 @@ def _build_managed_newapi_provider_record(
         model_groups=provider_groups,
         model_sync_status=(previous or {}).get("model_sync_status"),
         model_sync_error=(previous or {}).get("model_sync_error"),
+    )
+
+
+def _build_managed_newapi_provider_record_from_bootstrap(
+    *,
+    item: ManagedNewAPIBootstrapGroup,
+    previous: ProviderRecord | None = None,
+) -> ProviderRecord:
+    group_id = _safe_provider_id_part(item.get("group_id") or "default")
+    name = _as_non_empty_str(item.get("name")) or group_id
+    models = _normalize_models(item.get("models"))
+    model_groups = item.get("model_groups") if isinstance(item.get("model_groups"), dict) else {}
+    normalized_groups = {
+        str(group_name): _normalize_models(group_models)
+        for group_name, group_models in model_groups.items()
+        if _normalize_models(group_models)
+    }
+    if not normalized_groups and models:
+        normalized_groups = {group_id: models}
+
+    raw_secret = _as_non_empty_str(item.get("api_key"))
+    previous_secret = _provider_secret_value(previous or {})
+    encrypted_key = previous_secret
+    if raw_secret:
+        encrypted_key = encrypt_secret(raw_secret) if is_encryption_enabled() else raw_secret
+
+    status = _as_non_empty_str(item.get("model_sync_status"))
+    error = _as_non_empty_str(item.get("model_sync_error"))
+    if not status:
+        status = "synced" if models else "empty"
+    if status == "empty" and not error:
+        error = "NewAPI 登录成功，但该分组没有返回可用模型"
+
+    return ProviderRecord(
+        id=_newapi_provider_id_for_group(group_id),
+        name=f"NewAPI（{name}）",
+        provider="openai",
+        base_url=_normalize_openai_base_url(item.get("base_url") or (previous or {}).get("base_url") or ""),
+        models=models,
+        is_active=bool((previous or {}).get("is_active")),
+        temperature=(previous or {}).get("temperature"),
+        max_tokens=(previous or {}).get("max_tokens"),
+        api_key_encrypted=encrypted_key,
+        is_managed=True,
+        managed_by="newapi",
+        managed_group=group_id,
+        model_groups=normalized_groups,
+        model_sync_status=status,
+        model_sync_error=error,
     )
 
 
@@ -427,12 +488,38 @@ def _merge_managed_newapi_provider(
     return True
 
 
+def _has_oauth_managed_newapi_providers(bundle: AIProviderSettings) -> bool:
+    """Return true when per-user NewAPI OAuth/Hub sync already owns providers.
+
+    Env-configured managed NewAPI providers are a deployment fallback. Once a
+    signed-in user has Hub-created group providers, the fallback must not merge
+    again or it can collapse multiple user groups back to a single default env
+    provider.
+    """
+    managed = [
+        provider
+        for provider in bundle["providers"]
+        if provider.get("managed_by") == "newapi" and provider.get("id")
+    ]
+    if not managed:
+        return False
+    return any(
+        _provider_secret_value(provider)
+        and provider.get("managed_group")
+        and provider.get("model_sync_status") in {"synced", "empty", "error"}
+        for provider in managed
+    )
+
+
 async def _refresh_managed_newapi_provider_models(bundle: AIProviderSettings) -> bool:
     """Best-effort sync of server-managed NewAPI model lists.
 
     The managed provider is still rendered when sync fails, but the frontend gets
     an explicit sync status instead of a misleading "0 models" success state.
     """
+    if _has_oauth_managed_newapi_providers(bundle):
+        return False
+
     if not _merge_managed_newapi_provider(bundle):
         return False
 
@@ -447,6 +534,8 @@ async def _refresh_managed_newapi_provider_models(bundle: AIProviderSettings) ->
         provider_id = _newapi_provider_id_for_group(group["group_id"])
         provider = providers_by_id.get(provider_id)
         if provider is None:
+            continue
+        if provider.get("model_sync_status") == "synced" and _normalize_models(provider.get("models")):
             continue
 
         try:
@@ -1139,6 +1228,153 @@ class AISettingsService:
             "max_tokens": runtime["max_tokens"],
             "system_prompt": settings.system_prompt,
         }
+
+    async def apply_managed_newapi_bootstrap(
+        self,
+        *,
+        user_id: str,
+        models: list[str],
+        api_key: str | None,
+        base_url: str | None,
+        group: str | None,
+        db: AsyncSession,
+    ) -> dict[str, Any]:
+        """Persist NewAPI Hub bootstrap data into the managed provider.
+
+        This uses the current NewAPI login identity as the source of truth for
+        available models. It avoids relying on a deployment-wide fallback key
+        that may not have the same group or entitlement as the signed-in user.
+        """
+        settings = await self.get_or_create_settings(user_id, db)
+        preferences = _load_preferences(settings)
+        current = _ensure_ai_provider_settings(preferences)
+        _merge_managed_newapi_provider(current)
+
+        provider_id = _newapi_provider_id_for_group(group or "default")
+        provider = next(
+            (item for item in current["providers"] if item.get("id") == provider_id),
+            None,
+        )
+        if provider is None:
+            provider = next(
+                (item for item in current["providers"] if item.get("managed_by") == "newapi"),
+                None,
+            )
+        if provider is None:
+            return await self.get_ai_settings(user_id, db)
+
+        normalized_models = _normalize_models(models)
+        if normalized_models:
+            provider["models"] = normalized_models
+            provider["model_groups"] = {str(group or provider.get("managed_group") or "default"): normalized_models}
+            provider["model_sync_status"] = "synced"
+            provider["model_sync_error"] = None
+        else:
+            provider["model_sync_status"] = "empty"
+            provider["model_sync_error"] = "NewAPI 登录成功，但 Hub 没有返回可用模型"
+
+        if api_key:
+            provider["api_key_encrypted"] = encrypt_secret(api_key) if is_encryption_enabled() else api_key
+        if base_url:
+            provider["base_url"] = _normalize_openai_base_url(base_url)
+
+        if not current.get("default_provider_id"):
+            current["default_provider_id"] = provider.get("id")
+        if provider.get("id") == current.get("default_provider_id"):
+            provider["is_active"] = True
+            settings.api_provider = provider.get("provider") or settings.api_provider
+            settings.api_base_url = provider.get("base_url") or settings.api_base_url or ""
+            if normalized_models:
+                settings.llm_model = normalized_models[0]
+            settings.api_key = provider.get("api_key_encrypted") or settings.api_key
+
+        preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = {
+            "version": AI_PROVIDER_SETTINGS_VERSION,
+            "default_provider_id": current["default_provider_id"],
+            "providers": current["providers"],
+            "client_settings": current["client_settings"],
+            "feature_routing_settings": current.get("feature_routing_settings"),
+        }
+        _save_preferences(settings, preferences)
+        await db.commit()
+        await db.refresh(settings)
+        return await self.get_ai_settings(user_id, db)
+
+    async def apply_managed_newapi_group_bootstrap(
+        self,
+        *,
+        user_id: str,
+        groups: list[ManagedNewAPIBootstrapGroup],
+        db: AsyncSession,
+    ) -> dict[str, Any]:
+        """Persist per-NewAPI-group model catalogs and group-scoped API tokens."""
+        normalized_items: list[ManagedNewAPIBootstrapGroup] = []
+        for item in groups:
+            group_id = _safe_provider_id_part(str(item.get("group_id") or "default"))
+            normalized_items.append(
+                ManagedNewAPIBootstrapGroup(
+                    group_id=group_id,
+                    name=_as_non_empty_str(item.get("name")) or group_id,
+                    base_url=_normalize_openai_base_url(item.get("base_url") or ""),
+                    api_key=_as_non_empty_str(item.get("api_key")),
+                    models=_normalize_models(item.get("models")),
+                    model_groups=dict(item.get("model_groups") or {})
+                    if isinstance(item.get("model_groups"), dict)
+                    else {},
+                    model_sync_status=_as_non_empty_str(item.get("model_sync_status")),
+                    model_sync_error=_as_non_empty_str(item.get("model_sync_error")),
+                )
+            )
+        if not normalized_items:
+            return await self.get_ai_settings(user_id, db)
+
+        settings = await self.get_or_create_settings(user_id, db)
+        preferences = _load_preferences(settings)
+        current = _ensure_ai_provider_settings(preferences)
+        previous_by_id = {
+            str(provider.get("id")): provider
+            for provider in current["providers"]
+            if provider.get("managed_by") == "newapi" and provider.get("id")
+        }
+        non_managed = [provider for provider in current["providers"] if provider.get("managed_by") != "newapi"]
+        managed_providers = [
+            _build_managed_newapi_provider_record_from_bootstrap(
+                item=item,
+                previous=previous_by_id.get(_newapi_provider_id_for_group(item["group_id"])),
+            )
+            for item in normalized_items
+        ]
+
+        default_provider_id = current.get("default_provider_id")
+        if not default_provider_id or not any(provider.get("id") == default_provider_id for provider in managed_providers + non_managed):
+            provider_with_models = next((provider for provider in managed_providers if provider.get("models")), None)
+            default_provider_id = (provider_with_models or managed_providers[0]).get("id")
+
+        for provider in managed_providers + non_managed:
+            provider["is_active"] = provider.get("id") == default_provider_id
+        current["default_provider_id"] = default_provider_id
+        current["providers"] = [*managed_providers, *non_managed]
+
+        active = _select_active_provider(current["providers"], default_provider_id=current["default_provider_id"])
+        if active is not None:
+            settings.api_provider = active.get("provider") or settings.api_provider
+            settings.api_base_url = active.get("base_url") or ""
+            active_models = active.get("models") or []
+            if active_models:
+                settings.llm_model = active_models[0]
+            settings.api_key = active.get("api_key_encrypted") or settings.api_key
+
+        preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = {
+            "version": AI_PROVIDER_SETTINGS_VERSION,
+            "default_provider_id": current["default_provider_id"],
+            "providers": current["providers"],
+            "client_settings": current["client_settings"],
+            "feature_routing_settings": current.get("feature_routing_settings"),
+        }
+        _save_preferences(settings, preferences)
+        await db.commit()
+        await db.refresh(settings)
+        return await self.get_ai_settings(user_id, db)
 
     async def put_ai_settings(self, user_id: str, payload: dict[str, Any], db: AsyncSession) -> dict[str, Any]:
         """Update AI settings (new contract preferred, legacy fields supported)."""

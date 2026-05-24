@@ -15,9 +15,13 @@ from urllib.parse import urlencode, urljoin
 
 import httpx
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, TypeAdapter, ValidationError
+from sqlalchemy import select
 
 from app.gateway.auth.config import get_auth_config
 from app.gateway.auth.models import NewAPIAccountSnapshot, User
+from app.gateway.novel_migrated.core.database import AsyncSessionLocal
+from app.gateway.novel_migrated.models.settings import Settings
+from app.gateway.novel_migrated.services.ai_settings_service import get_ai_settings_service
 
 NEWAPI_PROVIDER = "newapi"
 _STATE_TTL_SECONDS = 10 * 60
@@ -310,7 +314,336 @@ async def exchange_newapi_code_for_user(code: str, state: str, provider) -> NewA
         remain_quota=userinfo.remain_quota,
         balance=userinfo.balance,
     )
+    await bootstrap_user_ai_settings_from_newapi(
+        user_id=str(user.id),
+        settings=settings,
+        access_token=access_token,
+        preferred_group=userinfo.group,
+    )
     return NewAPILoginResult(user=user, snapshot=snapshot, next_path=next_path)
+
+
+async def bootstrap_user_ai_settings_from_newapi(
+    *,
+    user_id: str,
+    settings: NewAPIOAuthSettings,
+    access_token: str,
+    preferred_group: str | None,
+) -> None:
+    """Best-effort sync of the signed-in NewAPI user's usable models."""
+    bootstrap_url = f"{settings.issuer.rstrip('/')}/api/hub/session/bootstrap"
+    relay_base_url = f"{settings.issuer.rstrip('/')}/v1"
+    payload: dict[str, Any] = {
+        "client_id": settings.client_id,
+        "site_name": "Miaowu OS",
+        "token_name": "Miaowu OS Local",
+    }
+    if preferred_group:
+        payload["group"] = preferred_group
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                bootstrap_url,
+                json=payload,
+                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+            )
+        if response.status_code != 200:
+            return
+        data = response.json()
+        if not isinstance(data, dict) or data.get("success") is False:
+            return
+        result = data.get("data") if isinstance(data.get("data"), dict) else data
+        if not isinstance(result, dict):
+            return
+
+        quick_start = result.get("quick_start")
+        if isinstance(quick_start, dict):
+            raw_relay = quick_start.get("relay_base_url")
+            if isinstance(raw_relay, str) and raw_relay.strip():
+                relay_base_url = raw_relay.strip()
+
+        system_access_token = _extract_newapi_system_access_token(result)
+        group_catalog = await _fetch_newapi_hub_group_catalog(
+            settings=settings,
+            system_access_token=system_access_token,
+        )
+        requested_groups = _resolve_newapi_bootstrap_groups(
+            group_catalog=group_catalog,
+            preferred_group=preferred_group,
+            first_bootstrap=result,
+        )
+        group_bootstraps = await _bootstrap_newapi_group_tokens(
+            settings=settings,
+            authorization_token=system_access_token or access_token,
+            groups=requested_groups,
+        )
+        group_items = await _build_newapi_managed_group_items(
+            settings=settings,
+            group_catalog=group_catalog,
+            group_bootstraps=group_bootstraps,
+            relay_base_url=relay_base_url,
+        )
+
+        if not group_items:
+            legacy_item = _build_legacy_newapi_group_item(
+                result=result,
+                relay_base_url=relay_base_url,
+                preferred_group=preferred_group,
+            )
+            group_items = [legacy_item] if legacy_item is not None else []
+
+        if not group_items:
+            return
+
+        async with AsyncSessionLocal() as db:
+            existing = await db.execute(select(Settings).where(Settings.user_id == user_id))
+            if existing.scalar_one_or_none() is None:
+                db.add(Settings(user_id=user_id))
+                await db.commit()
+            await get_ai_settings_service().apply_managed_newapi_group_bootstrap(
+                user_id=user_id,
+                groups=group_items,
+                db=db,
+            )
+    except Exception:
+        return
+
+
+def _extract_newapi_system_access_token(result: dict[str, Any]) -> str | None:
+    bearer = result.get("system_access_token_bearer")
+    if isinstance(bearer, str) and bearer.strip():
+        token = bearer.strip()
+        if token.lower().startswith("bearer "):
+            return token[7:].strip()
+        return token
+    token = result.get("system_access_token")
+    return token.strip() if isinstance(token, str) and token.strip() else None
+
+
+def _extract_newapi_token_key(result: dict[str, Any]) -> str | None:
+    hub_token = result.get("hub_api_token")
+    if not isinstance(hub_token, dict):
+        return None
+    raw_key = hub_token.get("sk_key") or hub_token.get("key")
+    return raw_key.strip() if isinstance(raw_key, str) and raw_key.strip() else None
+
+
+def _extract_newapi_token_group(result: dict[str, Any], fallback: str | None = None) -> str | None:
+    hub_token = result.get("hub_api_token")
+    if isinstance(hub_token, dict):
+        raw_group = hub_token.get("group")
+        if isinstance(raw_group, str) and raw_group.strip():
+            return raw_group.strip()
+    return fallback.strip() if isinstance(fallback, str) and fallback.strip() else None
+
+
+def _normalize_newapi_model_list(raw_models: Any) -> list[str]:
+    if not isinstance(raw_models, list):
+        return []
+    return sorted({item.strip() for item in raw_models if isinstance(item, str) and item.strip()})
+
+
+async def _fetch_newapi_hub_group_catalog(
+    *,
+    settings: NewAPIOAuthSettings,
+    system_access_token: str | None,
+) -> dict[str, dict[str, Any]]:
+    if not system_access_token:
+        return {}
+    groups_url = f"{settings.issuer.rstrip('/')}/api/hub/user/groups"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                groups_url,
+                headers={"Authorization": f"Bearer {system_access_token}", "Accept": "application/json"},
+            )
+        if response.status_code != 200:
+            return {}
+        data = response.json()
+    except Exception:
+        return {}
+
+    payload = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(payload, dict):
+        return {}
+    raw_groups = payload.get("groups") if isinstance(payload.get("groups"), dict) else payload
+    if not isinstance(raw_groups, dict):
+        return {}
+
+    catalog: dict[str, dict[str, Any]] = {}
+    for group_id, group_payload in raw_groups.items():
+        group_name = str(group_id).strip()
+        if not group_name:
+            continue
+        if isinstance(group_payload, dict):
+            display_name = group_payload.get("name") or group_payload.get("desc") or group_name
+            models = _normalize_newapi_model_list(group_payload.get("models"))
+        else:
+            display_name = group_name
+            models = []
+        catalog[group_name] = {"name": str(display_name or group_name), "models": models}
+    return catalog
+
+
+def _resolve_newapi_bootstrap_groups(
+    *,
+    group_catalog: dict[str, dict[str, Any]],
+    preferred_group: str | None,
+    first_bootstrap: dict[str, Any],
+) -> list[str]:
+    groups = [group for group in group_catalog.keys() if group.strip()]
+    if groups:
+        return sorted(dict.fromkeys(groups))
+
+    user = first_bootstrap.get("user")
+    if isinstance(user, dict):
+        user_group = user.get("group")
+        if isinstance(user_group, str) and user_group.strip():
+            return [user_group.strip()]
+
+    token_group = _extract_newapi_token_group(first_bootstrap, preferred_group)
+    if token_group:
+        return [token_group]
+
+    return ["default"]
+
+
+async def _bootstrap_newapi_group_tokens(
+    *,
+    settings: NewAPIOAuthSettings,
+    authorization_token: str,
+    groups: list[str],
+) -> dict[str, dict[str, Any]]:
+    bootstrap_url = f"{settings.issuer.rstrip('/')}/api/hub/session/bootstrap"
+    results: dict[str, dict[str, Any]] = {}
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for group in groups:
+            payload: dict[str, Any] = {
+                "client_id": settings.client_id,
+                "site_name": "Miaowu OS",
+                "token_name": f"Miaowu OS Local {group}",
+                "group": group,
+            }
+            try:
+                response = await client.post(
+                    bootstrap_url,
+                    json=payload,
+                    headers={"Authorization": f"Bearer {authorization_token}", "Accept": "application/json"},
+                )
+                if response.status_code != 200:
+                    results[group] = {
+                        "group": group,
+                        "model_sync_status": "error",
+                        "model_sync_error": f"NewAPI 分组 {group} 引导失败：HTTP {response.status_code}",
+                    }
+                    continue
+                data = response.json()
+                result = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
+                if isinstance(result, dict):
+                    results[group] = result
+            except Exception:
+                results[group] = {
+                    "group": group,
+                    "model_sync_status": "error",
+                    "model_sync_error": f"NewAPI 分组 {group} 引导失败",
+                }
+    return results
+
+
+async def _fetch_newapi_models_with_token(*, relay_base_url: str, api_key: str | None) -> list[str]:
+    if not api_key:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{relay_base_url.rstrip('/')}/models",
+                headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+            )
+        if response.status_code != 200:
+            return []
+        data = response.json()
+    except Exception:
+        return []
+    raw_models = data.get("data") if isinstance(data, dict) else None
+    models: list[str] = []
+    if isinstance(raw_models, list):
+        for item in raw_models:
+            if isinstance(item, dict):
+                model_id = item.get("id")
+                if isinstance(model_id, str) and model_id.strip():
+                    models.append(model_id.strip())
+            elif isinstance(item, str) and item.strip():
+                models.append(item.strip())
+    return sorted(dict.fromkeys(models))
+
+
+async def _build_newapi_managed_group_items(
+    *,
+    settings: NewAPIOAuthSettings,
+    group_catalog: dict[str, dict[str, Any]],
+    group_bootstraps: dict[str, dict[str, Any]],
+    relay_base_url: str,
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for group, bootstrap in group_bootstraps.items():
+        token_key = _extract_newapi_token_key(bootstrap)
+        token_group = _extract_newapi_token_group(bootstrap, group) or group
+        quick_start = bootstrap.get("quick_start")
+        group_relay_base_url = relay_base_url
+        if isinstance(quick_start, dict):
+            raw_relay = quick_start.get("relay_base_url")
+            if isinstance(raw_relay, str) and raw_relay.strip():
+                group_relay_base_url = raw_relay.strip()
+
+        models = await _fetch_newapi_models_with_token(relay_base_url=group_relay_base_url, api_key=token_key)
+        catalog_item = group_catalog.get(token_group) or group_catalog.get(group) or {}
+        if not models:
+            models = _normalize_newapi_model_list(catalog_item.get("models"))
+
+        status = bootstrap.get("model_sync_status") if isinstance(bootstrap.get("model_sync_status"), str) else None
+        error = bootstrap.get("model_sync_error") if isinstance(bootstrap.get("model_sync_error"), str) else None
+        if not status:
+            status = "synced" if models else "empty"
+        if status == "empty" and not error:
+            error = f"NewAPI 分组 {token_group} 没有返回可用模型"
+
+        items.append(
+            {
+                "group_id": token_group,
+                "name": catalog_item.get("name") or token_group,
+                "base_url": group_relay_base_url or f"{settings.issuer.rstrip('/')}/v1",
+                "api_key": token_key,
+                "models": models,
+                "model_groups": {token_group: models} if models else {},
+                "model_sync_status": status,
+                "model_sync_error": error,
+            }
+        )
+    return items
+
+
+def _build_legacy_newapi_group_item(
+    *,
+    result: dict[str, Any],
+    relay_base_url: str,
+    preferred_group: str | None,
+) -> dict[str, Any] | None:
+    models = _normalize_newapi_model_list(result.get("models"))
+    token_key = _extract_newapi_token_key(result)
+    token_group = _extract_newapi_token_group(result, preferred_group) or "default"
+    if not models and not token_key:
+        return None
+    return {
+        "group_id": token_group,
+        "name": token_group,
+        "base_url": relay_base_url,
+        "api_key": token_key,
+        "models": models,
+        "model_groups": {token_group: models} if models else {},
+        "model_sync_status": "synced" if models else "empty",
+        "model_sync_error": None if models else "NewAPI 登录成功，但 Hub 没有返回可用模型",
+    }
 
 
 async def exchange_code_for_token(settings: NewAPIOAuthSettings, token_endpoint: str, code: str) -> dict[str, Any]:

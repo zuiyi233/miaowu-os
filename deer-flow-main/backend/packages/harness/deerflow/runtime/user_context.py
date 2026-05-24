@@ -98,14 +98,15 @@ DEFAULT_USER_ID: Final[str] = "default"
 
 
 def get_effective_user_id() -> str:
-    """Return the current user's id as a string, or DEFAULT_USER_ID if unset.
+    """Return the current user's id as a string.
 
-    Unlike :func:`require_current_user` this never raises — it is designed
-    for filesystem-path resolution where a valid user bucket is always needed.
+    Protected runtime and filesystem paths are fail-closed: callers must run
+    inside an authenticated request context or pass an explicit user id through
+    migration/CLI-specific APIs.
     """
     user = _current_user.get()
     if user is None:
-        return DEFAULT_USER_ID
+        raise RuntimeError("protected storage path accessed without user context")
     return str(user.id)
 
 

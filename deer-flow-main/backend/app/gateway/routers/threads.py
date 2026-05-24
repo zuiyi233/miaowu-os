@@ -21,8 +21,10 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.gateway.authz import require_permission
 from app.gateway.deps import get_checkpointer
+from app.gateway.storage_quota import storage_quota_service
 from app.gateway.utils import sanitize_log_param
 from deerflow.config.paths import Paths, get_paths
+from deerflow.persistence.engine import get_session_factory
 from deerflow.media import draft_media_store
 from deerflow.runtime import serialize_channel_values
 from deerflow.runtime.user_context import get_effective_user_id
@@ -225,7 +227,7 @@ def _filter_expired_draft_media(values: dict[str, Any]) -> dict[str, Any]:
 
 def _cleanup_expired_channel_values(thread_id: str, channel_values: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     try:
-        draft_media_store.cleanup_expired(thread_id=thread_id)
+        draft_media_store.cleanup_expired(thread_id=thread_id, user_id=get_effective_user_id())
     except Exception:
         logger.debug("Failed to cleanup expired draft media for thread %s", sanitize_log_param(thread_id), exc_info=True)
 
@@ -332,7 +334,23 @@ async def delete_thread_data(thread_id: str, request: Request) -> ThreadDeleteRe
     from app.gateway.deps import get_thread_store
 
     # Clean local filesystem
-    response = _delete_thread_data(thread_id, user_id=get_effective_user_id())
+    user_id = get_effective_user_id()
+    response = _delete_thread_data(thread_id, user_id=user_id)
+
+    sf = get_session_factory()
+    if sf is not None:
+        try:
+            async with sf() as db:
+                for source in ("thread_upload", "thread_workspace", "thread_output", "thread_artifact", "draft_media"):
+                    await storage_quota_service.release_by_prefix(
+                        db,
+                        user_id=user_id,
+                        source_prefix=source,
+                        resource_prefix=f"{thread_id}:",
+                    )
+                await db.commit()
+        except Exception:
+            logger.debug("Could not release storage quota objects for thread %s", sanitize_log_param(thread_id), exc_info=True)
 
     # Remove checkpoints (best-effort)
     checkpointer = getattr(request.app.state, "checkpointer", None)

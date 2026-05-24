@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { getBackendBaseURL } from "@/core/config";
+import { browserStorageQuotaService } from "@/core/storage/browser-quota";
 import { cn } from "@/lib/utils";
 
 import { TtsPlayer } from "./TtsPlayer";
@@ -66,7 +67,7 @@ function loadSettings(): ReaderSettings {
 
 function saveSettings(s: ReaderSettings) {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+    void browserStorageQuotaService.setLocalItem(SETTINGS_KEY, JSON.stringify(s));
   } catch (error) {
     console.warn("Failed to save reading settings:", error);
   }

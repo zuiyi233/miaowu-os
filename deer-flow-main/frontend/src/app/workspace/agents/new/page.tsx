@@ -38,6 +38,7 @@ import {
   getAgent,
 } from "@/core/agents/api";
 import { useI18n } from "@/core/i18n/hooks";
+import { browserStorageQuotaService } from "@/core/storage/browser-quota";
 import { useThreadStream } from "@/core/threads/hooks";
 import { uuid } from "@/core/utils/uuid";
 import { isIMEComposing } from "@/lib/ime";
@@ -164,7 +165,7 @@ export default function NewAgentPage() {
       return;
     }
     setShowSaveHint(true);
-    window.localStorage.setItem(SAVE_HINT_STORAGE_KEY, "1");
+    void browserStorageQuotaService.setLocalItem(SAVE_HINT_STORAGE_KEY, "1");
   }, [step]);
 
   const handleConfirmName = useCallback(async () => {

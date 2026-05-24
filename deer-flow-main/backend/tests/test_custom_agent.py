@@ -60,6 +60,10 @@ class TestPaths:
         paths = _make_paths(tmp_path)
         assert paths.user_md_file == tmp_path / "USER.md"
 
+    def test_user_profile_file(self, tmp_path):
+        paths = _make_paths(tmp_path)
+        assert paths.user_profile_file("u1") == tmp_path / "users" / "u1" / "USER.md"
+
     def test_paths_are_different_from_global(self, tmp_path):
         paths = _make_paths(tmp_path)
         assert paths.memory_file != paths.agent_memory_file("my-agent")
@@ -565,6 +569,44 @@ class TestAgentsAPI:
         response = agent_client.post("/api/agents", json={"name": "legacy-agent", "soul": "x"})
         assert response.status_code == 409
 
+    def test_create_agent_enforces_combined_file_quota(self, agent_client, tmp_path, monkeypatch):
+        import app.gateway.routers.agents as agents_router
+
+        class _Reservation:
+            def __init__(self, incoming_bytes: int) -> None:
+                self.incoming_bytes = incoming_bytes
+
+        used = {"bytes": 0}
+
+        async def _reserve(_db, *, user_id, source, resource_id, incoming_bytes):
+            if used["bytes"] + incoming_bytes > 80:
+                from app.gateway.storage_quota import quota_http_error
+
+                raise quota_http_error(used_bytes=used["bytes"], quota_bytes=80, incoming_bytes=incoming_bytes)
+            return _Reservation(incoming_bytes)
+
+        async def _commit(_db, reservation, *, storage_path=None, content_hash=None):
+            used["bytes"] += reservation.incoming_bytes
+
+        class _FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def commit(self):
+                return None
+
+        monkeypatch.setattr(agents_router, "get_session_factory", lambda: _FakeSession)
+        monkeypatch.setattr(agents_router.storage_quota_service, "reserve", _reserve)
+        monkeypatch.setattr(agents_router.storage_quota_service, "commit_reservation", _commit)
+
+        response = agent_client.post("/api/agents", json={"name": "quota-agent", "soul": "x" * 200})
+
+        assert response.status_code == 413
+        assert response.json()["detail"]["code"] == "storage_quota_exceeded"
+
 
 # ===========================================================================
 # 9. Gateway API – User Profile endpoints
@@ -583,8 +625,8 @@ class TestUserProfileAPI:
         assert response.status_code == 200
         assert response.json()["content"] == content
 
-        # File should be written to disk
-        user_md = tmp_path / "USER.md"
+        # File should be written under the current user's scoped directory.
+        user_md = tmp_path / "users" / "test-user-autouse" / "USER.md"
         assert user_md.exists()
         assert user_md.read_text(encoding="utf-8") == content
 

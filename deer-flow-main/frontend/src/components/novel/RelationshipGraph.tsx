@@ -41,6 +41,7 @@ import { Separator } from "@/components/ui/separator";
 import { fetch as authFetch } from "@/core/api/fetcher";
 import { getBackendBaseURL } from "@/core/config";
 import { useI18n } from "@/core/i18n/hooks";
+import { browserStorageQuotaService } from "@/core/storage/browser-quota";
 import { cn } from "@/lib/utils";
 
 interface GraphNode {
@@ -327,7 +328,7 @@ export function RelationshipGraph({ projectId }: RelationshipGraphProps) {
     nodes.forEach((n) => {
       positions[n.id] = n.position;
     });
-    localStorage.setItem(
+    void browserStorageQuotaService.setLocalItem(
       LAYOUT_STORAGE_KEY(projectId),
       JSON.stringify(positions),
     );
@@ -336,7 +337,7 @@ export function RelationshipGraph({ projectId }: RelationshipGraphProps) {
   }, [nodes, projectId, t]);
 
   const resetLayout = useCallback(() => {
-    localStorage.removeItem(LAYOUT_STORAGE_KEY(projectId));
+    browserStorageQuotaService.removeLocalItem(LAYOUT_STORAGE_KEY(projectId));
     setHasSavedLayout(false);
     if (graphData) buildFlowElements(graphData, careers, null);
     toast.info(t.novel.layoutReset);

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.document_index import DocumentIndex
+from app.gateway.storage_quota import storage_quota_service
 
 logger = get_logger(__name__)
 
@@ -341,6 +342,7 @@ class WorkspaceDocumentService:
     async def write_document(
         self,
         *,
+        db: AsyncSession | None = None,
         user_id: str,
         project_id: str,
         entity_type: str,
@@ -358,6 +360,16 @@ class WorkspaceDocumentService:
         absolute_path.parent.mkdir(parents=True, exist_ok=True)
 
         content_text = self._serialize_content(entity_type=entity_type, content=content)
+        incoming_bytes = len(content_text.encode("utf-8"))
+        reservation = None
+        if db is not None:
+            reservation = await storage_quota_service.reserve(
+                db,
+                user_id=user_id,
+                source="workspace_document",
+                resource_id=f"{project_id}:{self._coerce_entity_type(entity_type)}:{self._validate_segment(entity_id, 'entity_id')}",
+                incoming_bytes=incoming_bytes,
+            )
         await asyncio.to_thread(absolute_path.write_text, content_text, "utf-8")
         stat = await asyncio.to_thread(absolute_path.stat)
         content_hash = self._compute_hash(content_text)
@@ -379,11 +391,19 @@ class WorkspaceDocumentService:
             docs = manifest.get("documents", [])
             manifest["documents"] = self._upsert_record(docs, record)
             await self._save_manifest(workspace, manifest)
+        if db is not None and reservation is not None:
+            await storage_quota_service.commit_reservation(
+                db,
+                reservation,
+                storage_path=str(absolute_path),
+                content_hash=content_hash,
+            )
         return record
 
     async def snapshot_chapter_history(
         self,
         *,
+        db: AsyncSession | None = None,
         user_id: str,
         project_id: str,
         chapter_id: str,
@@ -411,8 +431,54 @@ class WorkspaceDocumentService:
         next_version = max_version + 1
         snapshot_path = (history_dir / f"v{next_version}.md").resolve()
         self._assert_within_workspace_root(snapshot_path)
+        reservation = None
+        if db is not None:
+            reservation = await storage_quota_service.reserve(
+                db,
+                user_id=user_id,
+                source="chapter_history",
+                resource_id=f"{project_id}:{safe_chapter_id}:v{next_version}",
+                incoming_bytes=len(content.encode("utf-8")),
+            )
         await asyncio.to_thread(snapshot_path.write_text, content, "utf-8")
+        if db is not None and reservation is not None:
+            await storage_quota_service.commit_reservation(
+                db,
+                reservation,
+                storage_path=str(snapshot_path),
+                content_hash=self._compute_hash(content),
+            )
         return snapshot_path.relative_to(workspace).as_posix()
+
+    async def track_imported_file(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: str,
+        project_id: str,
+        relative_path: str,
+        absolute_path: Path,
+    ) -> None:
+        """Track a workspace file created by ZIP import."""
+        resolved = absolute_path.resolve()
+        workspace = self.workspace_dir(user_id, project_id)
+        self._assert_within_workspace_root(resolved)
+        try:
+            size = int(resolved.stat().st_size)
+        except OSError:
+            size = 0
+        reservation = await storage_quota_service.reserve(
+            db,
+            user_id=user_id,
+            source="workspace_import",
+            resource_id=f"{project_id}:{relative_path}",
+            incoming_bytes=size,
+        )
+        await storage_quota_service.commit_reservation(
+            db,
+            reservation,
+            storage_path=str(resolved),
+        )
 
     @staticmethod
     def _upsert_record(existing_records: list[Any], new_record: ManifestRecord) -> list[dict[str, Any]]:
@@ -634,6 +700,7 @@ class WorkspaceDocumentService:
     async def delete_document(
         self,
         *,
+        db: AsyncSession | None = None,
         user_id: str,
         project_id: str,
         entity_type: str,
@@ -661,11 +728,19 @@ class WorkspaceDocumentService:
             ]
             await self._save_manifest(workspace, manifest)
 
+        if db is not None and deleted_file:
+            await storage_quota_service.release_object(
+                db,
+                user_id=user_id,
+                source="workspace_document",
+                resource_id=f"{project_id}:{canonical_type}:{validated_id}",
+            )
         return deleted_file
 
     async def delete_project_workspace(
         self,
         *,
+        db: AsyncSession | None = None,
         user_id: str,
         project_id: str,
     ) -> bool:
@@ -674,6 +749,19 @@ class WorkspaceDocumentService:
             return False
         import shutil
         await asyncio.to_thread(shutil.rmtree, workspace, ignore_errors=True)
+        if db is not None:
+            await storage_quota_service.release_by_prefix(
+                db,
+                user_id=user_id,
+                source_prefix="workspace_document",
+                resource_prefix=f"{project_id}:",
+            )
+            await storage_quota_service.release_by_prefix(
+                db,
+                user_id=user_id,
+                source_prefix="chapter_history",
+                resource_prefix=f"{project_id}:",
+            )
         return True
 
     async def list_index_records(

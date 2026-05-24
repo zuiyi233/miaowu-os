@@ -118,8 +118,7 @@ def update_agent(
         return _err("update_agent is only available inside a custom agent's chat. There is no agent_name in the current runtime context, so there is nothing to update. If you are inside the bootstrap flow, use setup_agent instead.")
 
     # Resolve the active user so that updates only affect this user's agent.
-    # ``get_effective_user_id`` returns DEFAULT_USER_ID when no auth context
-    # is set (matching how memory and thread storage behave).
+    # Missing auth context fails closed instead of writing a default bucket.
     user_id = get_effective_user_id()
 
     # Reject an unknown ``model`` *before* touching the filesystem. Otherwise

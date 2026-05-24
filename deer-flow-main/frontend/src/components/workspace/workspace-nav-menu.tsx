@@ -3,6 +3,7 @@
 import {
   ChevronsUpDown,
   InfoIcon,
+  ShieldIcon,
   Settings2Icon,
   SettingsIcon,
 } from "lucide-react";
@@ -23,6 +24,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useI18n } from "@/core/i18n/hooks";
+import { useAuth } from "@/core/auth/AuthProvider";
 
 import { SettingsDialog } from "./settings";
 
@@ -49,11 +51,12 @@ function NavMenuButtonContent({
 export function WorkspaceNavMenu() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsDefaultSection, setSettingsDefaultSection] = useState<
-    "appearance" | "memory" | "tools" | "skills" | "notification" | "about"
+    "appearance" | "memory" | "tools" | "skills" | "notification" | "about" | "admin"
   >("appearance");
   const [mounted, setMounted] = useState(false);
   const { open: isSidebarOpen } = useSidebar();
   const { t } = useI18n();
+  const { user } = useAuth();
 
   useEffect(() => {
     setMounted(true);
@@ -94,6 +97,19 @@ export function WorkspaceNavMenu() {
                     {t.common.settings}
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
+                {user?.system_role === "admin" && (
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setSettingsDefaultSection("admin");
+                        setSettingsOpen(true);
+                      }}
+                    >
+                      <ShieldIcon />
+                      管理后台
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={() => {

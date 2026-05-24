@@ -16,6 +16,7 @@ import {
   normalizeFeatureRoutingState,
 } from "@/core/ai/feature-routing";
 import { getBackendBaseURL } from "@/core/config";
+import { browserStorageQuotaService } from "@/core/storage/browser-quota";
 import { cn } from "@/lib/utils";
 
 export interface GenerationConfig {
@@ -277,9 +278,12 @@ export function AIProjectGenerator({
   const saveProgress = useCallback(
     (pid: string, data: GenerationConfig, step: string) => {
       try {
-        localStorage.setItem(storageKeys.projectId, pid);
-        localStorage.setItem(storageKeys.generationData, JSON.stringify(data));
-        localStorage.setItem(storageKeys.currentStep, step);
+        void browserStorageQuotaService.setLocalItem(storageKeys.projectId, pid);
+        void browserStorageQuotaService.setLocalItem(
+          storageKeys.generationData,
+          JSON.stringify(data),
+        );
+        void browserStorageQuotaService.setLocalItem(storageKeys.currentStep, step);
       } catch (e) {
         console.error("Failed to save progress:", e);
       }
@@ -288,9 +292,9 @@ export function AIProjectGenerator({
   );
 
   const clearStorage = useCallback(() => {
-    localStorage.removeItem(storageKeys.projectId);
-    localStorage.removeItem(storageKeys.generationData);
-    localStorage.removeItem(storageKeys.currentStep);
+    browserStorageQuotaService.removeLocalItem(storageKeys.projectId);
+    browserStorageQuotaService.removeLocalItem(storageKeys.generationData);
+    browserStorageQuotaService.removeLocalItem(storageKeys.currentStep);
   }, [storageKeys]);
 
   useEffect(() => {

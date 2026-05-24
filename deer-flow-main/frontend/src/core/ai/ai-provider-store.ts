@@ -9,6 +9,7 @@ import {
   type UserAiSettings,
   type UserAiSettingsUpdate,
 } from "./useAiSettingsApi";
+import { browserStorageQuotaService } from "@/core/storage/browser-quota";
 
 export type AiProviderType = "openai" | "anthropic" | "google" | "custom";
 export type AiManagedBy = "newapi" | string;
@@ -348,7 +349,10 @@ function removeLocalProviderPersistence(): void {
     if (typeof container.state === "object" && container.state) {
       container.state = state;
     }
-    window.localStorage.setItem("novelist-settings-storage", JSON.stringify(container));
+    void browserStorageQuotaService.setLocalItem(
+      "novelist-settings-storage",
+      JSON.stringify(container),
+    );
   } catch (err) {
     console.warn("Failed to sanitize novelist-settings-storage:", err);
   }

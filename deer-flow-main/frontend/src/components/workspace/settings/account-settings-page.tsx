@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangleIcon, LogOutIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -11,12 +11,20 @@ import { fetch, getCsrfHeaders } from "@/core/api/fetcher";
 import { useAuth } from "@/core/auth/AuthProvider";
 import { parseAuthError } from "@/core/auth/types";
 import { useI18n } from "@/core/i18n/hooks";
+import { browserStorageQuotaService } from "@/core/storage/browser-quota";
 
 import { SettingsSection } from "./settings-section";
 
-function formatQuotaValue(value: number | null | undefined): string {
+const NEWAPI_QUOTA_PER_USD = 500000;
+
+function formatNewApiQuotaUsd(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
-  return new Intl.NumberFormat().format(value);
+  const usd = value / NEWAPI_QUOTA_PER_USD;
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: usd >= 100 ? 2 : 4,
+  }).format(usd);
 }
 
 function formatSyncTime(value: string | null | undefined): string {
@@ -29,6 +37,18 @@ function formatSyncTime(value: string | null | undefined): string {
   }).format(date);
 }
 
+function formatBytes(value: number | null | undefined): string {
+  const bytes = Number(value ?? 0);
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let current = bytes / 1024;
+  for (const unit of units) {
+    if (current < 1024) return `${current.toFixed(1)} ${unit}`;
+    current /= 1024;
+  }
+  return `${current.toFixed(1)} PB`;
+}
+
 export function AccountSettingsPage() {
   const { user, logout } = useAuth();
   const { t } = useI18n();
@@ -38,11 +58,31 @@ export function AccountSettingsPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [storageUsage, setStorageUsage] = useState<any>(null);
   const newApiAccount = user?.newapi_account ?? null;
   const shouldWarnNewApiQuota =
     !!newApiAccount &&
     ((newApiAccount.remain_quota ?? Number.POSITIVE_INFINITY) <= 0 ||
       (newApiAccount.balance ?? Number.POSITIVE_INFINITY) <= 0);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadStorageUsage() {
+      try {
+        await browserStorageQuotaService.reportUsage();
+        const res = await fetch("/api/account/storage-usage");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setStorageUsage(data);
+      } catch {
+        // Storage usage display is non-blocking.
+      }
+    }
+    void loadStorageUsage();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -134,25 +174,25 @@ export function AccountSettingsPage() {
               <div className="rounded-md border p-3">
                 <div className="text-muted-foreground text-xs">余额</div>
                 <div className="mt-1 text-sm font-medium">
-                  {formatQuotaValue(newApiAccount.balance)}
+                  {formatNewApiQuotaUsd(newApiAccount.balance)}
                 </div>
               </div>
               <div className="rounded-md border p-3">
                 <div className="text-muted-foreground text-xs">剩余额度</div>
                 <div className="mt-1 text-sm font-medium">
-                  {formatQuotaValue(newApiAccount.remain_quota)}
+                  {formatNewApiQuotaUsd(newApiAccount.remain_quota)}
                 </div>
               </div>
               <div className="rounded-md border p-3">
                 <div className="text-muted-foreground text-xs">已用额度</div>
                 <div className="mt-1 text-sm font-medium">
-                  {formatQuotaValue(newApiAccount.used_quota)}
+                  {formatNewApiQuotaUsd(newApiAccount.used_quota)}
                 </div>
               </div>
               <div className="rounded-md border p-3">
                 <div className="text-muted-foreground text-xs">总额度</div>
                 <div className="mt-1 text-sm font-medium">
-                  {formatQuotaValue(newApiAccount.quota)}
+                  {formatNewApiQuotaUsd(newApiAccount.quota)}
                 </div>
               </div>
             </div>
@@ -172,6 +212,39 @@ export function AccountSettingsPage() {
             当前没有绑定 NewAPI 账号。请从登录页使用 NewAPI 登录。
           </p>
         )}
+      </SettingsSection>
+
+      <SettingsSection
+        title="Miaowu 本地空间"
+        description="服务端空间和浏览器本地缓存是独立额度，不等同于 NewAPI 额度。"
+      >
+        <div className="grid max-w-xl grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-md border p-3">
+            <div className="text-muted-foreground text-xs">服务端空间</div>
+            <div className="mt-1 text-sm font-medium">
+              {formatBytes(storageUsage?.backend?.used_bytes)} /{" "}
+              {formatBytes(storageUsage?.backend?.quota_bytes)}
+            </div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="text-muted-foreground text-xs">浏览器本地缓存</div>
+            <div className="mt-1 text-sm font-medium">
+              {formatBytes(storageUsage?.browser?.reported_used_bytes)} /{" "}
+              {formatBytes(storageUsage?.browser?.quota_bytes)}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => {
+                browserStorageQuotaService.clearAppControlledStorage();
+                setStorageUsage(null);
+              }}
+            >
+              清理本地缓存
+            </Button>
+          </div>
+        </div>
       </SettingsSection>
 
       {newApiAccount ? (

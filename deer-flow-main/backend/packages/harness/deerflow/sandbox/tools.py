@@ -19,6 +19,7 @@ from deerflow.sandbox.sandbox_provider import get_sandbox_provider
 from deerflow.sandbox.search import GrepMatch
 from deerflow.sandbox.security import LOCAL_HOST_BASH_DISABLED_MESSAGE, is_host_bash_allowed
 from deerflow.tools.types import Runtime
+from deerflow.runtime.user_context import resolve_runtime_user_id
 
 _ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![:\w])(?<!:/)/(?:[^\s\"'`;&|<>()]+)")
 _FILE_URL_PATTERN = re.compile(r"\bfile://\S+", re.IGNORECASE)
@@ -994,6 +995,83 @@ def _apply_cwd_prefix(command: str, thread_data: ThreadDataState | None) -> str:
     return command
 
 
+def _runtime_thread_id(runtime: Runtime | None, thread_data: ThreadDataState | None = None) -> str | None:
+    if runtime is not None:
+        if runtime.context and runtime.context.get("thread_id"):
+            return str(runtime.context["thread_id"])
+        if runtime.config:
+            thread_id = runtime.config.get("configurable", {}).get("thread_id")
+            if thread_id:
+                return str(thread_id)
+    return _extract_thread_id_from_thread_data(thread_data)
+
+
+def _format_quota_exception(exc: Exception) -> str:
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, dict):
+        code = detail.get("code")
+        if code:
+            return str(code)
+    return str(exc)
+
+
+def _runtime_quota_user_id(runtime: Runtime | None) -> str | None:
+    try:
+        return resolve_runtime_user_id(runtime)
+    except RuntimeError:
+        return None
+
+
+def _reserve_thread_write_quota(
+    runtime: Runtime,
+    thread_data: ThreadDataState | None,
+    path: str,
+    incoming_bytes: int,
+):
+    thread_id = _runtime_thread_id(runtime, thread_data)
+    user_id = _runtime_quota_user_id(runtime)
+    if thread_id is None or user_id is None:
+        return None
+    try:
+        from app.gateway.storage_quota import reserve_thread_file_write_sync
+
+        return reserve_thread_file_write_sync(
+            user_id=user_id,
+            thread_id=thread_id,
+            path=path,
+            incoming_bytes=incoming_bytes,
+        )
+    except Exception as exc:
+        raise RuntimeError(_format_quota_exception(exc)) from exc
+
+
+def _commit_thread_write_quota(reservation, path: str) -> None:
+    if reservation is None:
+        return
+    try:
+        from app.gateway.storage_quota import commit_thread_file_write_sync
+
+        commit_thread_file_write_sync(reservation, path=path)
+    except Exception as exc:
+        raise RuntimeError(_format_quota_exception(exc)) from exc
+
+
+def _enforce_thread_quota(runtime: Runtime, thread_data: ThreadDataState | None) -> None:
+    thread_id = _runtime_thread_id(runtime, thread_data)
+    user_id = _runtime_quota_user_id(runtime)
+    if thread_id is None or user_id is None:
+        return
+    try:
+        from app.gateway.storage_quota import enforce_thread_storage_quota_sync
+
+        enforce_thread_storage_quota_sync(
+            user_id=user_id,
+            thread_id=thread_id,
+        )
+    except Exception as exc:
+        raise RuntimeError(_format_quota_exception(exc)) from exc
+
+
 def get_thread_data(runtime: Runtime | None) -> ThreadDataState | None:
     """Extract thread_data from runtime state."""
     if runtime is None:
@@ -1248,6 +1326,7 @@ def bash_tool(runtime: Runtime, description: str, command: str) -> str:
             command = replace_virtual_paths_in_command(command, thread_data)
             command = _apply_cwd_prefix(command, thread_data)
             output = sandbox.execute_command(command)
+            _enforce_thread_quota(runtime, thread_data)
             try:
                 from deerflow.config.app_config import get_app_config
 
@@ -1514,14 +1593,25 @@ def write_file_tool(
         sandbox = ensure_sandbox_initialized(runtime)
         ensure_thread_directories_exist(runtime)
         requested_path = path
+        thread_data = None
+        reservation = None
+        is_custom_mount = False
         if is_local_sandbox(runtime):
             thread_data = get_thread_data(runtime)
             validate_local_tool_path(path, thread_data)
-            if not _is_custom_mount_path(path):
+            is_custom_mount = _is_custom_mount_path(path)
+            if not is_custom_mount:
                 path = _resolve_and_validate_user_data_path(path, thread_data)
             # Custom mount paths are resolved by LocalSandbox._resolve_path()
+            if not is_custom_mount:
+                existing_size = Path(path).stat().st_size if append and Path(path).exists() else 0
+                incoming_bytes = existing_size + len(content.encode("utf-8"))
+                reservation = _reserve_thread_write_quota(runtime, thread_data, path, incoming_bytes)
         with get_file_operation_lock(sandbox, path):
             sandbox.write_file(path, content, append)
+            if is_local_sandbox(runtime) and not is_custom_mount:
+                _commit_thread_write_quota(reservation, path)
+                _enforce_thread_quota(runtime, thread_data)
         return "OK"
     except SandboxError as e:
         return f"Error: {e}"
@@ -1558,10 +1648,14 @@ def str_replace_tool(
         sandbox = ensure_sandbox_initialized(runtime)
         ensure_thread_directories_exist(runtime)
         requested_path = path
+        thread_data = None
+        reservation = None
+        is_custom_mount = False
         if is_local_sandbox(runtime):
             thread_data = get_thread_data(runtime)
             validate_local_tool_path(path, thread_data)
-            if not _is_custom_mount_path(path):
+            is_custom_mount = _is_custom_mount_path(path)
+            if not is_custom_mount:
                 path = _resolve_and_validate_user_data_path(path, thread_data)
             # Custom mount paths are resolved by LocalSandbox._resolve_path()
         with get_file_operation_lock(sandbox, path):
@@ -1574,7 +1668,12 @@ def str_replace_tool(
                 content = content.replace(old_str, new_str)
             else:
                 content = content.replace(old_str, new_str, 1)
+            if is_local_sandbox(runtime) and not is_custom_mount:
+                reservation = _reserve_thread_write_quota(runtime, thread_data, path, len(content.encode("utf-8")))
             sandbox.write_file(path, content)
+            if is_local_sandbox(runtime) and not is_custom_mount:
+                _commit_thread_write_quota(reservation, path)
+                _enforce_thread_quota(runtime, thread_data)
         return "OK"
     except SandboxError as e:
         return f"Error: {e}"

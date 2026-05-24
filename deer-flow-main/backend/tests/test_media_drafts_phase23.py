@@ -7,7 +7,9 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from _router_auth_helpers import make_authed_test_app
 from app.gateway.routers import media_drafts, threads
+from deerflow.media import DraftMediaStore
 
 
 @pytest.fixture(autouse=True)
@@ -44,7 +46,7 @@ class _FakeDB:
 
 
 def _build_attach_app(fake_db: _FakeDB) -> FastAPI:
-    app = FastAPI()
+    app = make_authed_test_app()
     app.include_router(media_drafts.router)
     app.dependency_overrides[media_drafts.get_db] = lambda: fake_db
     return app
@@ -263,7 +265,7 @@ def test_cleanup_expired_channel_values_filters_expired_draft_media_and_triggers
 ) -> None:
     cleanup_calls: list[str] = []
 
-    def _cleanup_expired(*, thread_id: str) -> None:
+    def _cleanup_expired(*, thread_id: str, user_id: str | None = None) -> None:
         cleanup_calls.append(thread_id)
 
     monkeypatch.setattr(threads.draft_media_store, "cleanup_expired", _cleanup_expired)
@@ -287,7 +289,7 @@ def test_cleanup_expired_channel_values_filters_expired_draft_media_and_triggers
 
 
 def test_cleanup_expired_channel_values_keeps_filtering_when_cleanup_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _cleanup_expired(*, thread_id: str) -> None:
+    def _cleanup_expired(*, thread_id: str, user_id: str | None = None) -> None:
         raise RuntimeError(f"cleanup failed for {thread_id}")
 
     monkeypatch.setattr(threads.draft_media_store, "cleanup_expired", _cleanup_expired)
@@ -342,3 +344,27 @@ def test_persist_cleaned_draft_media_checkpoint_writes_new_checkpoint() -> None:
     assert write["cfg"] == {"configurable": {"thread_id": "thread-3", "checkpoint_ns": ""}}
     assert write["checkpoint"]["channel_values"] == cleaned_values
     assert write["metadata"]["writes"] == {"tests.cleanup": {"draft_media": {"_expired_removed": True}}}
+
+
+def test_attach_draft_moves_asset_under_current_user(tmp_path) -> None:
+    store = DraftMediaStore()
+    store._paths = store._paths.__class__(tmp_path)
+    item = store.create_draft(
+        thread_id="thread-asset",
+        kind="image",
+        mime_type="image/png",
+        content=b"png-bytes",
+        ttl_seconds=None,
+    )
+
+    asset = store.attach_draft_to_asset(
+        thread_id="thread-asset",
+        draft_id=item["id"],
+        target_type="scene",
+        target_id="scene-1",
+    )
+    paths = store.load_asset_paths(asset_id=asset["asset_id"])
+
+    assert paths is not None
+    assert paths.content_path.is_relative_to(tmp_path / "users" / "test-user-autouse" / "media-assets")
+    assert not (tmp_path / "media-assets").exists()

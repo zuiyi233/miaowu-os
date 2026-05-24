@@ -1,7 +1,7 @@
 """JSONL file-backed RunEventStore implementation.
 
-Each run's events are stored in a single file:
-``.deer-flow/threads/{thread_id}/runs/{run_id}.jsonl``
+Each run's events are stored in a single user-scoped file:
+``.deer-flow/users/{user_id}/threads/{thread_id}/runs/{run_id}.jsonl``
 
 All categories (message, trace, lifecycle) are in the same file.
 This backend is suitable for lightweight single-node deployments.
@@ -19,7 +19,9 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
+from deerflow.config.paths import _validate_user_id
 from deerflow.runtime.events.store.base import RunEventStore
+from deerflow.runtime.user_context import get_effective_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,8 @@ class JsonlRunEventStore(RunEventStore):
 
     def _thread_dir(self, thread_id: str) -> Path:
         self._validate_id(thread_id, "thread_id")
-        return self._base_dir / "threads" / thread_id / "runs"
+        user_id = _validate_user_id(get_effective_user_id())
+        return self._base_dir / "users" / user_id / "threads" / thread_id / "runs"
 
     def _run_file(self, thread_id: str, run_id: str) -> Path:
         self._validate_id(run_id, "run_id")

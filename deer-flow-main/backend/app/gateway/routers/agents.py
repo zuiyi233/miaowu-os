@@ -3,14 +3,17 @@
 import logging
 import re
 import shutil
+from pathlib import Path
 
 import yaml
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app.gateway.storage_quota import storage_quota_service
 from deerflow.config.agents_api_config import get_agents_api_config
 from deerflow.config.agents_config import AgentConfig, list_custom_agents, load_agent_config, load_agent_soul
 from deerflow.config.paths import get_paths
+from deerflow.persistence.engine import get_session_factory
 from deerflow.runtime.user_context import get_effective_user_id
 
 logger = logging.getLogger(__name__)
@@ -101,6 +104,49 @@ def _agent_config_to_response(agent_cfg: AgentConfig, include_soul: bool = False
         skills=agent_cfg.skills,
         soul=soul,
     )
+
+
+async def _reserve_file_quota(*, user_id: str, source: str, resource_id: str, content: str, storage_path: Path):
+    sf = get_session_factory()
+    if sf is None:
+        return None
+    incoming_bytes = len(content.encode("utf-8"))
+    async with sf() as db:
+        reservation = await storage_quota_service.reserve(
+            db,
+            user_id=user_id,
+            source=source,
+            resource_id=resource_id,
+            incoming_bytes=incoming_bytes,
+        )
+        await db.commit()
+    return (reservation, storage_path)
+
+
+async def _commit_file_quota(reservation_info) -> None:
+    if reservation_info is None:
+        return
+    reservation, storage_path = reservation_info
+    sf = get_session_factory()
+    if sf is None:
+        return
+    async with sf() as db:
+        await storage_quota_service.commit_reservation(db, reservation, storage_path=str(storage_path))
+        await db.commit()
+
+
+async def _release_agent_quota(*, user_id: str, agent_name: str) -> None:
+    sf = get_session_factory()
+    if sf is None:
+        return
+    async with sf() as db:
+        await storage_quota_service.release_by_prefix(
+            db,
+            user_id=user_id,
+            source_prefix="agent_file",
+            resource_prefix=f"{agent_name}:",
+        )
+        await db.commit()
 
 
 @router.get(
@@ -233,13 +279,29 @@ async def create_agent_endpoint(request: AgentCreateRequest) -> AgentResponse:
         if request.skills is not None:
             config_data["skills"] = request.skills
 
+        config_text = yaml.dump(config_data, default_flow_style=False, allow_unicode=True)
         config_file = agent_dir / "config.yaml"
-        with open(config_file, "w", encoding="utf-8") as f:
-            yaml.dump(config_data, f, default_flow_style=False, allow_unicode=True)
-
-        # Write SOUL.md
         soul_file = agent_dir / "SOUL.md"
+        config_quota = await _reserve_file_quota(
+            user_id=user_id,
+            source="agent_file",
+            resource_id=f"{normalized_name}:config.yaml",
+            content=config_text,
+            storage_path=config_file,
+        )
+        config_file.write_text(config_text, encoding="utf-8")
+        await _commit_file_quota(config_quota)
+
+        soul_quota = await _reserve_file_quota(
+            user_id=user_id,
+            source="agent_file",
+            resource_id=f"{normalized_name}:SOUL.md",
+            content=request.soul,
+            storage_path=soul_file,
+        )
         soul_file.write_text(request.soul, encoding="utf-8")
+        await _commit_file_quota(soul_quota)
+        await _commit_file_quota(soul_quota)
 
         logger.info(f"Created agent '{normalized_name}' at {agent_dir}")
 
@@ -321,14 +383,30 @@ async def update_agent(name: str, request: AgentUpdateRequest) -> AgentResponse:
             if new_skills is not None:
                 updated["skills"] = new_skills
 
+            config_text = yaml.dump(updated, default_flow_style=False, allow_unicode=True)
             config_file = agent_dir / "config.yaml"
-            with open(config_file, "w", encoding="utf-8") as f:
-                yaml.dump(updated, f, default_flow_style=False, allow_unicode=True)
+            quota = await _reserve_file_quota(
+                user_id=user_id,
+                source="agent_file",
+                resource_id=f"{name}:config.yaml",
+                content=config_text,
+                storage_path=config_file,
+            )
+            config_file.write_text(config_text, encoding="utf-8")
+            await _commit_file_quota(quota)
 
         # Update SOUL.md if provided
         if request.soul is not None:
             soul_path = agent_dir / "SOUL.md"
+            quota = await _reserve_file_quota(
+                user_id=user_id,
+                source="agent_file",
+                resource_id=f"{name}:SOUL.md",
+                content=request.soul,
+                storage_path=soul_path,
+            )
             soul_path.write_text(request.soul, encoding="utf-8")
+            await _commit_file_quota(quota)
 
         logger.info(f"Updated agent '{name}'")
 
@@ -343,25 +421,25 @@ async def update_agent(name: str, request: AgentUpdateRequest) -> AgentResponse:
 
 
 class UserProfileResponse(BaseModel):
-    """Response model for the global user profile (USER.md)."""
+    """Response model for the per-user profile (USER.md)."""
 
-    content: str | None = Field(default=None, description="USER.md content, or null if not yet created")
+    content: str | None = Field(default=None, description="Per-user USER.md content, or null if not yet created")
 
 
 class UserProfileUpdateRequest(BaseModel):
     """Request body for setting the global user profile."""
 
-    content: str = Field(default="", description="USER.md content — describes the user's background and preferences")
+    content: str = Field(default="", description="Per-user USER.md content — describes the user's background and preferences")
 
 
 @router.get(
     "/user-profile",
     response_model=UserProfileResponse,
     summary="Get User Profile",
-    description="Read the global USER.md file that is injected into all custom agents.",
+    description="Read the per-user USER.md file that is injected into this user's custom agents.",
 )
 async def get_user_profile() -> UserProfileResponse:
-    """Return the current USER.md content.
+    """Return the current user's USER.md content.
 
     Returns:
         UserProfileResponse with content=None if USER.md does not exist yet.
@@ -369,7 +447,8 @@ async def get_user_profile() -> UserProfileResponse:
     _require_agents_api_enabled()
 
     try:
-        user_md_path = get_paths().user_md_file
+        user_id = get_effective_user_id()
+        user_md_path = get_paths().user_profile_file(user_id)
         if not user_md_path.exists():
             return UserProfileResponse(content=None)
         raw = user_md_path.read_text(encoding="utf-8").strip()
@@ -383,10 +462,10 @@ async def get_user_profile() -> UserProfileResponse:
     "/user-profile",
     response_model=UserProfileResponse,
     summary="Update User Profile",
-    description="Write the global USER.md file that is injected into all custom agents.",
+    description="Write the per-user USER.md file that is injected into this user's custom agents.",
 )
 async def update_user_profile(request: UserProfileUpdateRequest) -> UserProfileResponse:
-    """Create or overwrite the global USER.md.
+    """Create or overwrite the current user's USER.md.
 
     Args:
         request: The update request with the new USER.md content.
@@ -397,10 +476,20 @@ async def update_user_profile(request: UserProfileUpdateRequest) -> UserProfileR
     _require_agents_api_enabled()
 
     try:
+        user_id = get_effective_user_id()
         paths = get_paths()
-        paths.base_dir.mkdir(parents=True, exist_ok=True)
-        paths.user_md_file.write_text(request.content, encoding="utf-8")
-        logger.info(f"Updated USER.md at {paths.user_md_file}")
+        user_md_path = paths.user_profile_file(user_id)
+        quota = await _reserve_file_quota(
+            user_id=user_id,
+            source="user_profile",
+            resource_id="USER.md",
+            content=request.content,
+            storage_path=user_md_path,
+        )
+        user_md_path.parent.mkdir(parents=True, exist_ok=True)
+        user_md_path.write_text(request.content, encoding="utf-8")
+        await _commit_file_quota(quota)
+        logger.info(f"Updated USER.md at {user_md_path}")
         return UserProfileResponse(content=request.content or None)
     except Exception as e:
         logger.error(f"Failed to update user profile: {e}", exc_info=True)
@@ -440,6 +529,7 @@ async def delete_agent(name: str) -> None:
 
     try:
         shutil.rmtree(agent_dir)
+        await _release_agent_quota(user_id=user_id, agent_name=name)
         logger.info(f"Deleted agent '{name}' from {agent_dir}")
     except Exception as e:
         logger.error(f"Failed to delete agent '{name}': {e}", exc_info=True)

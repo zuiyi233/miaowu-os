@@ -31,6 +31,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
+import { browserStorageQuotaService } from '@/core/storage/browser-quota';
 import {
   Select,
   SelectContent,
@@ -124,10 +125,13 @@ function loadCache(): CacheState | null {
 }
 
 function saveCache(state: Partial<CacheState>) {
-  sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ...state, _ts: Date.now() }));
+  void browserStorageQuotaService.setSessionItem(
+    CACHE_KEY,
+    JSON.stringify({ ...state, _ts: Date.now() }),
+  );
 }
 
-function clearCache() { sessionStorage.removeItem(CACHE_KEY); }
+function clearCache() { browserStorageQuotaService.removeSessionItem(CACHE_KEY); }
 
 export function BookImportPage() {
   const router = useRouter();

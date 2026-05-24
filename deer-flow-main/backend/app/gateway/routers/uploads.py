@@ -9,9 +9,11 @@ from pydantic import BaseModel, Field
 
 from app.gateway.authz import require_permission
 from app.gateway.deps import get_config
+from app.gateway.storage_quota import storage_quota_service
 from deerflow.config.app_config import AppConfig
 from deerflow.config.paths import get_paths
 from deerflow.runtime.user_context import get_effective_user_id
+from deerflow.persistence.engine import get_session_factory
 from deerflow.sandbox.sandbox_provider import SandboxProvider, get_sandbox_provider
 from deerflow.uploads.manager import (
     PathTraversalError,
@@ -176,6 +178,7 @@ async def upload_files(
     config: AppConfig = Depends(get_config),
 ) -> UploadResponse:
     """Upload multiple files to a thread's uploads directory."""
+    user_id = get_effective_user_id()
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
@@ -187,7 +190,7 @@ async def upload_files(
         uploads_dir = ensure_uploads_dir(thread_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    sandbox_uploads = get_paths().sandbox_uploads_dir(thread_id, user_id=get_effective_user_id())
+    sandbox_uploads = get_paths().sandbox_uploads_dir(thread_id, user_id=user_id)
     uploaded_files = []
     written_paths = []
     sandbox_sync_targets = []
@@ -229,6 +232,23 @@ async def upload_files(
                 total_size=total_size,
             )
             written_paths.append(file_path)
+            reservation = None
+            sf = get_session_factory()
+            if sf is not None:
+                async with sf() as db:
+                    reservation = await storage_quota_service.reserve(
+                        db,
+                        user_id=user_id,
+                        source="thread_upload",
+                        resource_id=f"{thread_id}:{safe_filename}",
+                        incoming_bytes=file_size,
+                    )
+                    await storage_quota_service.commit_reservation(
+                        db,
+                        reservation,
+                        storage_path=str(file_path),
+                    )
+                    await db.commit()
 
             virtual_path = upload_virtual_path(safe_filename)
 
@@ -252,6 +272,21 @@ async def upload_files(
                 md_path = await convert_file_to_markdown(file_path)
                 if md_path:
                     written_paths.append(md_path)
+                    if sf is not None:
+                        async with sf() as db:
+                            md_reservation = await storage_quota_service.reserve(
+                                db,
+                                user_id=user_id,
+                                source="thread_upload",
+                                resource_id=f"{thread_id}:{md_path.name}",
+                                incoming_bytes=md_path.stat().st_size,
+                            )
+                            await storage_quota_service.commit_reservation(
+                                db,
+                                md_reservation,
+                                storage_path=str(md_path),
+                            )
+                            await db.commit()
                     md_virtual_path = upload_virtual_path(md_path.name)
 
                     if sync_to_sandbox:
@@ -327,12 +362,31 @@ async def list_uploaded_files(thread_id: str, request: Request) -> dict:
 @require_permission("threads", "delete", owner_check=True, require_existing=True)
 async def delete_uploaded_file(thread_id: str, filename: str, request: Request) -> dict:
     """Delete a file from a thread's uploads directory."""
+    user_id = get_effective_user_id()
     try:
         uploads_dir = get_uploads_dir(thread_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     try:
-        return delete_file_safe(uploads_dir, filename, convertible_extensions=CONVERTIBLE_EXTENSIONS)
+        result = delete_file_safe(uploads_dir, filename, convertible_extensions=CONVERTIBLE_EXTENSIONS)
+        sf = get_session_factory()
+        if sf is not None:
+            async with sf() as db:
+                await storage_quota_service.release_object(
+                    db,
+                    user_id=user_id,
+                    source="thread_upload",
+                    resource_id=f"{thread_id}:{filename}",
+                )
+                if any(filename.lower().endswith(ext) for ext in CONVERTIBLE_EXTENSIONS):
+                    await storage_quota_service.release_object(
+                        db,
+                        user_id=user_id,
+                        source="thread_upload",
+                        resource_id=f"{thread_id}:{os.path.splitext(filename)[0]}.md",
+                    )
+                await db.commit()
+        return result
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
     except PathTraversalError:

@@ -1,5 +1,6 @@
 import type { TokenUsageInlineMode } from "../messages/usage-model";
 import type { AgentThreadContext } from "../threads";
+import { browserStorageQuotaService } from "@/core/storage/browser-quota";
 
 export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   notification: {
@@ -85,10 +86,10 @@ export function saveThreadModelName(
   }
   const key = getThreadModelStorageKey(threadId);
   if (!modelName) {
-    localStorage.removeItem(key);
+    browserStorageQuotaService.removeLocalItem(key);
     return;
   }
-  localStorage.setItem(key, modelName);
+  void browserStorageQuotaService.setLocalItem(key, modelName);
 }
 
 export function applyThreadModelOverride(
@@ -125,5 +126,8 @@ export function saveLocalSettings(settings: LocalSettings) {
   if (!isBrowser()) {
     return;
   }
-  localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(settings));
+  void browserStorageQuotaService.setLocalItem(
+    LOCAL_SETTINGS_KEY,
+    JSON.stringify(settings),
+  );
 }

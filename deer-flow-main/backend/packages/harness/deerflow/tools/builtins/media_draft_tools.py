@@ -12,6 +12,7 @@ from langgraph.typing import ContextT
 
 from deerflow.agents.thread_state import ThreadState
 from deerflow.media import DraftMediaRetention, draft_media_store
+from deerflow.runtime.user_context import get_effective_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ async def generate_image_draft(
     thread_id = _get_thread_id(runtime)
     if not thread_id:
         return Command(update={"messages": [ToolMessage("Error: Thread ID is not available", tool_call_id=tool_call_id)]})
+    user_id = get_effective_user_id()
 
     configurable = _get_configurable(runtime)
     retention = _resolve_retention(configurable)
@@ -79,7 +81,7 @@ async def generate_image_draft(
 
     update: dict = {}
     try:
-        removed = draft_media_store.cleanup_expired(thread_id=thread_id)
+        removed = draft_media_store.cleanup_expired(thread_id=thread_id, user_id=user_id)
         if removed:
             update["draft_media"] = _build_draft_media_deletions(removed)
     except Exception:
@@ -94,6 +96,7 @@ async def generate_image_draft(
             prompt=(prompt or "").strip(),
             model=(model or "").strip() or None,
             retention=retention,
+            user_id=user_id,
         )
     except Exception as exc:
         logger.warning("generate_image_draft failed: thread_id=%s error=%s", thread_id, exc)
@@ -129,6 +132,7 @@ async def generate_tts_draft(
     thread_id = _get_thread_id(runtime)
     if not thread_id:
         return Command(update={"messages": [ToolMessage("Error: Thread ID is not available", tool_call_id=tool_call_id)]})
+    user_id = get_effective_user_id()
 
     configurable = _get_configurable(runtime)
     retention = _resolve_retention(configurable)
@@ -136,7 +140,7 @@ async def generate_tts_draft(
 
     update: dict = {}
     try:
-        removed = draft_media_store.cleanup_expired(thread_id=thread_id)
+        removed = draft_media_store.cleanup_expired(thread_id=thread_id, user_id=user_id)
         if removed:
             update["draft_media"] = _build_draft_media_deletions(removed)
     except Exception:
@@ -153,6 +157,7 @@ async def generate_tts_draft(
             voice=(voice or "").strip() or None,
             fmt=(format or "").strip() or None,
             retention=retention,
+            user_id=user_id,
         )
     except Exception as exc:
         logger.warning("generate_tts_draft failed: thread_id=%s error=%s", thread_id, exc)

@@ -178,6 +178,152 @@ def test_get_ai_settings_reports_managed_newapi_model_sync_empty(monkeypatch) ->
     assert "没有返回可用模型" in provider["model_sync_error"]
 
 
+def test_get_ai_settings_preserves_synced_managed_newapi_models(monkeypatch) -> None:
+    monkeypatch.setenv("NEWAPI_OAUTH_ENABLED", "true")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://newapi:3000/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-newapi-managed")
+
+    async def _unexpected_fetch_managed_newapi_models(provider_id=None):
+        raise AssertionError("synced NewAPI model list should not be overwritten by fallback sync")
+
+    monkeypatch.setattr(
+        "app.gateway.novel_migrated.services.ai_settings_service.fetch_managed_newapi_models",
+        _unexpected_fetch_managed_newapi_models,
+    )
+
+    fake_db = _FakeDB()
+    fake_db.settings = Settings(
+        user_id="default_user",
+        preferences=json.dumps(
+            {
+                "ai_provider_settings": {
+                    "version": 1,
+                    "default_provider_id": "newapi-managed",
+                    "providers": [
+                        {
+                            "id": "newapi-managed",
+                            "name": "NewAPI（默认分组）",
+                            "provider": "openai",
+                            "base_url": "http://newapi:3000/v1",
+                            "models": ["newapi-model-a"],
+                            "is_active": True,
+                            "api_key_encrypted": "sk-user-token",
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "default",
+                            "model_groups": {"default": ["newapi-model-a"]},
+                            "model_sync_status": "synced",
+                            "model_sync_error": None,
+                        }
+                    ],
+                    "client_settings": {"enable_stream_mode": True, "request_timeout": 660000, "max_retries": 2},
+                    "feature_routing_settings": None,
+                }
+            }
+        ),
+    )
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/user/ai-settings")
+
+    assert resp.status_code == 200
+    provider = resp.json()["providers"][0]
+    assert provider["models"] == ["newapi-model-a"]
+    assert provider["model_sync_status"] == "synced"
+    assert provider["model_sync_error"] is None
+
+
+def test_get_ai_settings_preserves_oauth_newapi_group_providers_against_env_fallback(monkeypatch) -> None:
+    monkeypatch.setenv("NEWAPI_OAUTH_ENABLED", "true")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://newapi:3000/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "env-default-key")
+
+    async def _unexpected_fetch_managed_newapi_models(provider_id=None):
+        raise AssertionError("OAuth NewAPI group providers must not be collapsed by env fallback")
+
+    monkeypatch.setattr(
+        "app.gateway.novel_migrated.services.ai_settings_service.fetch_managed_newapi_models",
+        _unexpected_fetch_managed_newapi_models,
+    )
+
+    fake_db = _FakeDB()
+    fake_db.settings = Settings(
+        user_id="default_user",
+        preferences=json.dumps(
+            {
+                "ai_provider_settings": {
+                    "version": 1,
+                    "default_provider_id": "newapi-managed",
+                    "providers": [
+                        {
+                            "id": "newapi-managed",
+                            "name": "NewAPI（default）",
+                            "provider": "openai",
+                            "base_url": "http://newapi:3000/v1",
+                            "models": ["default-model"],
+                            "is_active": True,
+                            "api_key_encrypted": "user-default-key",
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "default",
+                            "model_groups": {"default": ["default-model"]},
+                            "model_sync_status": "synced",
+                            "model_sync_error": None,
+                        },
+                        {
+                            "id": "newapi-managed-vip",
+                            "name": "NewAPI（vip）",
+                            "provider": "openai",
+                            "base_url": "http://newapi:3000/v1",
+                            "models": ["vip-model"],
+                            "is_active": False,
+                            "api_key_encrypted": "user-vip-key",
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "vip",
+                            "model_groups": {"vip": ["vip-model"]},
+                            "model_sync_status": "synced",
+                            "model_sync_error": None,
+                        },
+                        {
+                            "id": "newapi-managed-svip",
+                            "name": "NewAPI（svip）",
+                            "provider": "openai",
+                            "base_url": "http://newapi:3000/v1",
+                            "models": [],
+                            "is_active": False,
+                            "api_key_encrypted": "user-svip-key",
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "svip",
+                            "model_groups": {},
+                            "model_sync_status": "empty",
+                            "model_sync_error": "NewAPI 分组 svip 没有返回可用模型",
+                        },
+                    ],
+                    "client_settings": {"enable_stream_mode": True, "request_timeout": 660000, "max_retries": 2},
+                    "feature_routing_settings": None,
+                }
+            },
+            ensure_ascii=False,
+        ),
+    )
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/user/ai-settings")
+
+    assert resp.status_code == 200
+    providers = {provider["id"]: provider for provider in resp.json()["providers"]}
+    assert set(providers) == {"newapi-managed", "newapi-managed-vip", "newapi-managed-svip"}
+    assert providers["newapi-managed-vip"]["managed_group"] == "vip"
+    assert providers["newapi-managed-vip"]["models"] == ["vip-model"]
+    assert providers["newapi-managed-svip"]["managed_group"] == "svip"
+    assert providers["newapi-managed-svip"]["models"] == []
+    assert "env-default-key" not in json.dumps(resp.json(), ensure_ascii=False)
+
+
 def test_get_ai_settings_injects_newapi_group_providers(monkeypatch) -> None:
     monkeypatch.setenv(
         "MIAOWU_NEWAPI_GROUPS_JSON",
@@ -205,6 +351,60 @@ def test_get_ai_settings_injects_newapi_group_providers(monkeypatch) -> None:
     dumped = json.dumps(data, ensure_ascii=False)
     assert "sk-basic" not in dumped
     assert "sk-vip" not in dumped
+
+
+def test_apply_managed_newapi_group_bootstrap_creates_group_scoped_providers() -> None:
+    fake_db = _FakeDB()
+    service = get_ai_settings_service()
+
+    import anyio
+
+    async def _run() -> dict:
+        return await service.apply_managed_newapi_group_bootstrap(
+            user_id="default_user",
+            groups=[
+                {
+                    "group_id": "basic",
+                    "name": "基础组",
+                    "base_url": "http://127.0.0.1:3000/v1",
+                    "api_key": "token-basic",
+                    "models": ["basic-model"],
+                    "model_groups": {"basic": ["basic-model"]},
+                    "model_sync_status": "synced",
+                    "model_sync_error": None,
+                },
+                {
+                    "group_id": "vip",
+                    "name": "VIP组",
+                    "base_url": "http://127.0.0.1:3000/v1",
+                    "api_key": "token-vip",
+                    "models": ["vip-model-a", "vip-model-b"],
+                    "model_groups": {"vip": ["vip-model-a", "vip-model-b"]},
+                    "model_sync_status": "synced",
+                    "model_sync_error": None,
+                },
+            ],
+            db=fake_db,
+        )
+
+    data = anyio.run(_run)
+
+    providers = {provider["id"]: provider for provider in data["providers"]}
+    assert providers["newapi-managed-basic"]["managed_group"] == "basic"
+    assert providers["newapi-managed-basic"]["models"] == ["basic-model"]
+    assert providers["newapi-managed-basic"]["has_api_key"] is True
+    assert providers["newapi-managed-vip"]["managed_group"] == "vip"
+    assert providers["newapi-managed-vip"]["models"] == ["vip-model-a", "vip-model-b"]
+    assert providers["newapi-managed-vip"]["has_api_key"] is True
+    assert data["default_provider_id"] == "newapi-managed-basic"
+    dumped = json.dumps(data, ensure_ascii=False)
+    assert "token-basic" not in dumped
+    assert "token-vip" not in dumped
+
+    prefs = json.loads(fake_db.settings.preferences or "{}")
+    stored = {provider["id"]: provider for provider in prefs["ai_provider_settings"]["providers"]}
+    assert stored["newapi-managed-basic"]["api_key_encrypted"] == "token-basic"
+    assert stored["newapi-managed-vip"]["api_key_encrypted"] == "token-vip"
 
 
 def test_put_ai_settings_encrypts_key_and_mirrors_active_provider() -> None:

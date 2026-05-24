@@ -81,9 +81,10 @@ def test_default_user_id_is_default():
 
 
 @pytest.mark.no_auto_user
-def test_effective_user_id_returns_default_when_no_user():
-    """No user in context -> fallback to DEFAULT_USER_ID."""
-    assert get_effective_user_id() == "default"
+def test_effective_user_id_raises_when_no_user():
+    """Protected runtime storage paths fail closed without user context."""
+    with pytest.raises(RuntimeError, match="without user context"):
+        get_effective_user_id()
 
 
 @pytest.mark.no_auto_user

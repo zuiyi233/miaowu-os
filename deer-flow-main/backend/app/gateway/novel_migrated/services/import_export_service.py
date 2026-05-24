@@ -144,6 +144,13 @@ class ImportExportService:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(member, "r") as src, open(target, "wb") as dst:
                     dst.write(src.read())
+                await workspace_document_service.track_imported_file(
+                    db=db,
+                    user_id=user_id,
+                    project_id=project.id,
+                    relative_path=rel,
+                    absolute_path=target,
+                )
 
         records = await workspace_document_service.rescan_workspace(user_id=user_id, project_id=project.id)
         await workspace_document_service.sync_records_to_db(

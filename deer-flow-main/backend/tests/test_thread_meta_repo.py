@@ -82,12 +82,12 @@ class TestThreadMetaRepository:
         await _cleanup()
 
     @pytest.mark.anyio
-    async def test_check_access_no_owner_allows_all(self, tmp_path):
+    async def test_check_access_no_owner_denies_normal_user(self, tmp_path):
         repo = await _make_repo(tmp_path)
         # Explicit user_id=None to bypass the new AUTO default that
         # would otherwise pick up the test user from the autouse fixture.
         await repo.create("t1", user_id=None)
-        assert await repo.check_access("t1", "anyone") is True
+        assert await repo.check_access("t1", "anyone") is False
         await _cleanup()
 
     @pytest.mark.anyio
@@ -117,16 +117,11 @@ class TestThreadMetaRepository:
         await _cleanup()
 
     @pytest.mark.anyio
-    async def test_check_access_strict_null_owner_still_allowed(self, tmp_path):
-        """Even in strict mode, a row with NULL user_id stays shared.
-
-        The strict flag tightens the *missing row* case, not the *shared
-        row* case — legacy pre-auth rows that survived a clean migration
-        without an owner are still everyone's.
-        """
+    async def test_check_access_strict_null_owner_denied(self, tmp_path):
+        """NULL-owner legacy rows are orphaned and not shared at runtime."""
         repo = await _make_repo(tmp_path)
         await repo.create("t1", user_id=None)
-        assert await repo.check_access("t1", "anyone", require_existing=True) is True
+        assert await repo.check_access("t1", "anyone", require_existing=True) is False
         await _cleanup()
 
     @pytest.mark.anyio

@@ -24,6 +24,7 @@ from unittest.mock import patch
 import pytest
 
 from deerflow.config.sandbox_config import SandboxConfig
+from deerflow.runtime.user_context import reset_current_user, set_current_user
 from deerflow.sandbox.local.local_sandbox_provider import LocalSandboxProvider
 
 
@@ -276,10 +277,14 @@ def test_concurrent_acquire_same_thread_yields_single_instance(provider):
     results_lock = threading.Lock()
 
     def racer():
-        barrier.wait()
-        sid = provider.acquire("alpha")
-        with results_lock:
-            results.append(sid)
+        token = set_current_user(SimpleNamespace(id="test-user-autouse"))
+        try:
+            barrier.wait()
+            sid = provider.acquire("alpha")
+            with results_lock:
+                results.append(sid)
+        finally:
+            reset_current_user(token)
 
     with patch.object(local_sandbox_module.LocalSandbox, "__init__", slow_init):
         threads = [threading.Thread(target=racer) for _ in range(8)]
@@ -304,10 +309,14 @@ def test_concurrent_acquire_distinct_threads_yields_distinct_instances(provider)
     lock = threading.Lock()
 
     def racer(name: str):
-        barrier.wait()
-        sid = provider.acquire(name)
-        with lock:
-            sids[name] = sid
+        token = set_current_user(SimpleNamespace(id="test-user-autouse"))
+        try:
+            barrier.wait()
+            sid = provider.acquire(name)
+            with lock:
+                sids[name] = sid
+        finally:
+            reset_current_user(token)
 
     threads = [threading.Thread(target=racer, args=(f"t{i}",)) for i in range(6)]
     for t in threads:

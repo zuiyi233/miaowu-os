@@ -114,6 +114,8 @@ HARNESS_ROUTER_MODULES = (
     "app.gateway.routers.thread_runs",
     "app.gateway.routers.runs",
     "app.gateway.routers.auth",
+    "app.gateway.routers.account",
+    "app.gateway.routers.admin",
 )
 CORE_ROUTER_MODULES = (
     "app.gateway.routers.novel",
