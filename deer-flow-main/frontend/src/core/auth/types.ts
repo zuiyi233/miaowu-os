@@ -11,7 +11,7 @@ export const userSchema = z.object({
     .object({
       user_id: z.string(),
       newapi_sub: z.string(),
-      email: z.string().email().nullable().optional(),
+      email: z.string().nullable().optional(),
       username: z.string().nullable().optional(),
       name: z.string().nullable().optional(),
       avatar: z.string().nullable().optional(),

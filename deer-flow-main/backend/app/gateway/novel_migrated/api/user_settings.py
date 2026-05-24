@@ -17,6 +17,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.auth.newapi_oauth import (
+    NewAPIOAuthError,
+    get_newapi_group_catalog_for_user,
+    sync_newapi_groups_for_user,
+)
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.user_context import get_request_user_id
 from app.gateway.novel_migrated.services.ai_settings_service import (
@@ -328,6 +333,149 @@ async def list_newapi_provider_groups(request: Request):
         )
         for group in groups
     ]
+
+
+class NewAPISyncGroupItem(BaseModel):
+    group_id: str
+    name: str
+    models: list[str] = Field(default_factory=list)
+    model_count: int = 0
+    provider_id: str
+    already_synced: bool = False
+    has_api_key: bool = False
+    model_sync_status: str | None = None
+    model_sync_error: str | None = None
+
+
+class NewAPISyncGroupsResponse(BaseModel):
+    groups: list[NewAPISyncGroupItem] = Field(default_factory=list)
+    manual_group_allowed: bool = True
+    warnings: list[str] = Field(default_factory=list)
+
+
+class NewAPISyncGroupsRequest(BaseModel):
+    groups: list[str] = Field(default_factory=list)
+    manual_groups: list[str] = Field(default_factory=list)
+
+
+class NewAPISyncGroupResult(BaseModel):
+    group_id: str
+    provider_id: str
+    model_count: int
+    has_api_key: bool
+    status: str
+    error: str | None = None
+
+
+class NewAPISyncGroupsApplyResponse(BaseModel):
+    results: list[NewAPISyncGroupResult] = Field(default_factory=list)
+    ai_settings: AiSettingsResponse
+
+
+def _newapi_provider_id_for_response(group_id: str) -> str:
+    normalized = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in group_id.strip().lower())
+    normalized = "-".join(part for part in normalized.split("-") if part) or "default"
+    if normalized == "default":
+        return MANAGED_NEWAPI_PROVIDER_ID
+    return f"{MANAGED_NEWAPI_PROVIDER_ID}-{normalized}"
+
+
+def _managed_newapi_provider_map(ai_settings: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    providers = ai_settings.get("providers") if isinstance(ai_settings, dict) else []
+    result: dict[str, dict[str, Any]] = {}
+    if not isinstance(providers, list):
+        return result
+    for provider in providers:
+        if not isinstance(provider, dict):
+            continue
+        if provider.get("managed_by") != "newapi":
+            continue
+        group = provider.get("managed_group")
+        if isinstance(group, str) and group.strip():
+            result[group.strip().lower()] = provider
+    return result
+
+
+@router.get("/newapi-sync/groups", response_model=NewAPISyncGroupsResponse)
+async def list_newapi_sync_groups(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return current user's selectable NewAPI groups without exposing tokens."""
+    user_id = get_request_user_id(request)
+    service = get_ai_settings_service()
+    ai_settings = await service.get_ai_settings(user_id, db)
+    provider_by_group = _managed_newapi_provider_map(ai_settings)
+    try:
+        catalog, warnings = await get_newapi_group_catalog_for_user(user_id=user_id, db=db)
+    except NewAPIOAuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    group_ids = sorted({*catalog.keys(), *provider_by_group.keys()})
+    items: list[NewAPISyncGroupItem] = []
+    for group_id in group_ids:
+        catalog_item = catalog.get(group_id) or catalog.get(group_id.lower()) or {}
+        provider = provider_by_group.get(group_id.lower()) or {}
+        models = catalog_item.get("models") if isinstance(catalog_item.get("models"), list) else provider.get("models")
+        model_list = [item for item in (models or []) if isinstance(item, str) and item.strip()]
+        status = provider.get("model_sync_status") if isinstance(provider.get("model_sync_status"), str) else None
+        error = provider.get("model_sync_error") if isinstance(provider.get("model_sync_error"), str) else None
+        items.append(
+            NewAPISyncGroupItem(
+                group_id=group_id,
+                name=str(catalog_item.get("name") or provider.get("name") or group_id),
+                models=sorted(dict.fromkeys(model_list)),
+                model_count=len(set(model_list)),
+                provider_id=str(provider.get("id") or _newapi_provider_id_for_response(group_id)),
+                already_synced=bool(provider),
+                has_api_key=bool(provider.get("has_api_key")),
+                model_sync_status=status,
+                model_sync_error=error,
+            )
+        )
+
+    logger.info(
+        "NewAPI sync groups listed user_id=%s groups=%d synced=%d",
+        user_id,
+        len(items),
+        sum(1 for item in items if item.already_synced),
+    )
+    return NewAPISyncGroupsResponse(groups=items, warnings=warnings)
+
+
+@router.post("/newapi-sync/groups", response_model=NewAPISyncGroupsApplyResponse)
+async def sync_newapi_sync_groups(
+    payload: NewAPISyncGroupsRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Synchronize user-selected NewAPI groups into managed AI providers."""
+    user_id = get_request_user_id(request)
+    try:
+        sync_result = await sync_newapi_groups_for_user(
+            user_id=user_id,
+            groups=payload.groups,
+            manual_groups=payload.manual_groups,
+            db=db,
+        )
+    except NewAPIOAuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    ai_settings = await get_ai_settings_service().get_ai_settings(user_id, db)
+    return NewAPISyncGroupsApplyResponse(
+        results=[
+            NewAPISyncGroupResult(
+                group_id=item.group_id,
+                provider_id=item.provider_id,
+                model_count=item.model_count,
+                has_api_key=item.has_api_key,
+                status=item.status,
+                error=item.error,
+            )
+            for item in sync_result.results
+        ],
+        ai_settings=ai_settings,
+    )
 
 
 def _get_anthropic_static_models() -> list[str]:

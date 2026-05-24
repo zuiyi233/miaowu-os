@@ -80,6 +80,38 @@ export interface UserAiSettingsUpdate {
   system_prompt?: string | null;
 }
 
+export interface NewApiSyncGroupItem {
+  group_id: string;
+  name: string;
+  models: string[];
+  model_count: number;
+  provider_id: string;
+  already_synced: boolean;
+  has_api_key: boolean;
+  model_sync_status?: string | null;
+  model_sync_error?: string | null;
+}
+
+export interface NewApiSyncGroupsResponse {
+  groups: NewApiSyncGroupItem[];
+  manual_group_allowed: boolean;
+  warnings: string[];
+}
+
+export interface NewApiSyncGroupResult {
+  group_id: string;
+  provider_id: string;
+  model_count: number;
+  has_api_key: boolean;
+  status: string;
+  error?: string | null;
+}
+
+export interface NewApiSyncGroupsApplyResponse {
+  results: NewApiSyncGroupResult[];
+  ai_settings: UserAiSettings;
+}
+
 export class ApiHttpError extends Error {
   status: number;
   statusText: string;
@@ -120,6 +152,39 @@ export async function putUserAiSettings(
     throw new ApiHttpError(response.status, response.statusText);
   }
   return (await response.json()) as UserAiSettings;
+}
+
+export async function fetchNewApiSyncGroups(
+  signal?: AbortSignal
+): Promise<NewApiSyncGroupsResponse> {
+  const response = await fetch(`${getApiBase()}/api/user/newapi-sync/groups`, {
+    credentials: "include",
+    signal,
+  });
+  if (!response.ok) {
+    throw new ApiHttpError(response.status, response.statusText);
+  }
+  return (await response.json()) as NewApiSyncGroupsResponse;
+}
+
+export async function syncNewApiGroups(
+  payload: { groups?: string[]; manual_groups?: string[] },
+  signal?: AbortSignal
+): Promise<NewApiSyncGroupsApplyResponse> {
+  const response = await fetch(`${getApiBase()}/api/user/newapi-sync/groups`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({
+      groups: payload.groups ?? [],
+      manual_groups: payload.manual_groups ?? [],
+    }),
+    signal,
+  });
+  if (!response.ok) {
+    throw new ApiHttpError(response.status, response.statusText);
+  }
+  return (await response.json()) as NewApiSyncGroupsApplyResponse;
 }
 
 export function useAiSettingsApi() {

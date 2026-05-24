@@ -25,6 +25,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Command,
   CommandEmpty,
@@ -62,6 +63,12 @@ import {
   type AiProviderConfig,
   type AiProviderType,
 } from "@/core/ai/ai-provider-store";
+import {
+  fetchNewApiSyncGroups,
+  syncNewApiGroups,
+  type NewApiSyncGroupItem,
+  type NewApiSyncGroupResult,
+} from "@/core/ai/useAiSettingsApi";
 import {
   createCustomModuleRoute,
   getProviderDisplayName,
@@ -484,6 +491,26 @@ function isNewApiManagedProvider(
   );
 }
 
+function normalizeManualGroups(value: string): string[] {
+  return value
+    .split(/[\n,，;；\s]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function newApiSyncStatusLabel(status?: string | null): string {
+  switch (status) {
+    case "synced":
+      return "已同步";
+    case "empty":
+      return "无模型";
+    case "error":
+      return "失败";
+    default:
+      return "未同步";
+  }
+}
+
 export function AiProviderSettingsPage() {
   const {
     hydrated,
@@ -525,6 +552,15 @@ export function AiProviderSettingsPage() {
   const [fetchingModels, setFetchingModels] = useState(false);
   const [fetchModelsError, setFetchModelsError] = useState<string | null>(null);
   const [newApiSyncPending, setNewApiSyncPending] = useState(false);
+  const [newApiSyncDialogOpen, setNewApiSyncDialogOpen] = useState(false);
+  const [newApiSyncGroups, setNewApiSyncGroups] = useState<NewApiSyncGroupItem[]>([]);
+  const [newApiSelectedGroups, setNewApiSelectedGroups] = useState<Set<string>>(new Set());
+  const [newApiManualGroups, setNewApiManualGroups] = useState("");
+  const [newApiSyncWarnings, setNewApiSyncWarnings] = useState<string[]>([]);
+  const [newApiSyncResults, setNewApiSyncResults] = useState<NewApiSyncGroupResult[]>([]);
+  const [newApiSyncLoading, setNewApiSyncLoading] = useState(false);
+  const [newApiSyncApplying, setNewApiSyncApplying] = useState(false);
+  const [newApiSyncError, setNewApiSyncError] = useState<string | null>(null);
 
   useEffect(() => {
     if (routingNotice) {
@@ -851,13 +887,65 @@ export function AiProviderSettingsPage() {
   );
   const managedNewApiProviders = providers.filter((provider) => isNewApiManagedProvider(provider));
 
+  const loadNewApiSyncGroups = useCallback(async () => {
+    setNewApiSyncLoading(true);
+    setNewApiSyncError(null);
+    setNewApiSyncResults([]);
+    try {
+      const data = await fetchNewApiSyncGroups();
+      setNewApiSyncGroups(data.groups ?? []);
+      setNewApiSyncWarnings(data.warnings ?? []);
+      setNewApiSelectedGroups((prev) => {
+        const availableIds = new Set((data.groups ?? []).map((group) => group.group_id));
+        const kept = new Set([...prev].filter((groupId) => availableIds.has(groupId)));
+        if (kept.size === 0 && data.groups.length === 1) {
+          kept.add(data.groups[0]!.group_id);
+        }
+        return kept;
+      });
+    } catch (err) {
+      setNewApiSyncGroups([]);
+      setNewApiSyncWarnings([]);
+      setNewApiSyncError(err instanceof Error ? err.message : "NewAPI 分组读取失败");
+    } finally {
+      setNewApiSyncLoading(false);
+    }
+  }, []);
+
   const handleOpenNewApiResync = useCallback(() => {
+    setNewApiSyncDialogOpen(true);
+    void loadNewApiSyncGroups();
+  }, [loadNewApiSyncGroups]);
+
+  const handleOpenNewApiLoginTab = useCallback(() => {
     window.localStorage.setItem(NEWAPI_SYNC_PENDING_KEY, "1");
     setNewApiSyncPending(true);
     setSaveError(null);
     setSaveSuccess("已打开 NewAPI 同步窗口；完成登录后回到本页会自动刷新。");
     window.open(buildNewApiResyncUrl(), "_blank", "noopener,noreferrer");
   }, []);
+
+  const handleApplyNewApiGroupSync = useCallback(async () => {
+    const selected = [...newApiSelectedGroups];
+    const manual = normalizeManualGroups(newApiManualGroups);
+    if (selected.length === 0 && manual.length === 0) {
+      setNewApiSyncError("请选择分组，或手动输入至少一个分组名");
+      return;
+    }
+    setNewApiSyncApplying(true);
+    setNewApiSyncError(null);
+    setNewApiSyncResults([]);
+    try {
+      const result = await syncNewApiGroups({ groups: selected, manual_groups: manual });
+      setNewApiSyncResults(result.results ?? []);
+      await refreshFromServer();
+      setSaveSuccess("NewAPI 分组同步完成，已刷新服务商列表。");
+    } catch (err) {
+      setNewApiSyncError(err instanceof Error ? err.message : "NewAPI 分组同步失败");
+    } finally {
+      setNewApiSyncApplying(false);
+    }
+  }, [newApiManualGroups, newApiSelectedGroups, refreshFromServer]);
 
   return (
     <div className="space-y-8">
@@ -884,6 +972,169 @@ export function AiProviderSettingsPage() {
           <AlertDescription>{saveSuccess}</AlertDescription>
         </Alert>
       )}
+
+      <Dialog open={newApiSyncDialogOpen} onOpenChange={setNewApiSyncDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>同步 NewAPI 分组</DialogTitle>
+            <DialogDescription>
+              选择要同步的 NewAPI 分组，后端会为每个分组创建或复用密钥并拉取模型；密钥不会返回到浏览器。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void loadNewApiSyncGroups()}
+                disabled={newApiSyncLoading || newApiSyncApplying}
+              >
+                <RefreshCw className={cn("mr-1 h-4 w-4", newApiSyncLoading && "animate-spin")} />
+                重新发现分组
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleOpenNewApiLoginTab}
+                disabled={newApiSyncApplying}
+              >
+                <ExternalLink className="mr-1 h-4 w-4" />
+                重新登录 NewAPI
+              </Button>
+            </div>
+
+            {newApiSyncError && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>NewAPI 同步失败</AlertTitle>
+                <AlertDescription>{newApiSyncError}</AlertDescription>
+              </Alert>
+            )}
+
+            {newApiSyncWarnings.length > 0 && (
+              <Alert>
+                <AlertTriangle className="h-4 w-4 text-amber-600" />
+                <AlertTitle>需要注意</AlertTitle>
+                <AlertDescription className="space-y-1">
+                  {newApiSyncWarnings.map((warning) => (
+                    <div key={warning}>{warning}</div>
+                  ))}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>发现到的分组</Label>
+                <span className="text-xs text-muted-foreground">
+                  {newApiSyncLoading ? "读取中" : `${newApiSyncGroups.length} 个分组`}
+                </span>
+              </div>
+              <div className="max-h-64 overflow-y-auto rounded-md border">
+                {newApiSyncGroups.length === 0 ? (
+                  <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                    {newApiSyncLoading ? "正在读取 NewAPI 分组..." : "未发现分组，可在下方手动输入。"}
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {newApiSyncGroups.map((group) => {
+                      const checked = newApiSelectedGroups.has(group.group_id);
+                      const status = group.model_sync_status ?? (group.already_synced ? "synced" : null);
+                      return (
+                        <label
+                          key={group.group_id}
+                          className="flex cursor-pointer items-start gap-3 px-3 py-3 hover:bg-muted/50"
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(value) => {
+                              setNewApiSelectedGroups((prev) => {
+                                const next = new Set(prev);
+                                if (value) next.add(group.group_id);
+                                else next.delete(group.group_id);
+                                return next;
+                              });
+                            }}
+                            className="mt-0.5"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-center gap-2">
+                              <span className="font-medium">{group.name || group.group_id}</span>
+                              <Badge variant="outline">{group.group_id}</Badge>
+                              <Badge variant={status === "error" ? "destructive" : "secondary"}>
+                                {newApiSyncStatusLabel(status)}
+                              </Badge>
+                            </span>
+                            <span className="mt-1 block text-xs text-muted-foreground">
+                              {group.model_count} 个模型
+                              {group.already_synced ? " · 已有本地 provider" : ""}
+                              {group.has_api_key ? " · 已有服务端密钥" : ""}
+                            </span>
+                            {group.model_sync_error && (
+                              <span className="mt-1 block text-xs text-destructive">{group.model_sync_error}</span>
+                            )}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="newapi-manual-groups">手动输入分组名</Label>
+              <Input
+                id="newapi-manual-groups"
+                value={newApiManualGroups}
+                onChange={(event) => setNewApiManualGroups(event.target.value)}
+                placeholder="例如：default, vip, svip"
+                disabled={newApiSyncApplying}
+              />
+              <p className="text-xs text-muted-foreground">
+                当 NewAPI 分组目录不完整时，可手动输入分组名；多个分组用逗号、空格或换行分隔。
+              </p>
+            </div>
+
+            {newApiSyncResults.length > 0 && (
+              <div className="space-y-2">
+                <Label>同步结果</Label>
+                <div className="rounded-md border">
+                  {newApiSyncResults.map((result) => (
+                    <div key={`${result.group_id}-${result.provider_id}`} className="flex items-start justify-between gap-3 border-b px-3 py-2 last:border-b-0">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium">{result.group_id}</span>
+                          <Badge variant={result.status === "error" ? "destructive" : "secondary"}>
+                            {newApiSyncStatusLabel(result.status)}
+                          </Badge>
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {result.provider_id} · {result.model_count} 个模型 · {result.has_api_key ? "已有密钥" : "无密钥"}
+                        </div>
+                        {result.error && <div className="mt-1 text-xs text-destructive">{result.error}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setNewApiSyncDialogOpen(false)}>
+              关闭
+            </Button>
+            <Button type="button" onClick={handleApplyNewApiGroupSync} disabled={newApiSyncApplying || newApiSyncLoading}>
+              <RefreshCw className={cn("mr-1 h-4 w-4", newApiSyncApplying && "animate-spin")} />
+              同步选中分组
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <SettingsSection title="AI 服务商" description="NewAPI 是系统内置统一供应商；也可以按需添加 OpenAI、Anthropic、Google 或自定义第三方供应商。">
         <div className="flex items-center gap-2 mb-3">

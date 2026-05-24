@@ -522,6 +522,115 @@ def test_put_ai_settings_persists_provider_model_groups() -> None:
     }
 
 
+def test_newapi_sync_groups_lists_catalog_and_existing_managed_provider(monkeypatch) -> None:
+    fake_db = _FakeDB()
+    fake_db.settings = Settings(
+        user_id="default_user",
+        preferences=json.dumps(
+            {
+                "ai_provider_settings": {
+                    "version": 1,
+                    "default_provider_id": "newapi-managed",
+                    "providers": [
+                        {
+                            "id": "newapi-managed",
+                            "name": "NewAPI（default）",
+                            "provider": "openai",
+                            "base_url": "http://newapi:3000/v1",
+                            "models": ["default-model"],
+                            "is_active": True,
+                            "api_key_encrypted": "token-default",
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "default",
+                            "model_groups": {"default": ["default-model"]},
+                            "model_sync_status": "synced",
+                            "model_sync_error": None,
+                        }
+                    ],
+                    "client_settings": {"enable_stream_mode": True, "request_timeout": 660000, "max_retries": 2},
+                    "feature_routing_settings": None,
+                }
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    async def _fake_catalog(*, user_id, db):
+        assert user_id == "default_user"
+        assert db is fake_db
+        return {
+            "default": {"name": "默认分组", "models": ["default-model"]},
+            "vip": {"name": "VIP分组", "models": ["vip-model"]},
+        }, []
+
+    monkeypatch.setattr(user_settings, "get_newapi_group_catalog_for_user", _fake_catalog)
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/user/newapi-sync/groups")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    groups = {item["group_id"]: item for item in data["groups"]}
+    assert groups["default"]["already_synced"] is True
+    assert groups["default"]["has_api_key"] is True
+    assert groups["default"]["model_sync_status"] == "synced"
+    assert groups["vip"]["already_synced"] is False
+    assert groups["vip"]["model_count"] == 1
+    assert "token-default" not in json.dumps(data, ensure_ascii=False)
+
+
+def test_newapi_sync_groups_applies_selected_and_manual_groups(monkeypatch) -> None:
+    from app.gateway.auth.newapi_oauth import NewAPIManualGroupSyncItem, NewAPIManualGroupSyncResult
+
+    fake_db = _FakeDB()
+
+    async def _fake_sync(*, user_id, groups, manual_groups, db):
+        assert user_id == "default_user"
+        assert groups == ["default"]
+        assert manual_groups == ["vip"]
+        assert db is fake_db
+        return NewAPIManualGroupSyncResult(
+            results=(
+                NewAPIManualGroupSyncItem(
+                    group_id="default",
+                    provider_id="newapi-managed",
+                    model_count=1,
+                    has_api_key=True,
+                    status="synced",
+                    error=None,
+                ),
+                NewAPIManualGroupSyncItem(
+                    group_id="vip",
+                    provider_id="newapi-managed-vip",
+                    model_count=2,
+                    has_api_key=True,
+                    status="synced",
+                    error=None,
+                ),
+            ),
+            group_items=(),
+        )
+
+    monkeypatch.setattr(user_settings, "sync_newapi_groups_for_user", _fake_sync)
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/user/newapi-sync/groups",
+            json={"groups": ["default"], "manual_groups": ["vip"]},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [item["group_id"] for item in data["results"]] == ["default", "vip"]
+    assert data["results"][1]["provider_id"] == "newapi-managed-vip"
+    dumped = json.dumps(data, ensure_ascii=False)
+    assert "token-default" not in dumped
+    assert "token-vip" not in dumped
+
+
 def test_put_ai_settings_keeps_feature_routing_settings_when_omitted() -> None:
     fake_db = _FakeDB()
     app = _build_user_settings_app(fake_db)

@@ -21,6 +21,7 @@ $BackendDir = Join-Path $RepoRoot "backend"
 
 $FrontendPort = 4560
 $BackendPort = 8551
+$FallbackFrontendPort = 14560
 
 function Write-Info {
     param([string]$Message)
@@ -53,6 +54,63 @@ function Ensure-Directory {
 function Escape-SingleQuote {
     param([Parameter(Mandatory = $true)][string]$Text)
     return $Text.Replace("'", "''")
+}
+
+function Get-BackendLocalNewApiSetupLines {
+    return @(
+        '$localNewApiEnv = Join-Path (Get-Location) ".miaowu-local-newapi.env"',
+        'if (Test-Path -LiteralPath $localNewApiEnv) {',
+        '    Get-Content -LiteralPath $localNewApiEnv | ForEach-Object {',
+        '        $line = $_.Trim()',
+        '        if (-not $line -or $line.StartsWith("#") -or $line -notmatch "^[A-Za-z_][A-Za-z0-9_]*=") { return }',
+        '        $parts = $line.Split("=", 2)',
+        '        $key = $parts[0].Trim()',
+        '        $value = $parts[1].Trim()',
+        '        if (($value.StartsWith("""") -and $value.EndsWith("""")) -or ($value.StartsWith("' + "'" + '") -and $value.EndsWith("' + "'" + '"))) {',
+        '            $value = $value.Substring(1, $value.Length - 2)',
+        '        }',
+        '        [Environment]::SetEnvironmentVariable($key, $value, "Process")',
+        '    }',
+        '}',
+        '$env:NEWAPI_OAUTH_ISSUER = "http://127.0.0.1:3000"',
+        '$env:NEWAPI_OAUTH_PUBLIC_ISSUER = "http://127.0.0.1:3000"',
+        '$env:MIAOWU_NEWAPI_BASE_URL = "http://127.0.0.1:3000/v1"',
+        '$env:NEWAPI_OPENAI_BASE_URL = "http://127.0.0.1:3000/v1"',
+        '$env:OPENAI_BASE_URL = "http://127.0.0.1:3000/v1"'
+    )
+}
+
+function Test-TcpPortExcluded {
+    param([Parameter(Mandatory = $true)][int]$Port)
+
+    try {
+        $lines = netsh interface ipv4 show excludedportrange protocol=tcp
+        foreach ($line in $lines) {
+            if ($line -match "^\s*(\d+)\s+(\d+)\s*(\*)?\s*$") {
+                $startPort = [int]$Matches[1]
+                $endPort = [int]$Matches[2]
+                if ($Port -ge $startPort -and $Port -le $endPort) {
+                    return $true
+                }
+            }
+        }
+    } catch {
+        Write-WarnLine "Unable to inspect Windows excluded TCP port ranges: $($_.Exception.Message)"
+    }
+
+    return $false
+}
+
+function Resolve-FrontendPortForStart {
+    if (-not (Test-TcpPortExcluded -Port $FrontendPort)) {
+        return $FrontendPort
+    }
+
+    Write-WarnLine "Frontend port $FrontendPort is reserved by Windows TCP exclusion ranges; using $FallbackFrontendPort for this local-dev run."
+    if (Test-TcpPortExcluded -Port $FallbackFrontendPort) {
+        throw "Fallback frontend port $FallbackFrontendPort is also reserved by Windows TCP exclusion ranges."
+    }
+    return $FallbackFrontendPort
 }
 
 function Get-PortOwnerPid {
@@ -463,12 +521,24 @@ function Ensure-PortsReadyForStart {
 
 function Print-Status {
     $state = Read-State
+    $backendStatusPort = $BackendPort
+    $frontendStatusPort = $FrontendPort
+    if ($null -ne $state -and $null -ne $state.services) {
+        foreach ($svc in $state.services) {
+            if ($svc.name -eq "backend") {
+                $backendStatusPort = [int]$svc.port
+            }
+            if ($svc.name -eq "frontend") {
+                $frontendStatusPort = [int]$svc.port
+            }
+        }
+    }
 
     Write-Host ""
     Write-Host "Local Dev Status"
     Write-Host "----------------"
-    Write-Host "Backend  (port $BackendPort): PID $(Get-PortOwnerPid -Port $BackendPort)"
-    Write-Host "Frontend (port $FrontendPort): PID $(Get-PortOwnerPid -Port $FrontendPort)"
+    Write-Host "Backend  (port $backendStatusPort): PID $(Get-PortOwnerPid -Port $backendStatusPort)"
+    Write-Host "Frontend (port $frontendStatusPort): PID $(Get-PortOwnerPid -Port $frontendStatusPort)"
 
     if ($null -eq $state) {
         Write-WarnLine "No state file found: $StateFile"
@@ -492,6 +562,7 @@ function Print-Status {
 function Start-AllServices {
     Assert-CommandExists -CommandName "pnpm"
     Assert-CommandExists -CommandName "uv"
+    $script:FrontendPort = Resolve-FrontendPortForStart
 
     if (-not (Test-Path -LiteralPath $FrontendDir)) {
         throw "Frontend directory not found: $FrontendDir"
@@ -523,11 +594,11 @@ function Start-AllServices {
     $backendRunner = New-RunnerScript `
         -Name "backend" `
         -WorkingDirectory $BackendDir `
-        -SetupLines @(
+        -SetupLines (@(
             '$env:PYTHONPATH = "."',
             '$env:GATEWAY_PORT = "8551"',
-            '$env:CORS_ORIGINS = "http://localhost:4560,http://127.0.0.1:4560"'
-        ) `
+            '$env:CORS_ORIGINS = "http://localhost:4560,http://127.0.0.1:4560,http://localhost:14560,http://127.0.0.1:14560"'
+        ) + (Get-BackendLocalNewApiSetupLines)) `
         -CommandLine $backendCommandLine `
         -LogFile $backendLog `
         -UseTee $splitWindow
@@ -548,7 +619,7 @@ function Start-AllServices {
             '$env:DEER_FLOW_INTERNAL_GATEWAY_BASE_URL = "http://127.0.0.1:8551"',
             '$env:DEER_FLOW_INTERNAL_LANGGRAPH_BASE_URL = "http://127.0.0.1:8551/api"'
         ) `
-        -CommandLine "& pnpm run dev -- --port 4560" `
+        -CommandLine "& pnpm run dev -- --hostname 127.0.0.1 --port $FrontendPort" `
         -LogFile $frontendLog `
         -UseTee $splitWindow
     $frontendProc = Start-RunnerProcess -RunnerPath $frontendRunner -SplitWindow $splitWindow

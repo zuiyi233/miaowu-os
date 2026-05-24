@@ -20,9 +20,10 @@ from sqlalchemy import select
 
 from app.gateway.auth.config import get_auth_config
 from app.gateway.auth.models import NewAPIAccountSnapshot, User
+from app.gateway.novel_migrated.core.crypto import encrypt_secret, is_encryption_enabled, safe_decrypt
 from app.gateway.novel_migrated.core.database import AsyncSessionLocal
 from app.gateway.novel_migrated.models.settings import Settings
-from app.gateway.novel_migrated.services.ai_settings_service import get_ai_settings_service
+from app.gateway.novel_migrated.services.ai_settings_service import MANAGED_NEWAPI_PROVIDER_ID, get_ai_settings_service
 from app.gateway.product_entitlements import product_entitlement_service
 
 NEWAPI_PROVIDER = "newapi"
@@ -31,6 +32,9 @@ _DEFAULT_SCOPES = "openid profile email"
 _DEFAULT_REDIRECT_URI = "http://127.0.0.1:8551/api/v1/auth/callback/newapi"
 _EMAIL_ADAPTER = TypeAdapter(EmailStr)
 _ADMIN_ROLE_VALUES = {"admin", "administrator", "root", "owner", "super_admin", "superadmin"}
+_NEWAPI_SYNC_PREF_KEY = "newapi_sync"
+_MAX_MANUAL_GROUPS = 20
+_MAX_GROUP_NAME_LENGTH = 80
 logger = logging.getLogger(__name__)
 
 
@@ -89,6 +93,23 @@ class NewAPIBootstrapResult:
     groups_with_key_count: int = 0
     managed_groups: tuple[str, ...] = ()
     message: str | None = None
+
+
+@dataclass(frozen=True)
+class NewAPIManualGroupSyncItem:
+    group_id: str
+    provider_id: str
+    model_count: int
+    has_api_key: bool
+    status: str
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class NewAPIManualGroupSyncResult:
+    results: tuple[NewAPIManualGroupSyncItem, ...]
+    group_items: tuple[dict[str, Any], ...]
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -397,6 +418,8 @@ async def bootstrap_user_ai_settings_from_newapi(
                 relay_base_url = raw_relay.strip()
 
         system_access_token = _extract_newapi_system_access_token(result)
+        if system_access_token:
+            await _save_newapi_sync_token(user_id=user_id, system_access_token=system_access_token)
         group_catalog = await _fetch_newapi_hub_group_catalog(
             settings=settings,
             system_access_token=system_access_token,
@@ -458,6 +481,206 @@ async def bootstrap_user_ai_settings_from_newapi(
     except Exception:
         logger.exception("NewAPI bootstrap failed user_id=%s", user_id)
         return NewAPIBootstrapResult(success=False, message="NewAPI Hub bootstrap failed unexpectedly.")
+
+
+def _load_settings_preferences(settings: Settings) -> dict[str, Any]:
+    raw = settings.preferences or "{}"
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return {}
+    else:
+        parsed = raw
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _save_settings_preferences(settings: Settings, preferences: dict[str, Any]) -> None:
+    settings.preferences = json.dumps(preferences, ensure_ascii=False)
+
+
+def _safe_newapi_group_id(value: str) -> str:
+    normalized = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in value.strip().lower())
+    normalized = "-".join(part for part in normalized.split("-") if part)
+    return normalized or "default"
+
+
+def _newapi_provider_id_for_sync_group(group_id: str) -> str:
+    safe_group = _safe_newapi_group_id(group_id)
+    if safe_group == "default":
+        return MANAGED_NEWAPI_PROVIDER_ID
+    return f"{MANAGED_NEWAPI_PROVIDER_ID}-{safe_group}"
+
+
+def _normalize_newapi_group_names(*groups: list[str] | tuple[str, ...] | None) -> list[str]:
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for values in groups:
+        for raw in values or []:
+            if not isinstance(raw, str):
+                continue
+            group = raw.strip()
+            if not group:
+                continue
+            if len(group) > _MAX_GROUP_NAME_LENGTH:
+                group = group[:_MAX_GROUP_NAME_LENGTH].strip()
+            key = group.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(group)
+            if len(normalized) >= _MAX_MANUAL_GROUPS:
+                return normalized
+    return normalized
+
+
+async def _save_newapi_sync_token(*, user_id: str, system_access_token: str) -> None:
+    token = system_access_token.strip()
+    if not token:
+        return
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Settings).where(Settings.user_id == user_id))
+        settings = result.scalar_one_or_none()
+        if settings is None:
+            settings = Settings(user_id=user_id)
+            db.add(settings)
+            await db.flush()
+        preferences = _load_settings_preferences(settings)
+        sync_state = preferences.get(_NEWAPI_SYNC_PREF_KEY)
+        if not isinstance(sync_state, dict):
+            sync_state = {}
+        sync_state["system_access_token_encrypted"] = encrypt_secret(token) if is_encryption_enabled() else token
+        sync_state["updated_at"] = int(time.time())
+        preferences[_NEWAPI_SYNC_PREF_KEY] = sync_state
+        _save_settings_preferences(settings, preferences)
+        await db.commit()
+
+
+def _read_newapi_sync_token_from_settings(settings: Settings) -> str | None:
+    preferences = _load_settings_preferences(settings)
+    sync_state = preferences.get(_NEWAPI_SYNC_PREF_KEY)
+    if not isinstance(sync_state, dict):
+        return None
+    encrypted = sync_state.get("system_access_token_encrypted")
+    if not isinstance(encrypted, str) or not encrypted.strip():
+        return None
+    return safe_decrypt(encrypted.strip()) or encrypted.strip()
+
+
+async def get_newapi_group_catalog_for_user(*, user_id: str, db=None) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    settings = require_newapi_settings()
+    warnings: list[str] = []
+    owns_db = db is None
+    if owns_db:
+        db_cm = AsyncSessionLocal()
+        db = await db_cm.__aenter__()
+    else:
+        db_cm = None
+    try:
+        result = await db.execute(select(Settings).where(Settings.user_id == user_id))
+        user_settings = result.scalar_one_or_none()
+        if user_settings is None:
+            warnings.append("当前账号还没有 NewAPI 同步令牌，请重新使用 NewAPI 登录。")
+            return {}, warnings
+        system_token = _read_newapi_sync_token_from_settings(user_settings)
+        if not system_token:
+            warnings.append("当前账号缺少 NewAPI 同步令牌，请重新使用 NewAPI 登录。")
+            return {}, warnings
+        catalog = await _fetch_newapi_hub_group_catalog(settings=settings, system_access_token=system_token)
+        if not catalog:
+            warnings.append("未从 NewAPI 获取到分组目录，可手动输入分组名同步。")
+        return catalog, warnings
+    finally:
+        if owns_db and db_cm is not None:
+            await db_cm.__aexit__(None, None, None)
+
+
+async def sync_newapi_groups_for_user(
+    *,
+    user_id: str,
+    groups: list[str] | tuple[str, ...] | None,
+    manual_groups: list[str] | tuple[str, ...] | None = None,
+    db,
+) -> NewAPIManualGroupSyncResult:
+    settings = require_newapi_settings()
+    requested_groups = _normalize_newapi_group_names(list(groups or []), list(manual_groups or []))
+    if not requested_groups:
+        raise NewAPIOAuthError("请选择至少一个 NewAPI 分组。", status_code=400)
+
+    result = await db.execute(select(Settings).where(Settings.user_id == user_id))
+    user_settings = result.scalar_one_or_none()
+    if user_settings is None:
+        raise NewAPIOAuthError("当前账号还没有 NewAPI 同步状态，请重新使用 NewAPI 登录。", status_code=409)
+    system_token = _read_newapi_sync_token_from_settings(user_settings)
+    if not system_token:
+        raise NewAPIOAuthError("当前账号缺少 NewAPI 同步令牌，请重新使用 NewAPI 登录。", status_code=409)
+
+    catalog = await _fetch_newapi_hub_group_catalog(settings=settings, system_access_token=system_token)
+    bootstraps = await _bootstrap_newapi_group_tokens(
+        settings=settings,
+        authorization_token=system_token,
+        groups=requested_groups,
+    )
+    relay_base_url = f"{settings.issuer.rstrip('/')}/v1"
+    group_items = await _build_newapi_managed_group_items(
+        settings=settings,
+        group_catalog=catalog,
+        group_bootstraps=bootstraps,
+        relay_base_url=relay_base_url,
+    )
+
+    items_by_requested: dict[str, dict[str, Any]] = {}
+    for item in group_items:
+        group_id = str(item.get("group_id") or "").strip()
+        if group_id:
+            items_by_requested[group_id.lower()] = item
+
+    results: list[NewAPIManualGroupSyncItem] = []
+    for group in requested_groups:
+        item = items_by_requested.get(group.lower())
+        if item is None:
+            bootstrap_error = bootstraps.get(group, {}).get("model_sync_error") if isinstance(bootstraps.get(group), dict) else None
+            results.append(
+                NewAPIManualGroupSyncItem(
+                    group_id=group,
+                    provider_id=_newapi_provider_id_for_sync_group(group),
+                    model_count=0,
+                    has_api_key=False,
+                    status="error",
+                    error=str(bootstrap_error or f"NewAPI 分组 {group} 同步失败"),
+                )
+            )
+            continue
+        models = _normalize_newapi_model_list(item.get("models"))
+        status = str(item.get("model_sync_status") or ("synced" if models else "empty"))
+        error = item.get("model_sync_error") if isinstance(item.get("model_sync_error"), str) else None
+        group_id = str(item.get("group_id") or group).strip() or group
+        results.append(
+            NewAPIManualGroupSyncItem(
+                group_id=group_id,
+                provider_id=_newapi_provider_id_for_sync_group(group_id),
+                model_count=len(models),
+                has_api_key=bool(_extract_newapi_token_key(bootstraps.get(group, {})) or item.get("api_key")),
+                status=status,
+                error=error,
+            )
+        )
+
+    persistable_items = [item for item in group_items if isinstance(item.get("group_id"), str) and item.get("group_id")]
+    if persistable_items:
+        await get_ai_settings_service().apply_managed_newapi_group_bootstrap(
+            user_id=user_id,
+            groups=persistable_items,
+            db=db,
+        )
+
+    logger.info(
+        "NewAPI manual group sync user_id=%s requested_groups=%s persisted_groups=%s",
+        user_id,
+        requested_groups,
+        [str(item.get("group_id")) for item in persistable_items],
+    )
+    return NewAPIManualGroupSyncResult(results=tuple(results), group_items=tuple(persistable_items))
 
 
 def _extract_newapi_system_access_token(result: dict[str, Any]) -> str | None:
