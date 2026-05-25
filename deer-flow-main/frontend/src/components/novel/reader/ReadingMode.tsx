@@ -29,7 +29,7 @@ interface ReadingModeProps {
   onExit?: () => void;
 }
 
-export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex = 0, onExit }: ReadingModeProps) {
+export function ReadingMode({ novelId, chapters, initialChapterIndex = 0, onExit }: ReadingModeProps) {
   const { t } = useI18n();
   const [currentChapterIndex, setCurrentChapterIndex] = useState(initialChapterIndex);
   const [showSettings, setShowSettings] = useState(false);
@@ -150,7 +150,14 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
           </div>
 
           <div className="flex items-center gap-1">
-            <TtsPlayer text={ttsText} theme={ttsTheme} tts={tts} />
+            <TtsPlayer
+              text={ttsText}
+              chapterId={currentChapter?.id}
+              projectId={novelId}
+              title={currentChapter?.title}
+              theme={ttsTheme}
+              tts={tts}
+            />
             <Button
               variant="ghost"
               size="icon"
@@ -369,7 +376,15 @@ export function ReadingMode({ novelId: _novelId, chapters, initialChapterIndex =
           className="fixed bottom-4 right-4 z-50 flex items-center gap-1 rounded-full border px-2 py-1 shadow-lg backdrop-blur-sm"
           style={{ borderColor: `${themeColors.accent}40`, backgroundColor: `${themeColors.bg}dd` }}
         >
-          <TtsPlayer text={ttsText} theme={ttsTheme} compact tts={tts} />
+          <TtsPlayer
+            text={ttsText}
+            chapterId={currentChapter?.id}
+            projectId={novelId}
+            title={currentChapter?.title}
+            theme={ttsTheme}
+            compact
+            tts={tts}
+          />
         </div>
       )}
     </div>

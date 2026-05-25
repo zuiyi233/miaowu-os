@@ -198,6 +198,8 @@ export function ChapterReader({
         <div className="flex items-center gap-1">
           <TtsPlayer
             text={ttsText}
+            chapterId={chapter.id}
+            title={`第${chapter.chapter_number}章：${chapter.title}`}
             theme={{ text: t.text, border: t.border, headerBg: t.headerBg }}
           />
           <Button

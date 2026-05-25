@@ -27,6 +27,7 @@ ACTIVE_PURPOSES = {
     "attachment",
     "image_material",
     "generated_result",
+    "tts_audio",
 }
 
 

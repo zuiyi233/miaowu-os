@@ -171,6 +171,7 @@ services:
       - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_ROOT}/backend/.deer-flow
       - DEER_FLOW_HOST_SKILLS_PATH=${DEER_FLOW_ROOT}/skills
       - DEER_FLOW_SANDBOX_HOST=host.docker.internal
+      - MIAOWU_FFMPEG_BIN=${MIAOWU_FFMPEG_BIN:-/usr/bin/ffmpeg}
     env_file:
       - ../.env
     extra_hosts:
