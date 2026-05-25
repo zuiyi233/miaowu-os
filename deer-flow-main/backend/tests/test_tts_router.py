@@ -48,8 +48,8 @@ def _wav_bytes(duration_ms: int = 40, *, sample_rate: int = 8000) -> bytes:
     return out.getvalue()
 
 
-def test_get_tts_config_respects_env_availability(monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:8551/v1")
+def test_get_tts_config_respects_explicit_tts_env_availability(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_TTS_BASE_URL", "http://127.0.0.1:8551/v1")
     monkeypatch.setenv("VOLCENGINE_TTS_APPID", "app-id")
     monkeypatch.setenv("VOLCENGINE_TTS_ACCESS_TOKEN", "token")
     monkeypatch.delenv("MOSS_TTS_BASE_URL", raising=False)
@@ -75,6 +75,28 @@ def test_get_tts_config_respects_env_availability(monkeypatch) -> None:
         "/api/text-normalization-status",
     ]
     assert payload["default_provider"] == "openai"
+
+
+def test_get_tts_config_ignores_regular_openai_env_for_tts_availability(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:8551/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "chat-key")
+    monkeypatch.delenv("OPENAI_TTS_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENAI_TTS_API_BASE", raising=False)
+    monkeypatch.delenv("TTS_OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("TTS_OPENAI_API_BASE", raising=False)
+    monkeypatch.delenv("VOLCENGINE_TTS_APPID", raising=False)
+    monkeypatch.delenv("VOLCENGINE_TTS_ACCESS_TOKEN", raising=False)
+
+    app = _build_app()
+    with TestClient(app) as client:
+        response = client.get("/api/tts/config")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["providers"]["openai"]["available"] is False
+    assert payload["providers"]["openai"]["config_source"] is None
+    assert payload["providers"]["moss-local"]["available"] is True
+    assert payload["default_provider"] == "moss-local"
 
 
 def test_get_tts_config_uses_volcengine_when_openai_unavailable(monkeypatch) -> None:
@@ -118,6 +140,10 @@ class _AISettingsServiceStub:
 async def test_get_tts_config_does_not_treat_default_ai_provider_as_openai_tts(monkeypatch) -> None:
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("OPENAI_API_BASE", raising=False)
+    monkeypatch.delenv("OPENAI_TTS_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENAI_TTS_API_BASE", raising=False)
+    monkeypatch.delenv("TTS_OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("TTS_OPENAI_API_BASE", raising=False)
     monkeypatch.delenv("VOLCENGINE_TTS_APPID", raising=False)
     monkeypatch.delenv("VOLCENGINE_TTS_ACCESS_TOKEN", raising=False)
     monkeypatch.setattr(
@@ -238,8 +264,8 @@ def test_synthesize_returns_stable_provider_error(monkeypatch) -> None:
 async def test_openai_synthesis_uses_current_default_model(monkeypatch) -> None:
     seen: dict[str, object] = {}
 
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://provider.example/v1")
-    monkeypatch.setenv("OPENAI_API_KEY", "secret-key")
+    monkeypatch.setenv("OPENAI_TTS_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("OPENAI_TTS_API_KEY", "secret-key")
 
     async def mock_post(self, url, **kwargs):
         seen["url"] = url
@@ -267,7 +293,7 @@ async def test_openai_synthesis_uses_current_default_model(monkeypatch) -> None:
 
 @pytest.mark.anyio
 async def test_openai_synthesis_rejects_non_audio_success(monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("OPENAI_TTS_BASE_URL", "https://provider.example/v1")
 
     async def mock_post(self, url, **kwargs):
         return httpx.Response(
@@ -581,7 +607,7 @@ async def test_chapter_tts_generates_local_asset_reuses_cache_and_honors_force(
 
 @pytest.mark.anyio
 async def test_openai_capability_probe_classifies_provider_responses(monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("OPENAI_TTS_BASE_URL", "https://provider.example/v1")
     cases = [
         (404, {"content-type": "application/json"}, b'{"error":"not found"}', "unsupported_endpoint", False),
         (401, {"content-type": "application/json"}, b'{"error":"bad key"}', "auth_failed", False),
@@ -611,7 +637,7 @@ async def test_openai_capability_probe_classifies_provider_responses(monkeypatch
 
 
 def test_probe_route_uses_env_fallback_without_database(monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("OPENAI_TTS_BASE_URL", "https://provider.example/v1")
 
     async def mock_post(self, url, **kwargs):
         return httpx.Response(

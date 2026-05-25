@@ -1212,18 +1212,15 @@ async def resolve_openai_config(
                 base_url = f"{base_url}/v1"
             return OpenAIConfig(base_url=base_url, api_key=api_key, source=source, provider_id=ai_provider_id)
 
-    base_url = (os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or "").strip().rstrip("/")
+    base_url = _explicit_openai_tts_base_url()
     if not base_url:
         raise TtsProviderError(
             "missing_config",
-            "OPENAI_BASE_URL is not configured for TTS",
+            "OPENAI_TTS_BASE_URL is not configured for TTS",
             provider="openai",
         )
-    if base_url.endswith("/v1"):
-        speech_base_url = base_url
-    else:
-        speech_base_url = f"{base_url}/v1"
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip() or None
+    speech_base_url = _normalize_openai_base_url(base_url)
+    api_key = _explicit_openai_tts_api_key()
     return OpenAIConfig(base_url=speech_base_url, api_key=api_key, source="env")
 
 
@@ -1243,6 +1240,34 @@ def resolve_volcengine_config() -> VolcengineConfig:
 def resolve_moss_config() -> MossConfig:
     base_url = (os.getenv("MOSS_TTS_BASE_URL") or MOSS_DEFAULT_BASE_URL).strip().rstrip("/")
     return MossConfig(base_url=base_url)
+
+
+def _normalize_openai_base_url(base_url: str) -> str:
+    value = base_url.strip().rstrip("/")
+    return value if value.endswith("/v1") else f"{value}/v1"
+
+
+def _explicit_openai_tts_base_url() -> str:
+    """Return only TTS-specific OpenAI-compatible base URLs.
+
+    Plain OPENAI_BASE_URL/OPENAI_API_BASE are used by the chat/model runtime and
+    do not prove that /v1/audio/speech is wired for the TTS feature.
+    """
+    return (
+        os.getenv("OPENAI_TTS_BASE_URL")
+        or os.getenv("OPENAI_TTS_API_BASE")
+        or os.getenv("TTS_OPENAI_BASE_URL")
+        or os.getenv("TTS_OPENAI_API_BASE")
+        or ""
+    ).strip().rstrip("/")
+
+
+def _explicit_openai_tts_api_key() -> str | None:
+    return (
+        os.getenv("OPENAI_TTS_API_KEY")
+        or os.getenv("TTS_OPENAI_API_KEY")
+        or ""
+    ).strip() or None
 
 
 def _has_explicit_tts_feature_routing(settings: Any) -> bool:
@@ -1289,7 +1314,7 @@ async def build_config_response(
     user_id: str | None = None,
     db: AsyncSession | None = None,
 ) -> TtsConfigResponse:
-    openai_available = bool((os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or "").strip())
+    openai_available = bool(_explicit_openai_tts_base_url())
     openai_source: str | None = "env" if openai_available else None
     openai_provider_id: str | None = None
     openai_model = OPENAI_DEFAULT_MODEL
