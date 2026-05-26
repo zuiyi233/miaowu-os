@@ -119,7 +119,7 @@ export function useTts(options: UseTtsOptions = {}) {
       nativeSpeechRef.current?.stop();
       unsubscribe();
     };
-  }, []);
+  }, [nativeVoiceId, playbackEngine]);
 
   useEffect(() => {
     setState((s) => ({
@@ -411,15 +411,21 @@ export function useTts(options: UseTtsOptions = {}) {
     browserExportAvailable: browserExportHook.browserExportAvailable,
     exportChapterInBrowser: browserExportHook.exportChapterInBrowser,
     narrationMode: narrationPlanHook.narrationMode,
-    narrationPlan: narrationPlanHook.narrationPlan,
-    narrationPlanLoading: narrationPlanHook.narrationPlanLoading,
-    narrationPlanGenerating: narrationPlanHook.narrationPlanGenerating,
-    speakerVoices: narrationPlanHook.speakerVoices,
+    narrationPlan: narrationPlanHook.narrationPlan ?? null,
+    narrationPlanLoading: narrationPlanHook.narrationPlanLoading ?? false,
+    narrationPlanGenerating: narrationPlanHook.narrationPlanGenerating ?? false,
+    speakerVoices: narrationPlanHook.speakerVoices ?? {},
     setNarrationMode: narrationPlanHook.setNarrationMode,
     setSpeakerVoices: narrationPlanHook.setSpeakerVoices,
     loadNarrationPlan: narrationPlanHook.loadNarrationPlan,
     generatePlan: narrationPlanHook.generatePlan,
     savePlan: narrationPlanHook.savePlan,
+    chapterAudio: chapterAudioHook.chapterAudio ?? state.chapterAudio,
+    chapterLoading: chapterAudioHook.chapterLoading ?? state.chapterLoading,
+    chapterGenerating: chapterAudioHook.chapterGenerating ?? state.chapterGenerating,
+    chapterJob: chapterAudioHook.chapterJob ?? state.chapterJob,
+    chapterCacheState: chapterAudioHook.chapterCacheState ?? state.chapterCacheState,
+    downloadUrl: chapterAudioHook.downloadUrl ?? state.downloadUrl,
     loadChapterAudio: chapterAudioHook.loadChapterAudio,
     generateChapter: chapterAudioHook.generateChapter,
     cancelChapterJob: chapterAudioHook.cancelChapterJob,

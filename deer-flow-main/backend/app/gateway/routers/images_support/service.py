@@ -192,6 +192,18 @@ def _user_dir_key(user_id: str) -> str:
     return hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:24]
 
 
+def _legacy_user_dir_key(user_id: str) -> str:
+    return hashlib.sha1(user_id.encode("utf-8")).hexdigest()[:24]
+
+
+def _user_dir_keys(user_id: str) -> tuple[str, ...]:
+    current = _user_dir_key(user_id)
+    legacy = _legacy_user_dir_key(user_id)
+    if legacy == current:
+        return (current,)
+    return (current, legacy)
+
+
 def _validate_path_segment(value: str, name: str = "id") -> str:
     if not re.fullmatch(r"[0-9a-zA-Z_-]{1,128}", value):
         raise HTTPException(status_code=400, detail=f"Invalid {name}")
@@ -539,10 +551,12 @@ def _persist_job(job: dict[str, Any]) -> None:
 
 
 def _load_job(user_id: str, job_id: str) -> dict[str, Any] | None:
-    payload = _safe_read_json(_job_path(user_id, job_id))
-    if payload is None or payload.get("user_id") != user_id or payload.get("id") != job_id:
-        return None
-    return payload
+    _validate_path_segment(job_id, "job_id")
+    for key in _user_dir_keys(user_id):
+        payload = _safe_read_json(_jobs_root() / key / f"{job_id}.json")
+        if payload is not None and payload.get("user_id") == user_id and payload.get("id") == job_id:
+            return payload
+    return None
 
 
 def _store_image_file(
@@ -781,15 +795,23 @@ async def generate_images(
 
 
 def list_image_jobs(*, user_id: str, limit: int = 50, offset: int = 0) -> ImageJobListResponse:
-    jobs_dir = _jobs_root() / _user_dir_key(user_id)
     items: list[ImageJobResponse] = []
-    if jobs_dir.is_dir():
+    seen_ids: set[str] = set()
+    for key in _user_dir_keys(user_id):
+        jobs_dir = _jobs_root() / key
+        if not jobs_dir.is_dir():
+            continue
         for path in jobs_dir.glob("*.json"):
             payload = _safe_read_json(path)
             if payload is None or payload.get("user_id") != user_id:
                 continue
+            job_id = str(payload.get("id") or "")
+            if job_id and job_id in seen_ids:
+                continue
             try:
-                items.append(ImageJobResponse.model_validate(payload))
+                item = ImageJobResponse.model_validate(payload)
+                items.append(item)
+                seen_ids.add(item.id)
             except Exception:
                 logger.warning("Skip invalid image job payload: %s", path, exc_info=True)
     items.sort(key=lambda item: (item.updated_at, item.created_at, item.id), reverse=True)
@@ -810,15 +832,23 @@ _SAFE_EXTENSIONS = {"png", "jpg", "webp", "gif", "bin"}
 
 
 def read_image_file(*, image_id: str, user_id: str) -> ImageFilePayload:
-    meta = _safe_read_json(_image_meta_path(user_id, image_id))
-    if meta is None or meta.get("user_id") != user_id or meta.get("image_id") != image_id:
+    _validate_path_segment(image_id, "image_id")
+    meta: dict[str, Any] | None = None
+    user_dir_key: str | None = None
+    for key in _user_dir_keys(user_id):
+        candidate = _safe_read_json(_files_root() / key / f"{image_id}.json")
+        if candidate is not None and candidate.get("user_id") == user_id and candidate.get("image_id") == image_id:
+            meta = candidate
+            user_dir_key = key
+            break
+    if meta is None or user_dir_key is None:
         raise HTTPException(status_code=404, detail="Image file not found")
 
     extension = str(meta.get("extension") or "").strip().lower()
     if extension not in _SAFE_EXTENSIONS:
         extension = "bin"
 
-    file_path = _files_root() / _user_dir_key(user_id) / f"{image_id}.{extension}"
+    file_path = _files_root() / user_dir_key / f"{image_id}.{extension}"
     try:
         content = file_path.read_bytes()
     except FileNotFoundError as exc:

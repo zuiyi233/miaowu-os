@@ -581,6 +581,69 @@ def test_newapi_sync_groups_lists_catalog_and_existing_managed_provider(monkeypa
     assert "token-default" not in json.dumps(data, ensure_ascii=False)
 
 
+def test_newapi_sync_groups_merges_catalog_display_name_with_existing_provider(monkeypatch) -> None:
+    fake_db = _FakeDB()
+    fake_db.settings = Settings(
+        user_id="default_user",
+        preferences=json.dumps(
+            {
+                "ai_provider_settings": {
+                    "version": 1,
+                    "default_provider_id": "newapi-managed-svip--pro-plus",
+                    "providers": [
+                        {
+                            "id": "newapi-managed-svip--pro-plus",
+                            "name": "NewAPI（svip-稳定渠道+Pro+plus+正规渠道）",
+                            "provider": "openai",
+                            "base_url": "http://newapi:3000/v1",
+                            "models": [f"svip-model-{index}" for index in range(6)],
+                            "is_active": True,
+                            "api_key_encrypted": "token-svip",
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "svip--pro-plus",
+                            "model_groups": {"svip--pro-plus": [f"svip-model-{index}" for index in range(6)]},
+                            "model_sync_status": "synced",
+                            "model_sync_error": None,
+                        }
+                    ],
+                    "client_settings": {"enable_stream_mode": True, "request_timeout": 660000, "max_retries": 2},
+                    "feature_routing_settings": None,
+                }
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    async def _fake_catalog(*, user_id, db):
+        assert user_id == "default_user"
+        assert db is fake_db
+        return {
+            "svip-稳定渠道+Pro+plus+正规渠道": {
+                "name": "svip-稳定渠道+Pro+plus+正规渠道",
+                "models": [],
+            },
+        }, []
+
+    monkeypatch.setattr(user_settings, "get_newapi_group_catalog_for_user", _fake_catalog)
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/user/newapi-sync/groups")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["groups"]) == 1
+    group = data["groups"][0]
+    assert group["group_id"] == "svip--pro-plus"
+    assert group["name"] == "svip-稳定渠道+Pro+plus+正规渠道"
+    assert group["already_synced"] is True
+    assert group["has_api_key"] is True
+    assert group["model_sync_status"] == "synced"
+    assert group["model_count"] == 6
+    assert "token-svip" not in json.dumps(data, ensure_ascii=False)
+
+
 def test_newapi_sync_groups_applies_selected_and_manual_groups(monkeypatch) -> None:
     from app.gateway.auth.newapi_oauth import NewAPIManualGroupSyncItem, NewAPIManualGroupSyncResult
 

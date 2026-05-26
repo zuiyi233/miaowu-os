@@ -8,7 +8,9 @@ Single source of truth:
 
 from __future__ import annotations
 
+import ipaddress
 import logging
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -198,12 +200,18 @@ def _validate_and_normalize_public_base_url(raw_base_url: str) -> str:
         raise HTTPException(status_code=400, detail="接口地址缺少主机名")
 
     blocked_hosts = {
-        "localhost", "127.0.0.1", "0.0.0.0",
         "169.254.169.254",
+        "metadata.google.internal",
     }
     hostname_lower = hostname.lower()
-    if hostname_lower in blocked_hosts or hostname_lower.startswith(("127.", "10.", "192.168.")):
-        raise HTTPException(status_code=400, detail="Base URL must not point to a private or reserved network address")
+    if hostname_lower in blocked_hosts:
+        raise HTTPException(status_code=400, detail="Base URL points to a restricted network address")
+    try:
+        host_ip = ipaddress.ip_address(hostname_lower)
+    except ValueError:
+        host_ip = None
+    if host_ip is not None and (host_ip.is_link_local or host_ip.is_multicast or host_ip.is_reserved):
+        raise HTTPException(status_code=400, detail="Base URL points to a restricted network address")
 
     return base_url
 
@@ -388,6 +396,33 @@ def _newapi_provider_id_for_response(group_id: str) -> str:
     return f"{MANAGED_NEWAPI_PROVIDER_ID}-{normalized}"
 
 
+def _newapi_ascii_safe_group_id(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9_-]+", "-", value.strip().lower()).strip("-")
+    return normalized or "default"
+
+
+def _newapi_ascii_compact_group_key(value: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9]+", "", value.strip().lower())
+
+
+def _newapi_group_aliases(*values: Any) -> set[str]:
+    aliases: set[str] = set()
+    for raw in values:
+        if not isinstance(raw, str):
+            continue
+        value = raw.strip()
+        if not value:
+            continue
+        lowered = value.lower()
+        aliases.add(lowered)
+        aliases.add(_newapi_ascii_safe_group_id(value))
+        compact = _newapi_ascii_compact_group_key(value)
+        if compact:
+            aliases.add(compact)
+    aliases.discard("")
+    return aliases
+
+
 def _managed_newapi_provider_map(ai_settings: dict[str, Any]) -> dict[str, dict[str, Any]]:
     providers = ai_settings.get("providers") if isinstance(ai_settings, dict) else []
     result: dict[str, dict[str, Any]] = {}
@@ -402,6 +437,55 @@ def _managed_newapi_provider_map(ai_settings: dict[str, Any]) -> dict[str, dict[
         if isinstance(group, str) and group.strip():
             result[group.strip().lower()] = provider
     return result
+
+
+def _newapi_catalog_item_aliases(group_id: str, catalog_item: dict[str, Any]) -> set[str]:
+    return _newapi_group_aliases(group_id, catalog_item.get("name"), catalog_item.get("group"), catalog_item.get("id"))
+
+
+def _newapi_provider_aliases(provider: dict[str, Any]) -> set[str]:
+    provider_id = provider.get("id")
+    provider_suffix = None
+    if isinstance(provider_id, str) and provider_id.startswith(f"{MANAGED_NEWAPI_PROVIDER_ID}-"):
+        provider_suffix = provider_id[len(f"{MANAGED_NEWAPI_PROVIDER_ID}-") :]
+    aliases = _newapi_group_aliases(
+        provider.get("managed_group"),
+        provider.get("name"),
+        provider_id,
+        provider_suffix,
+    )
+    model_groups = provider.get("model_groups")
+    if isinstance(model_groups, dict):
+        aliases.update(_newapi_group_aliases(*(key for key in model_groups.keys() if isinstance(key, str))))
+    return aliases
+
+
+def _merge_newapi_sync_group_ids(
+    catalog: dict[str, dict[str, Any]],
+    provider_by_group: dict[str, dict[str, Any]],
+) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    provider_alias_index: dict[str, str] = {}
+    for provider_group, provider in provider_by_group.items():
+        for alias in _newapi_provider_aliases(provider):
+            provider_alias_index.setdefault(alias, provider_group)
+
+    merged: dict[str, tuple[str, dict[str, Any], dict[str, Any]]] = {}
+    seen_catalog: set[str] = set()
+    for catalog_group, catalog_item in catalog.items():
+        aliases = _newapi_catalog_item_aliases(catalog_group, catalog_item)
+        provider_group = next((provider_alias_index[alias] for alias in aliases if alias in provider_alias_index), None)
+        canonical_group = provider_group or catalog_group
+        provider = provider_by_group.get(canonical_group.lower(), {})
+        merged[canonical_group.lower()] = (canonical_group, catalog_item, provider)
+        seen_catalog.update(aliases)
+
+    for provider_group, provider in provider_by_group.items():
+        aliases = _newapi_provider_aliases(provider)
+        if any(alias in seen_catalog for alias in aliases):
+            continue
+        merged.setdefault(provider_group.lower(), (provider_group, {}, provider))
+
+    return sorted(merged.values(), key=lambda item: item[0].lower())
 
 
 @router.get("/newapi-sync/groups", response_model=NewAPISyncGroupsResponse)
@@ -419,13 +503,15 @@ async def list_newapi_sync_groups(
     except NewAPIOAuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
-    group_ids = sorted({*catalog.keys(), *provider_by_group.keys()})
     items: list[NewAPISyncGroupItem] = []
-    for group_id in group_ids:
-        catalog_item = catalog.get(group_id) or catalog.get(group_id.lower()) or {}
-        provider = provider_by_group.get(group_id.lower()) or {}
-        models = catalog_item.get("models") if isinstance(catalog_item.get("models"), list) else provider.get("models")
-        model_list = [item for item in (models or []) if isinstance(item, str) and item.strip()]
+    for group_id, catalog_item, provider in _merge_newapi_sync_group_ids(catalog, provider_by_group):
+        catalog_models = catalog_item.get("models") if isinstance(catalog_item.get("models"), list) else []
+        provider_models = provider.get("models") if isinstance(provider.get("models"), list) else []
+        model_list = [
+            item
+            for item in [*catalog_models, *provider_models]
+            if isinstance(item, str) and item.strip()
+        ]
         status = provider.get("model_sync_status") if isinstance(provider.get("model_sync_status"), str) else None
         error = provider.get("model_sync_error") if isinstance(provider.get("model_sync_error"), str) else None
         items.append(

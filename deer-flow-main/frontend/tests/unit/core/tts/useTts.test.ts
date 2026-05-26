@@ -132,6 +132,10 @@ describe('useTts state shape', () => {
     let stateIndex = 0;
     const stateValues = [
       createInitialState(),
+      'device',
+      undefined,
+      1,
+      1,
       null,
       [],
       'openai',
@@ -141,12 +145,19 @@ describe('useTts state shape', () => {
       undefined,
       undefined,
       undefined,
+      { status: null, smoke: null, providerError: null },
       'single_narrator',
       {},
-      'device',
-      undefined,
-      1,
-      1,
+      null,
+      false,
+      false,
+      null,
+      false,
+      false,
+      null,
+      'unknown',
+      null,
+      false,
     ] as const;
     useStateMock.mockImplementation(() => {
       const value = stateValues[stateIndex] ?? undefined;
@@ -253,15 +264,17 @@ describe('useTts state shape', () => {
   });
 
   it('keeps chapter audio loading, plan loading, and generation abort controllers isolated', async () => {
-    const pending = new Promise<never>(() => {});
+    const pending = new Promise<never>(() => {
+      // Intentionally pending so each operation exposes its AbortSignal.
+    });
     getChapterAudioMock.mockReturnValue(pending);
     getNarrationPlanMock.mockReturnValue(pending);
     generateChapterAudioMock.mockReturnValue(pending);
 
-    const refs = Array.from({ length: 13 }, () => ({ current: null as unknown }));
+    const refs = Array.from({ length: 14 }, () => ({ current: null as unknown }));
     refs[0] = { current: createNoopAudio() };
-    refs[9] = { current: 0 };
-    refs[12] = { current: 0 };
+    refs[4] = { current: 0 };
+    refs[11] = { current: 0 };
     useRefMock.mockReset();
     useRefMock.mockImplementation(() => refs.shift() ?? { current: null });
 

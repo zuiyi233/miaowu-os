@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   TtsApiError,
@@ -29,6 +29,13 @@ export interface UseTtsNarrationPlanReturn {
   setSpeakerVoices: (voices: TtsSpeakerVoiceMapping) => void;
 }
 
+function abortControllerRef(ref: { current: AbortController | null }): void {
+  if (typeof ref.current?.abort === 'function') {
+    ref.current.abort();
+  }
+  ref.current = null;
+}
+
 export function useTtsNarrationPlan(
   options: {
     narrationMode?: TtsNarrationMode;
@@ -54,6 +61,12 @@ export function useTtsNarrationPlan(
   const narrationPlanLoadAbortRef = useRef<AbortController | null>(null);
   const narrationPlanGenerateAbortRef = useRef<AbortController | null>(null);
   const narrationPlanSaveAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => {
+    abortControllerRef(narrationPlanLoadAbortRef);
+    abortControllerRef(narrationPlanGenerateAbortRef);
+    abortControllerRef(narrationPlanSaveAbortRef);
+  }, []);
 
   const buildNarrationPlanOptions = useCallback((
     chapterId: string,
@@ -112,7 +125,7 @@ export function useTtsNarrationPlan(
     overrides: Partial<TtsNarrationPlanRequestOptions> = {},
   ) => {
     if (!chapterId) return null;
-    narrationPlanLoadAbortRef.current?.abort();
+    abortControllerRef(narrationPlanLoadAbortRef);
     const controller = new AbortController();
     narrationPlanLoadAbortRef.current = controller;
     setNarrationPlanLoading(true);
@@ -150,7 +163,7 @@ export function useTtsNarrationPlan(
     overrides: Partial<TtsNarrationPlanRequestOptions> = {},
   ) => {
     if (!chapterId || !text.trim()) return null;
-    narrationPlanGenerateAbortRef.current?.abort();
+    abortControllerRef(narrationPlanGenerateAbortRef);
     const controller = new AbortController();
     narrationPlanGenerateAbortRef.current = controller;
     setNarrationPlanGenerating(true);
@@ -188,7 +201,7 @@ export function useTtsNarrationPlan(
     overrides: Partial<TtsNarrationPlanRequestOptions> = {},
   ) => {
     if (!chapterId) return null;
-    narrationPlanSaveAbortRef.current?.abort();
+    abortControllerRef(narrationPlanSaveAbortRef);
     const controller = new AbortController();
     narrationPlanSaveAbortRef.current = controller;
     setNarrationPlanLoading(true);

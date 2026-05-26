@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 from types import SimpleNamespace
 
 import httpx
@@ -169,17 +171,12 @@ def test_generate_images_uses_env_fallback_and_supports_url_history_detail_and_f
             request=httpx.Request("POST", url),
         )
 
-    async def mock_get(self, url, **kwargs):
+    async def mock_download(_client, url):
         seen["download_url"] = url
-        return httpx.Response(
-            200,
-            content=_PNG_BYTES,
-            headers={"content-type": "image/png"},
-            request=httpx.Request("GET", url),
-        )
+        return _PNG_BYTES, "image/png"
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+    monkeypatch.setattr(images_service, "_download_image_from_url", mock_download)
 
     app = _build_app(db=None)
     with TestClient(app) as client:
@@ -212,6 +209,77 @@ def test_generate_images_uses_env_fallback_and_supports_url_history_detail_and_f
     assert file_response.content == _PNG_BYTES
     assert file_response.headers["content-type"] == "image/png"
     assert "inline; filename=" in file_response.headers["content-disposition"]
+
+
+def test_image_history_reads_legacy_sha1_user_directories() -> None:
+    legacy_key = hashlib.sha1(b"test-user").hexdigest()[:24]
+    job_id = "legacy-job"
+    image_id = "legacy-image"
+    created_at = "2026-05-26T00:00:00+00:00"
+
+    job_dir = images_service._jobs_root() / legacy_key
+    file_dir = images_service._files_root() / legacy_key
+    job_dir.mkdir(parents=True, exist_ok=True)
+    file_dir.mkdir(parents=True, exist_ok=True)
+    (job_dir / f"{job_id}.json").write_text(
+        json.dumps(
+            {
+                "id": job_id,
+                "user_id": "test-user",
+                "status": "completed",
+                "operation": "generate",
+                "source": "workspace-images",
+                "prompt": "legacy prompt",
+                "model": "legacy-model",
+                "request_params": {},
+                "response_metadata": {},
+                "images": [
+                    {
+                        "image_id": image_id,
+                        "url": f"/api/v1/images/files/{image_id}",
+                        "filename": "legacy.png",
+                        "content_type": "image/png",
+                        "size_bytes": len(_PNG_BYTES),
+                    }
+                ],
+                "image_urls": [f"/api/v1/images/files/{image_id}"],
+                "error": None,
+                "elapsed_seconds": 0.1,
+                "created_at": created_at,
+                "updated_at": created_at,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (file_dir / f"{image_id}.json").write_text(
+        json.dumps(
+            {
+                "image_id": image_id,
+                "job_id": job_id,
+                "user_id": "test-user",
+                "filename": "legacy.png",
+                "content_type": "image/png",
+                "extension": "png",
+                "size_bytes": len(_PNG_BYTES),
+                "created_at": created_at,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (file_dir / f"{image_id}.png").write_bytes(_PNG_BYTES)
+
+    app = _build_app(db=None)
+    with TestClient(app) as client:
+        list_response = client.get("/api/v1/images/jobs")
+        detail_response = client.get(f"/api/v1/images/jobs/{job_id}")
+        file_response = client.get(f"/api/v1/images/files/{image_id}")
+
+    assert list_response.status_code == 200
+    assert list_response.json()["items"][0]["id"] == job_id
+    assert detail_response.status_code == 200
+    assert detail_response.json()["id"] == job_id
+    assert file_response.status_code == 200
+    assert file_response.content == _PNG_BYTES
 
 
 def test_generate_images_returns_503_when_config_missing(monkeypatch: pytest.MonkeyPatch) -> None:

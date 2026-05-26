@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   TtsApiError,
@@ -37,6 +37,13 @@ export interface UseTtsChapterAudioReturn {
   retryChapterJob: () => Promise<TtsJob | null>;
 }
 
+function abortControllerRef(ref: { current: AbortController | null }): void {
+  if (typeof ref.current?.abort === 'function') {
+    ref.current.abort();
+  }
+  ref.current = null;
+}
+
 export function useTtsChapterAudio(
   configDeps: {
     selectedProvider: TtsProvider;
@@ -67,6 +74,16 @@ export function useTtsChapterAudio(
   const chapterAudioMutationSeqRef = useRef(0);
   const jobPollRef = useRef<number | null>(null);
   const jobPollAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => {
+    abortControllerRef(chapterAudioAbortRef);
+    abortControllerRef(chapterGenerateAbortRef);
+    abortControllerRef(jobPollAbortRef);
+    if (jobPollRef.current) {
+      window.clearInterval(jobPollRef.current);
+      jobPollRef.current = null;
+    }
+  }, []);
 
   const applyChapterAudio = useCallback((audio: TtsChapterAudioManifest | null) => {
     setChapterAudio(audio);
@@ -150,6 +167,7 @@ export function useTtsChapterAudio(
       window.clearInterval(jobPollRef.current);
       jobPollRef.current = null;
     }
+    abortControllerRef(jobPollAbortRef);
 
     const pollAbort = new AbortController();
     jobPollAbortRef.current = pollAbort;
@@ -203,7 +221,7 @@ export function useTtsChapterAudio(
     overrides: Partial<Omit<TtsChapterRequestOptions, 'chapter_id' | 'text'>> = {},
   ) => {
     if (!chapterId) return null;
-    chapterAudioAbortRef.current?.abort();
+    abortControllerRef(chapterAudioAbortRef);
     const controller = new AbortController();
     chapterAudioAbortRef.current = controller;
     const requestOptions = {
@@ -277,7 +295,7 @@ export function useTtsChapterAudio(
     overrides: Partial<TtsChapterRequestOptions> = {},
   ) => {
     if (!chapterId || !text.trim()) return null;
-    chapterGenerateAbortRef.current?.abort();
+    abortControllerRef(chapterGenerateAbortRef);
     const controller = new AbortController();
     chapterGenerateAbortRef.current = controller;
     chapterAudioMutationSeqRef.current += 1;
