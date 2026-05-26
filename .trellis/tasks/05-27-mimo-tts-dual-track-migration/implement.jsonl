@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend guideline entrypoint for TTS router, provider adapter, auth, asset, and API work."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend guideline entrypoint for novel TTS and workspace studio UI work."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "The migration spans provider config, API contracts, backend assets, frontend state, and UI workflows."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Provider/config/type constants and shared TTS/client helpers must be searched and reused before extension."}

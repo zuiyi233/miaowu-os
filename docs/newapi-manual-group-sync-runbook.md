@@ -62,6 +62,7 @@ Rules:
 - Merge NewAPI Hub catalog results with existing managed providers.
 - If the server-side NewAPI sync token is missing, return a warning so the UI can ask the user to re-login.
 - If the catalog is empty, keep `manual_group_allowed=true`.
+- Do not treat a visible group name as proof that the group has usable models. NewAPI `GetHubUserGroups` only includes per-group model lists when the user has product access.
 
 ### `POST /api/user/newapi-sync/groups`
 
@@ -103,6 +104,8 @@ Rules:
 - Save successful groups as managed providers through `AISettingsService.apply_managed_newapi_group_bootstrap`.
 - Empty model groups use `model_sync_status=empty`, not fake success.
 - Error groups keep `status=error` and a redacted message.
+- A group with no models plus a Hub diagnostic error, such as missing product access or unavailable Hub token provisioning, must be `error`, not `synced`.
+- Prefer `hub_api_token.authorization` / raw `key` from NewAPI Hub bootstrap when calling `/v1/models`; `sk_key` is a display/API-key form and must not be double-prefixed in a Bearer header.
 
 ## Server-Side Token State
 
@@ -116,6 +119,17 @@ Security rules:
 - Do not expose OAuth `code`, access token, system token, or Hub token in docs, tests, or API responses.
 
 This is an MVP persistence path. A future hardening pass can move the token into a dedicated encrypted table with expiry metadata.
+
+## Model Sync Diagnostics
+
+The NewAPI source contract in `N:\new-api-main\controller\hub.go` is the source of truth for repeated "group exists but zero models" incidents:
+
+- `POST /api/hub/session/bootstrap` returns `has_novel_product_access`, `hub_api_token.provisioning`, `hub_api_token.group`, `hub_api_token.authorization`, `hub_api_token.key`, `models`, and `quick_start.relay_base_url`.
+- `GET /api/hub/user/groups` returns selectable groups. Its per-group `models` list is populated only when the user has the required product access.
+- If `has_novel_product_access=false`, NewAPI deliberately does not create a usable Hub API token for model calls; Miaowu must surface that as a sync error.
+- If `/v1/models` returns non-200 or the token is missing, Miaowu must preserve the diagnostic status instead of collapsing the result into a generic `0 models`.
+
+When debugging, inspect these redacted facts in order: discovered group ids, `has_novel_product_access`, Hub token `provisioning`, token group, relay base URL, `/v1/models` HTTP status, parsed model count. Never log or return token values.
 
 ## Frontend Flow
 
@@ -178,4 +192,3 @@ Local-dev contract:
 - Miaowu frontend: `http://127.0.0.1:14560` in the current user test setup, or `4560` in the fixed local-dev contract
 - NewAPI: `http://127.0.0.1:3000`
 - Do not use `8001` as the Windows local-dev default.
-

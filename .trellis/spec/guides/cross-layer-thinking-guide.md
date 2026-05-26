@@ -92,6 +92,27 @@ For DeerFlow upstream sync tasks in this repo, run a concrete profile check befo
 - `.env.example` and `frontend/.env.example` examples for local-dev should not drift from `8551`
 - `docker/nginx/nginx.conf` may keep `gateway:8001` because it is container-internal routing, not Windows local-dev direct access
 
+### Mistake 5: Treating UI selection as the only guard
+
+**Bad**: A frontend shows a discovered list and assumes the user selected items, while the API only accepts explicit ids. If the checkbox is hard to see, state is reset, or the user clicks the primary action with an empty selection, the backend receives an empty request even though the discovery step succeeded.
+
+**Good**: Define the empty-selection contract at both layers for any discover-then-apply flow.
+
+For NewAPI group sync and similar flows:
+- Discovery result (`GET`) must be transformable into a valid apply payload (`POST`) without hidden UI state.
+- Frontend payload builders must have tests for: selected ids, manual ids, and empty selection with discovered items.
+- Backend apply APIs must either reject empty input before side effects or intentionally fall back to the server-side discovered catalog. Do not leave the behavior dependent only on a checkbox.
+- Error copy should say whether the problem is "no discovered items" or "nothing selected"; these are different operational states.
+- Tests must cover the failure chain that reached production, not only the happy path.
+
+For NewAPI specifically, keep four facts separate:
+- discovered group ids
+- product/access entitlement
+- Hub token provisioning result
+- `/v1/models` response and parsed model count
+
+A visible group is not proof of a usable model catalog. A token with no product access or failed provisioning must surface as an error, not as a successful provider with zero models.
+
 ---
 
 ## Checklist for Cross-Layer Features
@@ -107,6 +128,7 @@ After implementation:
 - [ ] Verified error handling at each boundary
 - [ ] Checked data survives round-trip
 - [ ] If config values changed, searched both old and new values repo-wide and reconciled profile-specific defaults
+- [ ] For discover-then-apply flows, tested empty selection against non-empty discovery data in both frontend payload construction and backend apply handling
 
 ---
 

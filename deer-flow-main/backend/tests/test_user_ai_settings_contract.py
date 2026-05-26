@@ -694,6 +694,70 @@ def test_newapi_sync_groups_applies_selected_and_manual_groups(monkeypatch) -> N
     assert "token-vip" not in dumped
 
 
+def test_newapi_sync_groups_empty_request_falls_back_to_discovered_groups(monkeypatch) -> None:
+    from app.gateway.auth import newapi_oauth
+
+    monkeypatch.setattr(
+        newapi_oauth,
+        "require_newapi_settings",
+        lambda: newapi_oauth.NewAPIOAuthSettings(
+            enabled=True,
+            issuer="https://xg.example.test",
+            client_id="miaowu",
+            client_secret="secret",
+        ),
+    )
+
+    fake_db = _FakeDB()
+    fake_db.settings = Settings(
+        user_id="default_user",
+        preferences=json.dumps(
+            {
+                "newapi_sync": {
+                    "system_access_token_encrypted": "system-token",
+                }
+            }
+        ),
+    )
+
+    async def _fake_catalog(*, settings, system_access_token):
+        assert system_access_token == "system-token"
+        return {
+            "半公益渠道": {"name": "半公益渠道", "models": ["charity-model"]},
+            "国产": {"name": "国产", "models": ["domestic-model"]},
+        }
+
+    async def _fake_bootstrap(*, settings, authorization_token, groups):
+        assert authorization_token == "system-token"
+        assert groups == ["半公益渠道", "国产"]
+        return {
+            "半公益渠道": {"hub_api_token": {"sk_key": "token-charity"}, "model_sync_status": "synced"},
+            "国产": {"hub_api_token": {"sk_key": "token-domestic"}, "model_sync_status": "synced"},
+        }
+
+    monkeypatch.setattr(newapi_oauth, "_fetch_newapi_hub_group_catalog", _fake_catalog)
+    monkeypatch.setattr(newapi_oauth, "_bootstrap_newapi_group_tokens", _fake_bootstrap)
+
+    import anyio
+
+    async def _run():
+        return await newapi_oauth.sync_newapi_groups_for_user(
+            user_id="default_user",
+            groups=[],
+            manual_groups=[],
+            db=fake_db,
+        )
+
+    result = anyio.run(_run)
+
+    assert [item.group_id for item in result.results] == ["半公益渠道", "国产"]
+    assert [item.status for item in result.results] == ["synced", "synced"]
+    assert [item["group_id"] for item in result.group_items] == ["半公益渠道", "国产"]
+    dumped = json.dumps([item.__dict__ for item in result.results], ensure_ascii=False)
+    assert "token-charity" not in dumped
+    assert "token-domestic" not in dumped
+
+
 def test_newapi_group_items_keep_requested_group_when_bootstrap_reports_default() -> None:
     import anyio
 
@@ -728,6 +792,57 @@ def test_newapi_group_items_keep_requested_group_when_bootstrap_reports_default(
     assert [item["name"] for item in items] == ["半公益渠道", "国产"]
     assert items[0]["model_groups"] == {"半公益渠道": ["charity-model"]}
     assert items[1]["model_groups"] == {"国产": ["domestic-model"]}
+
+
+def test_newapi_token_key_prefers_raw_authorization_key_over_sk_key() -> None:
+    from app.gateway.auth.newapi_oauth import _extract_newapi_token_key
+
+    assert (
+        _extract_newapi_token_key(
+            {
+                "hub_api_token": {
+                    "authorization": "Bearer raw-token",
+                    "key": "raw-token",
+                    "sk_key": "sk-raw-token",
+                }
+            }
+        )
+        == "raw-token"
+    )
+
+
+def test_newapi_group_items_surface_product_access_missing_instead_of_empty_success() -> None:
+    import anyio
+
+    from app.gateway.auth.newapi_oauth import (
+        NewAPIOAuthSettings,
+        _build_newapi_managed_group_items,
+    )
+
+    async def _run() -> list[dict]:
+        return await _build_newapi_managed_group_items(
+            settings=NewAPIOAuthSettings(enabled=True, issuer="https://xg.example.test"),
+            group_catalog={"vip": {"name": "VIP分组", "models": []}},
+            group_bootstraps={
+                "vip": {
+                    "model_sync_status": "synced",
+                    "has_novel_product_access": False,
+                    "hub_api_token": {
+                        "created": False,
+                        "provisioning": "not_available_without_product_entitlement",
+                    },
+                },
+            },
+            relay_base_url="https://xg.example.test/v1",
+        )
+
+    items = anyio.run(_run)
+
+    assert len(items) == 1
+    assert items[0]["group_id"] == "vip"
+    assert items[0]["models"] == []
+    assert items[0]["model_sync_status"] == "error"
+    assert "没有小说产品访问权限" in items[0]["model_sync_error"]
 
 
 def test_get_ai_settings_repairs_duplicate_default_provider_ids_and_single_active() -> None:

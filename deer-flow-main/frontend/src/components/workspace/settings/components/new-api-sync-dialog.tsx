@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, ExternalLink, RefreshCw } from "lucide-react";
+import { AlertTriangle, ExternalLink, RefreshCw } from "lucide-react";
 import React from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -116,9 +116,33 @@ export function NewApiSyncDialog({
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label>发现到的分组</Label>
-              <span className="text-xs text-muted-foreground">
-                {loading ? "读取中" : `${groups.length} 个分组`}
-              </span>
+              <div className="flex items-center gap-2">
+                {groups.length > 0 && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onSelectedGroupsChange(new Set(groups.map((group) => group.group_id)))}
+                      disabled={loading || applying}
+                    >
+                      全选
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onSelectedGroupsChange(new Set())}
+                      disabled={loading || applying}
+                    >
+                      清空
+                    </Button>
+                  </>
+                )}
+                <span className="text-xs text-muted-foreground">
+                  {loading ? "读取中" : `${selectedGroups.size}/${groups.length} 个分组`}
+                </span>
+              </div>
             </div>
             <div className="max-h-64 overflow-y-auto rounded-md border">
               {groups.length === 0 ? (
@@ -131,12 +155,34 @@ export function NewApiSyncDialog({
                     const checked = selectedGroups.has(group.group_id);
                     const status = group.model_sync_status ?? (group.already_synced ? "synced" : null);
                     return (
-                      <label
+                      <div
+                        role="button"
+                        tabIndex={0}
                         key={group.group_id}
-                        className="flex cursor-pointer items-start gap-3 px-3 py-3 hover:bg-muted/50"
+                        className="flex w-full cursor-pointer items-start gap-3 px-3 py-3 text-left hover:bg-muted/50"
+                        onClick={() => {
+                          if (applying) return;
+                          onSelectedGroupsChange((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(group.group_id)) next.delete(group.group_id);
+                            else next.add(group.group_id);
+                            return next;
+                          });
+                        }}
+                        onKeyDown={(event) => {
+                          if (applying || (event.key !== "Enter" && event.key !== " ")) return;
+                          event.preventDefault();
+                          onSelectedGroupsChange((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(group.group_id)) next.delete(group.group_id);
+                            else next.add(group.group_id);
+                            return next;
+                          });
+                        }}
                       >
                         <Checkbox
                           checked={checked}
+                          aria-label={`选择 ${group.name || group.group_id}`}
                           onCheckedChange={(value) => {
                             onSelectedGroupsChange((prev) => {
                               const next = new Set(prev);
@@ -145,6 +191,7 @@ export function NewApiSyncDialog({
                               return next;
                             });
                           }}
+                          onClick={(event) => event.stopPropagation()}
                           className="mt-0.5"
                         />
                         <span className="min-w-0 flex-1">
@@ -164,7 +211,7 @@ export function NewApiSyncDialog({
                             <span className="mt-1 block text-xs text-destructive">{group.model_sync_error}</span>
                           )}
                         </span>
-                      </label>
+                      </div>
                     );
                   })}
                 </div>

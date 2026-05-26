@@ -11,6 +11,20 @@ import { buildNewApiResyncUrl, normalizeManualGroups } from "../utils/newapi-hel
 
 const NEWAPI_SYNC_PENDING_KEY = "miaowu.newapi-sync.pending";
 
+export function buildNewApiSyncPayload(
+  selectedGroups: Set<string>,
+  manualGroups: string,
+  discoveredGroups: NewApiSyncGroupItem[],
+) {
+  const manual = normalizeManualGroups(manualGroups);
+  const selected = [...selectedGroups];
+  const groups =
+    selected.length > 0 || manual.length > 0
+      ? selected
+      : discoveredGroups.map((group) => group.group_id).filter(Boolean);
+  return { groups, manual_groups: manual };
+}
+
 export function useNewApiSync(
   refreshFromServer: () => Promise<void>,
   notifications: {
@@ -74,8 +88,10 @@ export function useNewApiSync(
       setSelectedGroups((prev) => {
         const availableIds = new Set((data.groups ?? []).map((group) => group.group_id));
         const kept = new Set([...prev].filter((groupId) => availableIds.has(groupId)));
-        if (kept.size === 0 && data.groups.length === 1) {
-          kept.add(data.groups[0]!.group_id);
+        if (kept.size === 0) {
+          for (const group of data.groups ?? []) {
+            kept.add(group.group_id);
+          }
         }
         return kept;
       });
@@ -102,9 +118,8 @@ export function useNewApiSync(
   }, [notifications]);
 
   const applySync = useCallback(async () => {
-    const selected = [...selectedGroups];
-    const manual = normalizeManualGroups(manualGroups);
-    if (selected.length === 0 && manual.length === 0) {
+    const payload = buildNewApiSyncPayload(selectedGroups, manualGroups, groups);
+    if (payload.groups.length === 0 && payload.manual_groups.length === 0) {
       setError("请选择分组，或手动输入至少一个分组名");
       return;
     }
@@ -112,7 +127,7 @@ export function useNewApiSync(
     setError(null);
     setResults([]);
     try {
-      const result = await syncNewApiGroups({ groups: selected, manual_groups: manual });
+      const result = await syncNewApiGroups(payload);
       setResults(result.results ?? []);
       await refreshFromServer();
       notifications.onSuccess("NewAPI 分组同步完成，已刷新服务商列表。");
@@ -121,7 +136,7 @@ export function useNewApiSync(
     } finally {
       setApplying(false);
     }
-  }, [manualGroups, selectedGroups, refreshFromServer, notifications]);
+  }, [groups, manualGroups, selectedGroups, refreshFromServer, notifications]);
 
   return {
     syncPending,

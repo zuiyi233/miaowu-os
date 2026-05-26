@@ -1,0 +1,31 @@
+{
+  "id": "mimo-tts-dual-track-migration",
+  "name": "mimo-tts-dual-track-migration",
+  "title": "MiMo TTS 双轨迁移到 Miaowu-OS",
+  "description": "Plan and coordinate MiMo TTS provider integration, novel audiobook voice workflows, and a Miaowu workspace audio studio without migrating the standalone MiMo Express/Electron app.",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-05-27",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "merge/upstream-main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "05-27-mimo-tts-provider-newapi-user-settings",
+    "05-27-novel-tts-role-voices-audiobook-segments",
+    "05-27-tts-studio-workspace-canvas-assets",
+    "05-27-mimo-tts-e2e-docs-deploy-check"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "Child task creation was initially run in parallel and the parent JSON lost two children; this file was repaired from child task parent fields.",
+  "meta": {}
+}

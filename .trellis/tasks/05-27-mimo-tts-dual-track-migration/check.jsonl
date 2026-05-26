@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Provider failures, auth failures, storage failures, and upstream errors must be normalized."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Async HTTP client use, background jobs, and cache scope must follow backend runtime rules."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend type/state/UI changes need project guideline review."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Final review must check data shape consistency across backend, frontend, and persisted assets."}

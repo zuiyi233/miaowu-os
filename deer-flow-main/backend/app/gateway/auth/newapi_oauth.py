@@ -107,6 +107,13 @@ class NewAPIManualGroupSyncItem:
 
 
 @dataclass(frozen=True)
+class NewAPIModelFetchResult:
+    models: tuple[str, ...] = ()
+    status_code: int | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class NewAPIManualGroupSyncResult:
     results: tuple[NewAPIManualGroupSyncItem, ...]
     group_items: tuple[dict[str, Any], ...]
@@ -624,9 +631,8 @@ async def sync_newapi_groups_for_user(
     db,
 ) -> NewAPIManualGroupSyncResult:
     settings = require_newapi_settings()
-    requested_groups = _normalize_newapi_group_names(list(groups or []), list(manual_groups or []))
-    if not requested_groups:
-        raise NewAPIOAuthError("请选择至少一个 NewAPI 分组。", status_code=400)
+    selected_groups = _normalize_newapi_group_names(list(groups or []))
+    manual_group_names = _normalize_newapi_group_names(list(manual_groups or []))
 
     result = await db.execute(select(Settings).where(Settings.user_id == user_id))
     user_settings = result.scalar_one_or_none()
@@ -637,6 +643,12 @@ async def sync_newapi_groups_for_user(
         raise NewAPIOAuthError("当前账号缺少 NewAPI 同步令牌，请重新使用 NewAPI 登录。", status_code=409)
 
     catalog = await _fetch_newapi_hub_group_catalog(settings=settings, system_access_token=system_token)
+    if not selected_groups and not manual_group_names and catalog:
+        selected_groups = _normalize_newapi_group_names(list(catalog.keys()))
+    requested_groups = _normalize_newapi_group_names(selected_groups, manual_group_names)
+    if not requested_groups:
+        raise NewAPIOAuthError("请选择至少一个 NewAPI 分组。", status_code=400)
+
     bootstraps = await _bootstrap_newapi_group_tokens(
         settings=settings,
         authorization_token=system_token,
@@ -719,7 +731,14 @@ def _extract_newapi_token_key(result: dict[str, Any]) -> str | None:
     hub_token = result.get("hub_api_token")
     if not isinstance(hub_token, dict):
         return None
-    raw_key = hub_token.get("sk_key") or hub_token.get("key")
+    raw_authorization = hub_token.get("authorization")
+    if isinstance(raw_authorization, str) and raw_authorization.strip():
+        auth_value = raw_authorization.strip()
+        if auth_value.lower().startswith("bearer "):
+            token = auth_value[7:].strip()
+            if token:
+                return token
+    raw_key = hub_token.get("key") or hub_token.get("sk_key")
     return raw_key.strip() if isinstance(raw_key, str) and raw_key.strip() else None
 
 
@@ -846,9 +865,9 @@ async def _bootstrap_newapi_group_tokens(
     return results
 
 
-async def _fetch_newapi_models_with_token(*, relay_base_url: str, api_key: str | None) -> list[str]:
+async def _fetch_newapi_models_with_token(*, relay_base_url: str, api_key: str | None) -> NewAPIModelFetchResult:
     if not api_key:
-        return []
+        return NewAPIModelFetchResult(error="NewAPI Hub 没有返回该分组的 API Token")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
@@ -856,11 +875,14 @@ async def _fetch_newapi_models_with_token(*, relay_base_url: str, api_key: str |
                 headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
             )
         if response.status_code != 200:
-            return []
+            return NewAPIModelFetchResult(
+                status_code=response.status_code,
+                error=f"NewAPI /v1/models 返回 HTTP {response.status_code}",
+            )
         data = response.json()
     except Exception as e:
         logger.warning("Failed to fetch NewAPI models: %s", e)
-        return []
+        return NewAPIModelFetchResult(error="NewAPI /v1/models 请求失败")
     raw_models = data.get("data") if isinstance(data, dict) else None
     models: list[str] = []
     if isinstance(raw_models, list):
@@ -871,7 +893,18 @@ async def _fetch_newapi_models_with_token(*, relay_base_url: str, api_key: str |
                     models.append(model_id.strip())
             elif isinstance(item, str) and item.strip():
                 models.append(item.strip())
-    return sorted(dict.fromkeys(models))
+    return NewAPIModelFetchResult(models=tuple(sorted(dict.fromkeys(models))))
+
+
+def _newapi_bootstrap_diagnostic_error(bootstrap: dict[str, Any]) -> str | None:
+    if bootstrap.get("has_novel_product_access") is False:
+        return "NewAPI 账号没有小说产品访问权限，Hub 不会创建分组 API Token 或返回可用模型"
+    hub_token = bootstrap.get("hub_api_token")
+    if isinstance(hub_token, dict):
+        provisioning = hub_token.get("provisioning")
+        if isinstance(provisioning, str) and provisioning.strip() and provisioning != "created" and provisioning != "reuse_named_token":
+            return f"NewAPI Hub Token 未可用：{provisioning.strip()}"
+    return None
 
 
 async def _build_newapi_managed_group_items(
@@ -892,15 +925,22 @@ async def _build_newapi_managed_group_items(
             if isinstance(raw_relay, str) and raw_relay.strip():
                 group_relay_base_url = raw_relay.strip()
 
-        models = await _fetch_newapi_models_with_token(relay_base_url=group_relay_base_url, api_key=token_key)
+        model_fetch = await _fetch_newapi_models_with_token(relay_base_url=group_relay_base_url, api_key=token_key)
+        models = list(model_fetch.models)
         catalog_item = group_catalog.get(token_group) or group_catalog.get(group) or {}
         if not models:
             models = _normalize_newapi_model_list(catalog_item.get("models"))
 
         status = bootstrap.get("model_sync_status") if isinstance(bootstrap.get("model_sync_status"), str) else None
         error = bootstrap.get("model_sync_error") if isinstance(bootstrap.get("model_sync_error"), str) else None
+        if not error:
+            error = _newapi_bootstrap_diagnostic_error(bootstrap)
+        if not error and not models:
+            error = model_fetch.error
         if not status:
-            status = "synced" if models else "empty"
+            status = "synced" if models else ("error" if error else "empty")
+        if error and not models and status == "synced":
+            status = "error"
         if status == "empty" and not error:
             error = f"NewAPI 分组 {token_group} 没有返回可用模型"
 
