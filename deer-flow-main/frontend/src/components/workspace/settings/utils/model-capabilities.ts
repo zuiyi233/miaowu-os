@@ -1,4 +1,5 @@
 import type { AiFeatureModuleRoute } from "@/core/ai/feature-routing";
+import { fetch as fetchWithAuth } from "@/core/api/fetcher";
 import { getBackendBaseURL } from "@/core/config";
 
 export const CATEGORY_LABELS: Record<AiFeatureModuleRoute["category"], string> = {
@@ -48,7 +49,7 @@ export async function fetchModelsFromProviderApi(
   providerId?: string,
 ): Promise<{ models: string[]; modelGroups: Record<string, string[]> }> {
   const endpoint = `${getBackendBaseURL()}/api/user/fetch-provider-models`;
-  const response = await fetch(endpoint, {
+  const response = await fetchWithAuth(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",

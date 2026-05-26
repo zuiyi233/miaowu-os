@@ -8,6 +8,7 @@ Single source of truth:
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import logging
 import re
@@ -390,7 +391,10 @@ class NewAPISyncGroupsApplyResponse(BaseModel):
 
 def _newapi_provider_id_for_response(group_id: str) -> str:
     normalized = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in group_id.strip().lower())
-    normalized = "-".join(part for part in normalized.split("-") if part) or "default"
+    normalized = "-".join(part for part in normalized.split("-") if part)
+    if not normalized:
+        raw = group_id.strip()
+        normalized = f"group-{hashlib.sha1(raw.encode('utf-8')).hexdigest()[:12]}" if raw else "default"
     if normalized == "default":
         return MANAGED_NEWAPI_PROVIDER_ID
     return f"{MANAGED_NEWAPI_PROVIDER_ID}-{normalized}"
@@ -398,7 +402,10 @@ def _newapi_provider_id_for_response(group_id: str) -> str:
 
 def _newapi_ascii_safe_group_id(value: str) -> str:
     normalized = re.sub(r"[^a-zA-Z0-9_-]+", "-", value.strip().lower()).strip("-")
-    return normalized or "default"
+    if normalized:
+        return normalized
+    raw = value.strip()
+    return f"group-{hashlib.sha1(raw.encode('utf-8')).hexdigest()[:12]}" if raw else "default"
 
 
 def _newapi_ascii_compact_group_key(value: str) -> str:

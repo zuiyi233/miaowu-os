@@ -2,14 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 
 import type { AiProviderConfig } from "@/core/ai/ai-provider-store";
 import {
+  applyGlobalTargetToAllModules,
   createCustomModuleRoute,
-  isFeatureModuleConfigurableInSettings,
+  getDefaultProviderTarget,
   loadFeatureRoutingState,
   normalizeFeatureRoutingState,
   type AiFeatureModuleRoute,
   type AiFeatureRoutingState,
   type AiModelTarget,
-  type AiParallelStrategy,
 } from "@/core/ai/feature-routing";
 
 export function useFeatureRouting(
@@ -17,6 +17,7 @@ export function useFeatureRouting(
   storeData: {
     hydrated: boolean;
     featureRoutingSettings: AiFeatureRoutingState | null;
+    defaultProviderId: string | null;
     saveFeatureRoutingToServer: (state: AiFeatureRoutingState | null) => Promise<AiFeatureRoutingState | null>;
   },
 ) {
@@ -45,11 +46,20 @@ export function useFeatureRouting(
     if (!storeData.hydrated) return;
     const backendOrDefault = storeData.featureRoutingSettings ?? loadFeatureRoutingState(providers);
     const normalized = normalizeFeatureRoutingState(backendOrDefault, providers);
+    const defaultProviderTarget = getDefaultProviderTarget(providers, storeData.defaultProviderId);
+    const normalizedWithProviderDefault =
+      defaultProviderTarget &&
+      normalized.defaultTarget?.providerId !== defaultProviderTarget.providerId
+        ? {
+            ...normalized,
+            defaultTarget: defaultProviderTarget,
+          }
+        : normalized;
     setRoutingDraft((prev) => {
       if (routingDirty && prev) return normalizeFeatureRoutingState(prev, providers);
-      return normalized;
+      return normalizedWithProviderDefault;
     });
-  }, [storeData.hydrated, storeData.featureRoutingSettings, providers, routingDirty]);
+  }, [storeData.hydrated, storeData.featureRoutingSettings, storeData.defaultProviderId, providers, routingDirty]);
 
   const mutateRouting = useCallback(
     (updater: (state: AiFeatureRoutingState) => AiFeatureRoutingState) => {
@@ -116,25 +126,14 @@ export function useFeatureRouting(
       setRoutingNotice({ type: "error", message: "请先设置主用模型" });
       return;
     }
-    const parallelTargets = globalParallelEnabled
-      ? [defaultTarget, ...(globalBackup ? [globalBackup] : [])]
-      : [];
-    mutateRouting((state) => ({
-      ...state,
-      modules: state.modules.map((m) => ({
-        ...(isFeatureModuleConfigurableInSettings(m.moduleId)
-          ? {
-              ...m,
-              primaryTarget: defaultTarget,
-              backupTarget: globalBackup,
-              autoFailover: globalAutoFailover,
-              parallelEnabled: globalParallelEnabled,
-              parallelStrategy: "compare" as AiParallelStrategy,
-              parallelTargets,
-            }
-          : m),
-      })),
-    }));
+    mutateRouting((state) =>
+      applyGlobalTargetToAllModules(state, {
+        defaultTarget,
+        backupTarget: globalBackup,
+        autoFailover: globalAutoFailover,
+        parallelEnabled: globalParallelEnabled,
+      })
+    );
     setGlobalPending(false);
     setRoutingNotice({ type: "success", message: "已应用到可配置功能模块" });
   }, [defaultTarget, globalBackup, globalAutoFailover, globalParallelEnabled, mutateRouting, routingDraft]);

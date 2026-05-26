@@ -51,6 +51,7 @@ FEATURE_PRO = FEATURE_CREATOR + [
 DEFAULT_PLAN_ENTITLEMENTS: dict[str, dict[str, Any]] = {
     "free": {
         "backend_storage_quota_bytes": 100 * 1024 * 1024,
+        "vector_memory_quota_bytes": 10 * 1024 * 1024,
         "max_projects": 2,
         "monthly_agent_runs": 30,
         "max_concurrent_runs": 1,
@@ -60,6 +61,7 @@ DEFAULT_PLAN_ENTITLEMENTS: dict[str, dict[str, Any]] = {
     },
     "creator": {
         "backend_storage_quota_bytes": 2 * 1024 * 1024 * 1024,
+        "vector_memory_quota_bytes": 100 * 1024 * 1024,
         "max_projects": 20,
         "monthly_agent_runs": 300,
         "max_concurrent_runs": 2,
@@ -69,6 +71,7 @@ DEFAULT_PLAN_ENTITLEMENTS: dict[str, dict[str, Any]] = {
     },
     "pro": {
         "backend_storage_quota_bytes": 20 * 1024 * 1024 * 1024,
+        "vector_memory_quota_bytes": 1024 * 1024 * 1024,
         "max_projects": 1000,
         "monthly_agent_runs": 3000,
         "max_concurrent_runs": 5,
@@ -120,6 +123,10 @@ def _normalize_entitlements(raw: dict[str, Any], plan_key: str) -> dict[str, Any
         "backend_storage_quota_bytes": _coerce_int(
             raw.get("backend_storage_quota_bytes"),
             defaults["backend_storage_quota_bytes"],
+        ),
+        "vector_memory_quota_bytes": _coerce_int(
+            raw.get("vector_memory_quota_bytes"),
+            defaults["vector_memory_quota_bytes"],
         ),
         "max_projects": _coerce_int(raw.get("max_projects"), defaults["max_projects"]),
         "monthly_agent_runs": _coerce_int(raw.get("monthly_agent_runs"), defaults["monthly_agent_runs"]),
@@ -266,6 +273,11 @@ class ProductEntitlementService:
         entitlement = await self.get_effective_entitlement(db, user_id)
         value = entitlement.entitlements.get("backend_storage_quota_bytes")
         return _coerce_int(value, DEFAULT_PLAN_ENTITLEMENTS["free"]["backend_storage_quota_bytes"])
+
+    async def get_vector_memory_quota_bytes(self, db: AsyncSession, user_id: str) -> int:
+        entitlement = await self.get_effective_entitlement(db, user_id)
+        value = entitlement.entitlements.get("vector_memory_quota_bytes")
+        return _coerce_int(value, DEFAULT_PLAN_ENTITLEMENTS["free"]["vector_memory_quota_bytes"])
 
     def _parse_upstream_payload(self, user_id: str, payload: dict[str, Any]) -> ProductEntitlement:
         data = payload.get("data") if isinstance(payload.get("data"), dict) else payload

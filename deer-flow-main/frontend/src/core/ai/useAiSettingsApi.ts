@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { fetch as fetchWithAuth } from "@/core/api/fetcher";
 import { getBackendBaseURL } from "@/core/config";
 
 import type { AiFeatureRoutingState } from "./feature-routing";
@@ -141,7 +142,7 @@ export async function putUserAiSettings(
   updates: UserAiSettingsUpdate,
   signal?: AbortSignal
 ): Promise<UserAiSettings> {
-  const response = await fetch(`${getApiBase()}/api/user/ai-settings`, {
+  const response = await fetchWithAuth(`${getApiBase()}/api/user/ai-settings`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -171,7 +172,7 @@ export async function syncNewApiGroups(
   payload: { groups?: string[]; manual_groups?: string[] },
   signal?: AbortSignal
 ): Promise<NewApiSyncGroupsApplyResponse> {
-  const response = await fetch(`${getApiBase()}/api/user/newapi-sync/groups`, {
+  const response = await fetchWithAuth(`${getApiBase()}/api/user/newapi-sync/groups`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",

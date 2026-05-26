@@ -506,7 +506,20 @@ def _save_settings_preferences(settings: Settings, preferences: dict[str, Any]) 
 def _safe_newapi_group_id(value: str) -> str:
     normalized = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in value.strip().lower())
     normalized = "-".join(part for part in normalized.split("-") if part)
-    return normalized or "default"
+    if normalized:
+        return normalized
+    raw = value.strip()
+    if not raw:
+        return "default"
+    return f"group-{hashlib.sha1(raw.encode('utf-8')).hexdigest()[:12]}"
+
+
+def _canonical_newapi_group_id(requested_group: str, token_group: str | None) -> str:
+    requested = requested_group.strip()
+    token = token_group.strip() if isinstance(token_group, str) else ""
+    if token and token.lower() != "default":
+        return token
+    return requested or token or "default"
 
 
 def _newapi_provider_id_for_sync_group(group_id: str) -> str:
@@ -871,7 +884,7 @@ async def _build_newapi_managed_group_items(
     items: list[dict[str, Any]] = []
     for group, bootstrap in group_bootstraps.items():
         token_key = _extract_newapi_token_key(bootstrap)
-        token_group = _extract_newapi_token_group(bootstrap, group) or group
+        token_group = _canonical_newapi_group_id(group, _extract_newapi_token_group(bootstrap, None))
         quick_start = bootstrap.get("quick_start")
         group_relay_base_url = relay_base_url
         if isinstance(quick_start, dict):

@@ -66,7 +66,7 @@ async def test_sync_workspace_documents_incremental_only_reindexes_changed_docs(
 
     assert stats_first["indexed"] == 1
     assert stats_first["skipped"] == 0
-    assert indexed_doc.status == "indexed"
+    assert indexed_doc.status == "fallback_indexed"
 
     async with session_factory() as db:
         stats_second = await memory_service.sync_workspace_documents_incremental(
@@ -104,9 +104,8 @@ async def test_sync_workspace_documents_incremental_only_reindexes_changed_docs(
         indexed_doc = (await db.execute(select(DocumentIndex))).scalar_one()
 
     assert stats_third["indexed"] == 1
-    assert indexed_doc.status == "indexed"
+    assert indexed_doc.status == "fallback_indexed"
 
     fallback_items = memory_service._fallback_store[(user_id, project_id)]
     assert len(fallback_items) == 1
     assert "第二版内容" in fallback_items[0]["content"]
-

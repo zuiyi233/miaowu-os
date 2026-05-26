@@ -28,6 +28,7 @@ import { Separator } from "@/components/ui/separator";
 import {
   useAiProviderStore,
 } from "@/core/ai/ai-provider-store";
+import type { AiModelTarget } from "@/core/ai/feature-routing";
 import {
   loadFeatureRoutingState,
   normalizeFeatureRoutingState,
@@ -84,6 +85,7 @@ export function AiProviderSettingsPage() {
   const routing = useFeatureRouting(providers, {
     hydrated,
     featureRoutingSettings: draft.featureRoutingSettings,
+    defaultProviderId: draft.defaultProviderId,
     saveFeatureRoutingToServer,
   });
 
@@ -115,7 +117,7 @@ export function AiProviderSettingsPage() {
     routing.setRoutingNotice(null);
   }, [draft.featureRoutingSettings, draft.providers, routing]);
 
-  const handleGlobalBackupChange = useCallback((target: import("@/core/ai/feature-routing").AiModelTarget | null) => {
+  const handleGlobalBackupChange = useCallback((target: AiModelTarget | null) => {
     routing.setGlobalBackup(target);
     routing.setGlobalPending(true);
     if (!target) routing.setGlobalAutoFailover(false);
@@ -131,7 +133,7 @@ export function AiProviderSettingsPage() {
     routing.setGlobalPending(true);
   }, [routing]);
 
-  const handleDefaultTargetChange = useCallback((target: import("@/core/ai/feature-routing").AiModelTarget | null) => {
+  const handleDefaultTargetChange = useCallback((target: AiModelTarget | null) => {
     routing.mutateRouting((state) => ({
       ...state,
       defaultTarget: target,

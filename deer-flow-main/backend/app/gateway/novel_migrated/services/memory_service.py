@@ -1,4 +1,4 @@
-"""向量记忆服务 - 支持向量检索与降级非向量检索。"""
+"""记忆服务 - 支持按用户配置的语义检索与非向量降级检索。"""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.cache_policy import TimedOrderedCache
+from app.gateway.product_entitlements import product_entitlement_service
 from app.gateway.novel_migrated.core.crypto import safe_decrypt
 from app.gateway.novel_migrated.core.database import AsyncSessionLocal
 from app.gateway.novel_migrated.core.logger import get_logger
@@ -42,6 +43,7 @@ _HTTP_CLIENT_TIMEOUT = float(os.getenv("NOVEL_MIGRATED_HTTP_TIMEOUT", "30.0"))
 _RAG_CONTENT_MAX_CHARS = int(os.getenv("NOVEL_MIGRATED_RAG_CONTENT_MAX_CHARS", "12000"))
 _CLOUD_CONFIG_CACHE_TTL_SECONDS = float(os.getenv("NOVEL_MIGRATED_CLOUD_CONFIG_CACHE_TTL_SECONDS", "120"))
 _CLOUD_CONFIG_CACHE_MAX_SIZE = int(os.getenv("NOVEL_MIGRATED_CLOUD_CONFIG_CACHE_MAX_SIZE", "256"))
+_VECTOR_QUOTA_WARNED_USERS_MAX = int(os.getenv("NOVEL_MIGRATED_VECTOR_QUOTA_WARNED_USERS_MAX", "1024"))
 
 _RAG_SUPPORTED_ENTITY_TYPES = {
     "book",
@@ -76,11 +78,12 @@ class MemoryService:
     """记忆管理服务。
 
     向量模式：
-    - `chromadb` + `sentence-transformers` 可用时启用。
+    - `chromadb` 作为服务端持久化向量索引，按实际使用懒初始化。
+    - Embedding 模型按用户配置解析；本地模型仅作为可选兜底，不在服务启动时加载。
 
     降级模式：
-    - 任一依赖不可用时切换为内存存储 + 关键词/覆盖度检索。
-    - 保证服务可初始化，不因依赖缺失阻塞启动。
+    - 用户未配置 Embedding 或向量索引不可用时，切换为内存缓存 + 关键词/覆盖度检索。
+    - 持久化真源仍由 story_memories / workspace documents 负责，降级缓存不是生产长期存储。
 
     性能优化（P2）：
     - 复用长生命周期 AsyncClient（避免每次创建）
@@ -107,10 +110,17 @@ class MemoryService:
         self.client = None
         self.embedding_model = None
         self._local_embedding_failed = False
+        self._vector_init_attempted = False
+        self._vector_unavailable_logged = False
+        self._vector_quota_warned_users: set[str] = set()
         self._local_embedding_model_name = os.getenv(
             "NOVEL_MIGRATED_LOCAL_EMBEDDING_MODEL",
             "paraphrase-multilingual-MiniLM-L12-v2",
         )
+        self._allow_local_embedding_fallback = os.getenv(
+            "NOVEL_MIGRATED_ALLOW_LOCAL_EMBEDDING_FALLBACK",
+            "0",
+        ).strip().lower() in {"1", "true", "yes", "on"}
         self._cloud_embedding_model = os.getenv(
             "NOVEL_MIGRATED_EMBEDDING_MODEL",
             "text-embedding-3-small",
@@ -124,12 +134,6 @@ class MemoryService:
         self._fallback_total_count = 0  # 跟踪总条目数（用于容量控制）
         self._state_lock = threading.RLock()
 
-        try:
-            self._vector_enabled = self._try_init_vector_stack()
-        except Exception as exc:
-            self._vector_enabled = False
-            logger.warning("⚠️ 向量组件初始化失败，降级为非向量检索: %s", exc)
-
         # 初始化复用的 HTTP 客户端
         if MemoryService._http_client is None:
             with MemoryService._http_client_lock:
@@ -140,10 +144,7 @@ class MemoryService:
                     except Exception as e:
                         logger.warning("⚠️ HTTP 客户端初始化失败: %s", e)
 
-        if self._vector_enabled:
-            logger.info("✅ MemoryService 初始化成功（向量模式）")
-        else:
-            logger.warning("⚠️ MemoryService 初始化为降级模式（无向量依赖），容量上限: %d", _FALLBACK_STORE_MAX_CAPACITY)
+        logger.info("✅ MemoryService 初始化完成（多用户懒加载模式，fallback 容量上限: %d）", _FALLBACK_STORE_MAX_CAPACITY)
 
         self._initialized = True
 
@@ -156,7 +157,6 @@ class MemoryService:
 
     def _try_init_vector_stack(self) -> bool:
         if chromadb is None:
-            logger.warning("⚠️ chromadb 未安装，使用内存语义检索/关键词降级模式")
             return False
 
         try:
@@ -175,12 +175,41 @@ class MemoryService:
 
         if SentenceTransformer is None:
             logger.warning("⚠️ sentence-transformers 未安装，将优先使用云 Embedding（可回退关键词）")
-        else:
+        elif self._allow_local_embedding_fallback:
             logger.info("✅ 本地 Embedding 可用：%s", self._local_embedding_model_name)
         return True
 
+    def _ensure_vector_stack(self) -> bool:
+        """按需初始化服务端向量索引。
+
+        多用户 SaaS 场景下，服务启动时不能假设存在全局 embedding 模型或单用户配置；
+        向量库只在用户实际触发语义索引/查询/清理时初始化。
+        """
+        if self._vector_enabled and self.client is not None:
+            return True
+
+        with self._state_lock:
+            if self._vector_enabled and self.client is not None:
+                return True
+            if self._vector_init_attempted:
+                return False
+
+            self._vector_init_attempted = True
+            try:
+                self._vector_enabled = self._try_init_vector_stack()
+            except Exception as exc:
+                self._vector_enabled = False
+                self.client = None
+                logger.warning("⚠️ 向量索引按需初始化失败，当前请求降级为非向量检索: %s", exc)
+
+            if not self._vector_enabled and not self._vector_unavailable_logged:
+                self._vector_unavailable_logged = True
+                logger.info("MemoryService 向量索引当前不可用，用户请求将使用关键词/缓存降级。")
+
+            return self._vector_enabled and self.client is not None
+
     def get_collection(self, user_id: str, project_id: str):
-        if not self._vector_enabled or not self.client:
+        if not self._ensure_vector_stack():
             return None
 
         user_hash = hashlib.md5(user_id.encode("utf-8")).hexdigest()[:12]
@@ -191,6 +220,154 @@ class MemoryService:
             name=collection_name,
             metadata={"hnsw:space": "cosine"},
         )
+
+    @staticmethod
+    def _estimate_vector_item_bytes(
+        *,
+        content: str,
+        metadata: dict[str, Any],
+        embedding: list[float] | None,
+    ) -> int:
+        """Estimate Chroma payload size for quota enforcement.
+
+        The limit is intentionally approximate: it covers document text,
+        metadata JSON and float vectors, which are the user-controlled growth
+        factors. Chroma's internal index overhead is implementation-specific.
+        """
+        content_bytes = len((content or "").encode("utf-8"))
+        metadata_bytes = len(json.dumps(metadata or {}, ensure_ascii=False).encode("utf-8"))
+        embedding_bytes = len(embedding or []) * 8
+        return content_bytes + metadata_bytes + embedding_bytes
+
+    @staticmethod
+    def _vector_memory_fallback_key(user_id: str) -> tuple[str, str]:
+        return ((user_id or "anonymous"), "__all_projects__")
+
+    def _estimate_user_fallback_vector_bytes(self, user_id: str) -> int:
+        total = 0
+        scope_user = user_id or "anonymous"
+        with self._state_lock:
+            for (stored_user, _project_id), items in self._fallback_store.items():
+                if stored_user != scope_user:
+                    continue
+                for item in items:
+                    total += self._estimate_vector_item_bytes(
+                        content=str(item.get("content") or ""),
+                        metadata=item.get("metadata") if isinstance(item.get("metadata"), dict) else {},
+                        embedding=self._safe_embedding(item.get("embedding")),
+                    )
+        return total
+
+    def _estimate_collection_bytes(self, collection: Any) -> int:
+        try:
+            payload = collection.get(include=["documents", "metadatas", "embeddings"])
+        except TypeError:
+            payload = collection.get()
+        except Exception as exc:
+            logger.warning("⚠️ 读取向量 collection 用量失败，保守禁止新增向量写入: %s", exc)
+            return 2**63 - 1
+
+        documents = payload.get("documents") or []
+        metadatas = payload.get("metadatas") or []
+        embeddings = payload.get("embeddings") or []
+        total = 0
+        for idx, doc in enumerate(documents):
+            embedding = None
+            if idx < len(embeddings):
+                embedding = self._safe_embedding(embeddings[idx])
+            meta = metadatas[idx] if idx < len(metadatas) and isinstance(metadatas[idx], dict) else {}
+            total += self._estimate_vector_item_bytes(
+                content=str(doc or ""),
+                metadata=meta,
+                embedding=embedding,
+            )
+        return total
+
+    def _estimate_user_collection_bytes(self, user_id: str) -> int:
+        if not self.client:
+            return 0
+
+        user_hash = hashlib.md5(user_id.encode("utf-8")).hexdigest()[:12]
+        prefix = f"u_{user_hash}_p_"
+        try:
+            collections = self.client.list_collections()
+        except Exception as exc:
+            logger.warning("⚠️ 列出用户向量 collection 失败，保守禁止新增向量写入: user=%s error=%s", user_id, exc)
+            return 2**63 - 1
+
+        total = 0
+        for item in collections:
+            name = getattr(item, "name", None)
+            if name is None and isinstance(item, str):
+                name = item
+            if not isinstance(name, str) or not name.startswith(prefix):
+                continue
+            try:
+                collection = self.client.get_collection(name=name)
+            except Exception as exc:
+                logger.warning("⚠️ 打开用户向量 collection 失败，保守跳过该 collection: user=%s name=%s error=%s", user_id, name, exc)
+                continue
+            total += self._estimate_collection_bytes(collection)
+        return total
+
+    async def _get_vector_memory_quota_bytes(self, user_id: str) -> int:
+        if not (user_id or "").strip():
+            return 0
+        try:
+            async with AsyncSessionLocal() as session:
+                return await product_entitlement_service.get_vector_memory_quota_bytes(session, user_id)
+        except Exception as exc:
+            logger.warning("⚠️ 读取用户向量记忆额度失败，使用免费额度: user=%s error=%s", user_id, exc)
+            return int(os.getenv("NOVEL_MIGRATED_DEFAULT_VECTOR_MEMORY_QUOTA_BYTES", str(10 * 1024 * 1024)))
+
+    def _log_vector_quota_exceeded_once(self, user_id: str, *, used: int, incoming: int, quota: int) -> None:
+        with self._state_lock:
+            if user_id in self._vector_quota_warned_users:
+                return
+            if len(self._vector_quota_warned_users) >= _VECTOR_QUOTA_WARNED_USERS_MAX:
+                self._vector_quota_warned_users.clear()
+            self._vector_quota_warned_users.add(user_id)
+        logger.warning(
+            "⚠️ 用户向量记忆额度不足，已降级为关键词/持久化资料检索: user=%s used=%d incoming=%d quota=%d",
+            user_id,
+            used,
+            incoming,
+            quota,
+        )
+
+    async def _filter_vector_items_by_user_quota(
+        self,
+        *,
+        user_id: str,
+        collection: Any,
+        items: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not items:
+            return []
+
+        quota = await self._get_vector_memory_quota_bytes(user_id)
+        if quota <= 0:
+            self._log_vector_quota_exceeded_once(user_id, used=0, incoming=0, quota=quota)
+            return []
+
+        used = self._estimate_user_collection_bytes(user_id)
+        if used >= 2**62:
+            return []
+        used += self._estimate_user_fallback_vector_bytes(user_id)
+
+        allowed: list[dict[str, Any]] = []
+        for item in items:
+            incoming = self._estimate_vector_item_bytes(
+                content=str(item.get("content") or ""),
+                metadata=item.get("metadata") if isinstance(item.get("metadata"), dict) else {},
+                embedding=self._safe_embedding(item.get("embedding")),
+            )
+            if used + incoming > quota:
+                self._log_vector_quota_exceeded_once(user_id, used=used, incoming=incoming, quota=quota)
+                continue
+            allowed.append(item)
+            used += incoming
+        return allowed
 
     @staticmethod
     def _build_document_vector_id(project_id: str, entity_type: str, entity_id: str) -> str:
@@ -345,8 +522,10 @@ class MemoryService:
         """从工作区文档增量同步到向量记忆索引。
 
         - 数据源：workspace files + document_indexes（不读取正文 DB 字段）
-        - 增量：仅处理 `status != indexed` 的文档（或 force=True）
+        - 增量：仅处理需要重建的文档（或 force=True）
         - 命名空间隔离：collection 已按 user_id/project_id 哈希隔离
+        - 只有真实写入向量索引后才标记 `indexed`；降级缓存标记为
+          `fallback_indexed`，避免把进程内缓存伪装成长期语义索引。
         """
         scope_user = (user_id or "").strip()
         if not scope_user:
@@ -370,13 +549,18 @@ class MemoryService:
             docs = docs[:limit]
 
         stats = {"total": len(docs), "indexed": 0, "skipped": 0, "failed": 0}
-        collection = self.get_collection(scope_user, scope_project) if self._vector_enabled else None
+        collection = self.get_collection(scope_user, scope_project)
 
         pending_docs = []
         for doc in docs:
-            if not force and (doc.status or "").lower() == "indexed":
-                stats["skipped"] += 1
-                continue
+            if not force:
+                status = (doc.status or "").lower()
+                if status == "indexed":
+                    stats["skipped"] += 1
+                    continue
+                if status == "fallback_indexed" and collection is None:
+                    stats["skipped"] += 1
+                    continue
             pending_docs.append(doc)
 
         if not pending_docs:
@@ -457,6 +641,17 @@ class MemoryService:
                     fallback_items.append({**item, "embedding": embedding})
 
             if collection is not None and vector_items:
+                quota_allowed = await self._filter_vector_items_by_user_quota(
+                    user_id=scope_user,
+                    collection=collection,
+                    items=vector_items,
+                )
+                if len(quota_allowed) != len(vector_items):
+                    allowed_ids = {item["memory_id"] for item in quota_allowed}
+                    fallback_items.extend(item for item in vector_items if item["memory_id"] not in allowed_ids)
+                    vector_items = quota_allowed
+
+            if collection is not None and vector_items:
                 ids = [item["memory_id"] for item in vector_items]
                 documents = [item["content"] for item in vector_items]
                 metadatas = [item["metadata"] for item in vector_items]
@@ -498,7 +693,7 @@ class MemoryService:
                         embedding=item["embedding"],
                     )
                     doc = item["doc"]
-                    doc.status = "indexed"
+                    doc.status = "fallback_indexed"
                     doc.indexed_at = datetime.now(tz=UTC)
                     stats["indexed"] += 1
 
@@ -699,13 +894,14 @@ class MemoryService:
             return None
 
     async def _embed_texts(self, user_id: str, texts: list[str]) -> list[list[float]] | None:
-        local_vectors = self._embed_with_local_model(texts)
-        if local_vectors is not None:
-            return local_vectors
-
         cloud_vectors = await self._embed_with_cloud_provider(user_id, texts)
         if cloud_vectors is not None:
             return cloud_vectors
+
+        if self._allow_local_embedding_fallback:
+            local_vectors = self._embed_with_local_model(texts)
+            if local_vectors is not None:
+                return local_vectors
 
         return None
 
@@ -724,18 +920,31 @@ class MemoryService:
         if embeddings and embeddings[0]:
             semantic_embedding = embeddings[0]
 
-        if self._vector_enabled and semantic_embedding is not None:
+        if semantic_embedding is not None:
             try:
                 collection = self.get_collection(user_id, project_id)
                 if collection is not None:
                     vector_meta = self._build_memory_vector_meta(memory_type, metadata)
-                    collection.add(
-                        ids=[memory_id],
-                        embeddings=[semantic_embedding],
-                        documents=[content],
-                        metadatas=[vector_meta],
+                    vector_items = await self._filter_vector_items_by_user_quota(
+                        user_id=user_id,
+                        collection=collection,
+                        items=[
+                            {
+                                "memory_id": memory_id,
+                                "content": content,
+                                "metadata": vector_meta,
+                                "embedding": semantic_embedding,
+                            }
+                        ],
                     )
-                    return True
+                    if vector_items:
+                        collection.add(
+                            ids=[memory_id],
+                            embeddings=[semantic_embedding],
+                            documents=[content],
+                            metadatas=[vector_meta],
+                        )
+                        return True
             except Exception as exc:
                 logger.warning("⚠️ 向量写入失败，回退到内存存储: %s", exc)
 
@@ -776,7 +985,7 @@ class MemoryService:
                 )
             embeddings = [None] * len(normalized_memories)
 
-        collection = self.get_collection(user_id, project_id) if self._vector_enabled else None
+        collection = self.get_collection(user_id, project_id)
         vector_payloads: list[tuple[str, str, str, dict[str, Any], list[float]]] = []
         fallback_payloads: list[tuple[str, str, str, dict[str, Any], list[float] | None]] = []
         for (memory_id, content, memory_type, mem_metadata), embedding in zip(normalized_memories, embeddings):
@@ -787,15 +996,36 @@ class MemoryService:
 
         saved = 0
         if collection is not None and vector_payloads:
-            ids = [memory_id for memory_id, _, _, _, _ in vector_payloads]
-            embedding_batch = [embedding for _, _, _, _, embedding in vector_payloads]
-            documents = [content for _, content, _, _, _ in vector_payloads]
-            metadatas = [
-                self._build_memory_vector_meta(memory_type, metadata)
-                for _, _, memory_type, metadata, _ in vector_payloads
+            candidate_items = [
+                {
+                    "memory_id": memory_id,
+                    "content": content,
+                    "memory_type": memory_type,
+                    "metadata": self._build_memory_vector_meta(memory_type, metadata),
+                    "raw_metadata": metadata,
+                    "embedding": embedding,
+                }
+                for memory_id, content, memory_type, metadata, embedding in vector_payloads
             ]
+            quota_allowed = await self._filter_vector_items_by_user_quota(
+                user_id=user_id,
+                collection=collection,
+                items=candidate_items,
+            )
+            if len(quota_allowed) != len(candidate_items):
+                allowed_ids = {item["memory_id"] for item in quota_allowed}
+                for memory_id, content, memory_type, mem_metadata, embedding in vector_payloads:
+                    if memory_id not in allowed_ids:
+                        fallback_payloads.append((memory_id, content, memory_type, mem_metadata, embedding))
+
+            ids = [item["memory_id"] for item in quota_allowed]
+            embedding_batch = [item["embedding"] for item in quota_allowed]
+            documents = [item["content"] for item in quota_allowed]
+            metadatas = [item["metadata"] for item in quota_allowed]
             try:
-                if hasattr(collection, "upsert"):
+                if not quota_allowed:
+                    pass
+                elif hasattr(collection, "upsert"):
                     collection.upsert(
                         ids=ids,
                         embeddings=embedding_batch,
@@ -812,9 +1042,18 @@ class MemoryService:
                     )
             except Exception as exc:
                 logger.warning("⚠️ 批量向量记忆写入失败，回退到内存存储: %s", exc)
-                fallback_payloads.extend(vector_payloads)
+                for item in quota_allowed:
+                    fallback_payloads.append(
+                        (
+                            item["memory_id"],
+                            item["content"],
+                            item["memory_type"],
+                            item["raw_metadata"],
+                            item["embedding"],
+                        )
+                    )
             else:
-                saved += len(vector_payloads)
+                saved += len(quota_allowed)
 
         for memory_id, content, memory_type, mem_metadata, embedding in fallback_payloads:
             self._store_memory_fallback_entry(
@@ -846,7 +1085,7 @@ class MemoryService:
         if query_vectors and query_vectors[0]:
             query_embedding = query_vectors[0]
 
-        if self._vector_enabled and query_embedding is not None:
+        if query_embedding is not None:
             try:
                 collection = self.get_collection(user_id, project_id)
                 if collection is not None:
@@ -923,32 +1162,31 @@ class MemoryService:
     ) -> list[dict[str, Any]]:
         memory_types = memory_types or []
 
-        if self._vector_enabled:
+        collection = self.get_collection(user_id, project_id)
+        if collection is not None:
             try:
-                collection = self.get_collection(user_id, project_id)
-                if collection is not None:
-                    where_clause = {"memory_type": {"$in": memory_types}} if memory_types else None
-                    results = collection.get(where=where_clause)
-                    docs = results.get("documents") or []
-                    metas = results.get("metadatas") or []
-                    ids = results.get("ids") or []
+                where_clause = {"memory_type": {"$in": memory_types}} if memory_types else None
+                results = collection.get(where=where_clause)
+                docs = results.get("documents") or []
+                metas = results.get("metadatas") or []
+                ids = results.get("ids") or []
 
-                    merged = [
-                        {
-                            "id": ids[idx] if idx < len(ids) else "",
-                            "content": docs[idx],
-                            "metadata": metas[idx] if idx < len(metas) else {},
-                        }
-                        for idx in range(len(docs))
-                    ]
-                    merged.sort(
-                        key=lambda item: (
-                            float(item["metadata"].get("importance", 0.0)),
-                            int(item["metadata"].get("chapter_number", 0) or 0),
-                        ),
-                        reverse=True,
-                    )
-                    return merged[:limit]
+                merged = [
+                    {
+                        "id": ids[idx] if idx < len(ids) else "",
+                        "content": docs[idx],
+                        "metadata": metas[idx] if idx < len(metas) else {},
+                    }
+                    for idx in range(len(docs))
+                ]
+                merged.sort(
+                    key=lambda item: (
+                        float(item["metadata"].get("importance", 0.0)),
+                        int(item["metadata"].get("chapter_number", 0) or 0),
+                    ),
+                    reverse=True,
+                )
+                return merged[:limit]
             except Exception as exc:
                 logger.warning("⚠️ 读取最近记忆失败，回退到降级模式: %s", exc)
 
@@ -1042,27 +1280,26 @@ class MemoryService:
         if not foreshadow_keywords:
             return 0
 
-        if self._vector_enabled:
+        collection = self.get_collection(user_id, project_id)
+        if collection is not None:
             try:
-                collection = self.get_collection(user_id, project_id)
-                if collection is not None:
-                    results = collection.get(where={"memory_type": "foreshadow"})
-                    ids = results.get("ids") or []
-                    docs = results.get("documents") or []
-                    metas = results.get("metadatas") or []
+                results = collection.get(where={"memory_type": "foreshadow"})
+                ids = results.get("ids") or []
+                docs = results.get("documents") or []
+                metas = results.get("metadatas") or []
 
-                    to_delete = []
-                    keywords = [k.strip().lower() for k in foreshadow_keywords if k and k.strip()]
-                    for idx, doc in enumerate(docs):
-                        meta = metas[idx] if idx < len(metas) else {}
-                        title = str(meta.get("title", "")).lower()
-                        content = str(doc or "").lower()
-                        if any(k in title or k in content for k in keywords):
-                            to_delete.append(ids[idx])
+                to_delete = []
+                keywords = [k.strip().lower() for k in foreshadow_keywords if k and k.strip()]
+                for idx, doc in enumerate(docs):
+                    meta = metas[idx] if idx < len(metas) else {}
+                    title = str(meta.get("title", "")).lower()
+                    content = str(doc or "").lower()
+                    if any(k in title or k in content for k in keywords):
+                        to_delete.append(ids[idx])
 
-                    if to_delete:
-                        collection.delete(ids=to_delete)
-                    return len(to_delete)
+                if to_delete:
+                    collection.delete(ids=to_delete)
+                return len(to_delete)
             except Exception as exc:
                 logger.warning("⚠️ 删除向量伏笔记忆失败，回退到降级存储删除: %s", exc)
 
@@ -1087,15 +1324,14 @@ class MemoryService:
             return before - len(kept)
 
     async def delete_chapter_memories(self, user_id: str, project_id: str, chapter_id: str) -> int:
-        if self._vector_enabled:
+        collection = self.get_collection(user_id, project_id)
+        if collection is not None:
             try:
-                collection = self.get_collection(user_id, project_id)
-                if collection is not None:
-                    results = collection.get(where={"chapter_id": str(chapter_id)})
-                    ids = results.get("ids") or []
-                    if ids:
-                        collection.delete(ids=ids)
-                    return len(ids)
+                results = collection.get(where={"chapter_id": str(chapter_id)})
+                ids = results.get("ids") or []
+                if ids:
+                    collection.delete(ids=ids)
+                return len(ids)
             except Exception as exc:
                 logger.warning("⚠️ 删除章节向量记忆失败，回退到降级存储删除: %s", exc)
 
@@ -1108,7 +1344,7 @@ class MemoryService:
             return before - len(self._fallback_store[key])
 
     async def delete_project_memories(self, user_id: str, project_id: str) -> bool:
-        if self._vector_enabled and self.client is not None:
+        if self._ensure_vector_stack() and self.client is not None:
             try:
                 user_hash = hashlib.md5(user_id.encode("utf-8")).hexdigest()[:12]
                 project_hash = hashlib.md5(project_id.encode("utf-8")).hexdigest()[:12]
@@ -1139,29 +1375,28 @@ class MemoryService:
             if vectors and vectors[0]:
                 updated_embedding = vectors[0]
 
-        if self._vector_enabled:
+        collection = self.get_collection(user_id, project_id)
+        if collection is not None:
             try:
-                collection = self.get_collection(user_id, project_id)
-                if collection is not None:
-                    update_data: dict[str, Any] = {"ids": [memory_id]}
-                    if content is not None:
-                        update_data["documents"] = [content]
-                        if updated_embedding is not None:
-                            update_data["embeddings"] = [updated_embedding]
-                    if metadata:
-                        update_data["metadatas"] = [
-                            {
-                                "memory_type": metadata.get("memory_type", "unknown"),
-                                "chapter_id": str(metadata.get("chapter_id", "")),
-                                "chapter_number": int(metadata.get("chapter_number", 0) or 0),
-                                "importance": float(metadata.get("importance_score", 0.5) or 0.5),
-                                "tags": json.dumps(metadata.get("tags", []), ensure_ascii=False),
-                                "title": str(metadata.get("title", ""))[:200],
-                                "is_foreshadow": int(metadata.get("is_foreshadow", 0) or 0),
-                            }
-                        ]
-                    collection.update(**update_data)
-                    return True
+                update_data: dict[str, Any] = {"ids": [memory_id]}
+                if content is not None:
+                    update_data["documents"] = [content]
+                    if updated_embedding is not None:
+                        update_data["embeddings"] = [updated_embedding]
+                if metadata:
+                    update_data["metadatas"] = [
+                        {
+                            "memory_type": metadata.get("memory_type", "unknown"),
+                            "chapter_id": str(metadata.get("chapter_id", "")),
+                            "chapter_number": int(metadata.get("chapter_number", 0) or 0),
+                            "importance": float(metadata.get("importance_score", 0.5) or 0.5),
+                            "tags": json.dumps(metadata.get("tags", []), ensure_ascii=False),
+                            "title": str(metadata.get("title", ""))[:200],
+                            "is_foreshadow": int(metadata.get("is_foreshadow", 0) or 0),
+                        }
+                    ]
+                collection.update(**update_data)
+                return True
             except Exception as exc:
                 logger.warning("⚠️ 更新向量记忆失败，回退到降级存储更新: %s", exc)
 
@@ -1182,22 +1417,21 @@ class MemoryService:
     async def get_memory_stats(self, user_id: str, project_id: str) -> dict[str, Any]:
         memories: list[dict[str, Any]] = []
 
-        if self._vector_enabled:
+        collection = self.get_collection(user_id, project_id)
+        if collection is not None:
             try:
-                collection = self.get_collection(user_id, project_id)
-                if collection is not None:
-                    all_memories = collection.get()
-                    docs = all_memories.get("documents") or []
-                    metas = all_memories.get("metadatas") or []
-                    ids = all_memories.get("ids") or []
-                    memories = [
-                        {
-                            "id": ids[idx] if idx < len(ids) else "",
-                            "content": docs[idx],
-                            "metadata": metas[idx] if idx < len(metas) else {},
-                        }
-                        for idx in range(len(docs))
-                    ]
+                all_memories = collection.get()
+                docs = all_memories.get("documents") or []
+                metas = all_memories.get("metadatas") or []
+                ids = all_memories.get("ids") or []
+                memories = [
+                    {
+                        "id": ids[idx] if idx < len(ids) else "",
+                        "content": docs[idx],
+                        "metadata": metas[idx] if idx < len(metas) else {},
+                    }
+                    for idx in range(len(docs))
+                ]
             except Exception as exc:
                 logger.warning("⚠️ 读取向量统计失败，回退到降级统计: %s", exc)
 

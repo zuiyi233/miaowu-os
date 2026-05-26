@@ -278,6 +278,26 @@ function getFirstAvailableTarget(providers: AiProviderConfig[]): AiModelTarget |
   };
 }
 
+export function getDefaultProviderTarget(
+  providers: AiProviderConfig[],
+  defaultProviderId?: string | null
+): AiModelTarget | null {
+  const normalizedDefaultProviderId =
+    typeof defaultProviderId === "string" ? defaultProviderId.trim() : "";
+  const defaultProvider = normalizedDefaultProviderId
+    ? providers.find((item) => item.id === normalizedDefaultProviderId && item.models.length > 0)
+    : undefined;
+  const activeProvider = providers.find((item) => item.isActive && item.models.length > 0);
+  const provider = defaultProvider ?? activeProvider ?? providers.find((item) => item.models.length > 0);
+  if (!provider) {
+    return null;
+  }
+  return {
+    providerId: provider.id,
+    model: provider.models[0]!,
+  };
+}
+
 function isValidTarget(
   target: AiModelTarget | null | undefined,
   providers: AiProviderConfig[]
@@ -292,6 +312,27 @@ function isValidTarget(
   return provider.models.includes(target.model);
 }
 
+function repairTargetByModel(
+  target: AiModelTarget | null | undefined,
+  providers: AiProviderConfig[]
+): AiModelTarget | null {
+  if (!target?.model) {
+    return null;
+  }
+  const exact = providers.find((item) => item.id === target.providerId && item.models.includes(target.model));
+  if (exact) {
+    return target;
+  }
+  const matches = providers.filter((item) => item.models.includes(target.model));
+  if (matches.length === 1) {
+    return {
+      providerId: matches[0]!.id,
+      model: target.model,
+    };
+  }
+  return null;
+}
+
 function normalizeTarget(
   target: AiModelTarget | null | undefined,
   providers: AiProviderConfig[],
@@ -300,7 +341,7 @@ function normalizeTarget(
   if (isValidTarget(target, providers)) {
     return target;
   }
-  return fallback;
+  return repairTargetByModel(target, providers) ?? fallback;
 }
 
 function defaultChannelMeta(providerId: string): AiChannelMetadata {
@@ -569,6 +610,35 @@ export function loadFeatureRoutingState(
   providers: AiProviderConfig[]
 ): AiFeatureRoutingState {
   return createDefaultFeatureRoutingState(providers);
+}
+
+export function applyGlobalTargetToAllModules(
+  state: AiFeatureRoutingState,
+  options: {
+    defaultTarget: AiModelTarget;
+    backupTarget: AiModelTarget | null;
+    autoFailover: boolean;
+    parallelEnabled: boolean;
+    parallelStrategy?: AiParallelStrategy;
+  }
+): AiFeatureRoutingState {
+  const parallelTargets = options.parallelEnabled
+    ? [options.defaultTarget, ...(options.backupTarget ? [options.backupTarget] : [])]
+    : [];
+  return {
+    ...state,
+    defaultTarget: options.defaultTarget,
+    modules: state.modules.map((moduleRoute) => ({
+      ...moduleRoute,
+      defaultTarget: options.defaultTarget,
+      primaryTarget: options.defaultTarget,
+      backupTarget: options.backupTarget,
+      autoFailover: options.autoFailover,
+      parallelEnabled: options.parallelEnabled,
+      parallelStrategy: options.parallelStrategy ?? "compare",
+      parallelTargets,
+    })),
+  };
 }
 
 export function saveFeatureRoutingState(_state: AiFeatureRoutingState): void {

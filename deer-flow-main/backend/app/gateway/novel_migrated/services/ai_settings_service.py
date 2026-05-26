@@ -14,6 +14,7 @@ Design goals:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -35,6 +36,7 @@ logger = get_logger(__name__)
 AI_PROVIDER_SETTINGS_PREF_KEY = "ai_provider_settings"
 AI_PROVIDER_SETTINGS_VERSION = 1
 MANAGED_NEWAPI_PROVIDER_ID = "newapi-managed"
+_AI_PROVIDER_SETTINGS_CHANGED_KEY = "_normalization_changed"
 
 DEFAULT_CLIENT_SETTINGS: ClientSettings = {
     "enable_stream_mode": True,
@@ -195,7 +197,21 @@ def _get_managed_newapi_api_key() -> str | None:
 
 def _safe_provider_id_part(value: str) -> str:
     normalized = re.sub(r"[^a-zA-Z0-9_-]+", "-", value.strip().lower()).strip("-")
-    return normalized or "default"
+    if normalized:
+        return normalized
+    raw = value.strip()
+    if not raw:
+        return "default"
+    return f"group-{hashlib.sha1(raw.encode('utf-8')).hexdigest()[:12]}"
+
+
+def _group_display_name_from_provider_name(name: str | None) -> str | None:
+    normalized = _as_non_empty_str(name)
+    if not normalized:
+        return None
+    match = re.search(r"NewAPI[（(](.*?)[）)]", normalized)
+    group_name = match.group(1).strip() if match else normalized
+    return _as_non_empty_str(group_name)
 
 
 def _newapi_provider_id_for_group(group_id: str) -> str:
@@ -232,15 +248,15 @@ def _parse_managed_newapi_groups_json(raw: str | None) -> list[ManagedNewAPIGrou
     for index, item in enumerate(parsed, start=1):
         if not isinstance(item, dict):
             continue
-        group_id = _as_non_empty_str(item.get("id")) or _as_non_empty_str(item.get("group")) or f"group-{index}"
+        raw_group_id = _as_non_empty_str(item.get("id")) or _as_non_empty_str(item.get("group")) or f"group-{index}"
         api_key = _as_non_empty_str(item.get("api_key")) or _as_non_empty_str(item.get("key"))
         base_url = _as_non_empty_str(item.get("base_url")) or _get_managed_newapi_base_url()
         if not api_key or not base_url:
             continue
         groups.append(
             ManagedNewAPIGroup(
-                group_id=_safe_provider_id_part(group_id),
-                name=_as_non_empty_str(item.get("name")) or group_id,
+                group_id=raw_group_id,
+                name=_as_non_empty_str(item.get("name")) or raw_group_id,
                 base_url=_normalize_openai_base_url(base_url),
                 api_key=api_key,
             )
@@ -394,8 +410,8 @@ def _build_managed_newapi_provider_record_from_bootstrap(
     item: ManagedNewAPIBootstrapGroup,
     previous: ProviderRecord | None = None,
 ) -> ProviderRecord:
-    group_id = _safe_provider_id_part(item.get("group_id") or "default")
-    name = _as_non_empty_str(item.get("name")) or group_id
+    raw_group_id = _as_non_empty_str(item.get("group_id")) or "default"
+    name = _as_non_empty_str(item.get("name")) or raw_group_id
     models = _normalize_models(item.get("models"))
     model_groups = item.get("model_groups") if isinstance(item.get("model_groups"), dict) else {}
     normalized_groups = {
@@ -404,7 +420,7 @@ def _build_managed_newapi_provider_record_from_bootstrap(
         if _normalize_models(group_models)
     }
     if not normalized_groups and models:
-        normalized_groups = {group_id: models}
+        normalized_groups = {raw_group_id: models}
 
     raw_secret = _as_non_empty_str(item.get("api_key"))
     previous_secret = _provider_secret_value(previous or {})
@@ -420,7 +436,7 @@ def _build_managed_newapi_provider_record_from_bootstrap(
         error = "NewAPI 登录成功，但该分组没有返回可用模型"
 
     return ProviderRecord(
-        id=_newapi_provider_id_for_group(group_id),
+        id=_newapi_provider_id_for_group(raw_group_id),
         name=f"NewAPI（{name}）",
         provider="openai",
         base_url=_normalize_openai_base_url(item.get("base_url") or (previous or {}).get("base_url") or ""),
@@ -431,7 +447,7 @@ def _build_managed_newapi_provider_record_from_bootstrap(
         api_key_encrypted=encrypted_key,
         is_managed=True,
         managed_by="newapi",
-        managed_group=group_id,
+        managed_group=raw_group_id,
         model_groups=normalized_groups,
         model_sync_status=status,
         model_sync_error=error,
@@ -797,6 +813,206 @@ def _normalize_provider_record(
     )
 
 
+def _repair_duplicate_provider_id(provider: ProviderRecord, provider_id: str) -> str | None:
+    if provider_id != MANAGED_NEWAPI_PROVIDER_ID:
+        return None
+    if provider.get("managed_by") != "newapi":
+        return None
+    managed_group = _as_non_empty_str(provider.get("managed_group"))
+    if managed_group and managed_group.lower() != "default":
+        return _newapi_provider_id_for_group(managed_group)
+    group_name = _group_display_name_from_provider_name(provider.get("name"))
+    if group_name and group_name.lower() not in {"default", "默认分组"}:
+        provider["managed_group"] = group_name
+        existing_groups = provider.get("model_groups") if isinstance(provider.get("model_groups"), dict) else {}
+        if list(existing_groups.keys()) == ["default"]:
+            provider["model_groups"] = {group_name: _normalize_models(existing_groups.get("default"))}
+        return _newapi_provider_id_for_group(group_name)
+    return None
+
+
+def _repair_colliding_newapi_default_provider_ids(providers: list[ProviderRecord]) -> None:
+    default_id_providers = [
+        provider
+        for provider in providers
+        if _as_non_empty_str(provider.get("id")) == MANAGED_NEWAPI_PROVIDER_ID
+        and provider.get("managed_by") == "newapi"
+    ]
+    if len(default_id_providers) <= 1:
+        return
+
+    canonical_default = next(
+        (
+            provider
+            for provider in default_id_providers
+            if (_group_display_name_from_provider_name(provider.get("name")) or "").lower() in {"default", "默认分组"}
+        ),
+        None,
+    )
+    keep_default = canonical_default or default_id_providers[0]
+
+    for provider in default_id_providers:
+        if provider is keep_default:
+            continue
+        repaired_id = _repair_duplicate_provider_id(provider, MANAGED_NEWAPI_PROVIDER_ID)
+        if repaired_id:
+            provider["id"] = repaired_id
+
+
+def _dedupe_provider_records(providers: list[ProviderRecord], default_provider_id: str | None) -> list[ProviderRecord]:
+    _repair_colliding_newapi_default_provider_ids(providers)
+    by_id: dict[str, ProviderRecord] = {}
+    order: list[str] = []
+    for provider in providers:
+        provider_id = _as_non_empty_str(provider.get("id"))
+        if provider_id is None:
+            continue
+        if provider_id in by_id:
+            repaired_id = _repair_duplicate_provider_id(provider, provider_id)
+            if repaired_id and repaired_id not in by_id:
+                provider["id"] = repaired_id
+                provider_id = repaired_id
+        existing = by_id.get(provider_id)
+        if existing is None:
+            by_id[provider_id] = provider
+            order.append(provider_id)
+            continue
+
+        existing_models = _normalize_models(existing.get("models"))
+        for model in _normalize_models(provider.get("models")):
+            if model not in existing_models:
+                existing_models.append(model)
+        existing["models"] = existing_models
+
+        merged_groups = dict(existing.get("model_groups") or {}) if isinstance(existing.get("model_groups"), dict) else {}
+        incoming_groups = provider.get("model_groups") if isinstance(provider.get("model_groups"), dict) else {}
+        for group_name, group_models in incoming_groups.items():
+            normalized_group_models = _normalize_models(group_models)
+            if not normalized_group_models:
+                continue
+            current_group_models = _normalize_models(merged_groups.get(group_name))
+            for model in normalized_group_models:
+                if model not in current_group_models:
+                    current_group_models.append(model)
+            merged_groups[str(group_name)] = current_group_models
+        existing["model_groups"] = merged_groups
+
+        if not _provider_secret_value(existing) and _provider_secret_value(provider):
+            existing["api_key_encrypted"] = _provider_secret_value(provider)
+        if not _as_non_empty_str(existing.get("base_url")) and _as_non_empty_str(provider.get("base_url")):
+            existing["base_url"] = provider.get("base_url")
+        if provider_id == default_provider_id or bool(provider.get("is_active")):
+            existing["is_active"] = True
+
+    return [by_id[provider_id] for provider_id in order]
+
+
+def _normalize_active_provider_flags(providers: list[ProviderRecord], default_provider_id: str | None) -> str | None:
+    providers[:] = _dedupe_provider_records(providers, default_provider_id)
+    if not providers:
+        return None
+
+    active = None
+    if default_provider_id:
+        active = next((provider for provider in providers if provider.get("id") == default_provider_id), None)
+    if active is None:
+        active = next((provider for provider in providers if provider.get("is_active")), None)
+    if active is None:
+        active = providers[0]
+
+    active_id = _as_non_empty_str(active.get("id"))
+    for provider in providers:
+        provider["is_active"] = provider.get("id") == active_id
+    return active_id
+
+
+def _is_valid_routing_target(target: Any, providers: list[ProviderRecord]) -> bool:
+    provider_id, model_name = _extract_target_from_routing_node(target)
+    if not provider_id or not model_name:
+        return False
+    provider = next((item for item in providers if _as_non_empty_str(item.get("id")) == provider_id), None)
+    return model_name in _provider_models(provider)
+
+
+def _repair_routing_target(target: Any, providers: list[ProviderRecord]) -> dict[str, str] | None:
+    provider_id, model_name = _extract_target_from_routing_node(target)
+    if not model_name:
+        return None
+    if _is_valid_routing_target(target, providers):
+        return {"providerId": provider_id or "", "model": model_name}
+
+    matches = [
+        provider
+        for provider in providers
+        if _as_non_empty_str(provider.get("id")) and model_name in _provider_models(provider)
+    ]
+    if len(matches) == 1:
+        return {"providerId": str(matches[0]["id"]), "model": model_name}
+    return None
+
+
+def _repair_feature_routing_settings(
+    feature_settings: dict[str, Any] | None,
+    providers: list[ProviderRecord],
+) -> tuple[dict[str, Any] | None, bool]:
+    if not isinstance(feature_settings, dict):
+        return feature_settings, False
+
+    changed = False
+
+    def normalize_single_target(target: Any, fallback: dict[str, str] | None = None) -> dict[str, str] | None:
+        nonlocal changed
+        if target is None:
+            return None
+        repaired = _repair_routing_target(target, providers)
+        if repaired is None:
+            if target is not None:
+                changed = True
+            return fallback
+        original_provider_id, original_model = _extract_target_from_routing_node(target)
+        if repaired["providerId"] != original_provider_id or repaired["model"] != original_model:
+            changed = True
+        return repaired
+
+    repaired_settings = dict(feature_settings)
+    default_target = normalize_single_target(repaired_settings.get("defaultTarget"))
+    if default_target != repaired_settings.get("defaultTarget"):
+        repaired_settings["defaultTarget"] = default_target
+
+    modules = repaired_settings.get("modules")
+    if isinstance(modules, list):
+        repaired_modules: list[Any] = []
+        for module in modules:
+            if not isinstance(module, dict):
+                repaired_modules.append(module)
+                continue
+            repaired_module = dict(module)
+            module_default = normalize_single_target(repaired_module.get("defaultTarget"), default_target)
+            primary_target = normalize_single_target(repaired_module.get("primaryTarget"), module_default)
+            backup_target = normalize_single_target(repaired_module.get("backupTarget"))
+            parallel_targets_raw = repaired_module.get("parallelTargets")
+            parallel_targets: list[dict[str, str]] = []
+            if isinstance(parallel_targets_raw, list):
+                for target in parallel_targets_raw:
+                    repaired = normalize_single_target(target)
+                    if repaired and repaired not in parallel_targets:
+                        parallel_targets.append(repaired)
+            if module_default != repaired_module.get("defaultTarget"):
+                repaired_module["defaultTarget"] = module_default
+            if primary_target != repaired_module.get("primaryTarget"):
+                repaired_module["primaryTarget"] = primary_target
+            if backup_target != repaired_module.get("backupTarget"):
+                repaired_module["backupTarget"] = backup_target
+            if parallel_targets != (parallel_targets_raw if isinstance(parallel_targets_raw, list) else []):
+                repaired_module["parallelTargets"] = parallel_targets
+            repaired_modules.append(repaired_module)
+        if repaired_modules != modules:
+            repaired_settings["modules"] = repaired_modules
+            changed = True
+
+    return repaired_settings, changed
+
+
 def _public_provider_record(provider: ProviderRecord) -> ProviderRecordPublic:
     return ProviderRecordPublic(
         id=provider.get("id", ""),
@@ -874,17 +1090,41 @@ def _ensure_ai_provider_settings(preferences: dict[str, Any]) -> AIProviderSetti
             # Normalize/sanitize persisted records; do NOT pass "previous=item"
             # (it defeats sanitization fallbacks like models normalization).
             providers.append(_normalize_provider_record(item, allow_raw_backend_secret_fields=True))
+    providers_before_normalization = json.dumps(providers, sort_keys=True, ensure_ascii=False, default=str)
+    default_provider_id = _normalize_active_provider_flags(providers, default_provider_id)
+    providers_after_normalization = json.dumps(providers, sort_keys=True, ensure_ascii=False, default=str)
 
     client_settings = _ensure_client_settings(raw.get("client_settings"))
     feature_routing_settings = _ensure_feature_routing_settings(raw.get("feature_routing_settings"))
+    feature_routing_settings, feature_routing_changed = _repair_feature_routing_settings(
+        feature_routing_settings,
+        providers,
+    )
 
-    return AIProviderSettings(
+    bundle = AIProviderSettings(
         version=int(raw.get("version") or AI_PROVIDER_SETTINGS_VERSION),
         default_provider_id=default_provider_id,
         providers=providers,
         client_settings=client_settings,
         feature_routing_settings=feature_routing_settings,
     )
+    if (
+        providers_before_normalization != providers_after_normalization
+        or default_provider_id != raw.get("default_provider_id")
+        or feature_routing_changed
+    ):
+        bundle[_AI_PROVIDER_SETTINGS_CHANGED_KEY] = True  # type: ignore[literal-required]
+    return bundle
+
+
+def _provider_settings_payload(bundle: AIProviderSettings) -> dict[str, Any]:
+    return {
+        "version": AI_PROVIDER_SETTINGS_VERSION,
+        "default_provider_id": bundle["default_provider_id"],
+        "providers": bundle["providers"],
+        "client_settings": bundle["client_settings"],
+        "feature_routing_settings": bundle.get("feature_routing_settings"),
+    }
 
 
 def _select_active_provider(
@@ -1119,10 +1359,7 @@ class AISettingsService:
                 settings.api_key = active.get("api_key_encrypted") or active.get("api_key") or None
 
             preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = {
-                "version": AI_PROVIDER_SETTINGS_VERSION,
-                "default_provider_id": seed_bundle.get("default_provider_id"),
-                "providers": seed_bundle["providers"],
-                "client_settings": seed_bundle["client_settings"],
+                **_provider_settings_payload(seed_bundle),
                 "feature_routing_settings": None,
             }
             _save_preferences(settings, preferences)
@@ -1150,7 +1387,7 @@ class AISettingsService:
 
         preferences = _load_preferences(settings)
         ai_provider_settings = _ensure_ai_provider_settings(preferences)
-        provider_bundle_changed = False
+        provider_bundle_changed = bool(ai_provider_settings.pop(_AI_PROVIDER_SETTINGS_CHANGED_KEY, False))  # type: ignore[arg-type]
 
         # If bundle missing (uninitialized) or still at template defaults, upgrade it
         # once from config.yaml (best-effort). Do NOT override explicit empty bundle.
@@ -1176,10 +1413,7 @@ class AISettingsService:
                         settings.llm_model = active_models[0]
 
                 preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = {
-                    "version": AI_PROVIDER_SETTINGS_VERSION,
-                    "default_provider_id": seed_bundle.get("default_provider_id"),
-                    "providers": seed_bundle["providers"],
-                    "client_settings": seed_bundle["client_settings"],
+                    **_provider_settings_payload(seed_bundle),
                     "feature_routing_settings": ai_provider_settings.get("feature_routing_settings"),
                 }
                 _save_preferences(settings, preferences)
@@ -1189,6 +1423,7 @@ class AISettingsService:
                 # Re-load for response.
                 preferences = _load_preferences(settings)
                 ai_provider_settings = _ensure_ai_provider_settings(preferences)
+                provider_bundle_changed = bool(ai_provider_settings.pop(_AI_PROVIDER_SETTINGS_CHANGED_KEY, False))  # type: ignore[arg-type]
 
         if await _refresh_managed_newapi_provider_models(ai_provider_settings):
             provider_bundle_changed = True
@@ -1202,13 +1437,7 @@ class AISettingsService:
             effective_default_provider_id = active_provider["id"]
 
         if provider_bundle_changed:
-            preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = {
-                "version": AI_PROVIDER_SETTINGS_VERSION,
-                "default_provider_id": ai_provider_settings["default_provider_id"],
-                "providers": ai_provider_settings["providers"],
-                "client_settings": ai_provider_settings["client_settings"],
-                "feature_routing_settings": ai_provider_settings.get("feature_routing_settings"),
-            }
+            preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = _provider_settings_payload(ai_provider_settings)
             _save_preferences(settings, preferences)
             await db.commit()
             await db.refresh(settings)
@@ -1288,13 +1517,8 @@ class AISettingsService:
                 settings.llm_model = normalized_models[0]
             settings.api_key = provider.get("api_key_encrypted") or settings.api_key
 
-        preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = {
-            "version": AI_PROVIDER_SETTINGS_VERSION,
-            "default_provider_id": current["default_provider_id"],
-            "providers": current["providers"],
-            "client_settings": current["client_settings"],
-            "feature_routing_settings": current.get("feature_routing_settings"),
-        }
+        current.pop(_AI_PROVIDER_SETTINGS_CHANGED_KEY, None)  # type: ignore[arg-type]
+        preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = _provider_settings_payload(current)
         _save_preferences(settings, preferences)
         await db.commit()
         await db.refresh(settings)
@@ -1310,7 +1534,7 @@ class AISettingsService:
         """Persist per-NewAPI-group model catalogs and group-scoped API tokens."""
         normalized_items: list[ManagedNewAPIBootstrapGroup] = []
         for item in groups:
-            group_id = _safe_provider_id_part(str(item.get("group_id") or "default"))
+            group_id = _as_non_empty_str(item.get("group_id")) or "default"
             normalized_items.append(
                 ManagedNewAPIBootstrapGroup(
                     group_id=group_id,
@@ -1364,13 +1588,8 @@ class AISettingsService:
                 settings.llm_model = active_models[0]
             settings.api_key = active.get("api_key_encrypted") or settings.api_key
 
-        preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = {
-            "version": AI_PROVIDER_SETTINGS_VERSION,
-            "default_provider_id": current["default_provider_id"],
-            "providers": current["providers"],
-            "client_settings": current["client_settings"],
-            "feature_routing_settings": current.get("feature_routing_settings"),
-        }
+        current.pop(_AI_PROVIDER_SETTINGS_CHANGED_KEY, None)  # type: ignore[arg-type]
+        preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = _provider_settings_payload(current)
         _save_preferences(settings, preferences)
         await db.commit()
         await db.refresh(settings)
@@ -1494,13 +1713,8 @@ class AISettingsService:
         if "system_prompt" in payload and payload["system_prompt"] is not None:
             settings.system_prompt = payload["system_prompt"]
 
-        preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = {
-            "version": AI_PROVIDER_SETTINGS_VERSION,
-            "default_provider_id": current["default_provider_id"],
-            "providers": current["providers"],
-            "client_settings": current["client_settings"],
-            "feature_routing_settings": current.get("feature_routing_settings"),
-        }
+        current.pop(_AI_PROVIDER_SETTINGS_CHANGED_KEY, None)  # type: ignore[arg-type]
+        preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = _provider_settings_payload(current)
         _save_preferences(settings, preferences)
 
         await db.commit()
@@ -1527,13 +1741,8 @@ class AISettingsService:
         preferences = _load_preferences(settings)
         current = _ensure_ai_provider_settings(preferences)
         self._sync_preferences_from_settings_payload(settings, current, payload)
-        preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = {
-            "version": AI_PROVIDER_SETTINGS_VERSION,
-            "default_provider_id": current["default_provider_id"],
-            "providers": current["providers"],
-            "client_settings": current["client_settings"],
-            "feature_routing_settings": current.get("feature_routing_settings"),
-        }
+        current.pop(_AI_PROVIDER_SETTINGS_CHANGED_KEY, None)  # type: ignore[arg-type]
+        preferences[AI_PROVIDER_SETTINGS_PREF_KEY] = _provider_settings_payload(current)
         _save_preferences(settings, preferences)
 
     def _sync_preferences_from_settings_payload(

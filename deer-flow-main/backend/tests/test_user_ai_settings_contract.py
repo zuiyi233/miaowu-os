@@ -694,6 +694,289 @@ def test_newapi_sync_groups_applies_selected_and_manual_groups(monkeypatch) -> N
     assert "token-vip" not in dumped
 
 
+def test_newapi_group_items_keep_requested_group_when_bootstrap_reports_default() -> None:
+    import anyio
+
+    from app.gateway.auth.newapi_oauth import (
+        NewAPIOAuthSettings,
+        _build_newapi_managed_group_items,
+    )
+
+    async def _run() -> list[dict]:
+        return await _build_newapi_managed_group_items(
+            settings=NewAPIOAuthSettings(enabled=True, issuer="https://xg.example.test"),
+            group_catalog={
+                "半公益渠道": {"name": "半公益渠道", "models": ["charity-model"]},
+                "国产": {"name": "国产", "models": ["domestic-model"]},
+            },
+            group_bootstraps={
+                "半公益渠道": {
+                    "hub_api_token": {"sk_key": "token-charity", "group": "default"},
+                    "model_sync_status": "synced",
+                },
+                "国产": {
+                    "hub_api_token": {"sk_key": "token-domestic", "group": "default"},
+                    "model_sync_status": "synced",
+                },
+            },
+            relay_base_url="https://xg.example.test/v1",
+        )
+
+    items = anyio.run(_run)
+
+    assert [item["group_id"] for item in items] == ["半公益渠道", "国产"]
+    assert [item["name"] for item in items] == ["半公益渠道", "国产"]
+    assert items[0]["model_groups"] == {"半公益渠道": ["charity-model"]}
+    assert items[1]["model_groups"] == {"国产": ["domestic-model"]}
+
+
+def test_get_ai_settings_repairs_duplicate_default_provider_ids_and_single_active() -> None:
+    fake_db = _FakeDB()
+    fake_db.settings = Settings(
+        user_id="default_user",
+        api_provider="openai",
+        api_base_url="http://example.test/v1",
+        llm_model="fallback-model",
+        preferences=json.dumps(
+            {
+                "ai_provider_settings": {
+                    "version": 1,
+                    "default_provider_id": "newapi-managed",
+                    "providers": [
+                        {
+                            "id": "newapi-managed",
+                            "name": "NewAPI（default）",
+                            "provider": "openai",
+                            "base_url": "http://example.test/v1",
+                            "models": ["default-model"],
+                            "is_active": True,
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "default",
+                            "api_key_encrypted": "token-default",
+                        },
+                        {
+                            "id": "newapi-managed",
+                            "name": "NewAPI（半公益渠道）",
+                            "provider": "openai",
+                            "base_url": "http://example.test/v1",
+                            "models": ["charity-model"],
+                            "is_active": True,
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "default",
+                            "model_groups": {"default": ["charity-model"]},
+                            "api_key_encrypted": "token-charity",
+                        },
+                        {
+                            "id": "newapi-managed-vip",
+                            "name": "NewAPI（vip）",
+                            "provider": "openai",
+                            "base_url": "http://example.test/v1",
+                            "models": ["vip-model"],
+                            "is_active": True,
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "vip",
+                            "api_key_encrypted": "token-vip",
+                        },
+                    ],
+                    "client_settings": {},
+                    "feature_routing_settings": None,
+                }
+            },
+            ensure_ascii=False,
+        ),
+    )
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/user/ai-settings")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    provider_ids = [provider["id"] for provider in data["providers"]]
+    assert len(provider_ids) == 3
+    assert provider_ids[0] == "newapi-managed"
+    assert provider_ids[1].startswith("newapi-managed-group-")
+    assert provider_ids[2] == "newapi-managed-vip"
+    assert len(set(provider_ids)) == 3
+    active_ids = [provider["id"] for provider in data["providers"] if provider["is_active"]]
+    assert active_ids == ["newapi-managed"]
+    assert data["providers"][0]["models"] == ["default-model"]
+    assert data["providers"][1]["models"] == ["charity-model"]
+    assert data["providers"][1]["name"] == "NewAPI（半公益渠道）"
+    assert data["providers"][1]["managed_group"] == "半公益渠道"
+
+    stored_prefs = json.loads(fake_db.settings.preferences or "{}")
+    stored_providers = stored_prefs["ai_provider_settings"]["providers"]
+    assert [provider["id"] for provider in stored_providers] == provider_ids
+    assert [provider["id"] for provider in stored_providers if provider["is_active"]] == ["newapi-managed"]
+    assert stored_providers[1]["managed_group"] == "半公益渠道"
+
+
+def test_get_ai_settings_repairs_first_duplicate_when_default_group_is_later() -> None:
+    fake_db = _FakeDB()
+    fake_db.settings = Settings(
+        user_id="default_user",
+        api_provider="openai",
+        api_base_url="http://example.test/v1",
+        llm_model="fallback-model",
+        preferences=json.dumps(
+            {
+                "ai_provider_settings": {
+                    "version": 1,
+                    "default_provider_id": "newapi-managed",
+                    "providers": [
+                        {
+                            "id": "newapi-managed",
+                            "name": "NewAPI（半公益渠道）",
+                            "provider": "openai",
+                            "base_url": "http://example.test/v1",
+                            "models": ["charity-model"],
+                            "is_active": True,
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "default",
+                            "model_groups": {"default": ["charity-model"]},
+                            "api_key_encrypted": "token-charity",
+                        },
+                        {
+                            "id": "newapi-managed",
+                            "name": "NewAPI（default）",
+                            "provider": "openai",
+                            "base_url": "http://example.test/v1",
+                            "models": ["default-model"],
+                            "is_active": True,
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "default",
+                            "api_key_encrypted": "token-default",
+                        },
+                    ],
+                    "client_settings": {},
+                    "feature_routing_settings": None,
+                }
+            },
+            ensure_ascii=False,
+        ),
+    )
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/user/ai-settings")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    providers = data["providers"]
+    assert providers[0]["id"].startswith("newapi-managed-group-")
+    assert providers[0]["managed_group"] == "半公益渠道"
+    assert providers[1]["id"] == "newapi-managed"
+    assert [provider["id"] for provider in providers if provider["is_active"]] == ["newapi-managed"]
+
+    stored_prefs = json.loads(fake_db.settings.preferences or "{}")
+    assert "_normalization_changed" not in stored_prefs["ai_provider_settings"]
+    assert [provider["id"] for provider in stored_prefs["ai_provider_settings"]["providers"]] == [
+        providers[0]["id"],
+        "newapi-managed",
+    ]
+
+
+def test_get_ai_settings_repairs_feature_routing_targets_after_provider_split() -> None:
+    fake_db = _FakeDB()
+    fake_db.settings = Settings(
+        user_id="default_user",
+        api_provider="openai",
+        api_base_url="http://example.test/default/v1",
+        llm_model="default-model",
+        preferences=json.dumps(
+            {
+                "ai_provider_settings": {
+                    "version": 1,
+                    "default_provider_id": "newapi-managed",
+                    "providers": [
+                        {
+                            "id": "newapi-managed",
+                            "name": "NewAPI（default）",
+                            "provider": "openai",
+                            "base_url": "http://example.test/default/v1",
+                            "models": ["default-model"],
+                            "is_active": True,
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "default",
+                            "api_key_encrypted": "token-default",
+                        },
+                        {
+                            "id": "newapi-managed",
+                            "name": "NewAPI（半公益渠道）",
+                            "provider": "openai",
+                            "base_url": "http://example.test/charity/v1",
+                            "models": ["charity-model"],
+                            "is_active": False,
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "default",
+                            "model_groups": {"default": ["charity-model"]},
+                            "api_key_encrypted": "token-charity",
+                        },
+                    ],
+                    "client_settings": {},
+                    "feature_routing_settings": {
+                        "version": 1,
+                        "defaultTarget": {"providerId": "newapi-managed", "model": "charity-model"},
+                        "channels": [],
+                        "modules": [
+                            {
+                                "moduleId": "novel-outline",
+                                "moduleLabel": "大纲规划",
+                                "moduleDescription": "小说大纲规划与维护",
+                                "category": "novel",
+                                "runtimeReady": True,
+                                "defaultTarget": {"providerId": "newapi-managed", "model": "charity-model"},
+                                "primaryTarget": {"providerId": "newapi-managed", "model": "charity-model"},
+                                "backupTarget": None,
+                                "currentMode": "primary",
+                                "autoFailover": True,
+                                "parallelEnabled": True,
+                                "parallelStrategy": "compare",
+                                "parallelTargets": [{"providerId": "newapi-managed", "model": "charity-model"}],
+                            }
+                        ],
+                        "switchLogs": [],
+                    },
+                }
+            },
+            ensure_ascii=False,
+        ),
+    )
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/user/ai-settings")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    charity_provider = next(provider for provider in data["providers"] if provider["managed_group"] == "半公益渠道")
+    repaired_target = {
+        "providerId": charity_provider["id"],
+        "model": "charity-model",
+    }
+    assert data["feature_routing_settings"]["defaultTarget"] == repaired_target
+    assert data["feature_routing_settings"]["modules"][0]["primaryTarget"] == repaired_target
+    assert data["feature_routing_settings"]["modules"][0]["parallelTargets"] == [repaired_target]
+
+    stored_prefs = json.loads(fake_db.settings.preferences or "{}")
+    assert stored_prefs["ai_provider_settings"]["feature_routing_settings"]["defaultTarget"] == repaired_target
+    assert "_normalization_changed" not in stored_prefs["ai_provider_settings"]
+
+    runtime, source = resolve_user_ai_runtime_config(fake_db.settings, module_id="novel-outline")
+    assert source == "feature-routing:novel-outline"
+    assert runtime["api_base_url"] == "http://example.test/charity/v1"
+    assert runtime["api_key"] == "token-charity"
+    assert runtime["model_name"] == "charity-model"
+
+
 def test_put_ai_settings_keeps_feature_routing_settings_when_omitted() -> None:
     fake_db = _FakeDB()
     app = _build_user_settings_app(fake_db)

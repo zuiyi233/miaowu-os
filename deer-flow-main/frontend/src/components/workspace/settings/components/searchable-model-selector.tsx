@@ -46,8 +46,17 @@ export function SearchableModelSelector({
   const [providerSearch, setProviderSearch] = useState("");
   const [modelSearch, setModelSearch] = useState("");
 
+  const uniqueProviders = useMemo(() => {
+    const seen = new Set<string>();
+    return providers.filter((provider) => {
+      if (seen.has(provider.id)) return false;
+      seen.add(provider.id);
+      return true;
+    });
+  }, [providers]);
+
   const selectedProviderId = target?.providerId ?? NONE_VALUE;
-  const selectedProvider = providers.find((p) => p.id === selectedProviderId);
+  const selectedProvider = uniqueProviders.find((p) => p.id === selectedProviderId);
   const selectedModel =
     selectedProvider && target?.model && selectedProvider.models.includes(target.model)
       ? target.model
@@ -56,10 +65,10 @@ export function SearchableModelSelector({
   const [recentModels, setRecentModels] = useState(() => loadRecentModels());
 
   const filteredProviders = useMemo(() => {
-    if (!providerSearch.trim()) return providers;
+    if (!providerSearch.trim()) return uniqueProviders;
     const q = providerSearch.toLowerCase();
-    return providers.filter((p) => p.name.toLowerCase().includes(q) || p.provider.toLowerCase().includes(q));
-  }, [providers, providerSearch]);
+    return uniqueProviders.filter((p) => p.name.toLowerCase().includes(q) || p.provider.toLowerCase().includes(q));
+  }, [uniqueProviders, providerSearch]);
 
   const filteredModels = useMemo(() => {
     const models = selectedProvider?.models ?? [];
@@ -101,14 +110,14 @@ export function SearchableModelSelector({
         if (allowEmpty) onChange(null);
         return;
       }
-      const provider = providers.find((p) => p.id === providerId);
+      const provider = uniqueProviders.find((p) => p.id === providerId);
       if (!provider || provider.models.length === 0) {
         onChange(null);
         return;
       }
       onChange({ providerId: provider.id, model: provider.models[0]! });
     },
-    [allowEmpty, onChange, providers],
+    [allowEmpty, onChange, uniqueProviders],
   );
 
   const handleModelSelect = useCallback(
