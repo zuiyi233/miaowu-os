@@ -291,11 +291,13 @@ function buildGeneratePayload(request: ImageGenerateRequest) {
 
 export async function generateImage(
   request: ImageGenerateRequest,
+  signal?: AbortSignal,
 ): Promise<ImageJob> {
   const res = await authFetch(imagesApiUrl("/generate"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(buildGeneratePayload(request)),
+    signal,
   });
   if (!res.ok) {
     throw await readImagesApiError(res);

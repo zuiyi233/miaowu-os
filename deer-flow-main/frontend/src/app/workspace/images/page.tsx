@@ -37,6 +37,8 @@ import {
   WorkspaceContainer,
   WorkspaceHeader,
 } from "@/components/workspace/workspace-container";
+import { useI18n } from "@/core/i18n/hooks";
+import type { Translations } from "@/core/i18n";
 import {
   ImagesApiError,
   generateImage,
@@ -50,31 +52,6 @@ import {
 
 const DEFAULT_OPTION = "backend-default";
 const HISTORY_POLL_INTERVAL_MS = 3_000;
-
-const SIZE_OPTIONS = [
-  { value: DEFAULT_OPTION, label: "后端默认" },
-  { value: "1024x1024", label: "1024 x 1024" },
-  { value: "1536x1024", label: "1536 x 1024" },
-  { value: "1024x1536", label: "1024 x 1536" },
-];
-
-const ASPECT_RATIO_OPTIONS = [
-  { value: DEFAULT_OPTION, label: "不指定" },
-  { value: "1:1", label: "1:1" },
-  { value: "3:2", label: "3:2" },
-  { value: "2:3", label: "2:3" },
-  { value: "4:3", label: "4:3" },
-  { value: "3:4", label: "3:4" },
-  { value: "16:9", label: "16:9" },
-  { value: "9:16", label: "9:16" },
-];
-
-const QUALITY_OPTIONS = [
-  { value: DEFAULT_OPTION, label: "后端默认" },
-  { value: "low", label: "low" },
-  { value: "medium", label: "medium" },
-  { value: "high", label: "high" },
-];
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
@@ -94,11 +71,11 @@ function mergeJobs(incoming: ImageJob[], current: ImageJob[]): ImageJob[] {
   });
 }
 
-function formatJobTime(value: string | null): string {
-  if (!value) return "未记录时间";
+function formatJobTime(value: string | null, locale: string, noTimeLabel: string): string {
+  if (!value) return noTimeLabel;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(locale, {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
@@ -109,18 +86,18 @@ function formatElapsed(value: number | null): string | null {
   return `${value.toFixed(value >= 10 ? 1 : 2)}s`;
 }
 
-function statusLabel(status: ImageJobStatus): string {
+function statusLabel(status: ImageJobStatus, t: Translations["images"]): string {
   switch (status) {
     case "queued":
-      return "排队中";
+      return t.statusQueued;
     case "running":
-      return "生成中";
+      return t.statusRunning;
     case "completed":
-      return "已完成";
+      return t.statusCompleted;
     case "failed":
-      return "失败";
+      return t.statusFailed;
     default:
-      return "未知";
+      return t.statusUnknown;
   }
 }
 
@@ -154,7 +131,7 @@ function getRequestText(
   return null;
 }
 
-function jobSubtitle(job: ImageJob): string {
+function jobSubtitle(job: ImageJob, t: Translations["images"]): string {
   const size = getRequestText(job.request_params, "size");
   const aspectRatio = getRequestText(job.request_params, "aspect_ratio");
   const quality = getRequestText(job.request_params, "quality");
@@ -162,10 +139,10 @@ function jobSubtitle(job: ImageJob): string {
 
   return [job.model, size, aspectRatio, quality, count ? `n=${count}` : null]
     .filter(Boolean)
-    .join(" · ");
+    .join(" · ") || t.useBackendDefault;
 }
 
-function jobPreviewText(job: ImageJob): string {
+function jobPreviewText(job: ImageJob, t: Translations["images"]): string {
   if (job.prompt.trim().length > 0) {
     return job.prompt;
   }
@@ -173,10 +150,37 @@ function jobPreviewText(job: ImageJob): string {
   if (errorMessage) {
     return errorMessage;
   }
-  return "无 prompt 内容";
+  return t.noPrompt;
 }
 
 export default function ImagesPage() {
+  const { t, locale } = useI18n();
+
+  const sizeOptions = useMemo(() => [
+    { value: DEFAULT_OPTION, label: t.images.sizeDefault },
+    { value: "1024x1024", label: "1024 x 1024" },
+    { value: "1536x1024", label: "1536 x 1024" },
+    { value: "1024x1536", label: "1024 x 1536" },
+  ], [t]);
+
+  const aspectRatioOptions = useMemo(() => [
+    { value: DEFAULT_OPTION, label: t.images.ratioUnspecified },
+    { value: "1:1", label: "1:1" },
+    { value: "3:2", label: "3:2" },
+    { value: "2:3", label: "2:3" },
+    { value: "4:3", label: "4:3" },
+    { value: "3:4", label: "3:4" },
+    { value: "16:9", label: "16:9" },
+    { value: "9:16", label: "9:16" },
+  ], [t]);
+
+  const qualityOptions = useMemo(() => [
+    { value: DEFAULT_OPTION, label: t.images.qualityDefault },
+    { value: "low", label: "low" },
+    { value: "medium", label: "medium" },
+    { value: "high", label: "high" },
+  ], [t]);
+
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("");
   const [size, setSize] = useState(DEFAULT_OPTION);
@@ -201,8 +205,8 @@ export default function ImagesPage() {
   );
 
   useEffect(() => {
-    document.title = "图片生成 - Miaowu OS";
-  }, []);
+    document.title = t.images.pageTitle;
+  }, [t]);
 
   const refreshJobs = useCallback(
     async ({
@@ -239,7 +243,7 @@ export default function ImagesPage() {
             ? error.message
             : error instanceof Error
               ? error.message
-              : "加载图片历史失败";
+              : t.images.loadHistoryFailed;
         setHistoryError(message);
       } finally {
         if (!silent) {
@@ -247,7 +251,7 @@ export default function ImagesPage() {
         }
       }
     },
-    [],
+    [t],
   );
 
   useEffect(() => {
@@ -274,11 +278,11 @@ export default function ImagesPage() {
       const trimmedPrompt = prompt.trim();
       const parsedCount = Number.parseInt(count, 10);
       if (!trimmedPrompt) {
-        setSubmitError("Prompt 不能为空。");
+        setSubmitError(t.images.promptRequired);
         return;
       }
       if (!Number.isInteger(parsedCount) || parsedCount < 1 || parsedCount > 10) {
-        setSubmitError("数量 n 必须是 1 到 10 之间的整数。");
+        setSubmitError(t.images.countInvalid);
         return;
       }
 
@@ -307,7 +311,7 @@ export default function ImagesPage() {
         setJobs((current) => mergeJobs([job], current));
         setSelectedJobId(job.id);
         toast.success(
-          isActiveImageJobStatus(job.status) ? "已提交图片生成任务" : "图片生成已返回结果",
+          isActiveImageJobStatus(job.status) ? t.images.jobSubmitted : t.images.jobCompleted,
         );
         void refreshJobs({ silent: true, preferredJobId: job.id });
       } catch (error) {
@@ -316,24 +320,24 @@ export default function ImagesPage() {
             ? error.message
             : error instanceof Error
               ? error.message
-              : "提交生成失败";
+              : t.images.submitFailed;
         setSubmitError(message);
         toast.error(message);
       } finally {
         setIsSubmitting(false);
       }
     },
-    [aspectRatio, count, model, prompt, quality, refreshJobs, size],
+    [aspectRatio, count, model, prompt, quality, refreshJobs, size, t],
   );
 
   const handleCopyUrl = useCallback(async (url: string) => {
     try {
       await navigator.clipboard.writeText(url);
-      toast.success("图片 URL 已复制");
+      toast.success(t.images.urlCopied);
     } catch {
-      toast.error("复制 URL 失败");
+      toast.error(t.images.copyUrlFailed);
     }
-  }, []);
+  }, [t]);
 
   return (
     <WorkspaceContainer>
@@ -346,10 +350,10 @@ export default function ImagesPage() {
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-2 text-base">
                     <ImageIcon className="size-4" />
-                    图片生成
+                    {t.images.cardTitle}
                   </CardTitle>
                   <CardDescription>
-                    通过网关提交文生图请求，历史记录直接从 `/api/v1/images/jobs` 刷新。
+                    {t.images.cardDescription}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -360,7 +364,7 @@ export default function ImagesPage() {
                         id="images-prompt"
                         value={prompt}
                         onChange={(event) => setPrompt(event.target.value)}
-                        placeholder="描述想生成的画面、镜头、材质、光线或构图。"
+                        placeholder={t.images.promptPlaceholder}
                         className="min-h-32"
                       />
                     </div>
@@ -370,7 +374,7 @@ export default function ImagesPage() {
                         id="images-model"
                         value={model}
                         onChange={(event) => setModel(event.target.value)}
-                        placeholder="例如 gpt-image-1"
+                        placeholder={t.images.modelPlaceholder}
                       />
                     </div>
                     <div className="grid gap-4 sm:grid-cols-3">
@@ -386,10 +390,10 @@ export default function ImagesPage() {
                           }}
                         >
                           <SelectTrigger className="w-full">
-                            <SelectValue placeholder="选择尺寸" />
+                            <SelectValue placeholder={t.images.selectSize} />
                           </SelectTrigger>
                           <SelectContent>
-                            {SIZE_OPTIONS.map((option) => (
+                            {sizeOptions.map((option) => (
                               <SelectItem key={option.value} value={option.value}>
                                 {option.label}
                               </SelectItem>
@@ -409,10 +413,10 @@ export default function ImagesPage() {
                           }}
                         >
                           <SelectTrigger className="w-full">
-                            <SelectValue placeholder="选择比例" />
+                            <SelectValue placeholder={t.images.selectRatio} />
                           </SelectTrigger>
                           <SelectContent>
-                            {ASPECT_RATIO_OPTIONS.map((option) => (
+                            {aspectRatioOptions.map((option) => (
                               <SelectItem key={option.value} value={option.value}>
                                 {option.label}
                               </SelectItem>
@@ -424,10 +428,10 @@ export default function ImagesPage() {
                         <Label>Quality</Label>
                         <Select value={quality} onValueChange={setQuality}>
                           <SelectTrigger className="w-full">
-                            <SelectValue placeholder="选择质量" />
+                            <SelectValue placeholder={t.images.selectQuality} />
                           </SelectTrigger>
                           <SelectContent>
-                            {QUALITY_OPTIONS.map((option) => (
+                            {qualityOptions.map((option) => (
                               <SelectItem key={option.value} value={option.value}>
                                 {option.label}
                               </SelectItem>
@@ -437,7 +441,7 @@ export default function ImagesPage() {
                       </div>
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      `size` 与 `aspect_ratio` 互斥。选中一个后，另一个会回到默认值。
+                      {t.images.sizeRatioMutualExclude}
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="images-count">n</Label>
@@ -463,24 +467,23 @@ export default function ImagesPage() {
                       {isSubmitting ? (
                         <>
                           <LoaderCircleIcon className="size-4 animate-spin" />
-                          提交中
+                          {t.images.submitting}
                         </>
                       ) : (
-                        "开始生成"
+                        t.images.startGenerate
                       )}
                     </Button>
                   </form>
 
                   <div className="space-y-2 rounded-lg border bg-muted/20 p-3 text-sm">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-muted-foreground">当前状态</span>
+                      <span className="text-muted-foreground">{t.images.currentStatus}</span>
                       <Badge variant={isSubmitting ? "secondary" : "outline"}>
-                        {isSubmitting ? "请求发送中" : "空闲"}
+                        {isSubmitting ? t.images.requestSending : t.images.idle}
                       </Badge>
                     </div>
                     <div className="text-muted-foreground">
-                      历史任务 {jobs.length} 条
-                      {hasActiveJobs ? "，包含进行中的任务" : "。"}
+                      {t.images.jobCount(jobs.length, hasActiveJobs)}
                     </div>
                   </div>
                 </CardContent>
@@ -491,8 +494,8 @@ export default function ImagesPage() {
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between gap-2">
                       <div>
-                        <CardTitle className="text-base">历史</CardTitle>
-                        <CardDescription>最新任务优先，生成后自动刷新。</CardDescription>
+                        <CardTitle className="text-base">{t.images.history}</CardTitle>
+                        <CardDescription>{t.images.historyDescription}</CardDescription>
                       </div>
                       <Button
                         type="button"
@@ -504,7 +507,7 @@ export default function ImagesPage() {
                         <RefreshCwIcon
                           className={`size-4 ${isHistoryLoading ? "animate-spin" : ""}`}
                         />
-                        刷新
+                        {t.images.refresh}
                       </Button>
                     </div>
                   </CardHeader>
@@ -518,7 +521,7 @@ export default function ImagesPage() {
                       <div className="flex flex-col">
                         {jobs.map((job) => {
                           const active = selectedJob?.id === job.id;
-                          const preview = jobPreviewText(job);
+                          const preview = jobPreviewText(job, t.images);
                           return (
                             <button
                               key={job.id}
@@ -534,17 +537,17 @@ export default function ImagesPage() {
                                     {preview}
                                   </div>
                                   <div className="mt-1 truncate text-xs text-muted-foreground">
-                                    {jobSubtitle(job) || "使用后端默认参数"}
+                                    {jobSubtitle(job, t.images)}
                                   </div>
                                 </div>
                                 <Badge variant={statusVariant(job.status)}>
-                                  {statusLabel(job.status)}
+                                  {statusLabel(job.status, t.images)}
                                 </Badge>
                               </div>
                               <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                                <span>{formatJobTime(job.created_at)}</span>
+                                <span>{formatJobTime(job.created_at, locale, t.images.noTimeRecorded)}</span>
                                 <span>·</span>
-                                <span>{job.images.length} 张</span>
+                                <span>{t.images.returnedCount(job.images.length)}</span>
                               </div>
                               {job.status === "failed" && getImageJobErrorMessage(job) ? (
                                 <div className="mt-2 line-clamp-2 text-xs text-destructive">
@@ -556,7 +559,7 @@ export default function ImagesPage() {
                         })}
                         {!isHistoryLoading && jobs.length === 0 ? (
                           <div className="px-6 py-8 text-sm text-muted-foreground">
-                            还没有图片生成记录。
+                            {t.images.noRecords}
                           </div>
                         ) : null}
                       </div>
@@ -568,16 +571,16 @@ export default function ImagesPage() {
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <CardTitle className="text-base">详情与预览</CardTitle>
+                        <CardTitle className="text-base">{t.images.detailTitle}</CardTitle>
                         <CardDescription>
                           {selectedJob
-                            ? `任务 ${selectedJob.id}`
-                            : "选择左侧任务查看图片与错误详情。"}
+                            ? t.images.taskLabel(selectedJob.id)
+                            : t.images.noTaskSelected}
                         </CardDescription>
                       </div>
                       {selectedJob ? (
                         <Badge variant={statusVariant(selectedJob.status)}>
-                          {statusLabel(selectedJob.status)}
+                          {statusLabel(selectedJob.status, t.images)}
                         </Badge>
                       ) : null}
                     </div>
@@ -612,17 +615,17 @@ export default function ImagesPage() {
                             ) : null}
                             {formatElapsed(selectedJob.elapsed_seconds) ? (
                               <Badge variant="secondary">
-                                用时 {formatElapsed(selectedJob.elapsed_seconds)}
+                                {formatElapsed(selectedJob.elapsed_seconds)}
                               </Badge>
                             ) : null}
                           </div>
                           <div className="mt-3 whitespace-pre-wrap break-words text-sm">
-                            {selectedJob.prompt || "该任务未返回 prompt。"}
+                            {selectedJob.prompt || t.images.noPrompt}
                           </div>
                           <div className="mt-3 text-xs text-muted-foreground">
-                            创建于 {formatJobTime(selectedJob.created_at)}
+                            {t.images.createdAt} {formatJobTime(selectedJob.created_at, locale, t.images.noTimeRecorded)}
                             {selectedJob.updated_at
-                              ? `，最近更新 ${formatJobTime(selectedJob.updated_at)}`
+                              ? `${t.images.updatedAt}${formatJobTime(selectedJob.updated_at, locale, t.images.noTimeRecorded)}`
                               : ""}
                           </div>
                         </div>
@@ -638,14 +641,14 @@ export default function ImagesPage() {
                         selectedJob.images.length > 0 ? (
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <CheckCircle2Icon className="size-4 text-emerald-600" />
-                            已返回 {selectedJob.images.length} 张图片。
+                            {t.images.returnedCount(selectedJob.images.length)}
                           </div>
                         ) : null}
 
                         {isActiveImageJobStatus(selectedJob.status) ? (
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <LoaderCircleIcon className="size-4 animate-spin" />
-                            任务仍在进行中，页面会自动刷新状态。
+                            {t.images.waitingForImages}
                           </div>
                         ) : null}
 
@@ -658,8 +661,8 @@ export default function ImagesPage() {
                               >
                                 <div className="bg-muted/30">
                                   <img
-                                    src={image.url}
-                                    alt={`生成图片 ${index + 1}`}
+                                    src={image.url?.startsWith('http') ? image.url : ''}
+                                    alt={t.images.imageAlt(index)}
                                     className="aspect-square w-full object-cover"
                                     loading="lazy"
                                   />
@@ -670,7 +673,7 @@ export default function ImagesPage() {
                                       {image.id ?? `image-${index + 1}`}
                                     </div>
                                     <div className="truncate">
-                                      {image.content_type ?? "未知格式"}
+                                      {image.content_type ?? t.images.unknownFormat}
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-2">
@@ -678,11 +681,11 @@ export default function ImagesPage() {
                                       <a
                                         href={image.download_url}
                                         target="_blank"
-                                        rel="noreferrer"
+                                        rel="noopener noreferrer"
                                         download
                                       >
                                         <DownloadIcon className="size-3.5" />
-                                        下载
+                                        {t.images.download}
                                       </a>
                                     </Button>
                                     <Button
@@ -692,7 +695,7 @@ export default function ImagesPage() {
                                       onClick={() => void handleCopyUrl(image.download_url)}
                                     >
                                       <CopyIcon className="size-3.5" />
-                                      复制 URL
+                                      {t.images.copyUrl}
                                     </Button>
                                   </div>
                                 </div>
@@ -702,14 +705,14 @@ export default function ImagesPage() {
                         ) : (
                           <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
                             {selectedJob.status === "failed"
-                              ? "该任务没有可预览图片。"
-                              : "图片尚未返回，等待后端生成或刷新历史后再查看。"}
+                              ? t.images.noPreviewForFailed
+                              : t.images.waitingForImages}
                           </div>
                         )}
                       </>
                     ) : (
                       <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                        暂无任务可展示。
+                        {t.images.noTaskToDisplay}
                       </div>
                     )}
                   </CardContent>

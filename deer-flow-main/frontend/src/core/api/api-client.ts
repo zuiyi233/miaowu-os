@@ -40,7 +40,6 @@ function fetchWithCredentials(input: RequestInfo | URL, init?: RequestInit) {
 
 function createCompatibleClient(isMock?: boolean): LangGraphClient {
   const apiUrl = getLangGraphBaseURL(isMock);
-  console.log(`Creating API client with base URL: ${apiUrl}`);
   const client = new LangGraphClient({
     apiUrl,
     callerOptions: {

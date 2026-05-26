@@ -9,6 +9,7 @@ import {
   VideoIcon,
 } from "lucide-react";
 
+import { withImagesDefaults } from "./images-defaults";
 import { withNovelDefaults } from "./novel-defaults";
 import type { Translations } from "./types";
 
@@ -408,6 +409,8 @@ export const enUS: Translations = {
     },
     "en",
   ),
+
+  images: withImagesDefaults({}, "en"),
 
   // Page titles (document title)
   pages: {

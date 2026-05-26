@@ -40,7 +40,15 @@ export function TtsPlayer({ text, chapterId, projectId, title, theme, compact = 
       tts.stop();
     }
     prevTextRef.current = text;
-  }, [text, tts]);
+  }, [text, tts.playing, tts.stop]);
+
+  useEffect(() => {
+    return () => {
+      if (tts.playing) {
+        tts.stop();
+      }
+    };
+  }, [tts.playing, tts.stop]);
 
   useEffect(() => {
     if (tts.error) {

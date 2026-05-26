@@ -84,6 +84,7 @@ _ERROR_STATUS_MAP: dict[str, int] = {
 }
 
 _http_client: httpx.AsyncClient | None = None
+_http_client_lock = asyncio.Lock()
 
 
 class TtsProviderError(Exception):
@@ -390,6 +391,8 @@ _chapter_manifests: dict[tuple[str, str], dict[str, Any]] = {}
 _narration_plans: dict[tuple[str, str, str], TtsNarrationPlan] = {}
 _audio_cache: dict[str, TtsAudioResult] = {}
 _local_audio_assets: dict[str, dict[str, Any]] = {}
+_MAX_CACHED_JOBS = 200
+_MAX_CACHED_MANIFESTS = 500
 _job_lock = asyncio.Lock()
 
 
@@ -423,12 +426,15 @@ MOSS_VOICES: list[TtsVoiceInfo] = [
 
 async def get_http_client() -> httpx.AsyncClient:
     global _http_client
-    if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(120.0),
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
-        )
-    return _http_client
+    if _http_client is not None and not _http_client.is_closed:
+        return _http_client
+    async with _http_client_lock:
+        if _http_client is None or _http_client.is_closed:
+            _http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(120.0),
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            )
+        return _http_client
 
 
 def ext_from_content_type(content_type: str) -> str:
@@ -470,11 +476,22 @@ def _local_tts_asset_root() -> Path:
     return (Path(__file__).resolve().parents[5] / ".deer-flow" / "tts-assets").resolve()
 
 
+def _validate_path_component(value: str, name: str = "id") -> str:
+    if not re.fullmatch(r"[0-9a-zA-Z_-]{1,128}", value):
+        raise ValueError(f"Invalid {name}: path traversal or invalid characters detected")
+    return value
+
+
 def _local_manifest_path(user_id: str, chapter_id: str) -> Path:
+    _validate_path_component(user_id, "user_id")
+    _validate_path_component(chapter_id, "chapter_id")
     return _local_tts_asset_root() / user_id / chapter_id / "manifest.json"
 
 
 def _local_plan_path(user_id: str, chapter_id: str, plan_id: str) -> Path:
+    _validate_path_component(user_id, "user_id")
+    _validate_path_component(chapter_id, "chapter_id")
+    _validate_path_component(plan_id, "plan_id")
     return _local_tts_asset_root() / user_id / chapter_id / "plans" / f"{plan_id}.json"
 
 
@@ -1049,6 +1066,8 @@ async def _mux_mp3_chunks_with_ffmpeg(chunks: list[bytes], media_type: str) -> t
             return encoded_output.read_bytes(), "audio/mpeg"
 
     stderr_text = (encode_stderr or copy_stderr).decode("utf-8", errors="replace")[:1000]
+    if stderr_text:
+        logger.warning("FFmpeg error output: %s", stderr_text[:500])
     raise TtsProviderError(
         "provider_failed",
         "FFmpeg failed to export chapter TTS audio",
@@ -1057,7 +1076,7 @@ async def _mux_mp3_chunks_with_ffmpeg(chunks: list[bytes], media_type: str) -> t
             "media_type": media_type,
             "chunk_count": len(chunks),
             "reason": "ffmpeg_failed",
-            "ffmpeg_error": stderr_text,
+            "ffmpeg_error": "FFmpeg processing failed" if stderr_text else None,
         },
     )
 
@@ -1961,6 +1980,10 @@ async def generate_chapter_tts(
     )
     async with _job_lock:
         _chapter_jobs[job.job_id] = job
+        if len(_chapter_jobs) > _MAX_CACHED_JOBS:
+            oldest_keys = list(_chapter_jobs.keys())[:len(_chapter_jobs) - _MAX_CACHED_JOBS]
+            for k in oldest_keys:
+                _chapter_jobs.pop(k, None)
 
     assets: list[dict[str, Any]] = []
     try:
@@ -2111,6 +2134,10 @@ async def generate_chapter_tts(
     job.status = "completed"
     job.manifest = manifest
     _chapter_manifests[(user_id, chapter.id)] = manifest
+    if len(_chapter_manifests) > _MAX_CACHED_MANIFESTS:
+        oldest_keys = list(_chapter_manifests.keys())[:len(_chapter_manifests) - _MAX_CACHED_MANIFESTS]
+        for k in oldest_keys:
+            _chapter_manifests.pop(k, None)
     _persist_local_manifest(user_id=user_id, chapter_id=chapter.id, manifest=manifest)
     job_response = _job_response(job)
     return TtsChapterGenerateEnvelope(
@@ -2143,10 +2170,6 @@ def cancel_tts_job(job_id: str, *, user_id: str) -> TtsJobActionResponse:
     if job is None or job.user_id != user_id:
         raise TtsProviderError("invalid_request", "TTS job not found", status_code=404)
     job.cancel_requested = True
-    if job.status in {"pending", "running"}:
-        job.status = "cancelled"
-        job.error_code = "generation_cancelled"
-        job.detail = "Chapter TTS generation was cancelled"
     return TtsJobActionResponse(ok=True, job=_job_response(job))
 
 
@@ -2179,7 +2202,7 @@ async def download_chapter_tts_audio(*, chapter_id: str, user_id: str, db: Async
             if not path.is_file():
                 raise TtsProviderError("invalid_request", "Chapter TTS audio asset not found", status_code=404)
             media_type = str(local_asset.get("content_type") or media_type)
-            contents.append(path.read_bytes())
+            contents.append(await asyncio.to_thread(path.read_bytes))
             continue
         asset = await db.get(MediaAsset, asset_id)
         if asset is None or asset.user_id != user_id or asset.status != "active":

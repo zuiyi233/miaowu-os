@@ -1,5 +1,61 @@
 import type { LucideIcon } from "lucide-react";
 
+interface ImagesTranslations {
+  pageTitle: string;
+  cardTitle: string;
+  cardDescription: string;
+  sizeDefault: string;
+  ratioUnspecified: string;
+  qualityDefault: string;
+  statusQueued: string;
+  statusRunning: string;
+  statusCompleted: string;
+  statusFailed: string;
+  statusUnknown: string;
+  submit: string;
+  submitting: string;
+  startGenerate: string;
+  refresh: string;
+  download: string;
+  copyUrl: string;
+  promptPlaceholder: string;
+  modelPlaceholder: string;
+  selectSize: string;
+  selectRatio: string;
+  selectQuality: string;
+  sizeRatioMutualExclude: string;
+  promptRequired: string;
+  countInvalid: string;
+  loadHistoryFailed: string;
+  submitFailed: string;
+  jobSubmitted: string;
+  jobCompleted: string;
+  urlCopied: string;
+  copyUrlFailed: string;
+  detailTitle: string;
+  noTaskSelected: string;
+  noRecords: string;
+  noPreviewForFailed: string;
+  waitingForImages: string;
+  noTaskToDisplay: string;
+  noTimeRecorded: string;
+  currentStatus: string;
+  requestSending: string;
+  idle: string;
+  history: string;
+  historyDescription: string;
+  useBackendDefault: string;
+  unknownFormat: string;
+  noPrompt: string;
+  jobCount: (count: number, hasActive: boolean) => string;
+  returnedCount: (count: number) => string;
+  imageAlt: (index: number) => string;
+  taskLabel: (id: string) => string;
+  elapsedTime: (seconds: number) => string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface NovelTranslations {
   loading: string;
   noNovelSelected: string;
@@ -691,6 +747,7 @@ export interface Translations {
   };
 
   novel: NovelTranslations;
+  images: ImagesTranslations;
 
   // Page titles (document title)
   pages: {

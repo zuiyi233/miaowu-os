@@ -22,6 +22,9 @@ export function canExportManifestInBrowser(audio: TtsChapterAudioManifest | null
 function resolveSegmentUrl(url: string | null | undefined): string | null {
   if (!url) return null;
   if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith('/')) {
+    return `${window.location.origin}${url}`;
+  }
   return url;
 }
 
@@ -53,7 +56,7 @@ export async function exportChapterMp3InBrowser(audio: TtsChapterAudioManifest):
     const response = await authFetch(url);
     if (!response.ok) throw new Error(`Failed to fetch audio segment ${index + 1}`);
     await ffmpeg.writeFile(path, await fetchFile(await response.blob()));
-    listLines.push(`file '${path}'`);
+    listLines.push(`file '${path.replace(/'/g, "'\\''")}'`);
   }
 
   await ffmpeg.writeFile('concat.txt', listLines.join('\n'));
@@ -107,5 +110,5 @@ export function downloadBlob(blob: Blob, filename: string): void {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }

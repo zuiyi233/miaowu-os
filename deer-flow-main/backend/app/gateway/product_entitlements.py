@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -15,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from deerflow.persistence.run.model import RunRow
 from deerflow.persistence.storage_quota.model import UserAgentRunUsageRow, UserProductEntitlementCacheRow
+
+logger = logging.getLogger(__name__)
 
 PRODUCT_KEY_NOVEL = "novel_product"
 PRODUCT_DISPLAY_NAME = "Miaowu OS 小说创作工作台"
@@ -93,6 +96,24 @@ def _coerce_features(value: Any, default: list[str]) -> list[str]:
     return list(default)
 
 
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.lower() in ("true", "1", "yes")
+    return default
+
+
+_VALID_PLAN_KEYS = {"free", "creator", "pro"}
+
+
+def _validate_plan_key(raw_key: str) -> str:
+    normalized = raw_key.strip().lower()
+    return normalized if normalized in _VALID_PLAN_KEYS else "free"
+
+
 def _normalize_entitlements(raw: dict[str, Any], plan_key: str) -> dict[str, Any]:
     defaults = DEFAULT_PLAN_ENTITLEMENTS.get(plan_key, DEFAULT_PLAN_ENTITLEMENTS["free"])
     return {
@@ -104,7 +125,7 @@ def _normalize_entitlements(raw: dict[str, Any], plan_key: str) -> dict[str, Any
         "monthly_agent_runs": _coerce_int(raw.get("monthly_agent_runs"), defaults["monthly_agent_runs"]),
         "max_concurrent_runs": _coerce_int(raw.get("max_concurrent_runs"), defaults["max_concurrent_runs"]),
         "chapter_history_limit": _coerce_int(raw.get("chapter_history_limit"), defaults["chapter_history_limit"]),
-        "priority_queue": bool(raw.get("priority_queue", defaults["priority_queue"])),
+        "priority_queue": _coerce_bool(raw.get("priority_queue"), defaults["priority_queue"]),
         "features": _coerce_features(raw.get("features"), defaults["features"]),
     }
 
@@ -186,7 +207,7 @@ class ProductEntitlement:
             "source_type": self.source_type,
             "source_id": self.source_id,
             "synced_at": self.synced_at.isoformat() if self.synced_at else None,
-            "sync_error": self.sync_error,
+            "sync_error": self.sync_error if include_internal else ("sync_failed" if self.sync_error else None),
             "source": self.source,
         }
 
@@ -298,7 +319,7 @@ class ProductEntitlementService:
                 try:
                     parsed_notes = json.loads(notes)
                     if isinstance(parsed_notes, dict):
-                        plan_key = str(parsed_notes.get("plan_key") or plan_key).strip().lower() or plan_key
+                        plan_key = _validate_plan_key(str(parsed_notes.get("plan_key") or plan_key))
                         raw_entitlements = parsed_notes.get("entitlements")
                         if isinstance(raw_entitlements, dict):
                             entitlement_overrides = raw_entitlements
@@ -357,6 +378,7 @@ class ProductEntitlementService:
             entitlement = self._parse_upstream_payload(user_id, payload)
             sync_error = None
         except Exception as exc:
+            logger.warning("Failed to refresh entitlements from Auth Hub: %s", exc)
             cached = await self.get_cached_entitlement(db, user_id)
             if cached is not None:
                 return ProductEntitlement(
@@ -454,13 +476,10 @@ class ProductEntitlementService:
     async def count_projects(self, db: AsyncSession, user_id: str) -> int:
         from app.gateway.novel_migrated.models.project import Project
 
-        try:
-            return int(
-                await db.scalar(select(func.count(Project.id)).where(Project.user_id == user_id))
-                or 0
-            )
-        except Exception:
-            return 0
+        return int(
+            await db.scalar(select(func.count(Project.id)).where(Project.user_id == user_id))
+            or 0
+        )
 
     async def ensure_project_create_allowed(self, db: AsyncSession, *, user_id: str, current_count: int) -> None:
         entitlement = await self.get_effective_entitlement(db, user_id)
@@ -523,7 +542,7 @@ class ProductEntitlementService:
                 },
                 "max_concurrent_runs": _coerce_int(entitlements.get("max_concurrent_runs"), DEFAULT_PLAN_ENTITLEMENTS["free"]["max_concurrent_runs"]),
             },
-            "upgrade_url": os.getenv("MIAOWU_PRODUCT_UPGRADE_URL") or "",
+            "upgrade_url": (lambda u: u if u.startswith("https://") else "")(os.getenv("MIAOWU_PRODUCT_UPGRADE_URL") or ""),
         }
 
 

@@ -197,6 +197,14 @@ def _validate_and_normalize_public_base_url(raw_base_url: str) -> str:
     if not hostname:
         raise HTTPException(status_code=400, detail="接口地址缺少主机名")
 
+    blocked_hosts = {
+        "localhost", "127.0.0.1", "0.0.0.0",
+        "169.254.169.254",
+    }
+    hostname_lower = hostname.lower()
+    if hostname_lower in blocked_hosts or hostname_lower.startswith(("127.", "10.", "192.168.")):
+        raise HTTPException(status_code=400, detail="Base URL must not point to a private or reserved network address")
+
     return base_url
 
 
@@ -307,7 +315,7 @@ async def fetch_provider_models(
         raise
     except Exception as exc:
         logger.exception("fetch-provider-models: unexpected error")
-        raise HTTPException(status_code=500, detail=f"获取模型列表失败: {exc}") from exc
+        raise HTTPException(status_code=500, detail="获取模型列表失败，请稍后重试") from exc
 
 
 class NewAPIProviderGroupResponse(BaseModel):

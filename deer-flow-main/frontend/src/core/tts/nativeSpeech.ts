@@ -48,20 +48,22 @@ export function getNativeVoices(): NativeTtsVoice[] {
 export function subscribeNativeVoicesChanged(callback: () => void): () => void {
   const synth = getSpeechSynthesis();
   if (!synth) return () => undefined;
-  synth.addEventListener?.('voiceschanged', callback);
+  if (synth.addEventListener) {
+    synth.addEventListener('voiceschanged', callback);
+    return () => {
+      if (synth.removeEventListener) {
+        synth.removeEventListener('voiceschanged', callback);
+      }
+    };
+  }
   synth.onvoiceschanged = callback;
-  return () => {
-    synth.removeEventListener?.('voiceschanged', callback);
-    if (synth.onvoiceschanged === callback) {
-      synth.onvoiceschanged = null;
-    }
-  };
+  return () => { synth.onvoiceschanged = null; };
 }
 
 export function chunkNativeSpeechText(text: string, maxChars = MAX_NATIVE_UTTERANCE_CHARS): string[] {
   const normalized = text.replace(/\s+/g, ' ').trim();
   if (!normalized) return [];
-  const sentences = normalized.match(/[^。！？!?；;：:\n]+[。！？!?；;：:]?/g) ?? [normalized];
+  const sentences = normalized.match(/[^。！？!?；;：:\n.…""」』\)]+[。！？!?；;：:\n.…""」』\)]?/g) ?? [normalized];
   const chunks: string[] = [];
   let current = '';
 

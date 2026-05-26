@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
+import ipaddress
 import json
 import logging
 import os
+import re
+import socket
 import time
 import uuid
 from dataclasses import dataclass
@@ -45,6 +49,7 @@ _ALLOWED_QUALITIES = {"auto", "low", "medium", "high", "standard", "hd"}
 _IMAGE_FILE_URL_PREFIX = "/api/v1/images/files"
 
 _http_client: httpx.AsyncClient | None = None
+_http_client_lock = asyncio.Lock()
 
 
 class GeneratedImageResponse(BaseModel):
@@ -184,7 +189,13 @@ def _utcnow_iso() -> str:
 
 
 def _user_dir_key(user_id: str) -> str:
-    return hashlib.sha1(user_id.encode("utf-8")).hexdigest()[:24]
+    return hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:24]
+
+
+def _validate_path_segment(value: str, name: str = "id") -> str:
+    if not re.fullmatch(r"[0-9a-zA-Z_-]{1,128}", value):
+        raise HTTPException(status_code=400, detail=f"Invalid {name}")
+    return value
 
 
 def _images_root() -> Path:
@@ -203,10 +214,12 @@ def _files_root() -> Path:
 
 
 def _job_path(user_id: str, job_id: str) -> Path:
+    _validate_path_segment(job_id, "job_id")
     return _jobs_root() / _user_dir_key(user_id) / f"{job_id}.json"
 
 
 def _image_meta_path(user_id: str, image_id: str) -> Path:
+    _validate_path_segment(image_id, "image_id")
     return _files_root() / _user_dir_key(user_id) / f"{image_id}.json"
 
 
@@ -240,13 +253,24 @@ def _safe_read_json(path: Path) -> dict[str, Any] | None:
 
 async def get_http_client() -> httpx.AsyncClient:
     global _http_client
-    if _http_client is None or _http_client.is_closed:
+    if _http_client is not None and not _http_client.is_closed:
+        return _http_client
+    async with _http_client_lock:
+        if _http_client is not None and not _http_client.is_closed:
+            return _http_client
         _http_client = httpx.AsyncClient(
             timeout=httpx.Timeout(180.0),
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             follow_redirects=True,
         )
-    return _http_client
+        return _http_client
+
+
+async def close_http_client() -> None:
+    global _http_client
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None
 
 
 def _normalize_openai_base_url(base_url: str) -> str:
@@ -390,14 +414,48 @@ def _content_type_and_extension_from_bytes(content: bytes) -> tuple[str, str]:
     return "application/octet-stream", "bin"
 
 
+async def _validate_image_url(url: str) -> str:
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ImageGenerationError("Only http/https URLs are allowed", status_code=400, error_code="invalid_url")
+    hostname = (parsed.hostname or "").lower()
+    blocked_hosts = {"169.254.169.254", "metadata.google.internal", "localhost"}
+    if hostname in blocked_hosts:
+        raise ImageGenerationError("URL points to a restricted host", status_code=400, error_code="restricted_url")
+    blocked_prefixes = ("10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.", "192.168.", "127.", "0.")
+    if any(hostname.startswith(p) for p in blocked_prefixes):
+        raise ImageGenerationError("URL points to a restricted host", status_code=400, error_code="restricted_url")
+    try:
+        loop = asyncio.get_event_loop()
+        addrs = await loop.getaddrinfo(hostname, None)
+        for addr in addrs:
+            ip_str = addr[4][0]
+            try:
+                ip = ipaddress.ip_address(ip_str)
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                    raise ImageGenerationError("Image URL resolves to a restricted network address", status_code=400, error_code="restricted_url")
+            except ValueError:
+                continue
+    except socket.gaierror:
+        pass
+    return url
+
+
 async def _download_image_from_url(client: httpx.AsyncClient, url: str) -> tuple[bytes, str]:
-    response = await client.get(url)
-    response.raise_for_status()
-    content = response.content
-    content_type = _optional_trim(response.headers.get("content-type")) or ""
-    if not content_type or content_type == "application/octet-stream":
-        detected_content_type, _ = _content_type_and_extension_from_bytes(content)
-        content_type = detected_content_type
+    url = await _validate_image_url(url)
+    MAX_IMAGE_SIZE_BYTES = 50 * 1024 * 1024
+    async with client.stream("GET", url) as response:
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "image/png")
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in response.aiter_bytes():
+            total += len(chunk)
+            if total > MAX_IMAGE_SIZE_BYTES:
+                raise ImageGenerationError("Image exceeds maximum allowed size (50 MB)", status_code=502, error_code="image_too_large")
+            chunks.append(chunk)
+        content = b"".join(chunks)
     return content, content_type
 
 
@@ -423,8 +481,9 @@ async def _decode_upstream_image(
         try:
             content, content_type = await _download_image_from_url(client, image_url)
         except httpx.HTTPStatusError as exc:
+            logger.warning("Upstream image download error: %s", _extract_upstream_error(exc))
             raise ImageGenerationError(
-                _extract_upstream_error(exc),
+                "Image generation provider returned an error",
                 status_code=502,
                 error_code="upstream_image_download_failed",
                 details={"status_code": exc.response.status_code if exc.response is not None else None},
@@ -569,8 +628,9 @@ async def _call_images_generation_api(
         )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
+        logger.warning("Upstream image generation error: %s", _extract_upstream_error(exc))
         raise ImageGenerationError(
-            _extract_upstream_error(exc),
+            "Image generation provider returned an error",
             status_code=502,
             error_code="upstream_request_failed",
             details={"status_code": exc.response.status_code if exc.response is not None else None},
@@ -703,9 +763,24 @@ async def generate_images(
         job["updated_at"] = _utcnow_iso()
         _persist_job(job)
         raise
+    except Exception as exc:
+        logger.exception("Unexpected error during image generation for job %s", job_id)
+        job["status"] = "failed"
+        job["error"] = {"error_code": "internal_error", "message": "Internal error during image generation"}
+        job["elapsed_seconds"] = round(time.perf_counter() - started_at, 3)
+        job["updated_at"] = _utcnow_iso()
+        try:
+            _persist_job(job)
+        except Exception:
+            logger.exception("Failed to persist failed job %s", job_id)
+        raise ImageGenerationError(
+            "Internal error during image generation",
+            status_code=500,
+            error_code="internal_error",
+        ) from exc
 
 
-def list_image_jobs(*, user_id: str) -> ImageJobListResponse:
+def list_image_jobs(*, user_id: str, limit: int = 50, offset: int = 0) -> ImageJobListResponse:
     jobs_dir = _jobs_root() / _user_dir_key(user_id)
     items: list[ImageJobResponse] = []
     if jobs_dir.is_dir():
@@ -718,6 +793,9 @@ def list_image_jobs(*, user_id: str) -> ImageJobListResponse:
             except Exception:
                 logger.warning("Skip invalid image job payload: %s", path, exc_info=True)
     items.sort(key=lambda item: (item.updated_at, item.created_at, item.id), reverse=True)
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    items = items[offset:offset + limit]
     return ImageJobListResponse(items=items)
 
 
@@ -728,14 +806,17 @@ def get_image_job(job_id: str, *, user_id: str) -> ImageJobResponse:
     return ImageJobResponse.model_validate(payload)
 
 
+_SAFE_EXTENSIONS = {"png", "jpg", "webp", "gif", "bin"}
+
+
 def read_image_file(*, image_id: str, user_id: str) -> ImageFilePayload:
     meta = _safe_read_json(_image_meta_path(user_id, image_id))
     if meta is None or meta.get("user_id") != user_id or meta.get("image_id") != image_id:
         raise HTTPException(status_code=404, detail="Image file not found")
 
-    extension = str(meta.get("extension") or "").strip()
-    if not extension:
-        raise HTTPException(status_code=404, detail="Image file metadata is invalid")
+    extension = str(meta.get("extension") or "").strip().lower()
+    if extension not in _SAFE_EXTENSIONS:
+        extension = "bin"
 
     file_path = _files_root() / _user_dir_key(user_id) / f"{image_id}.{extension}"
     try:

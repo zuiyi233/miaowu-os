@@ -17,6 +17,7 @@ from urllib.parse import urlencode, urljoin
 import httpx
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, TypeAdapter, ValidationError
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.auth.config import get_auth_config
 from app.gateway.auth.models import NewAPIAccountSnapshot, User
@@ -199,7 +200,7 @@ def validate_next_path(value: str | None) -> str:
         return "/workspace"
     if not value.startswith("/") or value.startswith("//"):
         return "/workspace"
-    if ":" in value and not value.startswith("/"):
+    if ":" in value:
         return "/workspace"
     return value
 
@@ -311,13 +312,18 @@ def _rewrite_endpoint_issuer(endpoint: str, *, source_issuer: str, target_issuer
 
 
 async def fetch_newapi_discovery(settings: NewAPIOAuthSettings) -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
         response = await client.get(settings.discovery_url)
     if response.status_code != 200:
         raise NewAPIOAuthError("Failed to fetch NewAPI OIDC discovery document.", status_code=502)
     data = response.json()
     if not isinstance(data, dict):
         raise NewAPIOAuthError("NewAPI OIDC discovery document is malformed.", status_code=502)
+    issuer_origin = settings.issuer.rstrip("/")
+    for key in ("token_endpoint", "userinfo_endpoint", "authorization_endpoint"):
+        endpoint = data.get(key)
+        if isinstance(endpoint, str) and not endpoint.startswith(issuer_origin + "/") and not endpoint.startswith(issuer_origin):
+            logger.warning("Discovery %s=%s does not match issuer %s", key, endpoint, settings.issuer)
     return data
 
 
@@ -367,9 +373,7 @@ async def exchange_newapi_code_for_user(code: str, state: str, provider) -> NewA
             )
             await db.commit()
     except Exception:
-        # Entitlement sync is retried from account/admin pages; login itself
-        # must remain usable and will fall back to Free if no cache exists.
-        pass
+        logger.warning("Entitlement sync failed for user_id=%s; will retry on next account page visit", str(user.id), exc_info=True)
     return NewAPILoginResult(user=user, snapshot=snapshot, next_path=next_path)
 
 
@@ -549,7 +553,11 @@ async def _save_newapi_sync_token(*, user_id: str, system_access_token: str) -> 
         sync_state = preferences.get(_NEWAPI_SYNC_PREF_KEY)
         if not isinstance(sync_state, dict):
             sync_state = {}
-        sync_state["system_access_token_encrypted"] = encrypt_secret(token) if is_encryption_enabled() else token
+        if is_encryption_enabled():
+            sync_state["system_access_token_encrypted"] = encrypt_secret(token)
+        else:
+            logger.warning("SETTINGS_ENCRYPTION_KEY not configured — NewAPI system token will be stored in plaintext. This is insecure for production deployments.")
+            sync_state["system_access_token_encrypted"] = token
         sync_state["updated_at"] = int(time.time())
         preferences[_NEWAPI_SYNC_PREF_KEY] = sync_state
         _save_settings_preferences(settings, preferences)
@@ -564,19 +572,17 @@ def _read_newapi_sync_token_from_settings(settings: Settings) -> str | None:
     encrypted = sync_state.get("system_access_token_encrypted")
     if not isinstance(encrypted, str) or not encrypted.strip():
         return None
-    return safe_decrypt(encrypted.strip()) or encrypted.strip()
+    decrypted = safe_decrypt(encrypted.strip())
+    if decrypted is not None:
+        return decrypted
+    return None
 
 
 async def get_newapi_group_catalog_for_user(*, user_id: str, db=None) -> tuple[dict[str, dict[str, Any]], list[str]]:
     settings = require_newapi_settings()
     warnings: list[str] = []
-    owns_db = db is None
-    if owns_db:
-        db_cm = AsyncSessionLocal()
-        db = await db_cm.__aenter__()
-    else:
-        db_cm = None
-    try:
+
+    async def _inner(db: AsyncSession) -> tuple[dict[str, dict[str, Any]], list[str]]:
         result = await db.execute(select(Settings).where(Settings.user_id == user_id))
         user_settings = result.scalar_one_or_none()
         if user_settings is None:
@@ -590,9 +596,11 @@ async def get_newapi_group_catalog_for_user(*, user_id: str, db=None) -> tuple[d
         if not catalog:
             warnings.append("未从 NewAPI 获取到分组目录，可手动输入分组名同步。")
         return catalog, warnings
-    finally:
-        if owns_db and db_cm is not None:
-            await db_cm.__aexit__(None, None, None)
+
+    if db is None:
+        async with AsyncSessionLocal() as db:
+            return await _inner(db)
+    return await _inner(db)
 
 
 async def sync_newapi_groups_for_user(
@@ -734,7 +742,8 @@ async def _fetch_newapi_hub_group_catalog(
         if response.status_code != 200:
             return {}
         data = response.json()
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to fetch NewAPI hub group catalog: %s", e)
         return {}
 
     payload = data.get("data") if isinstance(data, dict) else None
@@ -836,7 +845,8 @@ async def _fetch_newapi_models_with_token(*, relay_base_url: str, api_key: str |
         if response.status_code != 200:
             return []
         data = response.json()
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to fetch NewAPI models: %s", e)
         return []
     raw_models = data.get("data") if isinstance(data, dict) else None
     models: list[str] = []

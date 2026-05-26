@@ -350,7 +350,7 @@ function buildChapterPayload(options: TtsChapterRequestOptions) {
     text: options.text,
     project_id: options.project_id ?? undefined,
     title: options.title ?? undefined,
-    provider: options.provider ?? 'openai',
+    provider: options.provider ?? undefined,
     voice: options.voice ?? undefined,
     model: options.model ?? undefined,
     fmt: options.fmt ?? undefined,
@@ -398,8 +398,17 @@ function normalizeTtsJob(raw: unknown): TtsJob {
       : null;
 
   return {
-    ...(jobRecord as unknown as TtsJob),
+    job_id: typeof jobRecord.job_id === 'string' ? jobRecord.job_id : '',
+    status: typeof jobRecord.status === 'string' ? jobRecord.status as TtsJobStatus : 'failed',
+    chapter_id: typeof jobRecord.chapter_id === 'string' ? jobRecord.chapter_id : null,
+    project_id: typeof jobRecord.project_id === 'string' ? jobRecord.project_id : null,
+    progress: jobRecord.progress && typeof jobRecord.progress === 'object' ? jobRecord.progress as TtsJobProgress : undefined,
+    audio: jobRecord.audio && typeof jobRecord.audio === 'object' ? jobRecord.audio as TtsChapterAudioManifest : null,
     error,
+    error_code: typeof jobRecord.error_code === 'string' ? jobRecord.error_code : null,
+    detail: typeof jobRecord.detail === 'string' ? jobRecord.detail : null,
+    created_at: typeof jobRecord.created_at === 'string' ? jobRecord.created_at : null,
+    updated_at: typeof jobRecord.updated_at === 'string' ? jobRecord.updated_at : null,
   };
 }
 
@@ -409,7 +418,7 @@ export async function synthesizeSpeech(options: TtsSynthesizeOptions): Promise<B
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       text: options.text,
-      provider: options.provider ?? 'openai',
+      provider: options.provider ?? undefined,
       voice: options.voice ?? undefined,
       model: options.model ?? undefined,
       fmt: options.fmt ?? undefined,
