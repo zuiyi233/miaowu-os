@@ -1,5 +1,6 @@
 node_modules/
 .hyperframes/
+.mimo-tts.local.env
 
 assets/*response.json
 assets/*raw.wav

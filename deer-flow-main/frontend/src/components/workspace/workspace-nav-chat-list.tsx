@@ -6,6 +6,7 @@ import {
   ClipboardCheckIcon,
   ImageIcon,
   MessagesSquare,
+  Music2Icon,
   Sparkles,
   Upload,
 } from "lucide-react";
@@ -81,6 +82,17 @@ export function WorkspaceNavChatList() {
             <Link className="text-muted-foreground" href="/workspace/images" prefetch={false}>
               <ImageIcon />
               <span>图片生成</span>
+            </Link>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            isActive={pathname.startsWith("/workspace/tts-studio")}
+            asChild
+          >
+            <Link className="text-muted-foreground" href="/workspace/tts-studio" prefetch={false}>
+              <Music2Icon />
+              <span>音频工作站</span>
             </Link>
           </SidebarMenuButton>
         </SidebarMenuItem>

@@ -73,7 +73,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Long-Term Memory](#long-term-memory)
   - [Recommended Models](#recommended-models)
   - [Embedded Python Client](#embedded-python-client)
-  - [Documentation](#documentation)
+- [Documentation](#documentation)
   - [⚠️ Security Notice](#️-security-notice)
     - [Improper Deployment May Introduce Security Risks](#improper-deployment-may-introduce-security-risks)
     - [Security Recommendations](#security-recommendations)
@@ -708,6 +708,7 @@ All dict-returning methods are validated against Gateway Pydantic response model
 - [Configuration Guide](backend/docs/CONFIGURATION.md) - Setup and configuration instructions
 - [Architecture Overview](backend/CLAUDE.md) - Technical architecture details
 - [Backend Architecture](backend/README.md) - Backend architecture and API reference
+- [MiMo TTS Dual-Track Migration Guide](docs/mimo-tts-dual-track-migration-guide.md) - MiMo TTS provider, novel audiobook, and workspace audio studio integration
 
 ### Novel file-truth development notes (Miaowu fork)
 

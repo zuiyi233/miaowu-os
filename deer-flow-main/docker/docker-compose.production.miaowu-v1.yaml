@@ -19,9 +19,10 @@ services:
   frontend:
     image: ${MIAOWU_FRONTEND_IMAGE_TAG:?set MIAOWU_FRONTEND_IMAGE_TAG to miaowu-os-frontend:<git-sha>-<yyyymmdd>}
     container_name: ${MIAOWU_INSTANCE_NAME:-miaowu}-frontend
-    command: sh -c "cd frontend && node server.js"
+    command: sh -c "cd /app/frontend && pnpm start"
     environment:
       - NODE_ENV=production
+      - PORT=3000
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
       - DEER_FLOW_INTERNAL_GATEWAY_BASE_URL=http://gateway:8551
       - DEER_FLOW_TRUSTED_ORIGINS=${DEER_FLOW_TRUSTED_ORIGINS:-https://xs.miaowu.bond}
@@ -36,6 +37,8 @@ services:
     image: ${MIAOWU_GATEWAY_IMAGE_TAG:?set MIAOWU_GATEWAY_IMAGE_TAG to miaowu-os-gateway:<git-sha>-<yyyymmdd>}
     container_name: ${MIAOWU_INSTANCE_NAME:-miaowu}-gateway
     command: sh -c "cd backend && PYTHONPATH=. uv run --no-sync uvicorn app.gateway.app:app --host 0.0.0.0 --port 8551 --workers ${GATEWAY_WORKERS:-4}"
+    ports:
+      - "${GATEWAY_PORT:-8551}:8551"
     volumes:
       - ./config.docker.yaml:/app/backend/config.yaml:ro
       - ./extensions_config.docker.json:/app/backend/extensions_config.json:ro

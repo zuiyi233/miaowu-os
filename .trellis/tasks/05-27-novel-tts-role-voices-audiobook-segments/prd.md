@@ -26,6 +26,10 @@ Enhance the existing novel TTS path so novel roles/speakers can use MiMo-designe
 - [ ] UI clearly shows MiMo unavailable when config is missing.
 - [ ] Tests cover speaker voice mapping and at least one MiMo role voice generation path with mocked provider output.
 
+## Decisions
+
+- Role voice management should not be squeezed into the compact `TtsPlayer` surface. Keep the reader light and place richer voice management in a dedicated panel or adjacent workflow.
+
 ## Out of Scope
 
 - Building the full `/workspace/tts-studio` canvas.

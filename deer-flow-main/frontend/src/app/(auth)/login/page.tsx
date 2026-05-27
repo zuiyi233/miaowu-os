@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { resolveApiUrl } from "@/core/api/fetcher";
 import { useAuth } from "@/core/auth/AuthProvider";
 
+const DEFAULT_NEWAPI_PORTAL_URL = "https://xg.miaowu.bond";
+
 /**
  * Validate next parameter.
  * Prevent open redirect attacks by allowing only relative paths.
@@ -27,24 +29,6 @@ function validateNextParam(next: string | null): string | null {
   return next;
 }
 
-function resolveNewApiPortalUrl(): string {
-  const configured = process.env.NEXT_PUBLIC_NEWAPI_PORTAL_URL?.trim();
-  if (configured) {
-    return configured;
-  }
-
-  if (typeof window === "undefined") {
-    return "http://127.0.0.1:3000";
-  }
-
-  const host = window.location.hostname;
-  if (host === "127.0.0.1" || host === "localhost") {
-    return "http://127.0.0.1:3000";
-  }
-
-  return "https://xg.miaowu.bond";
-}
-
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -54,6 +38,9 @@ export default function LoginPage() {
   const [authorizationStartedAt, setAuthorizationStartedAt] = useState<
     number | null
   >(null);
+  const [newApiPortalUrl, setNewApiPortalUrl] = useState(
+    DEFAULT_NEWAPI_PORTAL_URL,
+  );
 
   const redirectPath =
     validateNextParam(searchParams.get("next")) ?? "/workspace";
@@ -70,6 +57,30 @@ export default function LoginPage() {
       router.replace(redirectPath);
     }
   }, [isAuthenticated, redirectPath, router]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    globalThis
+      .fetch("/runtime-config", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { newapi_portal_url?: unknown } | null) => {
+        const portalUrl =
+          typeof data?.newapi_portal_url === "string"
+            ? data.newapi_portal_url.trim()
+            : "";
+        if (!cancelled && portalUrl) {
+          setNewApiPortalUrl(portalUrl);
+        }
+      })
+      .catch(() => {
+        // Keep the built-in public NewAPI fallback if runtime config is unavailable.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (isAuthenticated || !authorizationStartedAt) return;
@@ -89,13 +100,13 @@ export default function LoginPage() {
 
   const handleOpenNewApiLogin = () => {
     setPortalOpened(true);
-    window.open(resolveNewApiPortalUrl(), "_blank", "noopener,noreferrer");
+    window.open(newApiPortalUrl, "_blank", "noopener,noreferrer");
   };
 
   const handleContinueAuthorization = () => {
     setAuthorizationOpened(true);
     setAuthorizationStartedAt(Date.now());
-    window.open(newApiLoginUrl, "_blank", "noopener,noreferrer");
+    window.location.assign(newApiLoginUrl);
   };
 
   return (

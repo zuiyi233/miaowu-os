@@ -3,7 +3,7 @@
   "name": "mimo-tts-provider-newapi-user-settings",
   "title": "MiMo provider 与 NewAPI 用户设置接入",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

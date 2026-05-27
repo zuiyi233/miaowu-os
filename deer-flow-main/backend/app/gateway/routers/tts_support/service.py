@@ -38,7 +38,7 @@ from app.gateway.novel_migrated.services.object_storage_service import (
 
 logger = logging.getLogger(__name__)
 
-TtsProvider = Literal["openai", "volcengine", "moss-local"]
+TtsProvider = Literal["openai", "volcengine", "moss-local", "mimo"]
 
 MIME_EXT_MAP: dict[str, str] = {
     "audio/mpeg": "mp3",
@@ -52,6 +52,9 @@ MIME_EXT_MAP: dict[str, str] = {
 
 OPENAI_DEFAULT_MODEL = "gpt-4o-mini-tts"
 OPENAI_DEFAULT_VOICE = "alloy"
+MIMO_DEFAULT_MODEL = "mimo-audio"
+MIMO_DEFAULT_VOICE = "mimo-voice"
+MIMO_ROUTE_MODULE_IDS = ("tts", "tts-studio", "mimo-tts")
 MOSS_DEFAULT_BASE_URL = "http://localhost:18083"
 MOSS_DEFAULT_VOICE = "demo-1"
 MAX_AUDIO_BYTES = 20 * 1024 * 1024
@@ -81,6 +84,7 @@ _ERROR_STATUS_MAP: dict[str, int] = {
     "planner_invalid_json": 502,
     "invalid_plan": 422,
     "unsupported_multivoice": 400,
+    "asset_not_found": 404,
 }
 
 _http_client: httpx.AsyncClient | None = None
@@ -137,6 +141,40 @@ class TtsRequest(BaseModel):
     ai_provider_id: str | None = Field(default=None, description="User AI provider id for OpenAI-compatible TTS")
 
 
+class MiMoAdvancedOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str | None = Field(default=None, max_length=2000)
+    reference_audio_asset_id: str | None = Field(default=None, max_length=128)
+    reference_audio_data_url: str | None = Field(default=None, max_length=8_000_000)
+
+
+class TtsRoleVoiceReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    voice: str | None = Field(default=None, max_length=120)
+    provider: TtsProvider | None = None
+    model: str | None = Field(default=None, max_length=120)
+    mode: Literal["design", "clone"] | None = None
+    character_id: str | None = Field(default=None, max_length=120)
+    role_id: str | None = Field(default=None, max_length=120)
+    display_name: str | None = Field(default=None, max_length=120)
+    aliases: list[str] = Field(default_factory=list)
+    gender: str | None = Field(default=None, max_length=80)
+    age: str | None = Field(default=None, max_length=80)
+    personality: str | None = Field(default=None, max_length=1200)
+    voice_description: str | None = Field(default=None, max_length=2000)
+    reference_audio_asset_id: str | None = Field(default=None, max_length=128)
+    generated_sample_asset_id: str | None = Field(default=None, max_length=128)
+    status: Literal["pending", "generating", "ready", "error"] | None = None
+    locked: bool | None = None
+    diagnostics: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+SpeakerVoiceMappingValue = str | TtsRoleVoiceReference
+
+
 class MossAdvancedOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -166,7 +204,7 @@ class TtsChapterGenerateRequest(BaseModel):
     force: bool = False
     max_chunk_chars: int = Field(default=1200, ge=80, le=5000)
     advanced_options: dict[str, Any] | None = None
-    speaker_voices: dict[str, str] | None = None
+    speaker_voices: dict[str, SpeakerVoiceMappingValue] | None = None
 
     @model_validator(mode="after")
     def validate_mode_contract(self) -> TtsChapterGenerateRequest:
@@ -181,6 +219,7 @@ class TtsNarrationSpeaker(BaseModel):
     id: str = Field(min_length=1, max_length=80)
     display_name: str = Field(min_length=1, max_length=120)
     voice: str = Field(min_length=1, max_length=120)
+    role_voice: TtsRoleVoiceReference | None = None
     style: str | None = Field(default=None, max_length=1200)
     instructions: str | None = Field(default=None, max_length=1200)
 
@@ -192,6 +231,7 @@ class TtsNarrationSegment(BaseModel):
     speaker_id: str = Field(min_length=1, max_length=80)
     text: str = Field(min_length=1, max_length=5000)
     voice: str | None = Field(default=None, max_length=120)
+    role_voice: TtsRoleVoiceReference | None = None
     style: str | None = Field(default=None, max_length=1200)
     instructions: str | None = Field(default=None, max_length=1200)
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -233,7 +273,7 @@ class TtsNarrationPlanRequest(BaseModel):
     model: str | None = None
     voice: str | None = None
     ai_provider_id: str | None = None
-    speaker_voices: dict[str, str] | None = None
+    speaker_voices: dict[str, SpeakerVoiceMappingValue] | None = None
 
 
 class TtsNarrationPlanResponse(BaseModel):
@@ -310,6 +350,62 @@ class TtsVoicesResponse(BaseModel):
     voices: list[TtsVoiceInfo]
 
 
+class TtsGeneratedAudioResponse(BaseModel):
+    asset_id: str
+    url: str
+    download_url: str
+    content_type: str
+    provider: TtsProvider
+    model: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    diagnostics: list[str] = Field(default_factory=list)
+
+
+class TtsVoiceDesignRequest(BaseModel):
+    voice_description: str = Field(min_length=1, max_length=2000)
+    text: str = Field(default="你好，这是喵呜声音设计试听。", min_length=1, max_length=5000)
+    instruction: str | None = Field(default=None, max_length=2000)
+    model: str | None = Field(default=None, max_length=120)
+    fmt: str | None = Field(default="mp3", max_length=20)
+    ai_provider_id: str | None = Field(default=None, max_length=128)
+
+
+class TtsVoiceCloneRequest(BaseModel):
+    text: str = Field(default="你好，这是喵呜声音克隆试听。", min_length=1, max_length=5000)
+    reference_audio_asset_id: str | None = Field(default=None, max_length=128)
+    reference_audio_data_url: str | None = Field(default=None, max_length=8_000_000)
+    instruction: str | None = Field(default=None, max_length=2000)
+    style: str | None = Field(default=None, max_length=2000)
+    model: str | None = Field(default=None, max_length=120)
+    fmt: str | None = Field(default="mp3", max_length=20)
+    ai_provider_id: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_reference_audio(self) -> TtsVoiceCloneRequest:
+        if bool(self.reference_audio_asset_id) == bool(self.reference_audio_data_url):
+            raise ValueError("Exactly one of reference_audio_asset_id or reference_audio_data_url is required")
+        return self
+
+
+class TtsStyleOptimizeRequest(BaseModel):
+    style_text: str = Field(min_length=1, max_length=4000)
+    model: str | None = Field(default=None, max_length=120)
+    ai_provider_id: str | None = Field(default=None, max_length=128)
+
+
+class TtsVoiceDesignOptimizeRequest(BaseModel):
+    voice_description: str = Field(min_length=1, max_length=4000)
+    model: str | None = Field(default=None, max_length=120)
+    ai_provider_id: str | None = Field(default=None, max_length=128)
+
+
+class TtsTextOptimizeResponse(BaseModel):
+    text: str
+    provider: TtsProvider
+    model: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class TtsConfigResponse(BaseModel):
     providers: dict[str, dict[str, Any]]
     default_provider: TtsProvider | None = None
@@ -354,6 +450,16 @@ class OpenAIConfig:
     api_key: str | None
     source: str = "env"
     provider_id: str | None = None
+
+
+@dataclass(frozen=True)
+class MiMoConfig:
+    base_url: str
+    api_key: str | None
+    source: str = "env"
+    provider_id: str | None = None
+    model: str | None = None
+    provider: str | None = None
 
 
 @dataclass(frozen=True)
@@ -421,6 +527,10 @@ VOLCENGINE_VOICES: list[TtsVoiceInfo] = [
 
 MOSS_VOICES: list[TtsVoiceInfo] = [
     TtsVoiceInfo(id="demo-1", name="MOSS Demo 1", provider="moss-local", language="zh"),
+]
+
+MIMO_VOICES: list[TtsVoiceInfo] = [
+    TtsVoiceInfo(id=MIMO_DEFAULT_VOICE, name="MiMo Generated Voice", provider="mimo", language="multi", models=[MIMO_DEFAULT_MODEL], supports_instructions=True),
 ]
 
 
@@ -493,6 +603,12 @@ def _local_plan_path(user_id: str, chapter_id: str, plan_id: str) -> Path:
     _validate_path_component(chapter_id, "chapter_id")
     _validate_path_component(plan_id, "plan_id")
     return _local_tts_asset_root() / user_id / chapter_id / "plans" / f"{plan_id}.json"
+
+
+def _local_generated_asset_path(user_id: str, asset_id: str, ext: str) -> Path:
+    _validate_path_component(user_id, "user_id")
+    _validate_path_component(asset_id, "asset_id")
+    return _local_tts_asset_root() / user_id / "generated" / f"{asset_id}.{ext}"
 
 
 def _safe_read_json(path: Path) -> dict[str, Any] | None:
@@ -578,6 +694,120 @@ def _persist_narration_plan(*, user_id: str, chapter_id: str, plan: TtsNarration
     _write_json_atomic(_local_plan_path(user_id, chapter_id, plan_id), payload)
     _narration_plans[(user_id, chapter_id, plan_id)] = normalized
     return normalized
+
+
+async def _persist_generated_tts_audio(
+    *,
+    user_id: str,
+    result: TtsAudioResult,
+    kind: str,
+    metadata: dict[str, Any] | None = None,
+    db: AsyncSession | None = None,
+) -> TtsGeneratedAudioResponse:
+    asset_id = str(uuid.uuid4())
+    ext = ext_from_content_type(result.content_type)
+    merged_metadata = {
+        "kind": kind,
+        "provider": result.provider,
+        "model": result.model,
+        "voice": result.voice,
+        "created_at": datetime.now(UTC).isoformat(),
+        **result.metadata,
+        **(metadata or {}),
+    }
+    filename = f"{kind}_{asset_id}.{ext}"
+    if db is not None:
+        try:
+            created = await media_asset_service.create_asset_from_bytes(
+                db=db,
+                user_id=user_id,
+                project_id=None,
+                purpose="tts_audio",
+                filename=filename,
+                content=result.audio_bytes,
+                mime_type=result.content_type,
+                metadata=merged_metadata,
+                commit=True,
+                refresh=True,
+                flush=False,
+            )
+            return TtsGeneratedAudioResponse(
+                asset_id=created.asset.id,
+                url=f"/api/tts/assets/{created.asset.id}",
+                download_url=f"/api/tts/assets/{created.asset.id}/download",
+                content_type=result.content_type,
+                provider="mimo",
+                model=result.model,
+                metadata={**merged_metadata, "storage": "media_asset"},
+            )
+        except ObjectStorageError:
+            logger.warning("Failed to persist generated TTS audio as MediaAsset; falling back to local file", exc_info=True)
+
+    target = _local_generated_asset_path(user_id, asset_id, ext)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(target.write_bytes, result.audio_bytes)
+    _local_audio_assets[asset_id] = {
+        "path": str(target),
+        "user_id": user_id,
+        "project_id": None,
+        "chapter_id": None,
+        "filename": filename,
+        "content_type": result.content_type,
+        "size_bytes": len(result.audio_bytes),
+        "fingerprint": stable_text_hash(f"{user_id}:{asset_id}:{kind}"),
+        "metadata": merged_metadata,
+    }
+    return TtsGeneratedAudioResponse(
+        asset_id=asset_id,
+        url=f"/api/tts/assets/{asset_id}",
+        download_url=f"/api/tts/assets/{asset_id}/download",
+        content_type=result.content_type,
+        provider="mimo",
+        model=result.model,
+        metadata=merged_metadata,
+    )
+
+
+async def read_tts_asset(*, asset_id: str, user_id: str) -> tuple[bytes, str, str]:
+    return await read_tts_audio_asset(asset_id=asset_id, user_id=user_id)
+
+
+async def read_tts_audio_asset(
+    *,
+    asset_id: str,
+    user_id: str,
+    db: AsyncSession | None = None,
+) -> tuple[bytes, str, str]:
+    try:
+        _validate_path_component(asset_id, "asset_id")
+    except ValueError as exc:
+        raise TtsProviderError("asset_not_found", "TTS asset not found", status_code=404) from exc
+    asset = _local_audio_assets.get(asset_id)
+    if asset and asset.get("user_id") == user_id:
+        path = Path(str(asset.get("path") or "")).resolve()
+        if path.is_file():
+            return await asyncio.to_thread(path.read_bytes), str(asset.get("content_type") or "application/octet-stream"), str(asset.get("filename") or path.name)
+
+    if db is not None:
+        media_asset = await db.get(MediaAsset, asset_id)
+        if media_asset and media_asset.user_id == user_id and media_asset.status == "active":
+            if not (media_asset.mime_type or "").startswith("audio/"):
+                raise TtsProviderError("invalid_request", "TTS asset must be audio", status_code=422)
+            try:
+                stored = await object_storage_service.get_object(object_key=media_asset.object_key)
+            except ObjectStorageError as exc:
+                raise TtsProviderError(
+                    "storage_unavailable",
+                    "TTS asset storage is unavailable",
+                    status_code=503,
+                ) from exc
+            return (
+                stored.content,
+                media_asset.mime_type or stored.content_type or "application/octet-stream",
+                media_asset.filename or f"{asset_id}.bin",
+            )
+
+    raise TtsProviderError("asset_not_found", "TTS asset not found", status_code=404)
 
 
 def _load_narration_plan(*, user_id: str, chapter_id: str, plan_id: str) -> TtsNarrationPlan | None:
@@ -864,6 +1094,105 @@ def _plan_hash(plan: TtsNarrationPlan | None) -> str | None:
     return stable_text_hash(_canonical_json(plan.model_dump(mode="json")))
 
 
+def _role_voice_ref_from_mapping(value: SpeakerVoiceMappingValue | dict[str, Any] | None) -> TtsRoleVoiceReference | None:
+    if value is None or isinstance(value, str):
+        return None
+    if isinstance(value, TtsRoleVoiceReference):
+        return value
+    if isinstance(value, dict):
+        return TtsRoleVoiceReference.model_validate(value)
+    return None
+
+
+def _voice_id_from_mapping(value: SpeakerVoiceMappingValue | dict[str, Any] | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    ref = _role_voice_ref_from_mapping(value)
+    if ref is None:
+        return None
+    return ref.voice or ref.generated_sample_asset_id or ref.reference_audio_asset_id
+
+
+def _role_voice_metadata(ref: TtsRoleVoiceReference | None, *, source: str) -> dict[str, Any] | None:
+    if ref is None:
+        return None
+    metadata = ref.model_dump(mode="json", exclude_none=True)
+    metadata["source"] = source
+    return metadata
+
+
+def _speaker_voices_json(speaker_voices: dict[str, SpeakerVoiceMappingValue] | None) -> dict[str, Any]:
+    return {
+        speaker_id: value.model_dump(mode="json") if isinstance(value, TtsRoleVoiceReference) else value
+        for speaker_id, value in (speaker_voices or {}).items()
+    }
+
+
+def _resolved_voice_for_segment(
+    *,
+    req: TtsChapterGenerateRequest,
+    plan: TtsNarrationPlan,
+    speaker: TtsNarrationSpeaker,
+    segment: TtsNarrationSegment,
+) -> dict[str, Any]:
+    mapping_value = (req.speaker_voices or {}).get(segment.speaker_id)
+    explicit_ref = _role_voice_ref_from_mapping(mapping_value)
+    segment_ref = segment.role_voice
+    speaker_ref = speaker.role_voice
+    role_ref = explicit_ref or segment_ref or speaker_ref
+    role_source = "speaker_voices" if explicit_ref else "segment" if segment_ref else "speaker" if speaker_ref else None
+
+    voice = (
+        _voice_id_from_mapping(mapping_value)
+        or segment.voice
+        or _voice_id_from_mapping(segment_ref)
+        or _voice_id_from_mapping(speaker_ref)
+        or speaker.voice
+        or plan.default_voice
+        or req.voice
+    )
+    provider = role_ref.provider if role_ref and role_ref.provider else req.provider
+    model = role_ref.model if role_ref and role_ref.model else req.model or plan.model
+    advanced_options = dict(req.advanced_options or {})
+    if provider == "mimo" and role_ref:
+        prompt_parts = [advanced_options.get("prompt"), role_ref.voice_description, role_ref.personality]
+        prompt = "\n".join(str(part).strip() for part in prompt_parts if str(part or "").strip())
+        if prompt:
+            advanced_options["prompt"] = prompt
+        if role_ref.reference_audio_asset_id:
+            advanced_options["reference_audio_asset_id"] = role_ref.reference_audio_asset_id
+
+    return {
+        "provider": provider,
+        "model": model,
+        "voice": voice,
+        "advanced_options": advanced_options or None,
+        "role_voice": _role_voice_metadata(role_ref, source=role_source or "none"),
+        "voice_resolution": {
+            "source": (
+                "speaker_voices"
+                if _voice_id_from_mapping(mapping_value)
+                else "segment_voice"
+                if segment.voice
+                else "segment_role_voice"
+                if segment_ref
+                else "speaker_role_voice"
+                if speaker_ref
+                else "speaker_voice"
+                if speaker.voice
+                else "plan_default_voice"
+                if plan.default_voice
+                else "request_voice"
+                if req.voice
+                else "provider_default"
+            ),
+            "role_voice_source": role_source,
+        },
+    }
+
+
 def _build_plan_units(
     *,
     plan: TtsNarrationPlan,
@@ -877,19 +1206,16 @@ def _build_plan_units(
     fingerprint_text_parts: list[str] = []
     for segment_index, segment in enumerate(plan.segments):
         speaker = speakers[segment.speaker_id]
-        voice = (
-            (req.speaker_voices or {}).get(segment.speaker_id)
-            or segment.voice
-            or speaker.voice
-            or plan.default_voice
-            or req.voice
-        )
+        resolved = _resolved_voice_for_segment(req=req, plan=plan, speaker=speaker, segment=segment)
+        provider = resolved["provider"]
+        model = resolved["model"]
+        voice = resolved["voice"]
         instructions = segment.instructions or segment.style or speaker.instructions or speaker.style or req.instructions
-        fingerprint_text_parts.append(f"{segment.speaker_id}:{voice}:{instructions or ''}:{segment.text}")
+        fingerprint_text_parts.append(f"{segment.speaker_id}:{provider}:{model}:{voice}:{instructions or ''}:{segment.text}")
         chunks = chunk_fingerprints(
             text=segment.text,
-            provider=req.provider,
-            model=req.model or plan.model,
+            provider=provider,
+            model=model,
             voice=voice,
             instructions=instructions,
             fmt=req.fmt,
@@ -906,7 +1232,12 @@ def _build_plan_units(
                 "segment_index": segment_index,
                 "speaker_id": segment.speaker_id,
                 "display_name": speaker.display_name,
+                "provider": provider,
+                "model": model,
                 "voice": voice,
+                "advanced_options": resolved["advanced_options"],
+                "role_voice": resolved["role_voice"],
+                "voice_resolution": resolved["voice_resolution"],
                 "style": segment.style or speaker.style,
                 "instructions": instructions,
                 "confidence": segment.confidence,
@@ -919,6 +1250,7 @@ def _build_plan_units(
         "plan_confidence": plan.confidence,
         "plan_warnings": plan.warnings,
         "speakers": [speaker.model_dump(mode="json") for speaker in plan.speakers],
+        "speaker_voices": _speaker_voices_json(req.speaker_voices),
     }
     return units, metadata, "\n".join(fingerprint_text_parts)
 
@@ -1243,6 +1575,57 @@ async def resolve_openai_config(
     return OpenAIConfig(base_url=speech_base_url, api_key=api_key, source="env")
 
 
+async def resolve_mimo_config(
+    *,
+    user_id: str | None = None,
+    db: AsyncSession | None = None,
+    ai_provider_id: str | None = None,
+) -> MiMoConfig:
+    if user_id and db is not None:
+        settings = await get_ai_settings_service().get_or_create_settings(user_id, db)
+        explicit_provider_id = (ai_provider_id or "").strip() or None
+        if explicit_provider_id and not _is_provider_allowed_for_tts_modules(settings, explicit_provider_id, MIMO_ROUTE_MODULE_IDS):
+            raise TtsProviderError(
+                "missing_config",
+                "MiMo TTS provider must be explicitly routed to tts, tts-studio, or mimo-tts",
+                provider="mimo",
+            )
+        module_ids = (None,) if ai_provider_id else tuple(item for item in (_first_explicit_tts_module_id(settings),) if item)
+        for module_id in module_ids:
+            runtime, source = resolve_user_ai_runtime_config(
+                settings,
+                ai_provider_id=ai_provider_id,
+                module_id=module_id,
+            )
+            provider = (runtime.get("api_provider") or "").strip().lower()
+            base_url = (runtime.get("api_base_url") or "").strip().rstrip("/")
+            api_key = (runtime.get("api_key") or "").strip() or None
+            if provider in {"openai", "custom", "newapi", "mimo"} and base_url:
+                return MiMoConfig(
+                    base_url=_normalize_openai_base_url(base_url),
+                    api_key=api_key,
+                    source=source if ai_provider_id else f"feature-routing:{module_id}",
+                    provider_id=ai_provider_id,
+                    model=str(runtime.get("model_name") or MIMO_DEFAULT_MODEL),
+                    provider=provider,
+                )
+
+    base_url = _explicit_mimo_base_url()
+    if not base_url:
+        raise TtsProviderError(
+            "missing_config",
+            "MIMO_TTS_BASE_URL is not configured for TTS",
+            provider="mimo",
+        )
+    return MiMoConfig(
+        base_url=_normalize_openai_base_url(base_url),
+        api_key=_explicit_mimo_api_key(),
+        source="env",
+        model=(os.getenv("MIMO_TTS_MODEL") or MIMO_DEFAULT_MODEL).strip() or MIMO_DEFAULT_MODEL,
+        provider="mimo",
+    )
+
+
 def resolve_volcengine_config() -> VolcengineConfig:
     app_id = (os.getenv("VOLCENGINE_TTS_APPID") or "").strip()
     access_token = (os.getenv("VOLCENGINE_TTS_ACCESS_TOKEN") or "").strip()
@@ -1291,28 +1674,91 @@ def _explicit_openai_tts_api_key() -> str | None:
 
 def _has_explicit_tts_feature_routing(settings: Any) -> bool:
     """Return True only when user settings explicitly route the TTS module."""
+    return _find_explicit_tts_module_id(settings, ("tts",)) is not None
+
+
+def _first_explicit_tts_module_id(settings: Any) -> str | None:
+    return _find_explicit_tts_module_id(settings, MIMO_ROUTE_MODULE_IDS)
+
+
+def _find_explicit_tts_module_id(settings: Any, module_ids: tuple[str, ...]) -> str | None:
+    parsed = _load_ai_provider_settings_from_preferences(settings)
+    if parsed is None:
+        return None
+
+    modules = parsed.get("feature_routing_modules")
+    if not isinstance(modules, list):
+        return None
+
+    for module_id in module_ids:
+        if any(isinstance(item, dict) and str(item.get("moduleId") or "").strip() == module_id for item in modules):
+            return module_id
+    return None
+
+
+def _load_ai_provider_settings_from_preferences(settings: Any) -> dict[str, Any] | None:
     preferences = getattr(settings, "preferences", None)
     if isinstance(preferences, str):
         try:
             preferences = json.loads(preferences)
         except json.JSONDecodeError:
-            return False
+            return None
     if not isinstance(preferences, dict):
-        return False
+        return None
 
     provider_settings = preferences.get("ai_provider_settings")
     if not isinstance(provider_settings, dict):
-        return False
+        return None
 
     feature_settings = provider_settings.get("feature_routing_settings")
     if not isinstance(feature_settings, dict):
-        return False
+        return None
 
     modules = feature_settings.get("modules")
+    provider_settings = dict(provider_settings)
+    provider_settings["feature_routing_modules"] = modules if isinstance(modules, list) else []
+    return provider_settings
+
+
+def _routing_node_provider_id(node: Any) -> str | None:
+    if not isinstance(node, dict):
+        return None
+    value = node.get("providerId") or node.get("provider_id")
+    return str(value).strip() if value else None
+
+
+def _is_provider_allowed_for_tts_modules(settings: Any, provider_id: str, module_ids: tuple[str, ...]) -> bool:
+    parsed = _load_ai_provider_settings_from_preferences(settings)
+    if parsed is None:
+        return False
+    modules = parsed.get("feature_routing_modules")
     if not isinstance(modules, list):
         return False
+    allowed_module_ids = set(module_ids)
+    for item in modules:
+        if not isinstance(item, dict) or str(item.get("moduleId") or "").strip() not in allowed_module_ids:
+            continue
+        for key in ("primaryTarget", "backupTarget", "defaultTarget"):
+            if _routing_node_provider_id(item.get(key)) == provider_id:
+                return True
+    return False
 
-    return any(isinstance(item, dict) and str(item.get("moduleId") or "").strip() == "tts" for item in modules)
+
+def _explicit_mimo_base_url() -> str:
+    return (
+        os.getenv("MIMO_TTS_BASE_URL")
+        or os.getenv("MIMO_BASE_URL")
+        or os.getenv("MIMO_API_BASE")
+        or ""
+    ).strip().rstrip("/")
+
+
+def _explicit_mimo_api_key() -> str | None:
+    return (
+        os.getenv("MIMO_TTS_API_KEY")
+        or os.getenv("MIMO_API_KEY")
+        or ""
+    ).strip() or None
 
 
 def list_voices_for_provider(provider: TtsProvider | None = None, model: str | None = None) -> list[TtsVoiceInfo]:
@@ -1323,6 +1769,8 @@ def list_voices_for_provider(provider: TtsProvider | None = None, model: str | N
         voices.extend(VOLCENGINE_VOICES)
     if provider is None or provider == "moss-local":
         voices.extend(MOSS_VOICES)
+    if provider is None or provider == "mimo":
+        voices.extend(MIMO_VOICES)
     if model:
         voices = [voice for voice in voices if not voice.models or model in voice.models]
     return voices
@@ -1337,6 +1785,10 @@ async def build_config_response(
     openai_source: str | None = "env" if openai_available else None
     openai_provider_id: str | None = None
     openai_model = OPENAI_DEFAULT_MODEL
+    mimo_available = bool(_explicit_mimo_base_url())
+    mimo_source: str | None = "env" if mimo_available else None
+    mimo_provider_id: str | None = None
+    mimo_model = (os.getenv("MIMO_TTS_MODEL") or MIMO_DEFAULT_MODEL).strip() or MIMO_DEFAULT_MODEL
     if user_id and db is not None:
         try:
             settings = await get_ai_settings_service().get_or_create_settings(user_id, db)
@@ -1354,6 +1806,15 @@ async def build_config_response(
                 openai_model = str(runtime["model_name"])
         except Exception:
             logger.debug("Skip reading user AI settings for TTS config.", exc_info=True)
+        try:
+            config = await resolve_mimo_config(user_id=user_id, db=db)
+            mimo_available = True
+            mimo_source = config.source
+            mimo_provider_id = config.provider_id
+            if config.model:
+                mimo_model = config.model
+        except TtsProviderError:
+            pass
 
     volcengine_available = bool((os.getenv("VOLCENGINE_TTS_APPID") or "").strip() and (os.getenv("VOLCENGINE_TTS_ACCESS_TOKEN") or "").strip())
     moss_config = resolve_moss_config()
@@ -1390,6 +1851,18 @@ async def build_config_response(
             "supports_streaming": False,
             "config_source": "env" if os.getenv("MOSS_TTS_BASE_URL") else "default",
         },
+        "mimo": {
+            "available": mimo_available,
+            "default_model": mimo_model,
+            "default_voice": MIMO_DEFAULT_VOICE,
+            "default_format": "mp3",
+            "default_speed": 1.0,
+            "supports_instructions": True,
+            "supports_streaming": False,
+            "config_source": mimo_source,
+            "provider_id": mimo_provider_id,
+            "route_modules": list(MIMO_ROUTE_MODULE_IDS),
+        },
     }
     capabilities = {
         "openai": {
@@ -1422,6 +1895,26 @@ async def build_config_response(
                 "multi_voice": True,
                 "pronunciation_dictionary": False,
                 "role_voices": False,
+                "timestamps": False,
+                "ssml": False,
+                "postprocess": False,
+                "export": False,
+            },
+        },
+        "mimo": {
+            "endpoint": "/v1/chat/completions",
+            "formats": ["mp3", "wav"],
+            "controls": ["model", "voice", "format", "instructions", "style", "reference_audio"],
+            "advanced_options": ["prompt", "reference_audio_asset_id", "reference_audio_data_url"],
+            "advanced_features": {
+                "voice_design": True,
+                "voice_clone": True,
+                "style_optimize": True,
+                "voice_design_optimize": True,
+                "narration_plan": True,
+                "multi_voice": True,
+                "pronunciation_dictionary": False,
+                "role_voices": True,
                 "timestamps": False,
                 "ssml": False,
                 "postprocess": False,
@@ -1694,6 +2187,366 @@ async def call_moss_tts(req: TtsRequest) -> TtsAudioResult:
     return TtsAudioResult(audio_bytes=audio_bytes, content_type="audio/wav", provider="moss-local", voice=voice, metadata=metadata)
 
 
+def _mimo_headers(config: MiMoConfig) -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if config.api_key:
+        if config.provider == "mimo":
+            headers["api-key"] = config.api_key
+        else:
+            headers["Authorization"] = f"Bearer {config.api_key}"
+    return headers
+
+
+def _normalize_mimo_format(fmt: str | None) -> str:
+    normalized = (fmt or "mp3").strip().lower()
+    if normalized not in {"mp3", "wav"}:
+        raise TtsProviderError(
+            "invalid_request",
+            "MiMo TTS format must be mp3 or wav",
+            provider="mimo",
+            status_code=422,
+            details={"format": normalized},
+        )
+    return normalized
+
+
+def _mimo_audio_content_type(fmt: str | None) -> str:
+    normalized = _normalize_mimo_format(fmt)
+    if normalized == "wav":
+        return "audio/wav"
+    return "audio/mpeg"
+
+
+def _extract_mimo_message(payload: dict[str, Any]) -> dict[str, Any]:
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise TtsProviderError("provider_failed", "TTS provider (mimo) returned an invalid response", provider="mimo")
+    first = choices[0]
+    if not isinstance(first, dict):
+        raise TtsProviderError("provider_failed", "TTS provider (mimo) returned an invalid response", provider="mimo")
+    message = first.get("message")
+    if not isinstance(message, dict):
+        raise TtsProviderError("provider_failed", "TTS provider (mimo) returned an invalid response", provider="mimo")
+    return message
+
+
+def _extract_mimo_text(payload: dict[str, Any]) -> str:
+    message = _extract_mimo_message(payload)
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+    raise TtsProviderError("provider_failed", "TTS provider (mimo) returned empty text", provider="mimo")
+
+
+def _extract_mimo_audio(payload: dict[str, Any], *, content_type: str) -> bytes:
+    message = _extract_mimo_message(payload)
+    audio = message.get("audio")
+    audio_data = audio.get("data") if isinstance(audio, dict) else None
+    if not isinstance(audio_data, str) or not audio_data.strip():
+        raise TtsProviderError("provider_failed", "TTS provider (mimo) returned empty audio data", provider="mimo")
+    try:
+        audio_bytes = base64.b64decode(audio_data, validate=True)
+    except Exception as exc:
+        raise TtsProviderError("provider_failed", "TTS provider (mimo) returned invalid audio data", provider="mimo") from exc
+    if not audio_bytes:
+        raise TtsProviderError("provider_failed", "TTS provider (mimo) returned empty audio data", provider="mimo")
+    if not content_type.startswith("audio/"):
+        raise TtsProviderError(
+            "provider_failed",
+            "TTS provider (mimo) returned non-audio content",
+            provider="mimo",
+            details={"content_type": content_type},
+        )
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
+        logger.warning("MiMo TTS response oversized: %d bytes", len(audio_bytes))
+        raise TtsProviderError("provider_failed", "TTS provider returned audio exceeding size limit", provider="mimo")
+    return audio_bytes
+
+
+async def _post_mimo_chat_completion(
+    payload: dict[str, Any],
+    *,
+    user_id: str | None,
+    db: AsyncSession | None,
+    ai_provider_id: str | None,
+) -> tuple[dict[str, Any], MiMoConfig]:
+    config = await resolve_mimo_config(user_id=user_id, db=db, ai_provider_id=ai_provider_id)
+    url = f"{config.base_url}/chat/completions"
+    client = await get_http_client()
+    try:
+        response = await client.post(url, json=payload, headers=_mimo_headers(config))
+        response.raise_for_status()
+    except httpx.TimeoutException as exc:
+        raise TtsProviderError("provider_timeout", "TTS provider (mimo) request timed out", provider="mimo") from exc
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        error_code, status_code, message = _normalize_provider_status("mimo", status)
+        logger.error("MiMo TTS error: status=%d body=%s", status, _response_snippet(exc.response))
+        raise TtsProviderError(error_code, message, provider="mimo", status_code=status_code, details={"status": status}) from exc
+    except httpx.RequestError as exc:
+        logger.error("MiMo TTS request error: %s", exc)
+        raise TtsProviderError("provider_failed", "TTS provider (mimo) request failed", provider="mimo") from exc
+
+    content_type = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if content_type and not content_type.startswith("application/json"):
+        raise TtsProviderError(
+            "provider_failed",
+            "TTS provider (mimo) returned non-JSON content",
+            provider="mimo",
+            details={"content_type": content_type},
+        )
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise TtsProviderError("provider_failed", "TTS provider (mimo) returned invalid JSON", provider="mimo") from exc
+    if not isinstance(data, dict):
+        raise TtsProviderError("provider_failed", "TTS provider (mimo) returned an invalid response", provider="mimo")
+    return data, config
+
+
+def _mimo_audio_payload(*, model: str, text: str, prompt: str | None, fmt: str | None, voice: str | None = None) -> dict[str, Any]:
+    return {
+        "model": model,
+        "modalities": ["text", "audio"],
+        "audio": {
+            "voice": voice or MIMO_DEFAULT_VOICE,
+            "format": _normalize_mimo_format(fmt),
+        },
+        "messages": [
+            {
+                "role": "user",
+                "content": "\n".join(part for part in [prompt, text] if part),
+            }
+        ],
+    }
+
+
+async def call_mimo_tts(
+    req: TtsRequest,
+    *,
+    user_id: str | None = None,
+    db: AsyncSession | None = None,
+) -> TtsAudioResult:
+    try:
+        advanced = MiMoAdvancedOptions.model_validate(req.advanced_options or {})
+    except ValidationError as exc:
+        raise TtsProviderError(
+            "invalid_request",
+            "Invalid mimo advanced_options",
+            provider="mimo",
+            status_code=422,
+            details={"errors": exc.errors()},
+        ) from exc
+    config = await resolve_mimo_config(user_id=user_id, db=db, ai_provider_id=req.ai_provider_id)
+    model = req.model or config.model or MIMO_DEFAULT_MODEL
+    prompt = req.instructions or advanced.prompt
+    payload = _mimo_audio_payload(model=model, text=req.text, prompt=prompt, fmt=req.fmt, voice=req.voice)
+    reference_voice = await _reference_audio_for_mimo_advanced(advanced, user_id=user_id, db=db)
+    if reference_voice:
+        payload["audio"]["voice"] = reference_voice
+    data, _config = await _post_mimo_chat_completion(payload, user_id=user_id, db=db, ai_provider_id=req.ai_provider_id)
+    content_type = _mimo_audio_content_type(req.fmt)
+    return TtsAudioResult(
+        audio_bytes=_extract_mimo_audio(data, content_type=content_type),
+        content_type=content_type,
+        provider="mimo",
+        model=model,
+        voice=req.voice or MIMO_DEFAULT_VOICE,
+        metadata={
+            "config_source": config.source,
+            "reference_audio_asset_id": advanced.reference_audio_asset_id,
+            "uses_reference_audio": bool(reference_voice),
+        },
+    )
+
+
+async def _mimo_optimize_text(
+    *,
+    text: str,
+    system_prompt: str,
+    model: str | None,
+    ai_provider_id: str | None,
+    user_id: str,
+    db: AsyncSession | None,
+) -> TtsTextOptimizeResponse:
+    config = await resolve_mimo_config(user_id=user_id, db=db, ai_provider_id=ai_provider_id)
+    selected_model = model or config.model or MIMO_DEFAULT_MODEL
+    payload = {
+        "model": selected_model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text},
+        ],
+    }
+    data, _config = await _post_mimo_chat_completion(payload, user_id=user_id, db=db, ai_provider_id=ai_provider_id)
+    return TtsTextOptimizeResponse(
+        text=_extract_mimo_text(data),
+        provider="mimo",
+        model=selected_model,
+        metadata={"config_source": config.source},
+    )
+
+
+async def optimize_tts_style(
+    req: TtsStyleOptimizeRequest,
+    *,
+    user_id: str,
+    db: AsyncSession | None = None,
+) -> TtsTextOptimizeResponse:
+    return await _mimo_optimize_text(
+        text=req.style_text,
+        system_prompt="Optimize this TTS style instruction. Return only the optimized style text.",
+        model=req.model,
+        ai_provider_id=req.ai_provider_id,
+        user_id=user_id,
+        db=db,
+    )
+
+
+async def optimize_tts_voice_design(
+    req: TtsVoiceDesignOptimizeRequest,
+    *,
+    user_id: str,
+    db: AsyncSession | None = None,
+) -> TtsTextOptimizeResponse:
+    return await _mimo_optimize_text(
+        text=req.voice_description,
+        system_prompt="Optimize this voice design description for a TTS voice generator. Return only the optimized description.",
+        model=req.model,
+        ai_provider_id=req.ai_provider_id,
+        user_id=user_id,
+        db=db,
+    )
+
+
+async def design_tts_voice(
+    req: TtsVoiceDesignRequest,
+    *,
+    user_id: str,
+    db: AsyncSession | None = None,
+) -> TtsGeneratedAudioResponse:
+    config = await resolve_mimo_config(user_id=user_id, db=db, ai_provider_id=req.ai_provider_id)
+    model = req.model or config.model or MIMO_DEFAULT_MODEL
+    prompt = f"Design a voice with this description: {req.voice_description}"
+    if req.instruction:
+        prompt = f"{prompt}\nInstruction: {req.instruction}"
+    payload = _mimo_audio_payload(model=model, text=req.text, prompt=prompt, fmt=req.fmt)
+    payload["messages"] = [
+        {"role": "user", "content": req.voice_description},
+        {"role": "assistant", "content": req.text},
+    ]
+    payload["audio"].pop("voice", None)
+    data, _config = await _post_mimo_chat_completion(payload, user_id=user_id, db=db, ai_provider_id=req.ai_provider_id)
+    content_type = _mimo_audio_content_type(req.fmt)
+    result = TtsAudioResult(
+        audio_bytes=_extract_mimo_audio(data, content_type=content_type),
+        content_type=content_type,
+        provider="mimo",
+        model=model,
+        voice=MIMO_DEFAULT_VOICE,
+        metadata={"config_source": config.source},
+    )
+    return await _persist_generated_tts_audio(
+        user_id=user_id,
+        result=result,
+        kind="voice_design",
+        metadata={"voice_description": req.voice_description},
+        db=db,
+    )
+
+
+def _parse_audio_data_url(data_url: str) -> tuple[str, bytes]:
+    match = re.fullmatch(r"data:([^;,]+);base64,(.+)", data_url.strip(), flags=re.DOTALL)
+    if not match:
+        raise TtsProviderError("invalid_request", "reference_audio_data_url must be a base64 data URL", provider="mimo", status_code=422)
+    content_type = _normalize_audio_media_type(match.group(1))
+    if not content_type.startswith("audio/"):
+        raise TtsProviderError("invalid_request", "reference_audio_data_url must contain audio data", provider="mimo", status_code=422)
+    try:
+        audio_bytes = base64.b64decode(match.group(2), validate=True)
+    except Exception as exc:
+        raise TtsProviderError("invalid_request", "reference_audio_data_url contains invalid base64 data", provider="mimo", status_code=422) from exc
+    if not audio_bytes:
+        raise TtsProviderError("invalid_request", "reference_audio_data_url contains empty audio data", provider="mimo", status_code=422)
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
+        raise TtsProviderError("invalid_request", "reference_audio_data_url exceeds audio size limit", provider="mimo", status_code=422)
+    return content_type, audio_bytes
+
+
+async def _reference_audio_for_clone(
+    req: TtsVoiceCloneRequest,
+    *,
+    user_id: str,
+    db: AsyncSession | None = None,
+) -> tuple[str, bytes]:
+    if req.reference_audio_data_url:
+        return _parse_audio_data_url(req.reference_audio_data_url)
+    assert req.reference_audio_asset_id is not None
+    audio_bytes, content_type, _filename = await read_tts_audio_asset(asset_id=req.reference_audio_asset_id, user_id=user_id, db=db)
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
+        raise TtsProviderError("invalid_request", "reference audio exceeds audio size limit", provider="mimo", status_code=422)
+    return _normalize_audio_media_type(content_type), audio_bytes
+
+
+async def _reference_audio_for_mimo_advanced(
+    advanced: MiMoAdvancedOptions,
+    *,
+    user_id: str | None,
+    db: AsyncSession | None = None,
+) -> str | None:
+    if advanced.reference_audio_data_url:
+        content_type, audio_bytes = _parse_audio_data_url(advanced.reference_audio_data_url)
+        return f"data:{content_type};base64,{base64.b64encode(audio_bytes).decode('ascii')}"
+    if advanced.reference_audio_asset_id:
+        if not user_id:
+            raise TtsProviderError("invalid_request", "reference_audio_asset_id requires authenticated user context", provider="mimo", status_code=422)
+        audio_bytes, content_type, _filename = await read_tts_audio_asset(asset_id=advanced.reference_audio_asset_id, user_id=user_id, db=db)
+        if len(audio_bytes) > MAX_AUDIO_BYTES:
+            raise TtsProviderError("invalid_request", "reference audio exceeds audio size limit", provider="mimo", status_code=422)
+        return f"data:{_normalize_audio_media_type(content_type)};base64,{base64.b64encode(audio_bytes).decode('ascii')}"
+    return None
+
+
+async def clone_tts_voice(
+    req: TtsVoiceCloneRequest,
+    *,
+    user_id: str,
+    db: AsyncSession | None = None,
+) -> TtsGeneratedAudioResponse:
+    reference_content_type, reference_audio = await _reference_audio_for_clone(req, user_id=user_id, db=db)
+    config = await resolve_mimo_config(user_id=user_id, db=db, ai_provider_id=req.ai_provider_id)
+    model = req.model or config.model or MIMO_DEFAULT_MODEL
+    prompt_parts = [
+        "Clone the voice from the supplied reference audio.",
+        f"Reference audio content type: {reference_content_type}.",
+        req.instruction,
+        req.style,
+    ]
+    payload = _mimo_audio_payload(model=model, text=req.text, prompt="\n".join(part for part in prompt_parts if part), fmt=req.fmt)
+    payload["messages"] = [
+        {"role": "user", "content": "\n".join(part for part in [req.instruction, req.style] if part)},
+        {"role": "assistant", "content": req.text},
+    ]
+    payload["audio"]["voice"] = f"data:{reference_content_type};base64,{base64.b64encode(reference_audio).decode('ascii')}"
+    data, _config = await _post_mimo_chat_completion(payload, user_id=user_id, db=db, ai_provider_id=req.ai_provider_id)
+    content_type = _mimo_audio_content_type(req.fmt)
+    result = TtsAudioResult(
+        audio_bytes=_extract_mimo_audio(data, content_type=content_type),
+        content_type=content_type,
+        provider="mimo",
+        model=model,
+        voice=MIMO_DEFAULT_VOICE,
+        metadata={"config_source": config.source, "reference_content_type": reference_content_type},
+    )
+    return await _persist_generated_tts_audio(
+        user_id=user_id,
+        result=result,
+        kind="voice_clone",
+        metadata={"reference_content_type": reference_content_type},
+        db=db,
+    )
+
+
 def validate_advanced_feature_gates(provider: str, advanced_options: dict[str, Any] | None) -> None:
     if not advanced_options:
         return
@@ -1722,6 +2575,8 @@ async def synthesize_tts(
         return await call_volcengine_tts(req)
     if req.provider == "moss-local":
         return await call_moss_tts(req)
+    if req.provider == "mimo":
+        return await call_mimo_tts(req, user_id=user_id, db=db)
     raise TtsProviderError("unsupported_provider", f"Unsupported TTS provider: {req.provider}", provider=str(req.provider), status_code=400)
 
 
@@ -2014,7 +2869,11 @@ async def generate_chapter_tts(
                     "source_chunk_index": chunk["index"],
                     "speaker_id": chunk.get("speaker_id"),
                     "display_name": chunk.get("display_name"),
+                    "provider": chunk.get("provider") or req.provider,
+                    "model": chunk.get("model") or req.model,
                     "voice": chunk.get("voice") or req.voice,
+                    "role_voice": chunk.get("role_voice"),
+                    "voice_resolution": chunk.get("voice_resolution"),
                     "style": chunk.get("style"),
                     "instructions": chunk.get("instructions"),
                     "text": chunk.get("text"),
@@ -2032,7 +2891,11 @@ async def generate_chapter_tts(
                     "source_chunk_index": chunk["index"],
                     "speaker_id": chunk.get("speaker_id"),
                     "display_name": chunk.get("display_name"),
+                    "provider": chunk.get("provider") or req.provider,
+                    "model": chunk.get("model") or req.model,
                     "voice": chunk.get("voice") or req.voice,
+                    "role_voice": chunk.get("role_voice"),
+                    "voice_resolution": chunk.get("voice_resolution"),
                     "style": chunk.get("style"),
                     "instructions": chunk.get("instructions"),
                     "text": chunk.get("text"),
@@ -2043,13 +2906,13 @@ async def generate_chapter_tts(
                 continue
             synth_req = TtsRequest(
                 text=chunk["text"],
-                provider=req.provider,
+                provider=chunk.get("provider") or req.provider,
                 voice=chunk.get("voice") or req.voice,
-                model=req.model,
+                model=chunk.get("model") or req.model,
                 fmt=req.fmt,
                 speed=req.speed,
                 instructions=chunk.get("instructions") or req.instructions,
-                advanced_options=req.advanced_options,
+                advanced_options=chunk.get("advanced_options") or req.advanced_options,
                 ai_provider_id=req.ai_provider_id,
             )
             result = await synthesize_tts(synth_req, user_id=user_id, db=db)
@@ -2072,7 +2935,11 @@ async def generate_chapter_tts(
                 "source_chunk_index": chunk["index"],
                 "speaker_id": chunk.get("speaker_id"),
                 "display_name": chunk.get("display_name"),
+                "provider": result.provider,
+                "model": result.model,
                 "voice": chunk.get("voice") or req.voice,
+                "role_voice": chunk.get("role_voice"),
+                "voice_resolution": chunk.get("voice_resolution"),
                 "style": chunk.get("style"),
                 "instructions": chunk.get("instructions"),
                 "text": chunk.get("text"),
@@ -2128,7 +2995,7 @@ async def generate_chapter_tts(
             instructions=req.instructions,
             fmt=req.fmt,
             speed=req.speed,
-            extra={"kind": "chapter_manifest", "plan_hash": _plan_hash(plan), "speaker_voices": req.speaker_voices or {}},
+            extra={"kind": "chapter_manifest", "plan_hash": _plan_hash(plan), "speaker_voices": _speaker_voices_json(req.speaker_voices)},
         ),
     }
     job.status = "completed"

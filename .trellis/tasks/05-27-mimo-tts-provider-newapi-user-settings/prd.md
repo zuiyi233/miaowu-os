@@ -36,8 +36,6 @@ Add MiMo as a backend-controlled provider in the existing Miaowu TTS core, using
 - Production deployment.
 - Copying the reference Express API layer.
 
-## Open Questions
+## Decisions
 
-- What exact feature module ids should be used for MiMo routing: `tts`, `tts-studio`, `mimo-tts`, or all three?
-
-Recommended answer: support `tts` as the canonical runtime module, add `tts-studio` and `mimo-tts` aliases for explicit user intent, and document the precedence.
+- MiMo routing should use `tts` as the canonical runtime module and also accept `tts-studio` and `mimo-tts` as explicit aliases. Resolver precedence and diagnostics must be documented and tested.

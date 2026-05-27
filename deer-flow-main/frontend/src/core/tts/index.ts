@@ -52,3 +52,19 @@ export {
   type NativeTtsVoice,
 } from './nativeSpeech';
 export { useTts, type TtsPlaybackEngine, type UseTtsOptions, type TtsState } from './hooks';
+export {
+  createTtsStudioWorkspace,
+  deleteTtsStudioWorkspace,
+  exportTtsStudioWorkspace,
+  listTtsStudioWorkspaces,
+  loadTtsStudioWorkspace,
+  runTtsStudioNode,
+  saveTtsStudioWorkspace,
+  type TtsStudioArtifact,
+  type TtsStudioBoard,
+  type TtsStudioEdge,
+  type TtsStudioNode,
+  type TtsStudioNodeType,
+  type TtsStudioWorkspace,
+  type TtsStudioWorkspaceListResponse,
+} from './studio-api';

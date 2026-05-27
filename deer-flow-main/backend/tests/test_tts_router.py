@@ -29,6 +29,20 @@ def _build_app() -> FastAPI:
     return app
 
 
+def _build_db_app() -> FastAPI:
+    app = FastAPI()
+    app.include_router(tts_router.router)
+    app.dependency_overrides[get_user_id] = lambda: "test-user"
+    return app
+
+
+def _build_real_auth_app() -> FastAPI:
+    app = FastAPI()
+    app.include_router(tts_router.router)
+    app.dependency_overrides[tts_router.get_optional_db] = lambda: None
+    return app
+
+
 def _reset_tts_runtime_state() -> None:
     tts_service._chapter_jobs.clear()
     tts_service._chapter_manifests.clear()
@@ -46,6 +60,19 @@ def _wav_bytes(duration_ms: int = 40, *, sample_rate: int = 8000) -> bytes:
         writer.setframerate(sample_rate)
         writer.writeframes(b"\x00\x00" * frames)
     return out.getvalue()
+
+
+def _mimo_audio_response(audio: bytes = b"mp3-bytes") -> dict[str, object]:
+    return {
+        "choices": [
+            {
+                "message": {
+                    "content": "ok",
+                    "audio": {"data": base64.b64encode(audio).decode("ascii")},
+                }
+            }
+        ]
+    }
 
 
 def test_get_tts_config_respects_explicit_tts_env_availability(monkeypatch) -> None:
@@ -84,6 +111,8 @@ def test_get_tts_config_ignores_regular_openai_env_for_tts_availability(monkeypa
     monkeypatch.delenv("OPENAI_TTS_API_BASE", raising=False)
     monkeypatch.delenv("TTS_OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("TTS_OPENAI_API_BASE", raising=False)
+    monkeypatch.delenv("MIMO_TTS_BASE_URL", raising=False)
+    monkeypatch.delenv("MIMO_BASE_URL", raising=False)
     monkeypatch.delenv("VOLCENGINE_TTS_APPID", raising=False)
     monkeypatch.delenv("VOLCENGINE_TTS_ACCESS_TOKEN", raising=False)
 
@@ -95,6 +124,8 @@ def test_get_tts_config_ignores_regular_openai_env_for_tts_availability(monkeypa
     payload = response.json()
     assert payload["providers"]["openai"]["available"] is False
     assert payload["providers"]["openai"]["config_source"] is None
+    assert payload["providers"]["mimo"]["available"] is False
+    assert payload["providers"]["mimo"]["config_source"] is None
     assert payload["providers"]["moss-local"]["available"] is True
     assert payload["default_provider"] == "moss-local"
 
@@ -202,6 +233,116 @@ async def test_get_tts_config_allows_explicit_tts_feature_routing(monkeypatch) -
     assert payload.default_provider == "openai"
 
 
+@pytest.mark.asyncio
+async def test_get_tts_config_allows_explicit_mimo_route_alias(monkeypatch) -> None:
+    monkeypatch.delenv("MIMO_TTS_BASE_URL", raising=False)
+    preferences = {
+        "ai_provider_settings": {
+            "version": 1,
+            "default_provider_id": "chat-provider",
+            "providers": [
+                {
+                    "id": "mimo-provider",
+                    "name": "MiMo Provider",
+                    "provider": "custom",
+                    "base_url": "http://127.0.0.1:3000/v1",
+                    "models": ["mimo-tts-model"],
+                }
+            ],
+            "feature_routing_settings": {
+                "modules": [
+                    {
+                        "moduleId": "mimo-tts",
+                        "currentMode": "primary",
+                        "primaryTarget": {"providerId": "mimo-provider", "model": "mimo-tts-model"},
+                    }
+                ]
+            },
+        }
+    }
+    monkeypatch.setattr(
+        tts_service,
+        "get_ai_settings_service",
+        lambda: _AISettingsServiceStub(_SettingsStub(preferences=json.dumps(preferences))),
+    )
+
+    payload = await tts_service.build_config_response(user_id="test-user", db=object())
+
+    assert payload.providers["mimo"]["available"] is True
+    assert payload.providers["mimo"]["config_source"] == "feature-routing:mimo-tts"
+    assert payload.providers["mimo"]["default_model"] == "mimo-tts-model"
+
+
+@pytest.mark.asyncio
+async def test_resolve_mimo_config_rejects_explicit_unrouted_provider(monkeypatch) -> None:
+    monkeypatch.delenv("MIMO_TTS_BASE_URL", raising=False)
+    preferences = {
+        "ai_provider_settings": {
+            "version": 1,
+            "default_provider_id": "chat-provider",
+            "providers": [
+                {
+                    "id": "chat-provider",
+                    "name": "Chat Provider",
+                    "provider": "custom",
+                    "base_url": "http://127.0.0.1:3000/v1",
+                    "models": ["chat-model"],
+                }
+            ],
+            "feature_routing_settings": {"modules": []},
+        }
+    }
+    monkeypatch.setattr(
+        tts_service,
+        "get_ai_settings_service",
+        lambda: _AISettingsServiceStub(_SettingsStub(preferences=json.dumps(preferences))),
+    )
+
+    with pytest.raises(tts_service.TtsProviderError) as exc_info:
+        await tts_service.resolve_mimo_config(user_id="test-user", db=object(), ai_provider_id="chat-provider")
+
+    assert exc_info.value.error_code == "missing_config"
+
+
+@pytest.mark.asyncio
+async def test_resolve_mimo_config_allows_explicit_routed_provider(monkeypatch) -> None:
+    monkeypatch.delenv("MIMO_TTS_BASE_URL", raising=False)
+    preferences = {
+        "ai_provider_settings": {
+            "version": 1,
+            "providers": [
+                {
+                    "id": "mimo-provider",
+                    "name": "MiMo Provider",
+                    "provider": "newapi",
+                    "base_url": "http://127.0.0.1:3000/v1",
+                    "models": ["mimo-tts-model"],
+                }
+            ],
+            "feature_routing_settings": {
+                "modules": [
+                    {
+                        "moduleId": "tts-studio",
+                        "currentMode": "primary",
+                        "primaryTarget": {"providerId": "mimo-provider", "model": "mimo-tts-model"},
+                    }
+                ]
+            },
+        }
+    }
+    monkeypatch.setattr(
+        tts_service,
+        "get_ai_settings_service",
+        lambda: _AISettingsServiceStub(_SettingsStub(preferences=json.dumps(preferences))),
+    )
+
+    config = await tts_service.resolve_mimo_config(user_id="test-user", db=object(), ai_provider_id="mimo-provider")
+
+    assert config.base_url == "http://127.0.0.1:3000/v1"
+    assert config.provider_id == "mimo-provider"
+    assert config.source == "explicit-provider"
+
+
 def test_list_voices_filters_by_provider() -> None:
     app = _build_app()
     with TestClient(app) as client:
@@ -224,6 +365,226 @@ def test_list_voices_includes_moss_local() -> None:
     payload = response.json()
     assert payload["voices"][0]["id"] == "demo-1"
     assert payload["voices"][0]["provider"] == "moss-local"
+
+
+def test_list_voices_includes_mimo() -> None:
+    app = _build_app()
+    with TestClient(app) as client:
+        response = client.get("/api/tts/voices", params={"provider": "mimo"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["voices"][0]["id"] == "mimo-voice"
+    assert payload["voices"][0]["provider"] == "mimo"
+
+
+def test_tts_voice_design_requires_authentication() -> None:
+    app = _build_real_auth_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/tts/voices/design",
+            json={"voice_description": "warm narrator", "text": "hello"},
+        )
+
+    assert response.status_code == 401
+
+
+def test_mimo_voice_design_route_persists_generated_asset(tmp_path, monkeypatch) -> None:
+    _reset_tts_runtime_state()
+    monkeypatch.setenv("MIAOWU_TTS_ASSET_DIR", str(tmp_path / "tts-assets"))
+    monkeypatch.setenv("MIMO_TTS_BASE_URL", "https://mimo.example/v1")
+
+    async def mock_post(self, url, **kwargs):
+        return httpx.Response(
+            200,
+            json=_mimo_audio_response(b"designed-audio"),
+            headers={"content-type": "application/json"},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    app = _build_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/tts/voices/design",
+            json={"voice_description": "warm narrator", "text": "hello"},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["provider"] == "mimo"
+        assert payload["asset_id"]
+
+        asset_response = client.get(payload["url"])
+        assert asset_response.status_code == 200
+        assert asset_response.content == b"designed-audio"
+
+
+def test_mimo_voice_design_route_persists_generated_media_asset(
+    novel_main_sqlite_engine,
+    monkeypatch,
+) -> None:
+    _reset_tts_runtime_state()
+    monkeypatch.setenv("MIMO_TTS_BASE_URL", "https://mimo.example/v1")
+    stored: dict[str, tuple[bytes, str | None]] = {}
+
+    async def fake_put_object(*, object_key: str, data: bytes, content_type: str | None = None):
+        stored[object_key] = (data, content_type)
+        return {"ok": True}
+
+    async def fake_get_object(*, object_key: str):
+        data, content_type = stored[object_key]
+        return type("StoredObject", (), {"content": data, "content_type": content_type})()
+
+    async def mock_post(self, url, **kwargs):
+        return httpx.Response(
+            200,
+            json=_mimo_audio_response(b"durable-designed-audio"),
+            headers={"content-type": "application/json"},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(tts_service.object_storage_service, "put_object", fake_put_object)
+    monkeypatch.setattr(tts_service.object_storage_service, "get_object", fake_get_object)
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    app = _build_db_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/tts/voices/design",
+            json={"voice_description": "warm narrator", "text": "hello"},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["metadata"]["storage"] == "media_asset"
+        asset_id = payload["asset_id"]
+        assert asset_id not in tts_service._local_audio_assets
+
+        asset_response = client.get(payload["url"])
+        assert asset_response.status_code == 200
+        assert asset_response.content == b"durable-designed-audio"
+
+        tts_service._local_audio_assets.clear()
+        restarted_response = client.get(payload["url"])
+        assert restarted_response.status_code == 200
+        assert restarted_response.content == b"durable-designed-audio"
+
+
+def test_mimo_voice_clone_validates_reference_input() -> None:
+    app = _build_app()
+    with TestClient(app) as client:
+        response = client.post("/api/tts/voices/clone", json={"text": "hello"})
+
+    assert response.status_code == 422
+
+
+def test_mimo_voice_clone_accepts_reference_data_url(tmp_path, monkeypatch) -> None:
+    _reset_tts_runtime_state()
+    monkeypatch.setenv("MIAOWU_TTS_ASSET_DIR", str(tmp_path / "tts-assets"))
+    monkeypatch.setenv("MIMO_TTS_BASE_URL", "https://mimo.example/v1")
+    seen: dict[str, object] = {}
+
+    async def mock_post(self, url, **kwargs):
+        seen["json"] = kwargs.get("json")
+        return httpx.Response(
+            200,
+            json=_mimo_audio_response(b"cloned-audio"),
+            headers={"content-type": "application/json"},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+    reference = "data:audio/wav;base64," + base64.b64encode(b"reference").decode("ascii")
+
+    app = _build_app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/tts/voices/clone",
+            json={"text": "hello", "reference_audio_data_url": reference},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["asset_id"]
+    assert seen["json"]["audio"]["voice"] == reference
+    assert "reference_audio" not in seen["json"]
+
+
+@pytest.mark.asyncio
+async def test_mimo_voice_clone_accepts_media_asset_reference_id(
+    novel_main_sqlite_engine,
+    monkeypatch,
+) -> None:
+    _reset_tts_runtime_state()
+    monkeypatch.setenv("MIMO_TTS_BASE_URL", "https://mimo.example/v1")
+    stored: dict[str, tuple[bytes, str | None]] = {}
+    seen: dict[str, object] = {}
+
+    async def fake_put_object(*, object_key: str, data: bytes, content_type: str | None = None):
+        stored[object_key] = (data, content_type)
+        return {"ok": True}
+
+    async def fake_get_object(*, object_key: str):
+        data, content_type = stored[object_key]
+        return type("StoredObject", (), {"content": data, "content_type": content_type})()
+
+    async def mock_post(self, url, **kwargs):
+        seen["json"] = kwargs.get("json")
+        return httpx.Response(
+            200,
+            json=_mimo_audio_response(b"cloned-from-media-asset"),
+            headers={"content-type": "application/json"},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(tts_service.object_storage_service, "put_object", fake_put_object)
+    monkeypatch.setattr(tts_service.object_storage_service, "get_object", fake_get_object)
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    async with AsyncSessionLocal() as db:
+        created = await tts_service.media_asset_service.create_asset_from_bytes(
+            db=db,
+            user_id="test-user",
+            project_id=None,
+            purpose="tts_audio",
+            filename="reference.wav",
+            content=b"reference-media-audio",
+            mime_type="audio/wav",
+            metadata={"source": "test"},
+            commit=True,
+            refresh=True,
+        )
+        result = await tts_service.clone_tts_voice(
+            tts_service.TtsVoiceCloneRequest(
+                text="hello",
+                reference_audio_asset_id=created.asset.id,
+            ),
+            user_id="test-user",
+            db=db,
+        )
+
+    assert result.asset_id
+    assert seen["json"]["audio"]["voice"] == "data:audio/wav;base64," + base64.b64encode(b"reference-media-audio").decode("ascii")
+
+
+def test_mimo_style_optimize_returns_text(monkeypatch) -> None:
+    monkeypatch.setenv("MIMO_TTS_BASE_URL", "https://mimo.example/v1")
+
+    async def mock_post(self, url, **kwargs):
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "更清晰的风格"}}]},
+            headers={"content-type": "application/json"},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    app = _build_app()
+    with TestClient(app) as client:
+        response = client.post("/api/tts/style/optimize", json={"style_text": "温柔"})
+
+    assert response.status_code == 200
+    assert response.json()["text"] == "更清晰的风格"
 
 
 def test_synthesize_rejects_invalid_request_payload() -> None:
@@ -311,6 +672,111 @@ async def test_openai_synthesis_rejects_non_audio_success(monkeypatch) -> None:
     assert exc_info.value.error_code == "provider_failed"
     assert exc_info.value.status_code == 502
     assert exc_info.value.details["content_type"] == "application/json"
+
+
+@pytest.mark.anyio
+async def test_mimo_synthesis_parses_chat_completion_audio(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+    monkeypatch.setenv("MIMO_TTS_BASE_URL", "https://mimo.example/v1")
+    monkeypatch.setenv("MIMO_TTS_API_KEY", "mimo-key")
+
+    async def mock_post(self, url, **kwargs):
+        seen["url"] = url
+        seen["json"] = kwargs.get("json")
+        seen["headers"] = kwargs.get("headers")
+        return httpx.Response(
+            200,
+            json=_mimo_audio_response(b"mimo-audio"),
+            headers={"content-type": "application/json"},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    result = await tts_service.synthesize_tts(
+        tts_service.TtsRequest(text="hello", provider="mimo", instructions="warm")
+    )
+
+    assert result.audio_bytes == b"mimo-audio"
+    assert result.content_type == "audio/mpeg"
+    assert seen["url"] == "https://mimo.example/v1/chat/completions"
+    assert seen["headers"]["api-key"] == "mimo-key"
+    assert "Authorization" not in seen["headers"]
+    assert seen["json"]["modalities"] == ["text", "audio"]
+
+
+@pytest.mark.anyio
+async def test_mimo_synthesis_maps_timeout(monkeypatch) -> None:
+    monkeypatch.setenv("MIMO_TTS_BASE_URL", "https://mimo.example/v1")
+
+    async def mock_post(self, url, **kwargs):
+        raise httpx.TimeoutException("timeout")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    with pytest.raises(tts_service.TtsProviderError) as exc_info:
+        await tts_service.synthesize_tts(tts_service.TtsRequest(text="hello", provider="mimo"))
+
+    assert exc_info.value.error_code == "provider_timeout"
+    assert exc_info.value.status_code == 504
+
+
+@pytest.mark.anyio
+async def test_mimo_synthesis_maps_http_status(monkeypatch) -> None:
+    monkeypatch.setenv("MIMO_TTS_BASE_URL", "https://mimo.example/v1")
+
+    async def mock_post(self, url, **kwargs):
+        return httpx.Response(429, json={"error": "limited"}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    with pytest.raises(tts_service.TtsProviderError) as exc_info:
+        await tts_service.synthesize_tts(tts_service.TtsRequest(text="hello", provider="mimo"))
+
+    assert exc_info.value.error_code == "rate_limited"
+    assert exc_info.value.status_code == 429
+
+
+@pytest.mark.anyio
+async def test_mimo_synthesis_rejects_empty_audio(monkeypatch) -> None:
+    monkeypatch.setenv("MIMO_TTS_BASE_URL", "https://mimo.example/v1")
+
+    async def mock_post(self, url, **kwargs):
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok", "audio": {"data": ""}}}]},
+            headers={"content-type": "application/json"},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    with pytest.raises(tts_service.TtsProviderError) as exc_info:
+        await tts_service.synthesize_tts(tts_service.TtsRequest(text="hello", provider="mimo"))
+
+    assert exc_info.value.error_code == "provider_failed"
+
+
+@pytest.mark.anyio
+async def test_mimo_synthesis_rejects_oversized_audio(monkeypatch) -> None:
+    monkeypatch.setenv("MIMO_TTS_BASE_URL", "https://mimo.example/v1")
+    monkeypatch.setattr(tts_service, "MAX_AUDIO_BYTES", 3)
+
+    async def mock_post(self, url, **kwargs):
+        return httpx.Response(
+            200,
+            json=_mimo_audio_response(b"too-large"),
+            headers={"content-type": "application/json"},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    with pytest.raises(tts_service.TtsProviderError) as exc_info:
+        await tts_service.synthesize_tts(tts_service.TtsRequest(text="hello", provider="mimo"))
+
+    assert exc_info.value.error_code == "provider_failed"
+    assert "size limit" in exc_info.value.message
 
 
 @pytest.mark.anyio
@@ -899,6 +1365,181 @@ async def test_chapter_tts_uses_saved_narration_plan_for_multivoice_api_calls(
         assert media_type == "audio/wav"
         with wave.open(BytesIO(content), "rb") as reader:
             assert reader.getnframes() > 0
+
+
+def test_plan_units_resolve_role_voice_precedence() -> None:
+    plan = tts_service.TtsNarrationPlan(
+        plan_id="plan-role-voice",
+        default_voice="plan-default",
+        speakers=[
+            {
+                "id": "narrator",
+                "display_name": "旁白",
+                "voice": "speaker-voice",
+                "role_voice": {
+                    "provider": "mimo",
+                    "voice": "speaker-role-voice",
+                    "mode": "design",
+                    "voice_description": "steady narrator",
+                },
+            },
+            {"id": "character-a", "display_name": "角色A", "voice": "character-speaker"},
+        ],
+        segments=[
+            {"speaker_id": "narrator", "text": "第一句。", "voice": "segment-voice"},
+            {
+                "speaker_id": "character-a",
+                "text": "第二句。",
+                "role_voice": {
+                    "provider": "mimo",
+                    "voice": "segment-role-voice",
+                    "mode": "clone",
+                    "reference_audio_asset_id": "asset-segment",
+                },
+            },
+            {"speaker_id": "character-a", "text": "第三句。"},
+        ],
+    )
+
+    units, metadata, _fingerprint_text = tts_service._build_plan_units(
+        plan=plan,
+        req=tts_service.TtsChapterGenerateRequest(
+            provider="moss-local",
+            voice="request-voice",
+            mode="ai_multivoice",
+            plan_id="plan-role-voice",
+            speaker_voices={
+                "character-a": {
+                    "provider": "mimo",
+                    "voice": "explicit-role-voice",
+                    "model": "mimo-role-model",
+                    "mode": "design",
+                    "voice_description": "bright role voice",
+                    "locked": True,
+                }
+            },
+        ),
+        project_id="project-role-voice",
+        chapter_id="chapter-role-voice",
+    )
+
+    assert [unit["voice"] for unit in units] == ["segment-voice", "explicit-role-voice", "explicit-role-voice"]
+    assert units[0]["provider"] == "mimo"
+    assert units[0]["voice_resolution"]["source"] == "segment_voice"
+    assert units[1]["provider"] == "mimo"
+    assert units[1]["model"] == "mimo-role-model"
+    assert units[1]["voice_resolution"]["source"] == "speaker_voices"
+    assert units[1]["role_voice"]["source"] == "speaker_voices"
+    assert units[1]["role_voice"]["locked"] is True
+    assert metadata["speaker_voices"]["character-a"]["voice"] == "explicit-role-voice"
+
+
+@pytest.mark.asyncio
+async def test_chapter_tts_manifest_records_mimo_role_voice_metadata(
+    novel_main_sqlite_engine,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _reset_tts_runtime_state()
+    monkeypatch.setenv("MIAOWU_TTS_ASSET_DIR", str(tmp_path / "tts-assets"))
+    monkeypatch.setenv("MIMO_TTS_BASE_URL", "https://mimo.example/v1")
+    await init_db_schema()
+
+    async with AsyncSessionLocal() as db:
+        db.add(Project(id="project-mimo-role", user_id="test-user", title="MiMo Role TTS Project"))
+        await db.commit()
+        db.add(
+            Chapter(
+                id="chapter-mimo-role",
+                project_id="project-mimo-role",
+                chapter_number=1,
+                title="第一章",
+                content="角色A：你好。",
+            )
+        )
+        await db.commit()
+
+    async def fail_object_storage(**kwargs):
+        raise ObjectStorageError("object storage is not configured")
+
+    monkeypatch.setattr(tts_service.media_asset_service, "create_asset_from_bytes", fail_object_storage)
+    tts_service._local_audio_assets["reference-asset"] = {
+        "path": str(tmp_path / "reference.wav"),
+        "user_id": "test-user",
+        "project_id": "project-mimo-role",
+        "chapter_id": None,
+        "filename": "reference.wav",
+        "content_type": "audio/wav",
+        "size_bytes": 8,
+        "fingerprint": "reference",
+        "metadata": {},
+    }
+    (tmp_path / "reference.wav").write_bytes(b"refaudio")
+    seen_payloads: list[dict[str, object]] = []
+
+    async def mock_post(self, url, **kwargs):
+        seen_payloads.append(kwargs.get("json"))
+        return httpx.Response(
+            200,
+            json=_mimo_audio_response(b"mimo-role-audio"),
+            headers={"content-type": "application/json"},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    async with AsyncSessionLocal() as db:
+        await tts_service.save_narration_plan(
+            chapter_id="chapter-mimo-role",
+            user_id="test-user",
+            req=tts_service.TtsNarrationPlanRequest(
+                plan={
+                    "plan_id": "plan-mimo-role",
+                    "chapter_id": "chapter-mimo-role",
+                    "speakers": [{"id": "character-a", "display_name": "角色A", "voice": "fallback-voice"}],
+                    "segments": [{"speaker_id": "character-a", "text": "你好。"}],
+                }
+            ),
+        )
+
+        response = await tts_service.generate_chapter_tts(
+            chapter_id="chapter-mimo-role",
+            req=tts_service.TtsChapterGenerateRequest(
+                provider="moss-local",
+                voice="fallback-voice",
+                mode="ai_multivoice",
+                plan_id="plan-mimo-role",
+                speaker_voices={
+                    "character-a": {
+                        "provider": "mimo",
+                        "model": "mimo-role-model",
+                        "mode": "clone",
+                        "voice": "role-reference",
+                        "character_id": "char-a",
+                        "voice_description": "清亮、年轻",
+                        "reference_audio_asset_id": "reference-asset",
+                        "status": "ready",
+                        "locked": True,
+                    }
+                },
+            ),
+            user_id="test-user",
+            db=db,
+        )
+
+    manifest = response.audio
+    assert manifest is not None
+    assert manifest["provider"] == "moss-local"
+    assert manifest["speaker_voices"]["character-a"]["provider"] == "mimo"
+    segment = manifest["segments"][0]
+    assert segment["provider"] == "mimo"
+    assert segment["model"] == "mimo-role-model"
+    assert segment["voice"] == "role-reference"
+    assert segment["role_voice"]["character_id"] == "char-a"
+    assert segment["role_voice"]["locked"] is True
+    assert segment["voice_resolution"]["source"] == "speaker_voices"
+    assert seen_payloads[0]["audio"]["voice"].startswith("data:audio/wav;base64,")
+    assert "清亮、年轻" in seen_payloads[0]["messages"][0]["content"]
 
 
 @pytest.mark.asyncio

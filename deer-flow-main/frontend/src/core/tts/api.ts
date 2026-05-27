@@ -1,7 +1,7 @@
 import { fetch as authFetch } from '@/core/api/fetcher';
 import { getBackendBaseURL } from '@/core/config';
 
-export type TtsProvider = 'openai' | 'volcengine' | 'moss-local';
+export type TtsProvider = 'openai' | 'volcengine' | 'moss-local' | 'mimo';
 
 export type TtsErrorCode =
   | 'missing_config'
@@ -100,19 +100,47 @@ export type MossLocalAdvancedOptions = {
   demo_id?: string;
 };
 
+export type MimoAdvancedOptions = {
+  prompt?: string;
+  reference_audio_asset_id?: string;
+  reference_audio_data_url?: string;
+};
+
 export interface TtsRoleVoice {
   role: string;
   voice: string;
 }
 
-export type TtsAdvancedOptions = MossLocalAdvancedOptions & Record<string, unknown>;
+export type TtsAdvancedOptions = (MossLocalAdvancedOptions | MimoAdvancedOptions) & Record<string, unknown>;
 
 export type TtsNarrationMode = 'single_narrator' | 'ai_multivoice';
+
+export interface TtsRoleVoiceReference {
+  voice?: string | null;
+  provider?: TtsProvider | null;
+  model?: string | null;
+  mode?: 'design' | 'clone' | null;
+  character_id?: string | null;
+  role_id?: string | null;
+  display_name?: string | null;
+  aliases?: string[];
+  gender?: string | null;
+  age?: string | null;
+  personality?: string | null;
+  voice_description?: string | null;
+  reference_audio_asset_id?: string | null;
+  generated_sample_asset_id?: string | null;
+  status?: 'pending' | 'generating' | 'ready' | 'error' | null;
+  locked?: boolean | null;
+  diagnostics?: string[];
+  metadata?: Record<string, unknown>;
+}
 
 export interface TtsNarrationSpeaker {
   id: string;
   display_name: string;
   voice: string;
+  role_voice?: TtsRoleVoiceReference | null;
   style?: string | null;
   instructions?: string | null;
   confidence?: number | null;
@@ -123,13 +151,14 @@ export interface TtsNarrationSegment {
   speaker_id: string;
   text?: string | null;
   voice?: string | null;
+  role_voice?: TtsRoleVoiceReference | null;
   style?: string | null;
   instructions?: string | null;
   confidence?: number | null;
   warnings?: string[];
 }
 
-export type TtsSpeakerVoiceMapping = Record<string, string>;
+export type TtsSpeakerVoiceMapping = Record<string, string | TtsRoleVoiceReference>;
 
 export interface TtsNarrationPlan {
   plan_id?: string | null;
@@ -260,6 +289,60 @@ export interface TtsChapterGenerateResponse {
   audio?: TtsChapterAudioManifest | null;
   cache_state?: TtsCacheState;
   cached?: boolean;
+}
+
+export interface TtsGeneratedAudioResponse {
+  asset_id: string;
+  url: string;
+  download_url: string;
+  content_type: string;
+  provider: TtsProvider;
+  model?: string | null;
+  metadata?: Record<string, unknown>;
+  diagnostics?: string[];
+}
+
+export interface TtsVoiceDesignOptions {
+  voice_description: string;
+  text?: string;
+  instruction?: string;
+  model?: string;
+  fmt?: string;
+  ai_provider_id?: string;
+  signal?: AbortSignal;
+}
+
+export interface TtsVoiceCloneOptions {
+  text?: string;
+  reference_audio_asset_id?: string;
+  reference_audio_data_url?: string;
+  instruction?: string;
+  style?: string;
+  model?: string;
+  fmt?: string;
+  ai_provider_id?: string;
+  signal?: AbortSignal;
+}
+
+export interface TtsStyleOptimizeOptions {
+  style_text: string;
+  model?: string;
+  ai_provider_id?: string;
+  signal?: AbortSignal;
+}
+
+export interface TtsVoiceDesignOptimizeOptions {
+  voice_description: string;
+  model?: string;
+  ai_provider_id?: string;
+  signal?: AbortSignal;
+}
+
+export interface TtsTextOptimizeResponse {
+  text: string;
+  provider: TtsProvider;
+  model?: string | null;
+  metadata?: Record<string, unknown>;
 }
 
 function ttsUrl(path: string): string {
@@ -434,6 +517,74 @@ export async function synthesizeSpeech(options: TtsSynthesizeOptions): Promise<B
   }
 
   return res.blob();
+}
+
+export async function designTtsVoice(options: TtsVoiceDesignOptions): Promise<TtsGeneratedAudioResponse> {
+  const res = await authFetch(ttsUrl('/voices/design'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      voice_description: options.voice_description,
+      text: options.text ?? undefined,
+      instruction: options.instruction ?? undefined,
+      model: options.model ?? undefined,
+      fmt: options.fmt ?? undefined,
+      ai_provider_id: options.ai_provider_id ?? undefined,
+    }),
+    signal: options.signal,
+  });
+  if (!res.ok) throw await readTtsApiError(res, 'synthesis');
+  return res.json();
+}
+
+export async function cloneTtsVoice(options: TtsVoiceCloneOptions): Promise<TtsGeneratedAudioResponse> {
+  const res = await authFetch(ttsUrl('/voices/clone'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text: options.text ?? undefined,
+      reference_audio_asset_id: options.reference_audio_asset_id ?? undefined,
+      reference_audio_data_url: options.reference_audio_data_url ?? undefined,
+      instruction: options.instruction ?? undefined,
+      style: options.style ?? undefined,
+      model: options.model ?? undefined,
+      fmt: options.fmt ?? undefined,
+      ai_provider_id: options.ai_provider_id ?? undefined,
+    }),
+    signal: options.signal,
+  });
+  if (!res.ok) throw await readTtsApiError(res, 'synthesis');
+  return res.json();
+}
+
+export async function optimizeTtsStyle(options: TtsStyleOptimizeOptions): Promise<TtsTextOptimizeResponse> {
+  const res = await authFetch(ttsUrl('/style/optimize'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      style_text: options.style_text,
+      model: options.model ?? undefined,
+      ai_provider_id: options.ai_provider_id ?? undefined,
+    }),
+    signal: options.signal,
+  });
+  if (!res.ok) throw await readTtsApiError(res, 'synthesis');
+  return res.json();
+}
+
+export async function optimizeTtsVoiceDesign(options: TtsVoiceDesignOptimizeOptions): Promise<TtsTextOptimizeResponse> {
+  const res = await authFetch(ttsUrl('/voice-design/optimize'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      voice_description: options.voice_description,
+      model: options.model ?? undefined,
+      ai_provider_id: options.ai_provider_id ?? undefined,
+    }),
+    signal: options.signal,
+  });
+  if (!res.ok) throw await readTtsApiError(res, 'synthesis');
+  return res.json();
 }
 
 export async function getChapterAudio(

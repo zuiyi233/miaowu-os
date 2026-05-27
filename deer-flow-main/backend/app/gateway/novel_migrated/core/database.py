@@ -77,6 +77,7 @@ def _load_models_for_schema_mode(schema_mode: str) -> None:
             prompt_workshop,
             regeneration_task,
             settings,
+            tts_studio_workspace,
             writing_style,
         )
         return
@@ -106,6 +107,7 @@ def _load_models_for_schema_mode(schema_mode: str) -> None:
         regeneration_task,
         relationship,
         settings,
+        tts_studio_workspace,
         writing_style,
     )
 

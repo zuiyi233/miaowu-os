@@ -17,6 +17,7 @@ from app.gateway.routers.tts_support.service import (
     TtsChapterGenerateRequest,
     TtsChapterJobResponse,
     TtsConfigResponse,
+    TtsGeneratedAudioResponse,
     TtsJobActionResponse,
     TtsNarrationPlanRequest,
     TtsNarrationPlanResponse,
@@ -25,9 +26,16 @@ from app.gateway.routers.tts_support.service import (
     TtsRequest,
     TtsSmokeRequest,
     TtsSmokeResponse,
+    TtsStyleOptimizeRequest,
+    TtsTextOptimizeResponse,
+    TtsVoiceCloneRequest,
+    TtsVoiceDesignOptimizeRequest,
+    TtsVoiceDesignRequest,
     TtsVoicesResponse,
     build_config_response,
     cancel_tts_job,
+    clone_tts_voice,
+    design_tts_voice,
     download_chapter_tts_audio,
     ext_from_content_type,
     generate_chapter_tts,
@@ -36,11 +44,29 @@ from app.gateway.routers.tts_support.service import (
     get_narration_plan,
     get_tts_job,
     list_voices_for_provider,
+    optimize_tts_style,
+    optimize_tts_voice_design,
     probe_openai_speech_capability,
+    read_tts_audio_asset,
     retry_tts_job,
     save_narration_plan,
     smoke_tts,
     synthesize_tts,
+)
+from app.gateway.routers.tts_support.studio import (
+    TtsStudioExportRequest,
+    TtsStudioRunNodeRequest,
+    TtsStudioWorkspaceCreate,
+    TtsStudioWorkspaceListResponse,
+    TtsStudioWorkspaceResponse,
+    TtsStudioWorkspaceUpdate,
+    build_export_zip,
+    create_workspace,
+    delete_workspace,
+    get_workspace,
+    list_workspaces,
+    run_workspace_node,
+    update_workspace,
 )
 
 router = APIRouter(prefix="/api/tts", tags=["tts"])
@@ -98,6 +124,72 @@ async def get_tts_config(
     return await build_config_response(user_id=user_id, db=db)
 
 
+@router.get("/studio/workspaces", response_model=TtsStudioWorkspaceListResponse)
+async def list_studio_workspaces(
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> TtsStudioWorkspaceListResponse:
+    return await list_workspaces(user_id=user_id, db=db)
+
+
+@router.post("/studio/workspaces", response_model=TtsStudioWorkspaceResponse)
+async def create_studio_workspace(
+    req: TtsStudioWorkspaceCreate,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> TtsStudioWorkspaceResponse:
+    return await create_workspace(req=req, user_id=user_id, db=db)
+
+
+@router.get("/studio/workspaces/{workspace_id}", response_model=TtsStudioWorkspaceResponse)
+async def get_studio_workspace(
+    workspace_id: str,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> TtsStudioWorkspaceResponse:
+    return await get_workspace(workspace_id=workspace_id, user_id=user_id, db=db)
+
+
+@router.put("/studio/workspaces/{workspace_id}", response_model=TtsStudioWorkspaceResponse)
+async def update_studio_workspace(
+    workspace_id: str,
+    req: TtsStudioWorkspaceUpdate,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> TtsStudioWorkspaceResponse:
+    return await update_workspace(workspace_id=workspace_id, req=req, user_id=user_id, db=db)
+
+
+@router.delete("/studio/workspaces/{workspace_id}")
+async def delete_studio_workspace(
+    workspace_id: str,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str | bool]:
+    return await delete_workspace(workspace_id=workspace_id, user_id=user_id, db=db)
+
+
+@router.post("/studio/workspaces/{workspace_id}/run-node")
+async def run_studio_workspace_node(
+    workspace_id: str,
+    req: TtsStudioRunNodeRequest,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    return await run_workspace_node(workspace_id=workspace_id, req=req, user_id=user_id, db=db)
+
+
+@router.post("/studio/workspaces/{workspace_id}/export")
+async def export_studio_workspace(
+    workspace_id: str,
+    req: TtsStudioExportRequest,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    content, media_type, filename = await build_export_zip(workspace_id=workspace_id, req=req, user_id=user_id, db=db)
+    return Response(content=content, media_type=media_type, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
 @router.get("/moss/health")
 async def get_moss_health() -> dict:
     return await get_moss_readiness()
@@ -119,6 +211,72 @@ async def probe(
     db: AsyncSession | None = Depends(get_optional_db),
 ) -> TtsCapabilityProbeResponse:
     return await probe_openai_speech_capability(req, user_id=user_id, db=db)
+
+
+@router.post("/voices/design", response_model=TtsGeneratedAudioResponse)
+async def design_voice(
+    req: TtsVoiceDesignRequest,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession | None = Depends(get_optional_db),
+) -> TtsGeneratedAudioResponse:
+    try:
+        return await design_tts_voice(req, user_id=user_id, db=db)
+    except TtsProviderError as exc:
+        _raise_tts_error(exc)
+
+
+@router.post("/voices/clone", response_model=TtsGeneratedAudioResponse)
+async def clone_voice(
+    req: TtsVoiceCloneRequest,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession | None = Depends(get_optional_db),
+) -> TtsGeneratedAudioResponse:
+    try:
+        return await clone_tts_voice(req, user_id=user_id, db=db)
+    except TtsProviderError as exc:
+        _raise_tts_error(exc)
+
+
+@router.post("/style/optimize", response_model=TtsTextOptimizeResponse)
+async def optimize_style(
+    req: TtsStyleOptimizeRequest,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession | None = Depends(get_optional_db),
+) -> TtsTextOptimizeResponse:
+    try:
+        return await optimize_tts_style(req, user_id=user_id, db=db)
+    except TtsProviderError as exc:
+        _raise_tts_error(exc)
+
+
+@router.post("/voice-design/optimize", response_model=TtsTextOptimizeResponse)
+async def optimize_voice_design(
+    req: TtsVoiceDesignOptimizeRequest,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession | None = Depends(get_optional_db),
+) -> TtsTextOptimizeResponse:
+    try:
+        return await optimize_tts_voice_design(req, user_id=user_id, db=db)
+    except TtsProviderError as exc:
+        _raise_tts_error(exc)
+
+
+@router.get("/assets/{asset_id}")
+@router.get("/assets/{asset_id}/download")
+async def get_asset(
+    asset_id: str,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession | None = Depends(get_optional_db),
+):
+    try:
+        content, media_type, filename = await read_tts_audio_asset(asset_id=asset_id, user_id=user_id, db=db)
+    except TtsProviderError as exc:
+        _raise_tts_error(exc)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 
 
 @router.post("/chapters/{chapter_id}/generate", response_model=TtsChapterGenerateEnvelope)
