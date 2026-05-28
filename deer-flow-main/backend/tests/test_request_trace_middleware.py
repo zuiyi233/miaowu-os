@@ -1,6 +1,8 @@
 import asyncio
 import json
+import logging
 
+import pytest
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
@@ -75,3 +77,41 @@ def test_request_trace_middleware_keeps_context_during_streaming_response():
         assert payload["project_id"] == "project-stream-1"
         assert payload["session_key"] == "session-stream-1"
         assert payload["idempotency_key"] == "idem-stream-1"
+
+
+def test_request_trace_logs_duration_for_success(caplog: pytest.LogCaptureFixture):
+    app = FastAPI()
+    app.add_middleware(RequestTraceMiddleware)
+
+    @app.get("/ok")
+    async def ok():
+        return {"ok": True}
+
+    with caplog.at_level(logging.INFO, logger="app.gateway.middleware.request_trace"):
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.get("/ok")
+
+    assert response.status_code == 200
+    assert any(
+        "Gateway request completed method=GET path=/ok status_code=200 duration_ms=" in record.message
+        for record in caplog.records
+    )
+
+
+def test_request_trace_logs_duration_for_exception(caplog: pytest.LogCaptureFixture):
+    app = FastAPI()
+    app.add_middleware(RequestTraceMiddleware)
+
+    @app.get("/boom")
+    async def boom():
+        raise RuntimeError("boom")
+
+    with caplog.at_level(logging.ERROR, logger="app.gateway.middleware.request_trace"):
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.get("/boom")
+
+    assert response.status_code == 500
+    assert any(
+        "Gateway request failed method=GET path=/boom duration_ms=" in record.message
+        for record in caplog.records
+    )

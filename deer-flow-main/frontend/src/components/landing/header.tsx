@@ -38,14 +38,12 @@ export async function Header({ className, homeURL, locale }: HeaderProps) {
       <nav className="mr-8 ml-auto flex items-center gap-8 text-sm font-medium">
         <Link
           href="/workspace/novel"
-          prefetch={false}
           className="text-secondary-foreground hover:text-foreground transition-colors"
         >
           {t.sidebar.novel}
         </Link>
         <Link
           href="/workspace/novel/author-control"
-          prefetch={false}
           className="text-secondary-foreground hover:text-foreground transition-colors"
         >
           作者控制台
@@ -65,7 +63,7 @@ export async function Header({ className, homeURL, locale }: HeaderProps) {
           asChild
           className="group relative z-10"
         >
-          <Link href="/workspace/novel" prefetch={false}>
+          <Link href="/workspace/novel">
             <LibraryIcon className="size-4" />
             我的书架
           </Link>

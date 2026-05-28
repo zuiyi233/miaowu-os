@@ -59,6 +59,12 @@ interface NovelState {
   setIsLoadingVersionHistory: (loading: boolean) => void;
 }
 
+const NOVEL_UI_STORAGE_BASE_KEY = 'novel-ui-store';
+
+function novelUiStorageKey(userId: string | null | undefined): string {
+  return userId ? `${NOVEL_UI_STORAGE_BASE_KEY}:${userId}` : NOVEL_UI_STORAGE_BASE_KEY;
+}
+
 export const useNovelStore = create<NovelState>()(
   persist(
     (set) => ({
@@ -142,7 +148,7 @@ export const useNovelStore = create<NovelState>()(
       setIsLoadingVersionHistory: (loading) => set({ isLoadingVersionHistory: loading }),
     }),
     {
-      name: 'novel-ui-store',
+      name: novelUiStorageKey(null),
       partialize: (state) => ({
         currentNovelTitle: state.currentNovelTitle,
         activeChapterId: state.activeChapterId,
@@ -152,3 +158,9 @@ export const useNovelStore = create<NovelState>()(
     }
   )
 );
+
+export function configureNovelStoreForUser(userId: string | null | undefined): void {
+  useNovelStore.setState(useNovelStore.getInitialState(), true);
+  useNovelStore.persist.setOptions({ name: novelUiStorageKey(userId) });
+  void useNovelStore.persist.rehydrate();
+}

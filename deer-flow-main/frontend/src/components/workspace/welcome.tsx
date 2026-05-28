@@ -118,7 +118,6 @@ export function Welcome({
               <Link
                 key={action.label}
                 href={action.href}
-                prefetch={false}
                 className="group rounded-lg border border-border/60 bg-background/60 px-3 py-2 shadow-sm backdrop-blur transition hover:border-amber-500/35 hover:bg-amber-500/5"
               >
                 <div className="flex items-center gap-2 text-sm font-medium">

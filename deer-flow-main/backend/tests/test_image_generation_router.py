@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -9,8 +10,12 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.gateway.novel_migrated.api.common import get_user_id
+from app.gateway.novel_migrated.core.database import AsyncSessionLocal
+from app.gateway.novel_migrated.models.media_asset import MediaAsset
+from app.gateway.novel_migrated.models.settings import Settings
 from app.gateway.routers import images as images_router
 from app.gateway.routers.images_support import service as images_service
 
@@ -59,11 +64,11 @@ def _reset_images_runtime(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     images_service._http_client = None
 
 
-def _build_app(*, override_user: bool = True, db: object = None) -> FastAPI:
+def _build_app(*, override_user: bool = True, db: object = None, user_id: str = "test-user") -> FastAPI:
     app = FastAPI()
     app.include_router(images_router.router)
     if override_user:
-        app.dependency_overrides[get_user_id] = lambda: "test-user"
+        app.dependency_overrides[get_user_id] = lambda: user_id
     if db is not _UNSET:
         app.dependency_overrides[images_router.get_optional_db] = lambda: db
     return app
@@ -145,6 +150,89 @@ def test_generate_images_success_uses_user_ai_runtime_config(monkeypatch: pytest
         "quality": "high",
     }
     assert seen["headers"]["Authorization"] == "Bearer db-secret"
+
+
+def test_generate_images_persists_media_asset_and_blocks_cross_user_file_read(
+    novel_main_sqlite_engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored: dict[str, tuple[bytes, str | None]] = {}
+
+    def fake_resolve(_settings, *, ai_provider_id=None, ai_model=None, module_id=None):
+        return (
+            {
+                "api_provider": "openai",
+                "api_key": "db-secret",
+                "api_base_url": "https://provider.example/v1",
+                "model_name": ai_model or "db-image-model",
+                "temperature": 0.0,
+                "max_tokens": 0,
+            },
+            "feature-routing:images",
+        )
+
+    async def fake_put_object(*, object_key: str, data: bytes, content_type: str | None = None):
+        stored[object_key] = (data, content_type)
+        return {"etag": '"test"', "size_bytes": len(data)}
+
+    async def fake_get_object(*, object_key: str):
+        data, content_type = stored[object_key]
+        return type("StoredObject", (), {"content": data, "content_type": content_type})()
+
+    async def mock_post(self, url, **kwargs):
+        return httpx.Response(
+            200,
+            json={"created": 123, "data": [{"b64_json": base64.b64encode(_PNG_BYTES).decode("ascii")}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(images_service, "resolve_user_ai_runtime_config", fake_resolve)
+    monkeypatch.setattr(images_service.object_storage_service, "put_object", fake_put_object)
+    monkeypatch.setattr(images_service.object_storage_service, "get_object", fake_get_object)
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    async def _session_override():
+        async with AsyncSessionLocal() as session:
+            yield session
+
+    async def _seed_settings() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(Settings(user_id="test-user"))
+            await session.commit()
+
+    asyncio.run(_seed_settings())
+
+    app = _build_app(db=_UNSET)
+    app.dependency_overrides[images_router.get_optional_db] = _session_override
+    with TestClient(app) as client:
+        response = client.post("/api/v1/images/generate", json={"prompt": "draw a private image"})
+        assert response.status_code == 200
+        payload = response.json()
+        image = payload["images"][0]
+        assert image["asset_id"]
+        file_response = client.get(image["url"])
+
+    assert file_response.status_code == 200
+    assert file_response.content == _PNG_BYTES
+
+    async def _load_asset() -> MediaAsset:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(MediaAsset).where(MediaAsset.id == image["asset_id"]))
+            return result.scalar_one()
+
+    asset = asyncio.run(_load_asset())
+    assert asset.user_id == "test-user"
+    assert asset.purpose == "image_generation_result"
+    assert asset.object_key in stored
+
+    other_app = _build_app(db=_UNSET, user_id="other-user")
+    other_app.dependency_overrides[images_router.get_optional_db] = _session_override
+    with TestClient(other_app) as other_client:
+        forbidden_file = other_client.get(image["url"])
+        forbidden_job = other_client.get(f"/api/v1/images/jobs/{payload['id']}")
+
+    assert forbidden_file.status_code == 404
+    assert forbidden_job.status_code == 404
 
 
 def test_generate_images_uses_env_fallback_and_supports_url_history_detail_and_file_read(

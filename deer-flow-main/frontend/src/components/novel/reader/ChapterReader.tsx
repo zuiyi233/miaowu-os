@@ -14,6 +14,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
+import { useAuth } from "@/core/auth/AuthProvider";
 import { getBackendBaseURL } from "@/core/config";
 import { browserStorageQuotaService } from "@/core/storage/browser-quota";
 import { cn } from "@/lib/utils";
@@ -55,9 +56,13 @@ const defaultSettings: ReaderSettings = {
   lineHeight: 1.8,
 };
 
-function loadSettings(): ReaderSettings {
+function getSettingsKey(userId: string | null | undefined): string {
+  return userId ? `${SETTINGS_KEY}:${userId}` : SETTINGS_KEY;
+}
+
+function loadSettings(storageKey: string): ReaderSettings {
   try {
-    const saved = localStorage.getItem(SETTINGS_KEY);
+    const saved = localStorage.getItem(storageKey);
     return saved ? JSON.parse(saved) : defaultSettings;
   } catch (error) {
     console.warn("Failed to load reading settings:", error);
@@ -65,9 +70,9 @@ function loadSettings(): ReaderSettings {
   }
 }
 
-function saveSettings(s: ReaderSettings) {
+function saveSettings(storageKey: string, s: ReaderSettings) {
   try {
-    void browserStorageQuotaService.setLocalItem(SETTINGS_KEY, JSON.stringify(s));
+    void browserStorageQuotaService.setLocalItem(storageKey, JSON.stringify(s));
   } catch (error) {
     console.warn("Failed to save reading settings:", error);
   }
@@ -100,14 +105,20 @@ export function ChapterReader({
   chapter,
   onChapterChange,
 }: ChapterReaderProps) {
-  const [settings, setSettings] = useState<ReaderSettings>(loadSettings);
+  const { user } = useAuth();
+  const settingsKey = useMemo(() => getSettingsKey(user?.id), [user?.id]);
+  const [settings, setSettings] = useState<ReaderSettings>(defaultSettings);
   const [navigation, setNavigation] = useState<NavigationInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
-    saveSettings(settings);
-  }, [settings]);
+    setSettings(loadSettings(settingsKey));
+  }, [settingsKey]);
+
+  useEffect(() => {
+    saveSettings(settingsKey, settings);
+  }, [settingsKey, settings]);
 
   useEffect(() => {
     if (open && chapter?.id) {

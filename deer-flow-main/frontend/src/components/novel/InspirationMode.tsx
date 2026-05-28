@@ -2,7 +2,7 @@
 
 import { Send, ArrowLeft, RefreshCcw, Sparkles, Loader2, RotateCcw } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { useAiProviderStore } from '@/core/ai/ai-provider-store';
 import { loadFeatureRoutingState, normalizeFeatureRoutingState, resolveModuleRoutingTarget } from '@/core/ai/feature-routing';
+import { useAuth } from '@/core/auth/AuthProvider';
 import { novelApiService, type AiModelRoutingPayload } from '@/core/novel/novel-api';
 import type { InspirationOption, InspirationWizardData } from '@/core/novel/schemas';
 import { browserStorageQuotaService } from '@/core/storage/browser-quota';
@@ -57,8 +58,14 @@ function getInspirationModelConfig(): AiModelRoutingPayload {
   };
 }
 
+function inspirationCacheKey(userId: string | null | undefined): string {
+  return userId ? `${INSPIRATION_CACHE_KEY}:${userId}` : INSPIRATION_CACHE_KEY;
+}
+
 export function InspirationMode() {
   const router = useRouter();
+  const { user } = useAuth();
+  const cacheKey = useMemo(() => inspirationCacheKey(user?.id), [user?.id]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [selectedOptions, setSelectedOptions] = useState<Set<string>>(new Set());
@@ -86,7 +93,7 @@ export function InspirationMode() {
 
   useEffect(() => {
     try {
-      const cached = localStorage.getItem(INSPIRATION_CACHE_KEY);
+      const cached = localStorage.getItem(cacheKey);
       if (cached) {
         const data = JSON.parse(cached) as {
           messages?: Message[];
@@ -118,7 +125,7 @@ export function InspirationMode() {
     } catch (error) {
       console.warn('Failed to load cached state:', error);
     }
-  }, []);
+  }, [cacheKey]);
 
   useEffect(() => {
     if (isGenerating) {
@@ -128,7 +135,7 @@ export function InspirationMode() {
     const timer = window.setTimeout(() => {
       try {
         void browserStorageQuotaService.setLocalItem(
-          INSPIRATION_CACHE_KEY,
+          cacheKey,
           JSON.stringify({
             messages,
             currentStep,
@@ -143,7 +150,7 @@ export function InspirationMode() {
     }, 300);
 
     return () => window.clearTimeout(timer);
-  }, [messages, currentStep, wizardData, selectedOptions, isGenerating]);
+  }, [messages, currentStep, wizardData, selectedOptions, isGenerating, cacheKey]);
 
   const getInitialIdea = useCallback(() => {
     const firstUserMessage = messages.find((message) => message.type === 'user');
@@ -375,7 +382,7 @@ export function InspirationMode() {
   const handleConfirmCreate = () => {
     setIsGenerating(true);
     setMessages((prev) => [...prev, { type: 'ai', content: `✅ 配置已确认！正在启动AI项目生成流程...\n\n《${wizardData.title}》即将诞生，请稍候。` }]);
-    localStorage.removeItem(INSPIRATION_CACHE_KEY);
+    localStorage.removeItem(cacheKey);
   };
 
   const buildGenerationConfig = (): GenerationConfig | null => {
@@ -402,7 +409,7 @@ export function InspirationMode() {
     setShowRefine(false);
     setRefineText('');
     setIsGenerating(false);
-    localStorage.removeItem(INSPIRATION_CACHE_KEY);
+    localStorage.removeItem(cacheKey);
   };
 
   const handleRefine = async () => {

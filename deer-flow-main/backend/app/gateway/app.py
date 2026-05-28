@@ -9,6 +9,7 @@ from types import ModuleType
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRoute
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -150,6 +151,63 @@ def _include_router_module(app: FastAPI, module_path: str, *, skip_if_deerflow_m
         raise
     app.include_router(module.router)
     return True
+
+
+def _include_langgraph_alias_router(app: FastAPI, module_path: str, *, source_prefix: str = "/api", alias_prefix: str = "/api/langgraph") -> int:
+    """Mount LangGraph SDK aliases that reuse existing endpoint callables."""
+    module = _import_router_module(module_path)
+    registered = 0
+    for route in module.router.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        if not route.path.startswith(source_prefix):
+            continue
+        alias_path = f"{alias_prefix}{route.path.removeprefix(source_prefix)}"
+        app.router.routes.append(
+            APIRoute(
+                path=alias_path,
+                endpoint=route.endpoint,
+                response_model=route.response_model,
+                status_code=route.status_code,
+                tags=route.tags,
+                dependencies=route.dependencies,
+                summary=route.summary,
+                description=route.description,
+                response_description=route.response_description,
+                responses=route.responses,
+                deprecated=route.deprecated,
+                methods=route.methods,
+                operation_id=f"langgraph_alias_{route.operation_id}" if route.operation_id else None,
+                response_model_include=route.response_model_include,
+                response_model_exclude=route.response_model_exclude,
+                response_model_by_alias=route.response_model_by_alias,
+                response_model_exclude_unset=route.response_model_exclude_unset,
+                response_model_exclude_defaults=route.response_model_exclude_defaults,
+                response_model_exclude_none=route.response_model_exclude_none,
+                include_in_schema=route.include_in_schema,
+                response_class=route.response_class,
+                name=f"langgraph_alias_{route.name}",
+                callbacks=route.callbacks,
+                openapi_extra=route.openapi_extra,
+                generate_unique_id_function=route.generate_unique_id_function,
+            )
+        )
+        registered += 1
+    return registered
+
+
+def _include_langgraph_alias_routers(app: FastAPI) -> int:
+    """Expose `/api/langgraph/*` without duplicating handler logic."""
+    module_paths = (
+        "app.gateway.routers.threads",
+        "app.gateway.routers.thread_runs",
+        "app.gateway.routers.assistants_compat",
+        "app.gateway.routers.runs",
+    )
+    registered = 0
+    for module_path in module_paths:
+        registered += _include_langgraph_alias_router(app, module_path)
+    return registered
 
 
 def get_app_config():
@@ -532,11 +590,16 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
     for module_path in CORE_ROUTER_MODULES:
         _include_router_module(app, module_path, skip_if_deerflow_missing=False)
 
+    registered_langgraph_alias_routers = 0
+    if deerflow_available:
+        registered_langgraph_alias_routers = _include_langgraph_alias_routers(app)
+
     full_mode = deerflow_available and registered_harness_router_count == len(HARNESS_ROUTER_MODULES)
     app.state.gateway_mode = "full" if full_mode else "degraded"
     app.state.deerflow_available = deerflow_available
     app.state.registered_harness_routers = registered_harness_router_count
     app.state.total_harness_routers = len(HARNESS_ROUTER_MODULES)
+    app.state.registered_langgraph_alias_routers = registered_langgraph_alias_routers
 
     # Add prompt cache middleware for AI chat endpoint optimization
     try:

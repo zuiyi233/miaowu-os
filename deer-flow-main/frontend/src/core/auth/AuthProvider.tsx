@@ -10,7 +10,16 @@ import React, {
   type ReactNode,
 } from "react";
 
+import { queryClient } from "@/components/query-client-provider";
 import { resolveApiUrl } from "@/core/api/fetcher";
+import {
+  configureNovelStoreForUser,
+  useNovelStore,
+} from "@/core/novel/useNovelStore";
+import {
+  configureSettingsStoreForUser,
+  useSettingsStore,
+} from "@/core/novel/useSettingsStore";
 
 import { type User, buildLoginUrl } from "./types";
 
@@ -29,6 +38,16 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+function resetUserScopedClientState(nextUserId: string | null): void {
+  queryClient.clear();
+  configureNovelStoreForUser(nextUserId);
+  configureSettingsStoreForUser(nextUserId);
+  if (nextUserId === null) {
+    useNovelStore.persist.clearStorage();
+    useSettingsStore.persist.clearStorage();
+  }
+}
 
 interface AuthProviderProps {
   children: ReactNode;
@@ -51,6 +70,10 @@ export function AuthProvider({ children, initialUser }: AuthProviderProps) {
 
   const isAuthenticated = user !== null;
 
+  useEffect(() => {
+    resetUserScopedClientState(initialUser?.id ?? null);
+  }, [initialUser?.id]);
+
   /**
    * Fetch current user from FastAPI
    * Used when initialUser might be stale (e.g., after tab was inactive)
@@ -64,9 +87,13 @@ export function AuthProvider({ children, initialUser }: AuthProviderProps) {
 
       if (res.ok) {
         const data = await res.json();
+        if (data?.id !== user?.id) {
+          resetUserScopedClientState(data?.id ?? null);
+        }
         setUser(data);
       } else if (res.status === 401) {
         // Session expired or invalid
+        resetUserScopedClientState(null);
         setUser(null);
         // Redirect to login if on a protected route
         if (pathname?.startsWith("/workspace")) {
@@ -79,7 +106,7 @@ export function AuthProvider({ children, initialUser }: AuthProviderProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [pathname, router]);
+  }, [pathname, router, user?.id]);
 
   /**
    * Logout - call FastAPI logout endpoint and clear local state
@@ -87,6 +114,7 @@ export function AuthProvider({ children, initialUser }: AuthProviderProps) {
    */
   const logout = useCallback(async () => {
     // Immediately clear local state to prevent UI flicker
+    resetUserScopedClientState(null);
     setUser(null);
 
     try {

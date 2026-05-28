@@ -50,6 +50,12 @@ interface SettingsState {
   updateSettings: (updates: Partial<Pick<SettingsState, 'readingTheme' | 'readingFontSize' | 'readingLineHeight' | 'readingParagraphSpacing'>>) => void;
 }
 
+const SETTINGS_STORAGE_BASE_KEY = "novelist-settings-storage";
+
+function settingsStorageKey(userId: string | null | undefined): string {
+  return userId ? `${SETTINGS_STORAGE_BASE_KEY}:${userId}` : SETTINGS_STORAGE_BASE_KEY;
+}
+
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
@@ -102,7 +108,13 @@ export const useSettingsStore = create<SettingsState>()(
       updateSettings: (updates) => set((state) => ({ ...state, ...updates })),
     }),
     {
-      name: "novelist-settings-storage",
+      name: settingsStorageKey(null),
     }
   )
 );
+
+export function configureSettingsStoreForUser(userId: string | null | undefined): void {
+  useSettingsStore.setState(useSettingsStore.getInitialState(), true);
+  useSettingsStore.persist.setOptions({ name: settingsStorageKey(userId) });
+  void useSettingsStore.persist.rehydrate();
+}

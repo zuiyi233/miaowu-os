@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { fetch as authFetch } from "@/core/api/fetcher";
+import { useAuth } from "@/core/auth/AuthProvider";
 import { getBackendBaseURL } from "@/core/config";
 import { useI18n } from "@/core/i18n/hooks";
 import { browserStorageQuotaService } from "@/core/storage/browser-quota";
@@ -157,6 +158,11 @@ function getEdgeCategory(relationship: string): EdgeCategory {
 const LAYOUT_STORAGE_KEY = (projectId: string) =>
   `relgraph-layout-${projectId}`;
 
+const USER_LAYOUT_STORAGE_KEY = (
+  projectId: string,
+  userId: string | null | undefined,
+) => (userId ? `relgraph-layout:${userId}:${projectId}` : LAYOUT_STORAGE_KEY(projectId));
+
 function getLayoutedElements(nodes: Node[], edges: Edge[]) {
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setDefaultEdgeLabel(() => ({}));
@@ -210,6 +216,11 @@ function getLayoutedElements(nodes: Node[], edges: Edge[]) {
 export function RelationshipGraph({ projectId }: RelationshipGraphProps) {
   const backendBase = getBackendBaseURL();
   const { t } = useI18n();
+  const { user } = useAuth();
+  const layoutStorageKey = useMemo(
+    () => USER_LAYOUT_STORAGE_KEY(projectId, user?.id),
+    [projectId, user?.id],
+  );
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(false);
   const [filterType, setFilterType] = useState<
@@ -316,7 +327,7 @@ export function RelationshipGraph({ projectId }: RelationshipGraphProps) {
 
   function loadSavedLayout(): Record<string, { x: number; y: number }> | null {
     try {
-      const raw = localStorage.getItem(LAYOUT_STORAGE_KEY(projectId));
+      const raw = localStorage.getItem(layoutStorageKey);
       return raw ? JSON.parse(raw) : null;
     } catch {
       return null;
@@ -329,19 +340,19 @@ export function RelationshipGraph({ projectId }: RelationshipGraphProps) {
       positions[n.id] = n.position;
     });
     void browserStorageQuotaService.setLocalItem(
-      LAYOUT_STORAGE_KEY(projectId),
+      layoutStorageKey,
       JSON.stringify(positions),
     );
     setHasSavedLayout(true);
     toast.success(t.novel.layoutSaved);
-  }, [nodes, projectId, t]);
+  }, [nodes, layoutStorageKey, t]);
 
   const resetLayout = useCallback(() => {
-    browserStorageQuotaService.removeLocalItem(LAYOUT_STORAGE_KEY(projectId));
+    browserStorageQuotaService.removeLocalItem(layoutStorageKey);
     setHasSavedLayout(false);
     if (graphData) buildFlowElements(graphData, careers, null);
     toast.info(t.novel.layoutReset);
-  }, [projectId, graphData, careers, t]);
+  }, [layoutStorageKey, graphData, careers, t]);
 
   const buildFlowElements = useCallback(
     (

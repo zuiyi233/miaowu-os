@@ -35,7 +35,7 @@ export function WorkspaceNavChatList() {
             isActive={pathname.startsWith("/workspace/novel") && !pathname.includes("/inspiration") && !pathname.includes("/book-import")}
             asChild
           >
-            <Link className="text-muted-foreground" href="/workspace/novel" prefetch={false}>
+            <Link className="text-muted-foreground" href="/workspace/novel">
               <BookOpenIcon />
               <span>{t.sidebar.novel}</span>
             </Link>
@@ -46,7 +46,7 @@ export function WorkspaceNavChatList() {
             isActive={pathname.startsWith("/workspace/novel") && pathname.includes("/author-control")}
             asChild
           >
-            <Link className="text-muted-foreground" href="/workspace/novel" prefetch={false}>
+            <Link className="text-muted-foreground" href="/workspace/novel">
               <ClipboardCheckIcon />
               <span>作者控制台</span>
             </Link>
@@ -57,7 +57,7 @@ export function WorkspaceNavChatList() {
             isActive={pathname === "/workspace/novel/inspiration"}
             asChild
           >
-            <Link className="text-muted-foreground" href="/workspace/novel/inspiration" prefetch={false}>
+            <Link className="text-muted-foreground" href="/workspace/novel/inspiration">
               <Sparkles />
               <span>灵感模式</span>
             </Link>
@@ -68,7 +68,7 @@ export function WorkspaceNavChatList() {
             isActive={pathname === "/workspace/novel/book-import"}
             asChild
           >
-            <Link className="text-muted-foreground" href="/workspace/novel/book-import" prefetch={false}>
+            <Link className="text-muted-foreground" href="/workspace/novel/book-import">
               <Upload />
               <span>拆书导入</span>
             </Link>
@@ -79,7 +79,7 @@ export function WorkspaceNavChatList() {
             isActive={pathname.startsWith("/workspace/images")}
             asChild
           >
-            <Link className="text-muted-foreground" href="/workspace/images" prefetch={false}>
+            <Link className="text-muted-foreground" href="/workspace/images">
               <ImageIcon />
               <span>图片生成</span>
             </Link>
@@ -90,7 +90,7 @@ export function WorkspaceNavChatList() {
             isActive={pathname.startsWith("/workspace/tts-studio")}
             asChild
           >
-            <Link className="text-muted-foreground" href="/workspace/tts-studio" prefetch={false}>
+            <Link className="text-muted-foreground" href="/workspace/tts-studio">
               <Music2Icon />
               <span>音频工作站</span>
             </Link>
@@ -103,7 +103,7 @@ export function WorkspaceNavChatList() {
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton isActive={pathname === "/workspace/chats"} asChild>
-            <Link className="text-muted-foreground" href="/workspace/chats" prefetch={false}>
+            <Link className="text-muted-foreground" href="/workspace/chats">
               <MessagesSquare />
               <span>{t.sidebar.chats}</span>
             </Link>
@@ -114,7 +114,7 @@ export function WorkspaceNavChatList() {
             isActive={pathname.startsWith("/workspace/agents")}
             asChild
           >
-            <Link className="text-muted-foreground" href="/workspace/agents" prefetch={false}>
+            <Link className="text-muted-foreground" href="/workspace/agents">
               <BotIcon />
               <span>{t.sidebar.agents}</span>
             </Link>

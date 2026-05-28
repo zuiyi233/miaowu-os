@@ -1,6 +1,14 @@
 "use client";
 
 import {
+  addEdge,
+  type Connection,
+  type Edge,
+  type Node as RFNode,
+  useEdgesState,
+  useNodesState,
+} from "@xyflow/react";
+import {
   AudioLinesIcon,
   DownloadIcon,
   FileAudioIcon,
@@ -11,15 +19,7 @@ import {
   Trash2Icon,
   WandSparklesIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  addEdge,
-  type Connection,
-  type Edge,
-  type Node as RFNode,
-  useEdgesState,
-  useNodesState,
-} from "@xyflow/react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import { toast } from "sonner";
 
 import {
@@ -50,6 +50,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { getBackendBaseURL } from "@/core/config";
 import { uploadMediaAsset } from "@/core/media-assets/api";
 import { fetchTtsConfig, optimizeTtsStyle, optimizeTtsVoiceDesign } from "@/core/tts/api";
 import {
@@ -65,7 +71,6 @@ import {
   type TtsStudioNodeType,
   type TtsStudioWorkspace,
 } from "@/core/tts/studio-api";
-import { getBackendBaseURL } from "@/core/config";
 
 type StudioNodeData = Record<string, unknown> & {
   nodeType?: TtsStudioNodeType;
@@ -102,9 +107,11 @@ function toFlowNode(node: TtsStudioNode): FlowNode {
 }
 
 function toBoardNode(node: FlowNode): TtsStudioNode {
-  const data = node.data as StudioNodeData;
-  const nodeType = (data.nodeType ?? "prompt") as TtsStudioNodeType;
-  const { nodeType: _nodeType, type: _type, ...rest } = data;
+  const data = node.data;
+  const nodeType = data.nodeType ?? "prompt";
+  const rest = { ...data };
+  delete rest.nodeType;
+  delete rest.type;
   return {
     id: node.id,
     type: nodeType,
@@ -131,6 +138,10 @@ function flowToBoard(nodes: FlowNode[], edges: Edge[], stash: TtsStudioArtifact[
   };
 }
 
+function boardSignature(board: TtsStudioBoard): string {
+  return JSON.stringify(board);
+}
+
 function nodeTitle(type: TtsStudioNodeType): string {
   switch (type) {
     case "referenceAudio":
@@ -149,7 +160,7 @@ function nodeTitle(type: TtsStudioNodeType): string {
 }
 
 function StudioNodeComponent({ id, data, selected }: { id: string; data: StudioNodeData; selected?: boolean }) {
-  const type = (data.nodeType ?? "prompt") as TtsStudioNodeType;
+  const type = data.nodeType ?? "prompt";
   const artifact = data.artifact ?? (type === "artifact" ? data as TtsStudioArtifact : undefined);
   const url = toAbsoluteUrl(artifact?.url ?? artifact?.download_url);
   return (
@@ -191,6 +202,25 @@ function StudioNodeComponent({ id, data, selected }: { id: string; data: StudioN
 
 const nodeTypes = { studioNode: StudioNodeComponent };
 
+function IconButtonWithTooltip({
+  label,
+  children,
+  ...props
+}: ComponentProps<typeof Button> & {
+  label: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button aria-label={label} title={label} {...props}>
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function TtsStudioWorkspaceView() {
   const [workspaces, setWorkspaces] = useState<TtsStudioWorkspace[]>([]);
   const [workspace, setWorkspace] = useState<TtsStudioWorkspace | null>(null);
@@ -202,8 +232,19 @@ export function TtsStudioWorkspaceView() {
   const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
   const [optimizingNodeId, setOptimizingNodeId] = useState<string | null>(null);
   const [configSummary, setConfigSummary] = useState("检测中");
-  const stash = workspace?.board.stash ?? [];
+  const lastSavedSignatureRef = useRef<string | null>(null);
+  const hasLoadedWorkspaceRef = useRef(false);
+  const stash = useMemo(() => workspace?.board.stash ?? [], [workspace?.board.stash]);
   const selectedNode = useMemo(() => nodes.find((node) => node.id === selectedNodeId) ?? null, [nodes, selectedNodeId]);
+
+  const applyWorkspace = useCallback((nextWorkspace: TtsStudioWorkspace) => {
+    setWorkspace(nextWorkspace);
+    const flow = boardToFlow(nextWorkspace.board);
+    setNodes(flow.nodes);
+    setEdges(flow.edges);
+    lastSavedSignatureRef.current = boardSignature(nextWorkspace.board);
+    hasLoadedWorkspaceRef.current = true;
+  }, [setEdges, setNodes]);
 
   const refreshWorkspaces = useCallback(async () => {
     const items = await listTtsStudioWorkspaces();
@@ -211,19 +252,13 @@ export function TtsStudioWorkspaceView() {
       setWorkspaces(items);
       const current = items[0];
       if (!current) return;
-      setWorkspace(current);
-      const flow = boardToFlow(current.board);
-      setNodes(flow.nodes);
-      setEdges(flow.edges);
+      applyWorkspace(current);
       return;
     }
     const created = await createTtsStudioWorkspace("音频工作站");
     setWorkspaces([created]);
-    setWorkspace(created);
-    const flow = boardToFlow(created.board);
-    setNodes(flow.nodes);
-    setEdges(flow.edges);
-  }, [setEdges, setNodes]);
+    applyWorkspace(created);
+  }, [applyWorkspace]);
 
   useEffect(() => {
     let cancelled = false;
@@ -247,20 +282,35 @@ export function TtsStudioWorkspaceView() {
 
   const currentBoard = useCallback(() => flowToBoard(nodes, edges, stash), [edges, nodes, stash]);
 
-  const persistWorkspace = useCallback(async () => {
+  const persistWorkspace = useCallback(async (options: { silent?: boolean } = {}) => {
     if (!workspace) return;
     setSaving(true);
     try {
       const saved = await saveTtsStudioWorkspace({ ...workspace, board: currentBoard() });
       setWorkspace(saved);
       setWorkspaces((items) => items.map((item) => item.id === saved.id ? saved : item));
-      toast.success("已保存");
+      lastSavedSignatureRef.current = boardSignature(saved.board);
+      if (!options.silent) toast.success("已保存");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "保存失败");
+      if (!options.silent) toast.error(error instanceof Error ? error.message : "保存失败");
+      else console.error("TTS studio autosave failed", error);
     } finally {
       setSaving(false);
     }
   }, [currentBoard, workspace]);
+
+  useEffect(() => {
+    if (!workspace || !hasLoadedWorkspaceRef.current) return;
+    const board = currentBoard();
+    const signature = boardSignature(board);
+    if (signature === lastSavedSignatureRef.current) return;
+
+    const timeoutId = window.setTimeout(() => {
+      void persistWorkspace({ silent: true });
+    }, 800);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [currentBoard, persistWorkspace, workspace]);
 
   const updateSelectedData = useCallback((patch: StudioNodeData) => {
     if (!selectedNodeId) return;
@@ -288,18 +338,15 @@ export function TtsStudioWorkspaceView() {
     setRunningNodeId(selectedNode.id);
     try {
       const result = await runTtsStudioNode(workspace.id, selectedNode.id, currentBoard());
-      setWorkspace(result.workspace);
+      applyWorkspace(result.workspace);
       setWorkspaces((items) => items.map((item) => item.id === result.workspace.id ? result.workspace : item));
-      const flow = boardToFlow(result.workspace.board);
-      setNodes(flow.nodes);
-      setEdges(flow.edges);
       toast.success("节点运行完成");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "节点运行失败");
     } finally {
       setRunningNodeId(null);
     }
-  }, [currentBoard, selectedNode, setEdges, setNodes, workspace]);
+  }, [applyWorkspace, currentBoard, selectedNode, workspace]);
 
   const optimizeSelectedNode = useCallback(async () => {
     if (!selectedNode) return;
@@ -361,8 +408,8 @@ export function TtsStudioWorkspaceView() {
   }
 
   return (
-    <div className="grid size-full grid-cols-[minmax(0,1fr)_22rem] overflow-hidden">
-      <div className="relative min-w-0">
+    <div className="grid size-full grid-rows-[minmax(24rem,1fr)_minmax(18rem,42vh)] overflow-hidden lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-none">
+      <div className="relative min-h-0 min-w-0">
         <Canvas
           nodes={nodes}
           edges={edges}
@@ -371,18 +418,19 @@ export function TtsStudioWorkspaceView() {
           onEdgesChange={onEdgesChange}
           onConnect={(connection: Connection) => setEdges((items) => addEdge(connection, items))}
           onNodeClick={(_, node) => setSelectedNodeId(node.id)}
+          onPaneClick={() => setSelectedNodeId(null)}
         >
           <Controls />
           <Panel position="top-left" className="flex items-center gap-1">
-            <Button size="sm" variant="ghost" onClick={() => addNode("referenceAudio")}><FileAudioIcon className="size-4" /></Button>
-            <Button size="sm" variant="ghost" onClick={() => addNode("voiceStyle")}><AudioLinesIcon className="size-4" /></Button>
-            <Button size="sm" variant="ghost" onClick={() => addNode("prompt")}><PlusIcon className="size-4" /></Button>
-            <Button size="sm" variant="ghost" onClick={() => addNode("voiceClone")}><Mic2Icon className="size-4" /></Button>
-            <Button size="sm" variant="ghost" onClick={() => addNode("voiceDesign")}><WandSparklesIcon className="size-4" /></Button>
+            <IconButtonWithTooltip label="添加参考音频" size="icon-sm" variant="ghost" onClick={() => addNode("referenceAudio")}><FileAudioIcon className="size-4" /></IconButtonWithTooltip>
+            <IconButtonWithTooltip label="添加声音风格" size="icon-sm" variant="ghost" onClick={() => addNode("voiceStyle")}><AudioLinesIcon className="size-4" /></IconButtonWithTooltip>
+            <IconButtonWithTooltip label="添加朗读文本" size="icon-sm" variant="ghost" onClick={() => addNode("prompt")}><PlusIcon className="size-4" /></IconButtonWithTooltip>
+            <IconButtonWithTooltip label="添加声音克隆" size="icon-sm" variant="ghost" onClick={() => addNode("voiceClone")}><Mic2Icon className="size-4" /></IconButtonWithTooltip>
+            <IconButtonWithTooltip label="添加声音设计" size="icon-sm" variant="ghost" onClick={() => addNode("voiceDesign")}><WandSparklesIcon className="size-4" /></IconButtonWithTooltip>
           </Panel>
         </Canvas>
       </div>
-      <aside className="flex min-h-0 flex-col border-l bg-background">
+      <aside className="flex min-h-0 flex-col border-t bg-background lg:border-l lg:border-t-0">
         <div className="flex items-center justify-between gap-2 border-b p-3">
           <div className="min-w-0">
             <Input
@@ -393,8 +441,8 @@ export function TtsStudioWorkspaceView() {
             <div className="truncate text-xs text-muted-foreground">{configSummary}</div>
           </div>
           <div className="flex items-center gap-1">
-            <Button size="icon" variant="ghost" onClick={() => void persistWorkspace()} disabled={saving}><SaveIcon className="size-4" /></Button>
-            <Button size="icon" variant="ghost" onClick={() => void deleteCurrentWorkspace()}><Trash2Icon className="size-4" /></Button>
+            <IconButtonWithTooltip label="保存工作区" size="icon" variant="ghost" onClick={() => void persistWorkspace()} disabled={saving}><SaveIcon className="size-4" /></IconButtonWithTooltip>
+            <IconButtonWithTooltip label="删除工作区" size="icon" variant="ghost" onClick={() => void deleteCurrentWorkspace()}><Trash2Icon className="size-4" /></IconButtonWithTooltip>
           </div>
         </div>
         <ScrollArea className="min-h-0 flex-1">
@@ -408,10 +456,7 @@ export function TtsStudioWorkspaceView() {
                     type="button"
                     className={`w-full rounded-md border px-3 py-2 text-left text-sm ${workspace?.id === item.id ? "bg-accent" : "hover:bg-muted/50"}`}
                     onClick={() => {
-                      setWorkspace(item);
-                      const flow = boardToFlow(item.board);
-                      setNodes(flow.nodes);
-                      setEdges(flow.edges);
+                      applyWorkspace(item);
                     }}
                   >
                     {item.name}
@@ -426,7 +471,7 @@ export function TtsStudioWorkspaceView() {
             {selectedNode ? (
               <div className="space-y-3 rounded-md border p-3">
                 <div>
-                  <div className="text-sm font-medium">{nodeTitle((selectedNode.data.nodeType ?? "prompt") as TtsStudioNodeType)}</div>
+                  <div className="text-sm font-medium">{nodeTitle(selectedNode.data.nodeType ?? "prompt")}</div>
                   <div className="text-xs text-muted-foreground">{selectedNode.id}</div>
                 </div>
                 {selectedNode.data.nodeType === "referenceAudio" ? (

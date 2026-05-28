@@ -26,6 +26,7 @@ ACTIVE_PURPOSES = {
     "project_export",
     "attachment",
     "image_material",
+    "image_generation_result",
     "generated_result",
     "tts_audio",
 }

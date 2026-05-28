@@ -23,8 +23,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.gateway.novel_migrated.models.media_asset import MediaAsset
 from app.gateway.novel_migrated.models.settings import Settings
 from app.gateway.novel_migrated.services.ai_settings_service import resolve_user_ai_runtime_config
+from app.gateway.novel_migrated.services.media_asset_service import media_asset_service
+from app.gateway.novel_migrated.services.object_storage_service import (
+    ObjectStorageError,
+    object_storage_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +64,7 @@ class GeneratedImageResponse(BaseModel):
     filename: str
     content_type: str
     size_bytes: int
+    asset_id: str | None = None
     revised_prompt: str | None = None
     source_url: str | None = None
 
@@ -158,6 +165,31 @@ class ImageFilePayload:
     content: bytes
     content_type: str
     filename: str
+
+
+async def _read_media_asset_image_file(*, asset_id: str, user_id: str, db: AsyncSession | None) -> ImageFilePayload | None:
+    if db is None:
+        return None
+    result = await db.execute(
+        select(MediaAsset).where(
+            MediaAsset.id == asset_id,
+            MediaAsset.user_id == user_id,
+            MediaAsset.status == "active",
+        )
+    )
+    asset = result.scalar_one_or_none()
+    if asset is None:
+        return None
+    try:
+        stored = await object_storage_service.get_object(object_key=asset.object_key)
+    except ObjectStorageError as exc:
+        logger.warning("Failed to read generated image media asset %s", asset_id, exc_info=True)
+        raise HTTPException(status_code=404, detail="Image file not found") from exc
+    return ImageFilePayload(
+        content=stored.content,
+        content_type=asset.mime_type or stored.content_type or "application/octet-stream",
+        filename=asset.filename,
+    )
 
 
 @dataclass(slots=True)
@@ -559,7 +591,7 @@ def _load_job(user_id: str, job_id: str) -> dict[str, Any] | None:
     return None
 
 
-def _store_image_file(
+async def _store_image_file(
     *,
     user_id: str,
     job_id: str,
@@ -568,12 +600,39 @@ def _store_image_file(
     content_type: str,
     source_url: str | None,
     revised_prompt: str | None,
+    db: AsyncSession | None,
 ) -> GeneratedImageResponse:
     detected_content_type, extension = _content_type_and_extension_from_bytes(content)
     normalized_content_type = content_type if content_type and content_type != "application/octet-stream" else detected_content_type
     normalized_extension = extension
     image_id = uuid.uuid4().hex
     filename = f"{job_id}-{ordinal + 1}.{normalized_extension}"
+    asset_id: str | None = None
+    if db is not None:
+        try:
+            created = await media_asset_service.create_asset_from_bytes(
+                db=db,
+                user_id=user_id,
+                project_id=None,
+                purpose="image_generation_result",
+                filename=filename,
+                content=content,
+                mime_type=normalized_content_type,
+                metadata={
+                    "source": "workspace-images",
+                    "image_id": image_id,
+                    "job_id": job_id,
+                    "ordinal": ordinal,
+                    "source_url": source_url,
+                    "revised_prompt": revised_prompt,
+                },
+                commit=False,
+                refresh=False,
+                flush=True,
+            )
+            asset_id = created.asset.id
+        except ObjectStorageError:
+            logger.warning("Failed to store generated image in media_assets; falling back to local image store", exc_info=True)
     base_path = _files_root() / _user_dir_key(user_id)
     file_path = base_path / f"{image_id}.{normalized_extension}"
     meta_path = _image_meta_path(user_id, image_id)
@@ -583,6 +642,7 @@ def _store_image_file(
         {
             "schema": "miaowu.images.file.v1",
             "image_id": image_id,
+            "asset_id": asset_id,
             "job_id": job_id,
             "user_id": user_id,
             "filename": filename,
@@ -600,6 +660,7 @@ def _store_image_file(
         filename=filename,
         content_type=normalized_content_type,
         size_bytes=len(content),
+        asset_id=asset_id,
         revised_prompt=revised_prompt,
         source_url=source_url,
     )
@@ -746,7 +807,7 @@ async def generate_images(
         _generated, metadata = await _call_images_generation_api(runtime=runtime, req=req)
         images: list[GeneratedImageResponse] = []
         for item in metadata.pop("upstream_items"):
-            image_response = _store_image_file(
+            image_response = await _store_image_file(
                 user_id=user_id,
                 job_id=job_id,
                 ordinal=int(item["ordinal"]),
@@ -754,6 +815,7 @@ async def generate_images(
                 content_type=str(item["content_type"]),
                 source_url=item["source_url"],
                 revised_prompt=item["revised_prompt"],
+                db=db,
             )
             images.append(image_response)
 
@@ -767,6 +829,8 @@ async def generate_images(
         job["image_urls"] = [image.url for image in images]
         job["elapsed_seconds"] = elapsed
         job["updated_at"] = _utcnow_iso()
+        if db is not None and hasattr(db, "commit"):
+            await db.commit()
         _persist_job(job)
         return ImageJobResponse.model_validate(job)
     except ImageGenerationError as exc:
@@ -831,7 +895,7 @@ def get_image_job(job_id: str, *, user_id: str) -> ImageJobResponse:
 _SAFE_EXTENSIONS = {"png", "jpg", "webp", "gif", "bin"}
 
 
-def read_image_file(*, image_id: str, user_id: str) -> ImageFilePayload:
+async def read_image_file(*, image_id: str, user_id: str, db: AsyncSession | None = None) -> ImageFilePayload:
     _validate_path_segment(image_id, "image_id")
     meta: dict[str, Any] | None = None
     user_dir_key: str | None = None
@@ -843,6 +907,12 @@ def read_image_file(*, image_id: str, user_id: str) -> ImageFilePayload:
             break
     if meta is None or user_dir_key is None:
         raise HTTPException(status_code=404, detail="Image file not found")
+
+    asset_id = str(meta.get("asset_id") or "").strip()
+    if asset_id:
+        media_payload = await _read_media_asset_image_file(asset_id=asset_id, user_id=user_id, db=db)
+        if media_payload is not None:
+            return media_payload
 
     extension = str(meta.get("extension") or "").strip().lower()
     if extension not in _SAFE_EXTENSIONS:

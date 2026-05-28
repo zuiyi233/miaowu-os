@@ -60,8 +60,12 @@ async def get_job(job_id: str, user_id: str = Depends(get_user_id)) -> ImageJobR
 
 
 @router.get("/files/{image_id}", response_class=None)
-async def get_file(image_id: str, user_id: str = Depends(get_user_id)):
-    payload = read_image_file(image_id=image_id, user_id=user_id)
+async def get_file(
+    image_id: str,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession | None = Depends(get_optional_db),
+):
+    payload = await read_image_file(image_id=image_id, user_id=user_id, db=db)
     return Response(
         content=payload.content,
         media_type=payload.content_type,
