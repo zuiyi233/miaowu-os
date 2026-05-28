@@ -25,6 +25,7 @@ from app.gateway.auth.newapi_oauth import (
     exchange_newapi_code_for_user,
     newapi_user_is_admin,
     resolve_or_create_local_user,
+    should_use_frontend_oauth_complete_page,
     sync_newapi_system_role,
     validate_newapi_state,
 )
@@ -79,6 +80,18 @@ def test_build_frontend_oauth_complete_url_rejects_external_next(monkeypatch):
         build_frontend_oauth_complete_url("https://evil.example/phish")
         == "http://127.0.0.1:14560/auth/newapi/complete?next=%2Fworkspace"
     )
+
+
+def test_should_use_frontend_oauth_complete_page_defaults_off(monkeypatch):
+    monkeypatch.delenv("MIAOWU_OAUTH_COMPLETE_PAGE_ENABLED", raising=False)
+
+    assert should_use_frontend_oauth_complete_page() is False
+
+
+def test_should_use_frontend_oauth_complete_page_can_be_enabled(monkeypatch):
+    monkeypatch.setenv("MIAOWU_OAUTH_COMPLETE_PAGE_ENABLED", "true")
+
+    assert should_use_frontend_oauth_complete_page() is True
 
 
 def test_build_newapi_authorize_url(monkeypatch):
@@ -305,7 +318,7 @@ def test_resolve_newapi_user_rejects_conflicting_oauth_email():
 def test_normalize_local_email_falls_back_for_reserved_provider_domain():
     userinfo = NewAPIUserInfo(sub="932521", email="miaowu31test@example.invalid")
 
-    assert _normalize_local_email(userinfo) == "newapi-932521@newapi.miaowu.bond"
+    assert _normalize_local_email(userinfo) == "newapi-932521@newapi.mwapi.bond"
 
 
 def test_bootstrap_user_ai_settings_reports_hub_bootstrap_failure(monkeypatch):

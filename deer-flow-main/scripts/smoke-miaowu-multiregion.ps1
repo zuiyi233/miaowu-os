@@ -1,6 +1,6 @@
 param(
-    [string]$FrontendBaseUrl = "https://xs.miaowu.bond",
-    [string]$GatewayBaseUrl = "https://xs.miaowu.bond",
+    [string]$FrontendBaseUrl = "https://xs.mwapi.bond",
+    [string]$GatewayBaseUrl = "https://xs.mwapi.bond",
     [string]$NodeName = "xs",
     [switch]$Help
 )
@@ -11,8 +11,8 @@ Miaowu v1 multi-region smoke check.
 
 Usage:
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-miaowu-multiregion.ps1 `
-    -FrontendBaseUrl https://xs.miaowu.bond `
-    -GatewayBaseUrl https://xs.miaowu.bond `
+    -FrontendBaseUrl https://xs.mwapi.bond `
+    -GatewayBaseUrl https://xs.mwapi.bond `
     -NodeName xs
 
 This script performs unauthenticated HTTP checks only. OIDC login, cross-user

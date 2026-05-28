@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -36,6 +37,7 @@ _ADMIN_ROLE_VALUES = {"admin", "administrator", "root", "owner", "super_admin", 
 _NEWAPI_SYNC_PREF_KEY = "newapi_sync"
 _MAX_MANUAL_GROUPS = 20
 _MAX_GROUP_NAME_LENGTH = 80
+NEWAPI_GROUP_BOOTSTRAP_DELAY_SECONDS = 0.5
 logger = logging.getLogger(__name__)
 
 
@@ -239,6 +241,17 @@ def build_frontend_oauth_complete_url(next_path: str) -> str:
     safe_next = validate_next_path(next_path)
     complete_path = f"/auth/newapi/complete?{urlencode({'next': safe_next})}"
     return build_frontend_redirect_url(complete_path)
+
+
+def should_use_frontend_oauth_complete_page() -> bool:
+    """Return whether OAuth callback should route through the frontend wait page.
+
+    Older production frontend images do not include ``/auth/newapi/complete``.
+    Defaulting to the direct target keeps successful logins from ending on a
+    Next.js 404, while allowing deployments that have verified the page to opt
+    back into the cookie-visibility wait step.
+    """
+    return (os.getenv("MIAOWU_OAUTH_COMPLETE_PAGE_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def require_newapi_settings() -> NewAPIOAuthSettings:
@@ -712,7 +725,17 @@ async def sync_newapi_groups_for_user(
             )
         )
 
-    persistable_items = [item for item in group_items if isinstance(item.get("group_id"), str) and item.get("group_id")]
+    persistable_items = [
+        item
+        for item in group_items
+        if isinstance(item.get("group_id"), str)
+        and item.get("group_id")
+        and (
+            bool(_normalize_newapi_model_list(item.get("models")))
+            or bool(_extract_newapi_token_key(bootstraps.get(str(item.get("group_id")), {})))
+            or bool(item.get("api_key"))
+        )
+    ]
     if persistable_items:
         await get_ai_settings_service().apply_managed_newapi_group_bootstrap(
             user_id=user_id,
@@ -845,7 +868,9 @@ async def _bootstrap_newapi_group_tokens(
     bootstrap_url = f"{settings.issuer.rstrip('/')}/api/hub/session/bootstrap"
     results: dict[str, dict[str, Any]] = {}
     async with httpx.AsyncClient(timeout=15.0) as client:
-        for group in groups:
+        for index, group in enumerate(groups):
+            if index > 0:
+                await asyncio.sleep(NEWAPI_GROUP_BOOTSTRAP_DELAY_SECONDS)
             payload: dict[str, Any] = {
                 "client_id": settings.client_id,
                 "site_name": "Miaowu OS",
@@ -859,6 +884,21 @@ async def _bootstrap_newapi_group_tokens(
                     headers={"Authorization": f"Bearer {authorization_token}", "Accept": "application/json"},
                 )
                 if response.status_code != 200:
+                    if response.status_code == 429:
+                        retry_after = response.headers.get("Retry-After")
+                        retry_hint = f"，约 {retry_after} 秒后再试" if retry_after and retry_after.strip().isdigit() else "，请稍后重试"
+                        results[group] = {
+                            "group": group,
+                            "model_sync_status": "error",
+                            "model_sync_error": f"NewAPI 分组同步触发限流{retry_hint}；已成功的分组已保留。",
+                        }
+                        for skipped_group in groups[index + 1 :]:
+                            results[skipped_group] = {
+                                "group": skipped_group,
+                                "model_sync_status": "error",
+                                "model_sync_error": "NewAPI 分组同步已因限流暂停；请稍后重试，已成功的分组已保留。",
+                            }
+                        break
                     results[group] = {
                         "group": group,
                         "model_sync_status": "error",
@@ -1063,7 +1103,7 @@ def _normalize_local_email(userinfo: NewAPIUserInfo) -> str:
             pass
     safe_sub = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in userinfo.sub.lower()).strip("-_")
     safe_sub = safe_sub or secrets.token_urlsafe(8)
-    return f"newapi-{safe_sub}@newapi.miaowu.bond"
+    return f"newapi-{safe_sub}@newapi.mwapi.bond"
 
 
 def _oauth_error_detail(response: httpx.Response) -> str:

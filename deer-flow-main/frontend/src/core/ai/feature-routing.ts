@@ -82,6 +82,8 @@ interface PersistedFeatureRoutingState {
 
 const MAX_SWITCH_LOGS = 40;
 
+export const CHAT_SUGGESTIONS_MODULE_ID = "chat-suggestions";
+
 export const BUILTIN_FEATURE_MODULES: AiFeatureModuleDefinition[] = [
   {
     id: "chat-main",
@@ -245,7 +247,7 @@ export const BUILTIN_FEATURE_MODULES: AiFeatureModuleDefinition[] = [
     runtimeReady: true,
   },
   {
-    id: "chat-suggestions",
+    id: CHAT_SUGGESTIONS_MODULE_ID,
     label: "智能推荐 / 后续问题",
     description: "对话结束后自动生成的后续问题建议（Follow-up Suggestions）",
     category: "workspace",

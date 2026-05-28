@@ -99,6 +99,21 @@ def test_resolve_runtime_explicit_override_has_highest_priority() -> None:
     assert source == "explicit-provider+explicit-model"
 
 
+def test_resolve_runtime_bare_model_does_not_override_feature_routing() -> None:
+    settings = _build_settings_with_bundle()
+
+    runtime, source = _resolve_user_ai_runtime_config(
+        settings,
+        ai_model="gpt-4.1-mini",
+        module_id="novel-inspiration-wizard",
+    )
+
+    assert runtime["api_provider"] == "anthropic"
+    assert runtime["model_name"] == "claude-3-5-sonnet"
+    assert runtime["api_base_url"] == "https://anthropic.example.com/v1"
+    assert source == "feature-routing:novel-inspiration-wizard"
+
+
 def test_resolve_runtime_falls_back_to_routing_default_target() -> None:
     settings = _build_settings_with_bundle()
 

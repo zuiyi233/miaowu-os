@@ -83,6 +83,10 @@ import {
 import { useThread } from "./messages/context";
 import { ModeHoverGuide } from "./mode-hover-guide";
 import { Tooltip } from "./tooltip";
+import {
+  buildFollowupSuggestionsRequestBody,
+  type FollowupSuggestionMessage,
+} from "./input-box-logic";
 
 type InputMode = "flash" | "thinking" | "pro" | "ultra";
 
@@ -364,10 +368,11 @@ export function InputBox({
     }
     lastGeneratedForAiIdRef.current = lastAiId;
 
-    const recent = messagesRef.current
+    const recent: FollowupSuggestionMessage[] = messagesRef.current
       .filter((m) => m.type === "human" || m.type === "ai")
       .map((m) => {
-        const role = m.type === "human" ? "user" : "assistant";
+        const role: FollowupSuggestionMessage["role"] =
+          m.type === "human" ? "user" : "assistant";
         const content = textOfMessage(m) ?? "";
         return { role, content };
       })
@@ -386,11 +391,7 @@ export function InputBox({
     fetch(`${getBackendBaseURL()}/api/threads/${threadId}/suggestions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: recent,
-        n: 3,
-        model_name: context.model_name ?? undefined,
-      }),
+      body: JSON.stringify(buildFollowupSuggestionsRequestBody(recent, 3)),
       signal: controller.signal,
     })
       .then(async (res) => {

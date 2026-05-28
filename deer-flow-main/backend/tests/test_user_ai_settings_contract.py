@@ -407,6 +407,220 @@ def test_apply_managed_newapi_group_bootstrap_creates_group_scoped_providers() -
     assert stored["newapi-managed-vip"]["api_key_encrypted"] == "token-vip"
 
 
+def test_resolve_runtime_matches_explicit_model_to_synced_newapi_group_provider() -> None:
+    settings = Settings(
+        user_id="default_user",
+        api_provider="openai",
+        api_base_url="http://newapi:3000/v1",
+        api_key="default-token",
+        llm_model="default-model",
+        preferences=json.dumps(
+            {
+                "ai_provider_settings": {
+                    "version": 1,
+                    "default_provider_id": "newapi-managed",
+                    "providers": [
+                        {
+                            "id": "newapi-managed",
+                            "name": "NewAPI（default）",
+                            "provider": "openai",
+                            "base_url": "http://newapi:3000/v1",
+                            "models": ["default-model"],
+                            "is_active": True,
+                            "api_key_encrypted": "default-token",
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "default",
+                            "model_groups": {"default": ["default-model"]},
+                            "model_sync_status": "synced",
+                            "model_sync_error": None,
+                        },
+                        {
+                            "id": "newapi-managed-mimo",
+                            "name": "NewAPI（MiMo）",
+                            "provider": "openai",
+                            "base_url": "http://newapi:3000/v1",
+                            "models": ["mimo-v2.5-pro"],
+                            "is_active": False,
+                            "api_key_encrypted": "mimo-token",
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "mimo",
+                            "model_groups": {"mimo": ["mimo-v2.5-pro"]},
+                            "model_sync_status": "synced",
+                            "model_sync_error": None,
+                        },
+                    ],
+                    "client_settings": {"enable_stream_mode": True, "request_timeout": 660000, "max_retries": 2},
+                    "feature_routing_settings": None,
+                }
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    runtime, source = resolve_user_ai_runtime_config(settings, ai_model="mimo-v2.5-pro")
+
+    assert source == "explicit-model-provider-match"
+    assert runtime["model_name"] == "mimo-v2.5-pro"
+    assert runtime["api_key"] == "mimo-token"
+
+
+def test_resolve_runtime_module_routing_ignores_bare_explicit_model() -> None:
+    settings = Settings(
+        user_id="default_user",
+        preferences=json.dumps(
+            {
+                "ai_provider_settings": {
+                    "version": 1,
+                    "default_provider_id": "newapi-managed",
+                    "providers": [
+                        {
+                            "id": "newapi-managed",
+                            "name": "NewAPI（default）",
+                            "provider": "openai",
+                            "base_url": "http://newapi:3000/v1",
+                            "models": ["mimo-v2.5-pro"],
+                            "is_active": True,
+                            "api_key_encrypted": "global-pro-token",
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "default",
+                            "model_groups": {"default": ["mimo-v2.5-pro"]},
+                            "model_sync_status": "synced",
+                            "model_sync_error": None,
+                        },
+                        {
+                            "id": "newapi-managed-mimo25",
+                            "name": "NewAPI（国产）",
+                            "provider": "openai",
+                            "base_url": "http://newapi:3000/v1",
+                            "models": ["mimo-v2.5"],
+                            "is_active": False,
+                            "api_key_encrypted": "suggestions-token",
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "国产",
+                            "model_groups": {"国产": ["mimo-v2.5"]},
+                            "model_sync_status": "synced",
+                            "model_sync_error": None,
+                        },
+                    ],
+                    "client_settings": {"enable_stream_mode": True, "request_timeout": 660000, "max_retries": 2},
+                    "feature_routing_settings": {
+                        "defaultTarget": {"providerId": "newapi-managed", "model": "mimo-v2.5-pro"},
+                        "modules": [
+                            {
+                                "moduleId": "chat-suggestions",
+                                "currentMode": "primary",
+                                "primaryTarget": {"providerId": "newapi-managed-mimo25", "model": "mimo-v2.5"},
+                            }
+                        ],
+                    },
+                }
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    runtime, source = resolve_user_ai_runtime_config(
+        settings,
+        module_id="chat-suggestions",
+        ai_model="mimo-v2.5-pro",
+    )
+
+    assert source == "feature-routing:chat-suggestions"
+    assert runtime["model_name"] == "mimo-v2.5"
+    assert runtime["api_key"] == "suggestions-token"
+
+
+def test_apply_managed_newapi_group_bootstrap_replaces_stale_managed_providers() -> None:
+    fake_db = _FakeDB()
+    fake_db.settings = Settings(
+        user_id="default_user",
+        preferences=json.dumps(
+            {
+                "ai_provider_settings": {
+                    "version": 1,
+                    "default_provider_id": "newapi-managed-old",
+                    "providers": [
+                        {
+                            "id": "newapi-managed-old",
+                            "name": "NewAPI（old）",
+                            "provider": "openai",
+                            "base_url": "http://127.0.0.1:3000/v1",
+                            "models": ["old-model"],
+                            "is_active": True,
+                            "api_key_encrypted": "token-old",
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "old",
+                            "model_groups": {"old": ["old-model"]},
+                            "model_sync_status": "synced",
+                            "model_sync_error": None,
+                        },
+                        {
+                            "id": "manual-provider",
+                            "name": "Manual Provider",
+                            "provider": "custom",
+                            "base_url": "https://manual.example/v1",
+                            "models": ["manual-model"],
+                            "is_active": False,
+                            "api_key_encrypted": "manual-token",
+                            "is_managed": False,
+                            "managed_by": None,
+                            "managed_group": None,
+                            "model_groups": {},
+                            "model_sync_status": None,
+                            "model_sync_error": None,
+                        },
+                    ],
+                    "client_settings": {"enable_stream_mode": True, "request_timeout": 660000, "max_retries": 2},
+                    "feature_routing_settings": None,
+                }
+            },
+            ensure_ascii=False,
+        ),
+    )
+    service = get_ai_settings_service()
+
+    import anyio
+
+    async def _run() -> dict:
+        return await service.apply_managed_newapi_group_bootstrap(
+            user_id="default_user",
+            groups=[
+                {
+                    "group_id": "fresh",
+                    "name": "Fresh",
+                    "base_url": "http://127.0.0.1:3000/v1",
+                    "api_key": "token-fresh",
+                    "models": ["fresh-model"],
+                    "model_groups": {"fresh": ["fresh-model"]},
+                    "model_sync_status": "synced",
+                    "model_sync_error": None,
+                }
+            ],
+            db=fake_db,
+        )
+
+    data = anyio.run(_run)
+
+    provider_ids = [provider["id"] for provider in data["providers"]]
+    assert provider_ids == ["newapi-managed-fresh", "manual-provider"]
+    assert data["default_provider_id"] == "newapi-managed-fresh"
+    assert data["providers"][0]["is_active"] is True
+    assert data["providers"][1]["is_active"] is False
+
+    prefs = json.loads(fake_db.settings.preferences or "{}")
+    stored_ids = [provider["id"] for provider in prefs["ai_provider_settings"]["providers"]]
+    assert stored_ids == provider_ids
+    dumped = json.dumps(prefs, ensure_ascii=False)
+    assert "newapi-managed-old" not in dumped
+    assert "token-old" not in dumped
+    assert "manual-token" in dumped
+
+
 def test_put_ai_settings_encrypts_key_and_mirrors_active_provider() -> None:
     _enable_encryption_for_test()
     fake_db = _FakeDB()
@@ -635,13 +849,73 @@ def test_newapi_sync_groups_merges_catalog_display_name_with_existing_provider(m
     data = resp.json()
     assert len(data["groups"]) == 1
     group = data["groups"][0]
-    assert group["group_id"] == "svip--pro-plus"
+    assert group["group_id"] == "svip-稳定渠道+Pro+plus+正规渠道"
     assert group["name"] == "svip-稳定渠道+Pro+plus+正规渠道"
     assert group["already_synced"] is True
     assert group["has_api_key"] is True
     assert group["model_sync_status"] == "synced"
     assert group["model_count"] == 6
     assert "token-svip" not in json.dumps(data, ensure_ascii=False)
+
+
+def test_newapi_sync_groups_omits_stale_managed_provider_when_catalog_changed(monkeypatch) -> None:
+    fake_db = _FakeDB()
+    fake_db.settings = Settings(
+        user_id="default_user",
+        preferences=json.dumps(
+            {
+                "ai_provider_settings": {
+                    "version": 1,
+                    "default_provider_id": "newapi-managed-svip--pro-plus",
+                    "providers": [
+                        {
+                            "id": "newapi-managed-svip--pro-plus",
+                            "name": "NewAPI（svip-稳定渠道+Pro+plus+正规渠道）",
+                            "provider": "openai",
+                            "base_url": "http://newapi:3000/v1",
+                            "models": [],
+                            "is_active": True,
+                            "api_key_encrypted": None,
+                            "is_managed": True,
+                            "managed_by": "newapi",
+                            "managed_group": "svip--pro-plus",
+                            "model_groups": {},
+                            "model_sync_status": "error",
+                            "model_sync_error": "NewAPI Hub 没有返回该分组的 API Token",
+                        }
+                    ],
+                    "client_settings": {"enable_stream_mode": True, "request_timeout": 660000, "max_retries": 2},
+                    "feature_routing_settings": None,
+                }
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    async def _fake_catalog(*, user_id, db):
+        assert user_id == "default_user"
+        assert db is fake_db
+        return {
+            "svip-稳定渠道+pro+plus+正规渠道": {
+                "name": "svip-稳定渠道+pro+plus+正规渠道",
+                "models": ["svip-model"],
+            },
+        }, []
+
+    monkeypatch.setattr(user_settings, "get_newapi_group_catalog_for_user", _fake_catalog)
+    app = _build_user_settings_app(fake_db)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/user/newapi-sync/groups")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [item["group_id"] for item in data["groups"]] == ["svip-稳定渠道+pro+plus+正规渠道"]
+    assert data["groups"][0]["already_synced"] is False
+    assert data["groups"][0]["model_sync_status"] is None
+    assert data["groups"][0]["model_sync_error"] is None
+    dumped = json.dumps(data, ensure_ascii=False)
+    assert "NewAPI Hub 没有返回该分组的 API Token" not in dumped
 
 
 def test_newapi_sync_groups_applies_selected_and_manual_groups(monkeypatch) -> None:
@@ -756,6 +1030,67 @@ def test_newapi_sync_groups_empty_request_falls_back_to_discovered_groups(monkey
     dumped = json.dumps([item.__dict__ for item in result.results], ensure_ascii=False)
     assert "token-charity" not in dumped
     assert "token-domestic" not in dumped
+
+
+def test_newapi_group_bootstrap_stops_after_rate_limit(monkeypatch) -> None:
+    import anyio
+    import httpx
+
+    from app.gateway.auth import newapi_oauth
+
+    calls: list[str] = []
+
+    class _FakeResponse:
+        def __init__(self, status_code: int, group: str) -> None:
+            self.status_code = status_code
+            self.headers = {"Retry-After": "1200"} if status_code == 429 else {}
+            self._group = group
+
+        def json(self):
+            return {
+                "data": {
+                    "group": self._group,
+                    "hub_api_token": {"key": f"token-{self._group}"},
+                    "model_sync_status": "synced",
+                }
+            }
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, _url, *, json, headers):
+            group = json["group"]
+            calls.append(group)
+            return _FakeResponse(429 if group == "g3" else 200, group)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(newapi_oauth, "NEWAPI_GROUP_BOOTSTRAP_DELAY_SECONDS", 0)
+
+    async def _run():
+        return await newapi_oauth._bootstrap_newapi_group_tokens(
+            settings=newapi_oauth.NewAPIOAuthSettings(enabled=True, issuer="https://xg.example.test", client_id="miaowu"),
+            authorization_token="system-token",
+            groups=["g1", "g2", "g3", "g4"],
+        )
+
+    results = anyio.run(_run)
+
+    assert calls == ["g1", "g2", "g3"]
+    assert results["g1"]["model_sync_status"] == "synced"
+    assert results["g2"]["model_sync_status"] == "synced"
+    assert results["g3"]["model_sync_status"] == "error"
+    assert "1200" in results["g3"]["model_sync_error"]
+    assert results["g4"]["model_sync_status"] == "error"
+    assert "限流暂停" in results["g4"]["model_sync_error"]
+    dumped = json.dumps(results, ensure_ascii=False)
+    assert "system-token" not in dumped
 
 
 def test_newapi_group_items_keep_requested_group_when_bootstrap_reports_default() -> None:

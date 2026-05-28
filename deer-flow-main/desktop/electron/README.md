@@ -2,7 +2,7 @@
 
 Windows Electron shell for the production Miaowu-OS deployment.
 
-This client loads `https://xs.miaowu.bond` and uses the remote server backend. It does not start a local FastAPI gateway, local database, local model runtime, or `.desktop-runtime` service bundle.
+This client loads `https://xs.mwapi.bond` and uses the remote server backend. It does not start a local FastAPI gateway, local database, local model runtime, or `.desktop-runtime` service bundle.
 
 ## Development
 
@@ -12,11 +12,11 @@ npm install
 npm run start
 ```
 
-The app opens `https://xs.miaowu.bond`. The main-window navigation allowlist is limited to Miaowu itself:
+The app opens `https://xs.mwapi.bond`. The main-window navigation allowlist is limited to Miaowu itself:
 
-- `xs.miaowu.bond` for Miaowu-OS
+- `xs.mwapi.bond` for Miaowu-OS
 
-NewAPI/OIDC authorization at `xg.miaowu.bond` opens in a controlled modal login window. When that flow redirects back to `xs.miaowu.bond`, the modal closes and the main window loads the callback or workspace URL. Other HTTP(S) links are opened with the system browser instead of replacing the app window.
+NewAPI/OIDC authorization at `xg.mwapi.bond` opens in a controlled modal login window. When that flow redirects back to `xs.mwapi.bond`, the modal closes and the main window loads the callback or workspace URL. Other HTTP(S) links are opened with the system browser instead of replacing the app window.
 
 ## Validation
 

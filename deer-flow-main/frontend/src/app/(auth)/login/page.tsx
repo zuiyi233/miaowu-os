@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { resolveApiUrl } from "@/core/api/fetcher";
 import { useAuth } from "@/core/auth/AuthProvider";
 
-const DEFAULT_NEWAPI_PORTAL_URL = "https://xg.miaowu.bond";
+const DEFAULT_NEWAPI_PORTAL_URL = "https://xg.mwapi.bond";
 
 /**
  * Validate next parameter.

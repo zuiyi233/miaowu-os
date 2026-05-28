@@ -29,6 +29,35 @@ def test_parse_json_string_list_rejects_non_list():
     assert suggestions._parse_json_string_list(text) is None
 
 
+def test_generate_suggestions_from_raw_accepts_json_object_shape():
+    text = '{"suggestions": ["Q1", "Q2"]}'
+    assert suggestions._generate_suggestions_from_raw(text, 3) == ["Q1", "Q2"]
+
+
+def test_generate_suggestions_from_raw_accepts_numbered_plain_text():
+    text = "1. 你想继续扩展这个设定吗？\n2. 是否需要改写成更紧张的节奏？\n3. 要不要生成下一章？"
+    assert suggestions._generate_suggestions_from_raw(text, 2) == [
+        "你想继续扩展这个设定吗？",
+        "是否需要改写成更紧张的节奏？",
+    ]
+
+
+def test_extract_response_text_accepts_dict_content_with_suggestions():
+    content = {"suggestions": ["Q1", "Q2"]}
+    assert suggestions._generate_suggestions_from_raw(suggestions._extract_response_text(content), 3) == ["Q1", "Q2"]
+
+
+def test_fallback_suggestions_from_conversation_uses_user_language():
+    messages = [
+        suggestions.SuggestionMessage(role="user", content="帮我继续写这一章"),
+        suggestions.SuggestionMessage(role="assistant", content="可以，我已经给出续写。"),
+    ]
+
+    result = suggestions._fallback_suggestions_from_conversation(messages, 2)
+
+    assert result == ["你能继续展开这个思路吗？", "下一步应该怎么做？"]
+
+
 def test_format_conversation_formats_roles():
     messages = [
         suggestions.SuggestionMessage(role="User", content="Hi"),
@@ -139,6 +168,29 @@ def test_generate_suggestions_returns_empty_on_model_error(monkeypatch):
     assert result.suggestions == []
 
 
+def test_generate_suggestions_returns_local_fallback_when_model_output_empty(monkeypatch):
+    req = _build_req(
+        n=2,
+        messages=[
+            suggestions.SuggestionMessage(role="user", content="帮我继续写这一章"),
+            suggestions.SuggestionMessage(role="assistant", content="可以，我已经给出续写。"),
+        ],
+    )
+    fake_ai_service = MagicMock()
+    fake_ai_service.generate_text_with_messages = AsyncMock(return_value={"content": ""})
+
+    with patch(
+        "app.gateway.routers.suggestions.get_user_ai_service_with_overrides",
+        new_callable=AsyncMock,
+        return_value=fake_ai_service,
+    ):
+        result = asyncio.run(
+            suggestions.generate_suggestions("t1", req, request=_make_fake_request(), db=_make_fake_db())
+        )
+
+    assert result.suggestions == ["你能继续展开这个思路吗？", "下一步应该怎么做？"]
+
+
 def test_generate_suggestions_only_fallbacks_for_routing_parse_failures(monkeypatch):
     req = _build_req(model_name="gpt-4o", module_id="chat-suggestions")
     primary_service = MagicMock()
@@ -240,7 +292,7 @@ def test_generate_suggestions_passes_module_id_to_routing(monkeypatch):
         mock_override.assert_called_once()
         call_kwargs = mock_override.call_args.kwargs
         assert call_kwargs.get("module_id") == "chat-suggestions"
-        assert call_kwargs.get("ai_model") == "gpt-5.4-mini"
+        assert call_kwargs.get("ai_model") is None
         assert result.suggestions == ["Q1"]
 
 

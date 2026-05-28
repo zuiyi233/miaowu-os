@@ -25,7 +25,7 @@ services:
       - PORT=3000
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
       - DEER_FLOW_INTERNAL_GATEWAY_BASE_URL=http://gateway:8551
-      - DEER_FLOW_TRUSTED_ORIGINS=${DEER_FLOW_TRUSTED_ORIGINS:-https://xs.miaowu.bond}
+      - DEER_FLOW_TRUSTED_ORIGINS=${DEER_FLOW_TRUSTED_ORIGINS:-https://cfxs.mwapi.bond,https://xs.mwapi.bond}
     env_file:
       - path: .env.production
         required: false

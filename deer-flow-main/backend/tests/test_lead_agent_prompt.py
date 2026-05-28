@@ -32,6 +32,25 @@ def test_build_self_update_section_present_for_custom_agent():
     assert "update_agent" in section
 
 
+def test_apply_prompt_template_uses_miaowu_default_agent_name(monkeypatch):
+    config = SimpleNamespace(
+        sandbox=SimpleNamespace(mounts=[]),
+        skills=SimpleNamespace(container_path="/mnt/skills"),
+        skill_evolution=SimpleNamespace(enabled=False),
+        tool_search=SimpleNamespace(enabled=False),
+        memory=SimpleNamespace(enabled=False, injection_enabled=True, max_injection_tokens=2000),
+        acp_agents={},
+    )
+    monkeypatch.setattr(prompt_module, "get_or_new_skill_storage", lambda **kwargs: SimpleNamespace(load_skills=lambda enabled_only=True: []))
+    monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None: "")
+
+    prompt = prompt_module.apply_prompt_template(app_config=config)
+
+    assert "You are Miaowu OS, the AI assistant inside Miaowu OS" in prompt
+    assert "AI creative workspace for long-form fiction" in prompt
+    assert "DeerFlow 2.0" not in prompt
+
+
 def test_build_custom_mounts_section_returns_empty_when_no_mounts(monkeypatch):
     config = SimpleNamespace(sandbox=SimpleNamespace(mounts=[]))
     monkeypatch.setattr("deerflow.config.get_app_config", lambda: config)

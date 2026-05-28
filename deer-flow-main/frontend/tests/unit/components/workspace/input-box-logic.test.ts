@@ -1,6 +1,9 @@
 import { expect, test } from "vitest";
 
-import { shouldShowFollowups } from "@/components/workspace/input-box-logic";
+import {
+  buildFollowupSuggestionsRequestBody,
+  shouldShowFollowups,
+} from "@/components/workspace/input-box-logic";
 
 test("should hide followups when pending clarification exists", () => {
   expect(
@@ -39,4 +42,24 @@ test("should hide followups when hidden flag is set", () => {
       followupsCount: 2,
     }),
   ).toBe(false);
+});
+
+test("should route followup suggestions through configured feature module", () => {
+  const payload = buildFollowupSuggestionsRequestBody(
+    [
+      { role: "user", content: "继续写这一章" },
+      { role: "assistant", content: "这一章已经推进到转折点。" },
+    ],
+    3,
+  );
+
+  expect(payload).toEqual({
+    messages: [
+      { role: "user", content: "继续写这一章" },
+      { role: "assistant", content: "这一章已经推进到转折点。" },
+    ],
+    n: 3,
+    module_id: "chat-suggestions",
+  });
+  expect("model_name" in payload).toBe(false);
 });

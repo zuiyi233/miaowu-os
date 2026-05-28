@@ -102,9 +102,77 @@ def _parse_json_string_list(text: str) -> list[str] | None:
     return out
 
 
+def _coerce_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        s = item.strip()
+        if s:
+            out.append(s)
+    return out
+
+
+def _parse_json_suggestions_object(text: str) -> list[str] | None:
+    if not text or not text.strip():
+        return None
+
+    cleaned = _remove_thinking_tags(text)
+    candidate = _strip_markdown_code_fence(cleaned)
+
+    start = candidate.find("{")
+    end = candidate.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        data = json.loads(candidate[start : end + 1])
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    for key in ("suggestions", "questions", "followups", "follow_up_questions"):
+        parsed = _coerce_string_list(data.get(key))
+        if parsed:
+            return parsed
+    return None
+
+
+def _parse_plain_text_suggestions(text: str) -> list[str]:
+    if not text or not text.strip():
+        return []
+
+    cleaned = _strip_markdown_code_fence(_remove_thinking_tags(text))
+    out: list[str] = []
+    for raw_line in cleaned.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = re.sub(r"^\s*(?:[-*•]\s+|\d+[\).、]\s*)", "", line).strip()
+        line = line.strip('"“”')
+        if not line:
+            continue
+        if line.startswith(("[", "{", "```")):
+            continue
+        out.append(line)
+    return out
+
+
 def _extract_response_text(content: object) -> str:
     if isinstance(content, str):
         return content
+    if isinstance(content, dict):
+        for key in ("content", "text", "output_text", "message"):
+            value = content.get(key)
+            if isinstance(value, str):
+                return value
+        for key in ("suggestions", "questions", "followups", "follow_up_questions"):
+            value = content.get(key)
+            if isinstance(value, list):
+                return json.dumps({key: value}, ensure_ascii=False)
+        return json.dumps(content, ensure_ascii=False)
     if isinstance(content, list):
         parts: list[str] = []
         for block in content:
@@ -121,7 +189,7 @@ def _extract_response_text(content: object) -> str:
 
 
 def _generate_suggestions_from_raw(raw: str, n: int) -> list[str]:
-    suggestions = _parse_json_string_list(raw) or []
+    suggestions = _parse_json_string_list(raw) or _parse_json_suggestions_object(raw) or _parse_plain_text_suggestions(raw)
     cleaned = [s.replace("\n", " ").strip() for s in suggestions if s.strip()]
     return cleaned[:n]
 
@@ -202,6 +270,44 @@ def _format_conversation(messages: list[SuggestionMessage]) -> str:
     return "\n".join(parts).strip()
 
 
+def _fallback_suggestions_from_conversation(messages: list[SuggestionMessage], n: int) -> list[str]:
+    last_user = next(
+        (
+            m.content.strip()
+            for m in reversed(messages)
+            if m.role.strip().lower() in {"user", "human"} and m.content.strip()
+        ),
+        "",
+    )
+    last_assistant = next(
+        (
+            m.content.strip()
+            for m in reversed(messages)
+            if m.role.strip().lower() in {"assistant", "ai"} and m.content.strip()
+        ),
+        "",
+    )
+    sample = f"{last_user}\n{last_assistant}".strip()
+    has_cjk = bool(re.search(r"[\u4e00-\u9fff]", sample))
+    if has_cjk:
+        candidates = [
+            "你能继续展开这个思路吗？",
+            "下一步应该怎么做？",
+            "能给我一个更具体的方案吗？",
+            "有没有需要注意的风险？",
+            "可以换一种写法再生成吗？",
+        ]
+    else:
+        candidates = [
+            "Can you expand on this?",
+            "What should I do next?",
+            "Can you give a more specific plan?",
+            "What risks should I watch for?",
+            "Can you rewrite it another way?",
+        ]
+    return candidates[:n]
+
+
 @router.post(
     "/threads/{thread_id}/suggestions",
     response_model=SuggestionsResponse,
@@ -242,7 +348,7 @@ async def generate_suggestions(
             request=request,
             db=db,
             module_id=body.module_id,
-            ai_model=body.model_name,
+            ai_model=body.model_name if not body.module_id else None,
         )
 
         cleaned = await _run_suggestions_generation(
@@ -252,12 +358,16 @@ async def generate_suggestions(
             n=n,
             model_name=body.model_name,
         )
-        logger.debug(
-            "Suggestions generated: thread_id=%s module_id=%s count=%d cleaned=%s",
+        source = "model"
+        if not cleaned:
+            cleaned = _fallback_suggestions_from_conversation(body.messages, n)
+            source = "local-fallback-empty-model-output"
+        logger.info(
+            "Suggestions generated: thread_id=%s module_id=%s count=%d source=%s",
             thread_id,
             body.module_id,
             len(cleaned),
-            cleaned,
+            source,
         )
         return SuggestionsResponse(suggestions=cleaned)
     except Exception as exc:
@@ -279,7 +389,11 @@ async def generate_suggestions(
                     n=n,
                     model_name=body.model_name,
                 )
-                logger.debug("Fallback suggestions generated: thread_id=%s count=%d", thread_id, len(cleaned))
+                source = "model-fallback-no-module"
+                if not cleaned:
+                    cleaned = _fallback_suggestions_from_conversation(body.messages, n)
+                    source = "local-fallback-empty-model-output"
+                logger.info("Fallback suggestions generated: thread_id=%s count=%d source=%s", thread_id, len(cleaned), source)
                 return SuggestionsResponse(suggestions=cleaned)
             except Exception as fallback_exc:
                 logger.exception("Fallback suggestions also failed: thread_id=%s err=%s", thread_id, fallback_exc)

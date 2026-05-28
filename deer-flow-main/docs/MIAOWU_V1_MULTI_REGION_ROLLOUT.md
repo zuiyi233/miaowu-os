@@ -1,8 +1,37 @@
 # Miaowu v1 正式多地部署 Runbook
 
-更新时间：2026-05-23
+更新时间：2026-05-28
 
-## 2026-05-24 实际上线状态
+## 2026-05-28 当前生产入口真值
+
+`miaowu.bond` 已因供应商暂停降级为历史记录域名；小说/Miaowu-OS 当前生产入口统一迁移到 `mwapi.bond`：
+
+- Miaowu-OS Web 主入口：`https://cfxs.mwapi.bond`
+- Miaowu-OS 直连/桌面兼容入口：`https://xs.mwapi.bond`
+- NewAPI/OIDC 浏览器授权入口：`https://xg.mwapi.bond`
+- NewAPI OIDC Client ID：`miaowu-os-xs-prod`
+- 当前主 Redirect URI：`https://cfxs.mwapi.bond/api/v1/auth/callback/newapi`
+- 兼容 Redirect URI：`https://xs.mwapi.bond/api/v1/auth/callback/newapi`
+- 旧 Redirect URI：`https://xs.miaowu.bond/api/v1/auth/callback/newapi` 已从 Provider 白名单移除，仅保留在历史记录中。
+- 162 生产 env 当前值：
+  - `NEWAPI_OAUTH_ISSUER=https://xg.mwapi.bond`
+  - `NEWAPI_OAUTH_PUBLIC_ISSUER=https://xg.mwapi.bond`
+  - `NEWAPI_OAUTH_REDIRECT_URI=https://cfxs.mwapi.bond/api/v1/auth/callback/newapi`
+  - `BETTER_AUTH_URL=https://cfxs.mwapi.bond`
+  - `MIAOWU_PUBLIC_FRONTEND_URL=https://cfxs.mwapi.bond`
+  - `DEER_FLOW_TRUSTED_ORIGINS` / `GATEWAY_CORS_ORIGINS` 不再包含 `https://xs.miaowu.bond`
+  - `DEER_FLOW_TRUSTED_ORIGINS` / `GATEWAY_CORS_ORIGINS` 同时包含 `https://cfxs.mwapi.bond` 与 `https://xs.mwapi.bond`
+- 已验证：
+  - `GET https://cfxs.mwapi.bond/health` -> `HTTP 200 application/json`
+  - `GET https://cfxs.mwapi.bond/api/v1/auth/login/newapi?next=/workspace` -> `HTTP 302` 到 `https://xg.mwapi.bond/oauth/authorize`，redirect URI 为 `https://cfxs.mwapi.bond/api/v1/auth/callback/newapi`
+  - `GET https://xs.mwapi.bond/health` -> `HTTP 200 application/json`
+  - `GET https://xs.mwapi.bond/api/v1/auth/setup-status` -> `HTTP 200`
+  - `GET https://xs.mwapi.bond/api/v1/auth/login/newapi?next=/workspace` -> `HTTP 302` 到 `https://xg.mwapi.bond/oauth/authorize`，redirect URI 为 `https://xs.mwapi.bond/api/v1/auth/callback/newapi`
+  - `GET https://xg.mwapi.bond/oauth/authorize?...redirect_uri=https%3A%2F%2Fxs.mwapi.bond%2Fapi%2Fv1%2Fauth%2Fcallback%2Fnewapi...` -> `HTTP 302 /sign-in?...`
+  - 使用旧 `xs.miaowu.bond` callback 调用 `xg.mwapi.bond/oauth/authorize` -> `HTTP 400 application/json`
+  - `scripts/smoke-miaowu-multiregion.ps1` 默认目标已改为 `https://xs.mwapi.bond`，未登录 smoke 通过。
+
+## 2026-05-24 历史上线状态（旧域已失效，仅作记录）
 
 `xs.miaowu.bond` 已完成正式入口试运行上线，并已从 Cloudflare 橙云切到腾讯 EdgeOne：
 
@@ -32,7 +61,7 @@
 - 本地磁盘状态审计仍有启动日志证据需要收口：legacy `novel_store.json` 和 LangGraph `InMemoryStore`。
 - Windows PowerShell smoke 对当前 EdgeOne/源站证书链会报 TLS 信任错误；本轮用 `curl -k` 验证 HTTP 层，浏览器侧以 EdgeOne 证书实际信任状态为准。
 
-本次未修改 `xg.miaowu.bond`、`api.miaowu.bond`、`1.miaowu.bond`、`2.miaowu.bond` 的既有角色。
+以上 2026-05-24 记录仅用于追溯当时上线过程；不要再按 `xs.miaowu.bond` / `xg.miaowu.bond` 作为当前生产配置执行。
 
 ## 结论
 
@@ -48,8 +77,10 @@ Miaowu v1 可以进入正式多地部署准备，但第一版只部署为：
 
 | 名称 | v1 角色 | 约束 |
 |---|---|---|
-| `xs.miaowu.bond` | Miaowu 正式公网入口 | NewAPI OIDC callback 和 frontend public URL 都使用此域名 |
-| `xg.miaowu.bond` | 现有 NewAPI 入口 | 不得改动、挪用、覆盖或重路由 |
+| `cfxs.mwapi.bond` | Miaowu 正式 Cloudflare 防护公网入口 | NewAPI OIDC 主 callback 和 frontend public URL 都使用此域名 |
+| `xs.mwapi.bond` | Miaowu 直连/桌面兼容入口 | 可保留为兼容 callback，但不作为新的主登录回调 |
+| `xg.mwapi.bond` | 现有 NewAPI 入口 | 不得改动、挪用、覆盖或重路由 |
+| `xs.miaowu.bond` / `xg.miaowu.bond` | 历史记录域名 | 旧域已不可用，不作为兼容入口或验收入口 |
 | 31 | PostgreSQL 候选主库 + verify/candidate 栈 | 不默认承载公网生产主入口 |
 | 161 | 第一生产 frontend/gateway | 通过 health/smoke 后接正式入口 |
 | 162 | standby frontend/gateway | 161 异常时切换 |
@@ -68,18 +99,19 @@ AUTH_JWT_SECRET=<same-secret-on-all-gateways>
 CRYPTO_SECRET=<same-secret-on-all-gateways>
 
 NEWAPI_OAUTH_ENABLED=true
-NEWAPI_OAUTH_ISSUER=https://<existing-newapi-domain>
+NEWAPI_OAUTH_ISSUER=https://xg.mwapi.bond
+NEWAPI_OAUTH_PUBLIC_ISSUER=https://xg.mwapi.bond
 NEWAPI_OAUTH_CLIENT_ID=<newapi-oidc-client-id>
 NEWAPI_OAUTH_CLIENT_SECRET=<newapi-oidc-client-secret>
-NEWAPI_OAUTH_REDIRECT_URI=https://xs.miaowu.bond/api/v1/auth/callback/newapi
+NEWAPI_OAUTH_REDIRECT_URI=https://cfxs.mwapi.bond/api/v1/auth/callback/newapi
 NEWAPI_OAUTH_SCOPES=openid profile email
-MIAOWU_PUBLIC_FRONTEND_URL=https://xs.miaowu.bond
+MIAOWU_PUBLIC_FRONTEND_URL=https://cfxs.mwapi.bond
 
-CORS_ORIGINS=https://xs.miaowu.bond
-GATEWAY_CORS_ORIGINS=https://xs.miaowu.bond
-DEER_FLOW_TRUSTED_ORIGINS=https://xs.miaowu.bond
+CORS_ORIGINS=https://cfxs.mwapi.bond,https://xs.mwapi.bond
+GATEWAY_CORS_ORIGINS=https://cfxs.mwapi.bond,https://xs.mwapi.bond
+DEER_FLOW_TRUSTED_ORIGINS=https://cfxs.mwapi.bond,https://xs.mwapi.bond
 
-MIAOWU_NEWAPI_GROUPS_JSON=[{"id":"default","name":"默认分组","base_url":"https://<newapi-domain>/v1","api_key":"sk-..."}]
+MIAOWU_NEWAPI_GROUPS_JSON=[{"id":"default","name":"默认分组","base_url":"https://xg.mwapi.bond/v1","api_key":"sk-..."}]
 
 MIAOWU_OBJECT_STORAGE_PROVIDER=s3
 MIAOWU_OBJECT_STORAGE_ENDPOINT=http://172.22.22.170:18334

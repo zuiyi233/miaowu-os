@@ -390,11 +390,7 @@ class NewAPISyncGroupsApplyResponse(BaseModel):
 
 
 def _newapi_provider_id_for_response(group_id: str) -> str:
-    normalized = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in group_id.strip().lower())
-    normalized = "-".join(part for part in normalized.split("-") if part)
-    if not normalized:
-        raw = group_id.strip()
-        normalized = f"group-{hashlib.sha1(raw.encode('utf-8')).hexdigest()[:12]}" if raw else "default"
+    normalized = _newapi_ascii_safe_group_id(group_id)
     if normalized == "default":
         return MANAGED_NEWAPI_PROVIDER_ID
     return f"{MANAGED_NEWAPI_PROVIDER_ID}-{normalized}"
@@ -467,6 +463,17 @@ def _newapi_provider_aliases(provider: dict[str, Any]) -> set[str]:
     return aliases
 
 
+def _is_reusable_newapi_sync_provider(provider: dict[str, Any]) -> bool:
+    if not provider:
+        return False
+    if provider.get("has_api_key") is True:
+        return True
+    models = provider.get("models")
+    if isinstance(models, list) and any(isinstance(item, str) and item.strip() for item in models):
+        return True
+    return provider.get("model_sync_status") not in {"error", "empty"}
+
+
 def _merge_newapi_sync_group_ids(
     catalog: dict[str, dict[str, Any]],
     provider_by_group: dict[str, dict[str, Any]],
@@ -481,8 +488,10 @@ def _merge_newapi_sync_group_ids(
     for catalog_group, catalog_item in catalog.items():
         aliases = _newapi_catalog_item_aliases(catalog_group, catalog_item)
         provider_group = next((provider_alias_index[alias] for alias in aliases if alias in provider_alias_index), None)
-        canonical_group = provider_group or catalog_group
-        provider = provider_by_group.get(canonical_group.lower(), {})
+        canonical_group = catalog_group
+        provider = provider_by_group.get((provider_group or "").lower(), {}) if provider_group else {}
+        if not _is_reusable_newapi_sync_provider(provider):
+            provider = {}
         merged[canonical_group.lower()] = (canonical_group, catalog_item, provider)
         seen_catalog.update(aliases)
 

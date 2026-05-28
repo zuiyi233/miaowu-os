@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const DEFAULT_NEWAPI_PORTAL_URL = "https://xg.miaowu.bond";
+const DEFAULT_NEWAPI_PORTAL_URL = "https://xg.mwapi.bond";
 
 function normalizeUrl(value: string | undefined): string {
   const trimmed = value?.trim();

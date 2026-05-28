@@ -1235,6 +1235,59 @@ def _provider_models(provider_record: dict[str, Any] | None) -> list[str]:
     return parsed
 
 
+def _find_provider_record_for_model(
+    bundle: AIProviderSettings,
+    model_name: str | None,
+    *,
+    exclude_provider_id: str | None = None,
+) -> ProviderRecord | None:
+    normalized_model = _as_non_empty_str(model_name)
+    if not normalized_model:
+        return None
+
+    excluded = _as_non_empty_str(exclude_provider_id)
+    providers = bundle.get("providers")
+    if not isinstance(providers, list):
+        return None
+
+    for provider in providers:
+        if not isinstance(provider, dict):
+            continue
+        provider_id = _as_non_empty_str(provider.get("id"))
+        if excluded and provider_id == excluded:
+            continue
+        if normalized_model in _provider_models(provider):
+            return provider
+
+    return None
+
+
+def _apply_provider_record_to_runtime(
+    runtime: UserAIRuntimeConfig,
+    provider_record: dict[str, Any],
+) -> None:
+    runtime["api_provider"] = _as_non_empty_str(provider_record.get("provider")) or runtime["api_provider"]
+    runtime["api_base_url"] = _as_non_empty_str(provider_record.get("base_url")) or ""
+
+    provider_secret = _provider_secret_for_runtime(provider_record)
+    if provider_secret is not None:
+        runtime["api_key"] = provider_secret
+
+    provider_temperature = provider_record.get("temperature")
+    if provider_temperature is not None:
+        try:
+            runtime["temperature"] = float(provider_temperature)
+        except Exception:
+            pass
+
+    provider_max_tokens = provider_record.get("max_tokens")
+    if provider_max_tokens is not None:
+        try:
+            runtime["max_tokens"] = int(provider_max_tokens)
+        except Exception:
+            pass
+
+
 def resolve_user_ai_runtime_config(
     settings: Settings,
     *,
@@ -1264,6 +1317,7 @@ def resolve_user_ai_runtime_config(
     explicit_provider_id = _as_non_empty_str(ai_provider_id)
     explicit_model_name = _as_non_empty_str(ai_model)
     normalized_module_id = _as_non_empty_str(module_id)
+    explicit_model_overrides_module = explicit_provider_id is not None or normalized_module_id is None
     routed_provider_id: str | None = None
     routed_model: str | None = None
 
@@ -1281,31 +1335,28 @@ def resolve_user_ai_runtime_config(
         )
 
     if provider_record is not None:
-        runtime["api_provider"] = _as_non_empty_str(provider_record.get("provider")) or runtime["api_provider"]
-        runtime["api_base_url"] = _as_non_empty_str(provider_record.get("base_url")) or ""
-
-        provider_secret = _provider_secret_for_runtime(provider_record)
-        if provider_secret is not None:
-            runtime["api_key"] = provider_secret
-
-        provider_temperature = provider_record.get("temperature")
-        if provider_temperature is not None:
-            try:
-                runtime["temperature"] = float(provider_temperature)
-            except Exception:
-                pass
-
-        provider_max_tokens = provider_record.get("max_tokens")
-        if provider_max_tokens is not None:
-            try:
-                runtime["max_tokens"] = int(provider_max_tokens)
-            except Exception:
-                pass
+        _apply_provider_record_to_runtime(runtime, provider_record)
 
     provider_models = _provider_models(provider_record)
-    if explicit_model_name:
+    if explicit_model_name and explicit_model_overrides_module:
+        if explicit_provider_id is None and explicit_model_name not in provider_models:
+            matched_provider = _find_provider_record_for_model(
+                ai_provider_settings,
+                explicit_model_name,
+                exclude_provider_id=target_provider_id,
+            )
+            if matched_provider is not None:
+                provider_record = matched_provider
+                provider_models = _provider_models(provider_record)
+                _apply_provider_record_to_runtime(runtime, provider_record)
+
         runtime["model_name"] = explicit_model_name
-        source = "explicit-provider+explicit-model" if explicit_provider_id and provider_record is not None else "explicit-model"
+        if explicit_provider_id and provider_record is not None:
+            source = "explicit-provider+explicit-model"
+        elif provider_record is not None and explicit_model_name in provider_models:
+            source = "explicit-model-provider-match"
+        else:
+            source = "explicit-model"
     elif routed_model:
         if not provider_models or routed_model in provider_models:
             runtime["model_name"] = routed_model
@@ -1316,6 +1367,14 @@ def resolve_user_ai_runtime_config(
     elif provider_models:
         runtime["model_name"] = provider_models[0]
         source = "provider-default-model"
+
+    if explicit_model_name and not explicit_model_overrides_module and routed_model:
+        logger.info(
+            "Ignoring bare explicit ai_model because module routing is configured: module=%s requested_model=%s routed_model=%s",
+            normalized_module_id,
+            explicit_model_name,
+            runtime["model_name"],
+        )
 
     if explicit_provider_id and not explicit_model_name and provider_record is not None:
         source = "explicit-provider"

@@ -24,6 +24,7 @@ from app.gateway.auth.newapi_oauth import (
     build_newapi_authorize_url,
     exchange_newapi_code_for_user,
     get_newapi_oauth_settings,
+    should_use_frontend_oauth_complete_page,
 )
 from app.gateway.csrf_middleware import CSRF_COOKIE_NAME, generate_csrf_token, is_secure_request
 from app.gateway.deps import get_current_user_from_request, get_local_provider
@@ -441,8 +442,13 @@ async def callback_newapi(
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     token = create_access_token(str(login_result.user.id), token_version=login_result.user.token_version)
+    redirect_url = (
+        build_frontend_oauth_complete_url(login_result.next_path)
+        if should_use_frontend_oauth_complete_page()
+        else build_frontend_redirect_url(login_result.next_path)
+    )
     response = RedirectResponse(
-        build_frontend_oauth_complete_url(login_result.next_path),
+        redirect_url,
         status_code=status.HTTP_302_FOUND,
     )
     _set_session_cookie(response, token, request)

@@ -1,9 +1,9 @@
 const { app, BrowserWindow, dialog, shell } = require("electron");
 const { autoUpdater } = require("electron-updater");
 
-const APP_URL = "https://xs.miaowu.bond";
-const MIAOWU_HOST = "xs.miaowu.bond";
-const OIDC_HOST = "xg.miaowu.bond";
+const APP_URL = "https://xs.mwapi.bond";
+const MIAOWU_HOST = "xs.mwapi.bond";
+const OIDC_HOST = "xg.mwapi.bond";
 const isDevelopment = !app.isPackaged;
 
 let mainWindow = null;

@@ -1,3 +1,5 @@
+import { CHAT_SUGGESTIONS_MODULE_ID } from "@/core/ai/feature-routing";
+
 export type FollowupsVisibilityParams = {
   disabled?: boolean;
   isNewThread?: boolean;
@@ -22,4 +24,26 @@ export function shouldShowFollowups({
     !followupsHidden &&
     (followupsLoading || followupsCount > 0)
   );
+}
+
+export type FollowupSuggestionMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type FollowupSuggestionsRequestBody = {
+  messages: FollowupSuggestionMessage[];
+  n: number;
+  module_id: typeof CHAT_SUGGESTIONS_MODULE_ID;
+};
+
+export function buildFollowupSuggestionsRequestBody(
+  messages: FollowupSuggestionMessage[],
+  n = 3,
+): FollowupSuggestionsRequestBody {
+  return {
+    messages,
+    n,
+    module_id: CHAT_SUGGESTIONS_MODULE_ID,
+  };
 }
