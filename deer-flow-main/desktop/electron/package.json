@@ -1,0 +1,60 @@
+{
+  "name": "miaowu-os-desktop",
+  "version": "0.1.0",
+  "description": "Miaowu-OS Windows desktop shell for the production remote backend.",
+  "private": true,
+  "main": "src/main.cjs",
+  "author": "Miaowu-OS",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check src/main.cjs",
+    "pack": "electron-builder --dir",
+    "dist:win": "electron-builder --win nsis"
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2"
+  },
+  "devDependencies": {
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "bond.miaowu.os.desktop",
+    "productName": "Miaowu OS",
+    "artifactName": "MiaowuOS-Setup-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Miaowu OS"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "zuiyi233",
+        "repo": "miaowu-os",
+        "releaseType": "release"
+      }
+    ]
+  }
+}

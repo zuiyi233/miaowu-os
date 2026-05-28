@@ -17,6 +17,7 @@ from app.gateway.auth.newapi_oauth import (
     NewAPIUserInfo,
     _normalize_local_email,
     bootstrap_user_ai_settings_from_newapi,
+    build_frontend_oauth_complete_url,
     build_frontend_redirect_url,
     build_newapi_authorize_url,
     create_newapi_state,
@@ -60,6 +61,24 @@ def test_build_frontend_redirect_url_rejects_external_next(monkeypatch):
     monkeypatch.setenv("MIAOWU_PUBLIC_FRONTEND_URL", "http://127.0.0.1:14560")
 
     assert build_frontend_redirect_url("https://evil.example/phish") == "http://127.0.0.1:14560/workspace"
+
+
+def test_build_frontend_oauth_complete_url_preserves_safe_next(monkeypatch):
+    monkeypatch.setenv("MIAOWU_PUBLIC_FRONTEND_URL", "http://127.0.0.1:14560")
+
+    assert (
+        build_frontend_oauth_complete_url("/workspace?tab=account")
+        == "http://127.0.0.1:14560/auth/newapi/complete?next=%2Fworkspace%3Ftab%3Daccount"
+    )
+
+
+def test_build_frontend_oauth_complete_url_rejects_external_next(monkeypatch):
+    monkeypatch.setenv("MIAOWU_PUBLIC_FRONTEND_URL", "http://127.0.0.1:14560")
+
+    assert (
+        build_frontend_oauth_complete_url("https://evil.example/phish")
+        == "http://127.0.0.1:14560/auth/newapi/complete?next=%2Fworkspace"
+    )
 
 
 def test_build_newapi_authorize_url(monkeypatch):

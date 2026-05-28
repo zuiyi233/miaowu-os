@@ -32,12 +32,9 @@ function validateNextParam(next: string | null): string | null {
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { isAuthenticated, refreshUser } = useAuth();
+  const { isAuthenticated } = useAuth();
   const [portalOpened, setPortalOpened] = useState(false);
-  const [authorizationOpened, setAuthorizationOpened] = useState(false);
-  const [authorizationStartedAt, setAuthorizationStartedAt] = useState<
-    number | null
-  >(null);
+  const [authorizationStarted, setAuthorizationStarted] = useState(false);
   const [newApiPortalUrl, setNewApiPortalUrl] = useState(
     DEFAULT_NEWAPI_PORTAL_URL,
   );
@@ -82,30 +79,13 @@ export default function LoginPage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (isAuthenticated || !authorizationStartedAt) return;
-
-    const maxPollingUntil = authorizationStartedAt + 2 * 60_000;
-    const interval = window.setInterval(() => {
-      if (Date.now() > maxPollingUntil) {
-        window.clearInterval(interval);
-        return;
-      }
-      void refreshUser();
-    }, 3_000);
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [authorizationStartedAt, isAuthenticated, refreshUser]);
-
   const handleOpenNewApiLogin = () => {
     setPortalOpened(true);
     window.open(newApiPortalUrl, "_blank", "noopener,noreferrer");
   };
 
   const handleContinueAuthorization = () => {
-    setAuthorizationOpened(true);
-    setAuthorizationStartedAt(Date.now());
+    setAuthorizationStarted(true);
     window.location.assign(newApiLoginUrl);
   };
 
@@ -135,17 +115,12 @@ export default function LoginPage() {
         </Button>
         <Button
           className="w-full"
-          disabled={!portalOpened}
+          disabled={!portalOpened || authorizationStarted}
           variant={portalOpened ? "default" : "secondary"}
           onClick={handleContinueAuthorization}
         >
-          已确认账号，继续授权登录
+          {authorizationStarted ? "正在进入授权..." : "已确认账号，继续授权登录"}
         </Button>
-        {authorizationOpened && (
-          <p className="text-muted-foreground text-xs">
-            授权完成后保持本页打开，Miaowu 会自动进入工作区。
-          </p>
-        )}
       </div>
     </main>
   );

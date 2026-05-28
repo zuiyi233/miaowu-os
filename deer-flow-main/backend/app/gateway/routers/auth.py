@@ -19,6 +19,7 @@ from app.gateway.auth.config import get_auth_config
 from app.gateway.auth.errors import AuthErrorCode, AuthErrorResponse
 from app.gateway.auth.newapi_oauth import (
     NewAPIOAuthError,
+    build_frontend_oauth_complete_url,
     build_frontend_redirect_url,
     build_newapi_authorize_url,
     exchange_newapi_code_for_user,
@@ -441,7 +442,7 @@ async def callback_newapi(
 
     token = create_access_token(str(login_result.user.id), token_version=login_result.user.token_version)
     response = RedirectResponse(
-        build_frontend_redirect_url(login_result.next_path),
+        build_frontend_oauth_complete_url(login_result.next_path),
         status_code=status.HTTP_302_FOUND,
     )
     _set_session_cookie(response, token, request)

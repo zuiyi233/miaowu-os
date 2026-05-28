@@ -228,6 +228,19 @@ def build_frontend_redirect_url(next_path: str) -> str:
     return urljoin(frontend_base + "/", safe_next.lstrip("/"))
 
 
+def build_frontend_oauth_complete_url(next_path: str) -> str:
+    """Redirect the browser to a Miaowu-owned OAuth completion page.
+
+    Going directly from the backend callback to ``/workspace`` can race with the
+    first protected-route auth check in some browsers. The completion page waits
+    until the callback cookie is observable via ``/auth/me`` before entering the
+    workspace, preventing a transient bounce back to ``/login``.
+    """
+    safe_next = validate_next_path(next_path)
+    complete_path = f"/auth/newapi/complete?{urlencode({'next': safe_next})}"
+    return build_frontend_redirect_url(complete_path)
+
+
 def require_newapi_settings() -> NewAPIOAuthSettings:
     settings = get_newapi_oauth_settings()
     if not settings.enabled:
