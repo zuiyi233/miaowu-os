@@ -171,16 +171,21 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         prompt, user_msg = self._build_title_prompt(state)
 
         try:
+            from deerflow.agents.lead_agent.agent import _build_runtime_overrides
+
             model_kwargs: dict = {"thinking_enabled": False}
             if self._app_config is not None:
                 model_kwargs["app_config"] = self._app_config
             effective_model_name = self._override_model_name or config.model_name
-            if self._runtime_model:
-                model_kwargs["model"] = self._runtime_model
-            if self._runtime_base_url:
-                model_kwargs["base_url"] = self._runtime_base_url
-            if self._runtime_api_key:
-                model_kwargs["api_key"] = self._runtime_api_key
+            runtime_overrides = _build_runtime_overrides(
+                app_config=self._app_config,
+                model_name=effective_model_name,
+                runtime_model=self._runtime_model,
+                runtime_base_url=self._runtime_base_url,
+                runtime_api_key=self._runtime_api_key,
+                caller_label="title",
+            )
+            model_kwargs.update(runtime_overrides)
 
             if effective_model_name:
                 model = create_chat_model(name=effective_model_name, **model_kwargs)

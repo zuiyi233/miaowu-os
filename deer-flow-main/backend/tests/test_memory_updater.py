@@ -1,9 +1,11 @@
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from deerflow.agents.memory.prompt import format_conversation_for_update
 from deerflow.agents.memory.updater import (
     MemoryUpdater,
+    _MODEL_CACHE_TTL_SEC,
     _extract_text,
     clear_memory_data,
     create_memory_fact,
@@ -40,6 +42,7 @@ def _memory_config(**overrides: object) -> MemoryConfig:
 
 
 def test_get_model_forwards_runtime_provider_overrides(monkeypatch) -> None:
+    MemoryUpdater.clear_model_cache()
     updater = MemoryUpdater(
         model_name="safe-model",
         runtime_model="LongCat-Flash-Chat",
@@ -65,6 +68,105 @@ def test_get_model_forwards_runtime_provider_overrides(monkeypatch) -> None:
         base_url="https://runtime.example/v1",
         api_key="sk-runtime",
     )
+    MemoryUpdater.clear_model_cache()
+
+
+def test_model_cache_evicts_after_insert_at_max_size(monkeypatch) -> None:
+    MemoryUpdater.clear_model_cache()
+    import deerflow.agents.memory.updater as updater_module
+
+    previous_max = updater_module._MODEL_CACHE_MAX_SIZE
+    try:
+        updater_module._MODEL_CACHE_MAX_SIZE = 2
+        created: list[object] = []
+
+        def create_model(**kwargs):
+            model = object()
+            created.append(model)
+            return model
+
+        monkeypatch.setattr("deerflow.agents.memory.updater.create_chat_model", create_model)
+        monkeypatch.setattr(
+            "deerflow.agents.memory.updater.get_memory_config",
+            lambda: _memory_config(model_name="unused-config-model"),
+        )
+
+        for model_name in ("model-a", "model-b", "model-c"):
+            MemoryUpdater(model_name=model_name)._get_model()
+
+        assert len(MemoryUpdater._model_cache) == 2
+        assert all(not key.startswith("model-a:") for key in MemoryUpdater._model_cache)
+        assert any(key.startswith("model-b:") for key in MemoryUpdater._model_cache)
+        assert any(key.startswith("model-c:") for key in MemoryUpdater._model_cache)
+        assert len(created) == 3
+    finally:
+        updater_module._MODEL_CACHE_MAX_SIZE = previous_max
+        MemoryUpdater.clear_model_cache()
+
+
+def test_model_cache_hit_refreshes_lru_order(monkeypatch) -> None:
+    MemoryUpdater.clear_model_cache()
+    import deerflow.agents.memory.updater as updater_module
+
+    previous_max = updater_module._MODEL_CACHE_MAX_SIZE
+    try:
+        updater_module._MODEL_CACHE_MAX_SIZE = 2
+        created: list[object] = []
+
+        def create_model(**kwargs):
+            model = object()
+            created.append(model)
+            return model
+
+        monkeypatch.setattr("deerflow.agents.memory.updater.create_chat_model", create_model)
+        monkeypatch.setattr(
+            "deerflow.agents.memory.updater.get_memory_config",
+            lambda: _memory_config(model_name="unused-config-model"),
+        )
+
+        model_a_first = MemoryUpdater(model_name="model-a")._get_model()
+        MemoryUpdater(model_name="model-b")._get_model()
+        model_a_second = MemoryUpdater(model_name="model-a")._get_model()
+        MemoryUpdater(model_name="model-c")._get_model()
+
+        assert model_a_second is model_a_first
+        assert len(MemoryUpdater._model_cache) == 2
+        assert any(key.startswith("model-a:") for key in MemoryUpdater._model_cache)
+        assert all(not key.startswith("model-b:") for key in MemoryUpdater._model_cache)
+        assert any(key.startswith("model-c:") for key in MemoryUpdater._model_cache)
+        assert len(created) == 3
+    finally:
+        updater_module._MODEL_CACHE_MAX_SIZE = previous_max
+        MemoryUpdater.clear_model_cache()
+
+
+def test_model_cache_expired_entry_is_removed_on_next_access(monkeypatch) -> None:
+    MemoryUpdater.clear_model_cache()
+    created: list[object] = []
+
+    def create_model(**kwargs):
+        model = object()
+        created.append(model)
+        return model
+
+    monkeypatch.setattr("deerflow.agents.memory.updater.create_chat_model", create_model)
+    monkeypatch.setattr(
+        "deerflow.agents.memory.updater.get_memory_config",
+        lambda: _memory_config(model_name="unused-config-model"),
+    )
+
+    MemoryUpdater(model_name="model-expired")._get_model()
+    cache_key = next(iter(MemoryUpdater._model_cache))
+    cached_at, cached_model = MemoryUpdater._model_cache[cache_key]
+    MemoryUpdater._model_cache[cache_key] = (time.monotonic() - _MODEL_CACHE_TTL_SEC - 1, cached_model)
+
+    refreshed_model = MemoryUpdater(model_name="model-expired")._get_model()
+
+    assert refreshed_model is not cached_model
+    assert len(MemoryUpdater._model_cache) == 1
+    assert len(created) == 2
+    assert cached_at
+    MemoryUpdater.clear_model_cache()
 
 
 def test_apply_updates_skips_existing_duplicate_and_preserves_removals() -> None:

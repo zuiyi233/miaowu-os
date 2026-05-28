@@ -245,12 +245,26 @@ async def task_tool(
         if thread_id is None:
             thread_id = runtime.config.get("configurable", {}).get("thread_id")
 
-        # Try to get parent model from configurable
         metadata = runtime.config.get("metadata", {})
         parent_model = metadata.get("model_name")
 
-        # Get or generate trace_id for distributed tracing
         trace_id = metadata.get("trace_id") or str(uuid.uuid4())[:8]
+
+    runtime_model = None
+    runtime_base_url = None
+    runtime_api_key = None
+    runtime_provider = None
+    if runtime is not None:
+        configurable = runtime.config.get("configurable", {})
+        context_dict = runtime.context if isinstance(runtime.context, dict) else {}
+        runtime_model = configurable.get("runtime_model") or context_dict.get("runtime_model")
+        runtime_base_url = configurable.get("runtime_base_url") or context_dict.get("runtime_base_url")
+        runtime_provider = configurable.get("runtime_provider") or context_dict.get("runtime_provider")
+        try:
+            from app.gateway.services import get_runtime_api_key
+            runtime_api_key = get_runtime_api_key()
+        except ImportError:
+            runtime_api_key = configurable.get("runtime_api_key") or context_dict.get("runtime_api_key")
 
     parent_available_skills = metadata.get("available_skills")
     if parent_available_skills is not None:
@@ -289,6 +303,10 @@ async def task_tool(
         "thread_data": thread_data,
         "thread_id": thread_id,
         "trace_id": trace_id,
+        "runtime_model": runtime_model,
+        "runtime_base_url": runtime_base_url,
+        "runtime_api_key": runtime_api_key,
+        "runtime_provider": runtime_provider,
     }
     if resolved_app_config is not None:
         executor_kwargs["app_config"] = resolved_app_config

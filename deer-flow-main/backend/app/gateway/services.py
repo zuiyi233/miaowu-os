@@ -8,6 +8,7 @@ frames, and consuming stream bridge events.  Router modules
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import re
@@ -41,6 +42,55 @@ from deerflow.runtime import (
 from deerflow.persistence.engine import get_session_factory
 
 logger = logging.getLogger(__name__)
+
+_runtime_api_key_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "runtime_api_key", default=None
+)
+
+_runtime_feature_api_keys_var: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(
+    "runtime_feature_api_keys", default={}
+)
+
+
+def set_runtime_api_key(key: str | None) -> contextvars.Token[str | None]:
+    return _runtime_api_key_var.set(key)
+
+
+def reset_runtime_api_key(token: contextvars.Token[str | None]) -> None:
+    _runtime_api_key_var.reset(token)
+
+
+def set_runtime_feature_api_keys(keys: dict[str, str]) -> contextvars.Token[dict[str, str]]:
+    return _runtime_feature_api_keys_var.set(keys)
+
+
+def reset_runtime_feature_api_keys(token: contextvars.Token[dict[str, str]]) -> None:
+    _runtime_feature_api_keys_var.reset(token)
+
+
+def get_runtime_api_key() -> str | None:
+    return _runtime_api_key_var.get()
+
+
+def get_runtime_feature_api_key(feature: str) -> str | None:
+    return _runtime_feature_api_keys_var.get().get(feature)
+
+
+_FEATURE_PREFIXES = ("title", "memory", "summarization")
+
+_API_KEY_CONFIGURABLE_SUFFIXES = (
+    "runtime_api_key",
+    *(f"{prefix}_runtime_api_key" for prefix in _FEATURE_PREFIXES),
+)
+
+
+def _strip_api_keys_from_configurable(configurable: dict[str, Any]) -> None:
+    """Remove plaintext API keys from configurable, replacing with boolean indicators."""
+    for key in _API_KEY_CONFIGURABLE_SUFFIXES:
+        value = configurable.get(key)
+        if value is not None:
+            del configurable[key]
+            configurable[f"{key}_set"] = bool(value)
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +185,7 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
         "is_bootstrap",
         "media_draft_retention",
         "provider_id",
+        "module_id",
     }
 )
 
@@ -192,6 +243,11 @@ def _apply_runtime_provider_overrides(
 ) -> bool:
     """Inject runtime provider/model overrides into run configurable.
 
+    The plaintext ``runtime_api_key`` is stored in a ContextVar instead of
+    ``configurable`` to prevent accidental serialization into checkpoints,
+    metadata, or SSE events.  Only a boolean ``runtime_api_key_set`` is
+    written to ``configurable`` for observability.
+
     Returns True when at least one override field is written.
     """
     changed = False
@@ -205,8 +261,10 @@ def _apply_runtime_provider_overrides(
         configurable["runtime_base_url"] = runtime_base_url
         changed = True
     if runtime_api_key:
-        configurable["runtime_api_key"] = runtime_api_key
+        configurable["runtime_api_key_set"] = True
         changed = True
+    else:
+        configurable["runtime_api_key_set"] = False
     return changed
 
 
@@ -215,12 +273,16 @@ async def _resolve_runtime_provider_overrides_for_thread(
     *,
     requested_model_name: str | None,
     module_id: str | None = None,
-) -> dict[str, str] | None:
+) -> tuple[dict[str, str] | None, object | None]:
     """Resolve per-user provider credentials for LangGraph runtime calls.
 
     Source of truth is `Settings` / `ai_provider_settings` persistence layer.
     We intentionally do NOT read `.env`/`config.yaml` here so frontend-saved
     user settings can take effect immediately for thread runs.
+
+    Returns (overrides_dict, settings_orm_object) so callers can reuse the
+    settings object for subsequent feature-routing resolution without a
+    second database query.
     """
     user_id = get_request_user_id(request)
     try:
@@ -233,10 +295,10 @@ async def _resolve_runtime_provider_overrides_for_thread(
             user_id,
             exc_info=True,
         )
-        return None
+        return None, None
 
     if settings is None:
-        return None
+        return None, None
 
     runtime, _ = resolve_user_ai_runtime_config(
         settings,
@@ -251,7 +313,37 @@ async def _resolve_runtime_provider_overrides_for_thread(
         resolved["runtime_base_url"] = runtime["api_base_url"]
     if runtime["api_key"]:
         resolved["runtime_api_key"] = runtime["api_key"]
-    return resolved
+    return resolved, settings
+
+
+def _extract_ai_settings_from_preferences(preferences_raw: object) -> dict[str, Any]:
+    """Extract ai_provider_settings dict from raw preferences payload."""
+    if isinstance(preferences_raw, str):
+        try:
+            preferences = json.loads(preferences_raw)
+        except Exception:
+            preferences = {}
+    else:
+        preferences = preferences_raw
+
+    if not isinstance(preferences, dict):
+        return {}
+
+    ai_provider_settings = preferences.get("ai_provider_settings", {})
+    if not isinstance(ai_provider_settings, dict):
+        return {}
+
+    providers_raw = ai_provider_settings.get("providers", [])
+    public_providers = []
+    if isinstance(providers_raw, list):
+        for p in providers_raw:
+            if isinstance(p, dict):
+                public_providers.append(p)
+
+    return {
+        "providers": public_providers,
+        "feature_routing_settings": ai_provider_settings.get("feature_routing_settings"),
+    }
 
 
 def _resolve_feature_model_from_routing(
@@ -327,12 +419,16 @@ async def _resolve_feature_model_overrides_for_thread(
     request: Request,
     *,
     active_provider_overrides: dict[str, str] | None,
+    settings: object | None = None,
 ) -> dict[str, str]:
     """Resolve per-feature model overrides from user ai-settings feature routing.
 
     For each feature (title, memory, summarization), checks if the user has
     configured a specific model in feature_routing_settings. If not, falls back
     to the active provider's model (same as main chat).
+
+    When *settings* is provided (a Settings ORM object), it is used directly
+    instead of performing a separate database query.
 
     Returns a flat dict with keys like:
       title_runtime_model, title_runtime_base_url, title_runtime_api_key,
@@ -342,41 +438,21 @@ async def _resolve_feature_model_overrides_for_thread(
     user_id = get_request_user_id(request)
     ai_settings: dict[str, Any] = {}
 
-    try:
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(select(Settings).where(Settings.user_id == user_id))
-            settings = result.scalar_one_or_none()
-            if settings is None:
-                return {}
-
-            preferences_raw = settings.preferences or "{}"
-            if isinstance(preferences_raw, str):
-                try:
-                    preferences = json.loads(preferences_raw)
-                except Exception:
-                    preferences = {}
-            else:
-                preferences = preferences_raw
-
-            if not isinstance(preferences, dict):
-                preferences = {}
-
-            ai_provider_settings = preferences.get("ai_provider_settings", {})
-            if isinstance(ai_provider_settings, dict):
-                providers_raw = ai_provider_settings.get("providers", [])
-                public_providers = []
-                if isinstance(providers_raw, list):
-                    for p in providers_raw:
-                        if isinstance(p, dict):
-                            public_providers.append(p)
-
-                ai_settings = {
-                    "providers": public_providers,
-                    "feature_routing_settings": ai_provider_settings.get("feature_routing_settings"),
-                }
-    except Exception:
-        logger.debug("Failed to load feature routing settings for user %s", user_id, exc_info=True)
-        return {}
+    if settings is not None:
+        preferences_raw = getattr(settings, "preferences", None) or "{}"
+        ai_settings = _extract_ai_settings_from_preferences(preferences_raw)
+    else:
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(select(Settings).where(Settings.user_id == user_id))
+                db_settings = result.scalar_one_or_none()
+                if db_settings is None:
+                    return {}
+                preferences_raw = db_settings.preferences or "{}"
+                ai_settings = _extract_ai_settings_from_preferences(preferences_raw)
+        except Exception:
+            logger.debug("Failed to load feature routing settings for user %s", user_id, exc_info=True)
+            return {}
 
     fallback_runtime_model = active_provider_overrides.get("runtime_model") if active_provider_overrides else None
     fallback_base_url = active_provider_overrides.get("runtime_base_url") if active_provider_overrides else None
@@ -384,11 +460,9 @@ async def _resolve_feature_model_overrides_for_thread(
 
     result: dict[str, str] = {}
 
-    for feature_id, prefix in [
-        ("title-ai", "title"),
-        ("memory-ai", "memory"),
-        ("summarization-ai", "summarization"),
-    ]:
+    _FEATURE_ROUTING_IDS = {"title": "title-ai", "memory": "memory-ai", "summarization": "summarization-ai"}
+    for prefix in _FEATURE_PREFIXES:
+        feature_id = _FEATURE_ROUTING_IDS[prefix]
         feature_overrides = _resolve_feature_model_from_routing(feature_id, ai_settings)
 
         if feature_overrides:
@@ -586,7 +660,7 @@ async def start_run(
 
     configurable = config.setdefault("configurable", {})
     requested_model_name = _as_non_empty_str(configurable.get("model_name") or configurable.get("model"))
-    runtime_overrides = await _resolve_runtime_provider_overrides_for_thread(
+    runtime_overrides, user_settings = await _resolve_runtime_provider_overrides_for_thread(
         request,
         requested_model_name=requested_model_name,
         module_id=module_id,
@@ -610,27 +684,48 @@ async def start_run(
     feature_overrides = await _resolve_feature_model_overrides_for_thread(
         request,
         active_provider_overrides=runtime_overrides,
+        settings=user_settings,
     )
+    feature_api_keys: dict[str, str] = {}
     if feature_overrides:
+        for feature in _FEATURE_PREFIXES:
+            key_name = f"{feature}_runtime_api_key"
+            fk = feature_overrides.pop(key_name, None)
+            if fk:
+                feature_api_keys[feature] = fk
         configurable.update(feature_overrides)
+        for feature in _FEATURE_PREFIXES:
+            configurable[f"{feature}_runtime_api_key_set"] = feature in feature_api_keys
+
+    _strip_api_keys_from_configurable(configurable)
+
+    runtime_api_key = runtime_overrides.get("runtime_api_key") if runtime_overrides else None
+    runtime_feature_api_keys = feature_api_keys
 
     stream_modes = normalize_stream_modes(body.stream_mode)
 
-    task = asyncio.create_task(
-        run_agent(
-            bridge,
-            run_mgr,
-            record,
-            ctx=run_ctx,
-            agent_factory=agent_factory,
-            graph_input=graph_input,
-            config=config,
-            stream_modes=stream_modes,
-            stream_subgraphs=body.stream_subgraphs,
-            interrupt_before=body.interrupt_before,
-            interrupt_after=body.interrupt_after,
-        )
-    )
+    async def _run_agent_with_key_cleanup():
+        api_key_token = set_runtime_api_key(runtime_api_key)
+        feature_api_keys_token = set_runtime_feature_api_keys(runtime_feature_api_keys)
+        try:
+            return await run_agent(
+                bridge,
+                run_mgr,
+                record,
+                ctx=run_ctx,
+                agent_factory=agent_factory,
+                graph_input=graph_input,
+                config=config,
+                stream_modes=stream_modes,
+                stream_subgraphs=body.stream_subgraphs,
+                interrupt_before=body.interrupt_before,
+                interrupt_after=body.interrupt_after,
+            )
+        finally:
+            reset_runtime_feature_api_keys(feature_api_keys_token)
+            reset_runtime_api_key(api_key_token)
+
+    task = asyncio.create_task(_run_agent_with_key_cleanup())
     record.task = task
 
     # Title sync is handled by runtime/runs/worker.py in its completion path.

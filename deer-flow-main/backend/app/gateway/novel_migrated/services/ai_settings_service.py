@@ -1787,6 +1787,20 @@ class AISettingsService:
         except Exception:
             logger.debug("Skip clear_model_cache (import/init issue).", exc_info=True)
 
+        try:
+            from deerflow.agents.memory.updater import MemoryUpdater
+
+            MemoryUpdater.clear_model_cache()
+        except Exception:
+            logger.debug("Skip MemoryUpdater.clear_model_cache (import/init issue).", exc_info=True)
+
+        try:
+            from app.gateway.routers.models import _models_cache
+
+            _models_cache.clear()
+        except Exception:
+            logger.debug("Skip models cache clear (import/init issue).", exc_info=True)
+
         return await self.get_ai_settings(user_id, db)
 
     def sync_preferences_from_settings_payload(self, settings: Settings, payload: dict[str, Any]) -> None:

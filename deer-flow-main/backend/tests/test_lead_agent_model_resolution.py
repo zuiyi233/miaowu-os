@@ -279,20 +279,24 @@ def test_make_lead_agent_forwards_runtime_provider_overrides(monkeypatch):
     monkeypatch.setattr(lead_agent_module, "create_chat_model", _fake_create_chat_model)
     monkeypatch.setattr(lead_agent_module, "create_agent", lambda **kwargs: kwargs)
 
-    lead_agent_module.make_lead_agent(
-        {
-            "configurable": {
-                "model_name": "safe-model",
-                "runtime_model": "Deepseek-v3.2",
-                "runtime_provider": "openai",
-                "runtime_base_url": "http://172.22.22.31:39999/v1",
-                "runtime_api_key": "sk-runtime",
-                "thinking_enabled": False,
-                "is_plan_mode": False,
-                "subagent_enabled": False,
+    from app.gateway.services import set_runtime_api_key, reset_runtime_api_key
+    token = set_runtime_api_key("sk-runtime")
+    try:
+        lead_agent_module.make_lead_agent(
+            {
+                "configurable": {
+                    "model_name": "safe-model",
+                    "runtime_model": "Deepseek-v3.2",
+                    "runtime_provider": "openai",
+                    "runtime_base_url": "http://172.22.22.31:39999/v1",
+                    "thinking_enabled": False,
+                    "is_plan_mode": False,
+                    "subagent_enabled": False,
+                }
             }
-        }
-    )
+        )
+    finally:
+        reset_runtime_api_key(token)
 
     assert captured["name"] == "safe-model"
     assert captured["thinking_enabled"] is False
@@ -388,7 +392,7 @@ def test_build_middlewares_uses_loop_detection_config(monkeypatch):
 
     monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: app_config)
     monkeypatch.setattr(lead_agent_module, "build_lead_runtime_middlewares", lambda *, app_config, lazy_init=True: [])
-    monkeypatch.setattr(lead_agent_module, "_create_summarization_middleware", lambda *, app_config=None: None)
+    monkeypatch.setattr(lead_agent_module, "_create_summarization_middleware", lambda *, app_config=None, runtime_model=None, runtime_base_url=None, runtime_api_key=None: None)
     monkeypatch.setattr(lead_agent_module, "_create_todo_list_middleware", lambda is_plan_mode: None)
 
     middlewares = lead_agent_module._build_middlewares(
@@ -414,7 +418,7 @@ def test_build_middlewares_omits_loop_detection_when_disabled(monkeypatch):
 
     monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: app_config)
     monkeypatch.setattr(lead_agent_module, "build_lead_runtime_middlewares", lambda *, app_config, lazy_init=True: [])
-    monkeypatch.setattr(lead_agent_module, "_create_summarization_middleware", lambda *, app_config=None: None)
+    monkeypatch.setattr(lead_agent_module, "_create_summarization_middleware", lambda *, app_config=None, runtime_model=None, runtime_base_url=None, runtime_api_key=None: None)
     monkeypatch.setattr(lead_agent_module, "_create_todo_list_middleware", lambda is_plan_mode: None)
 
     middlewares = lead_agent_module._build_middlewares(
@@ -539,3 +543,108 @@ def test_memory_middleware_uses_explicit_memory_config_without_global_read(monke
     middleware = MemoryMiddleware(memory_config=MemoryConfig(enabled=False))
 
     assert middleware.after_agent({"messages": []}, runtime=MagicMock(context={"thread_id": "thread-1"})) is None
+
+
+def test_build_runtime_overrides_skips_non_openai_model():
+    anthropic_model = ModelConfig(
+        name="claude-model",
+        display_name="Claude",
+        description=None,
+        use="langchain_anthropic:ChatAnthropic",
+        model="claude-3-7-sonnet",
+        supports_thinking=False,
+    )
+    app_config = _make_app_config([anthropic_model])
+
+    result = lead_agent_module._build_runtime_overrides(
+        app_config=app_config,
+        model_name="claude-model",
+        runtime_model="override-model",
+        runtime_base_url="https://override.example/v1",
+        runtime_api_key="sk-override",
+        caller_label="summarization",
+    )
+
+    assert result == {}
+
+
+def test_build_runtime_overrides_allows_openai_model():
+    openai_model = ModelConfig(
+        name="openai-model",
+        display_name="OpenAI",
+        description=None,
+        use="langchain_openai:ChatOpenAI",
+        model="gpt-4o",
+        supports_thinking=False,
+    )
+    app_config = _make_app_config([openai_model])
+
+    result = lead_agent_module._build_runtime_overrides(
+        app_config=app_config,
+        model_name="openai-model",
+        runtime_model="override-model",
+        runtime_base_url="https://override.example/v1",
+        runtime_api_key="sk-override",
+        caller_label="summarization",
+    )
+
+    assert result == {
+        "model": "override-model",
+        "base_url": "https://override.example/v1",
+        "api_key": "sk-override",
+    }
+
+
+def test_build_runtime_overrides_assumes_openai_when_model_config_none():
+    result = lead_agent_module._build_runtime_overrides(
+        app_config=None,
+        model_name="unknown-model",
+        runtime_model="override-model",
+        runtime_base_url="https://override.example/v1",
+        runtime_api_key="sk-override",
+        caller_label="title",
+    )
+
+    assert result == {
+        "model": "override-model",
+        "base_url": "https://override.example/v1",
+        "api_key": "sk-override",
+    }
+
+
+def test_build_runtime_overrides_with_lightweight_app_config():
+    from types import SimpleNamespace
+
+    lightweight_config = SimpleNamespace(models=[SimpleNamespace(name="my-model", use="langchain_openai:ChatOpenAI")])
+
+    result = lead_agent_module._build_runtime_overrides(
+        app_config=lightweight_config,
+        model_name="my-model",
+        runtime_model="override-model",
+        runtime_base_url="https://override.example/v1",
+        runtime_api_key="sk-override",
+        caller_label="memory",
+    )
+
+    assert result == {
+        "model": "override-model",
+        "base_url": "https://override.example/v1",
+        "api_key": "sk-override",
+    }
+
+
+def test_build_runtime_overrides_skips_non_openai_lightweight_app_config():
+    from types import SimpleNamespace
+
+    lightweight_config = SimpleNamespace(models=[SimpleNamespace(name="my-model", use="langchain_anthropic:ChatAnthropic")])
+
+    result = lead_agent_module._build_runtime_overrides(
+        app_config=lightweight_config,
+        model_name="my-model",
+        runtime_model="override-model",
+        runtime_base_url="https://override.example/v1",
+        runtime_api_key="sk-override",
+        caller_label="memory",
+    )
+
+    assert result == {}

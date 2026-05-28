@@ -1,5 +1,7 @@
 import { CHAT_SUGGESTIONS_MODULE_ID } from "@/core/ai/feature-routing";
 
+import type { Model } from "@/core/models/types";
+
 export type FollowupsVisibilityParams = {
   disabled?: boolean;
   isNewThread?: boolean;
@@ -46,4 +48,33 @@ export function buildFollowupSuggestionsRequestBody(
     n,
     module_id: CHAT_SUGGESTIONS_MODULE_ID,
   };
+}
+
+export type ModelSelectionResult = {
+  modelName: string | null;
+  changed: boolean;
+};
+
+export function resolveNextModelSelection(
+  currentModelName: string | undefined,
+  models: Model[],
+  defaultModelName: string | null,
+): ModelSelectionResult {
+  if (models.length === 0) {
+    return { modelName: null, changed: false };
+  }
+  const currentModel = models.find((m) => m.name === currentModelName);
+  if (currentModel) {
+    return { modelName: currentModelName!, changed: false };
+  }
+  const fallbackModel = defaultModelName
+    ? models.find((m) => m.name === defaultModelName) ?? models[0]
+    : models[0];
+  return { modelName: fallbackModel!.name, changed: true };
+}
+
+export function resolveModuleId(
+  agentName?: string,
+): "chat-main" | "agent-chat" {
+  return agentName ? "agent-chat" : "chat-main";
 }

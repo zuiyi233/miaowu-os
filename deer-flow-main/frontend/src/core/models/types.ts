@@ -6,6 +6,7 @@ export interface Model {
   description?: string | null;
   supports_thinking?: boolean;
   supports_reasoning_effort?: boolean;
+  provider_id?: string | null;
 }
 
 export interface TokenUsageSettings {
@@ -15,4 +16,6 @@ export interface TokenUsageSettings {
 export interface ModelsResponse {
   models: Model[];
   token_usage: TokenUsageSettings;
+  default_model_name?: string | null;
+  default_provider_id?: string | null;
 }

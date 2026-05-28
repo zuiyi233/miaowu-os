@@ -1060,6 +1060,121 @@ class TestThreadSafety:
         assert result.token_usage_records == token_usage_records
 
 
+class TestLightweightAppConfigCompat:
+    """Test SubagentExecutor compatibility with lightweight app_config objects."""
+
+    def test_get_model_config_from_app_config_with_lightweight_config(self, classes):
+        from types import SimpleNamespace
+
+        SubagentExecutor = classes["SubagentExecutor"]
+
+        model_a = SimpleNamespace(name="model-a")
+        model_b = SimpleNamespace(name="model-b")
+        lightweight_config = SimpleNamespace(models=[model_a, model_b])
+
+        result = SubagentExecutor._get_model_config_from_app_config(lightweight_config, "model-b")
+        assert result is model_b
+
+        result_missing = SubagentExecutor._get_model_config_from_app_config(lightweight_config, "nonexistent")
+        assert result_missing is None
+
+        empty_config = SimpleNamespace(models=[])
+        result_empty = SubagentExecutor._get_model_config_from_app_config(empty_config, "model-a")
+        assert result_empty is None
+
+    def test_create_agent_with_lightweight_config_no_crash(self, classes, monkeypatch):
+        from types import ModuleType, SimpleNamespace
+
+        SubagentExecutor = classes["SubagentExecutor"]
+        SubagentConfig = classes["SubagentConfig"]
+
+        captured_kwargs: dict = {}
+
+        def _fake_create_chat_model(*, name=None, thinking_enabled=False, app_config=None, **kwargs):
+            captured_kwargs.update(kwargs)
+            captured_kwargs["name"] = name
+            captured_kwargs["app_config"] = app_config
+            return object()
+
+        monkeypatch.setattr("deerflow.subagents.executor.create_chat_model", _fake_create_chat_model)
+        monkeypatch.setattr("deerflow.subagents.executor.get_app_config", lambda: SimpleNamespace(models=[SimpleNamespace(name="test-model")]))
+        monkeypatch.setattr("deerflow.subagents.executor.create_agent", lambda **kwargs: kwargs)
+
+        mwt_module = ModuleType("deerflow.agents.middlewares.tool_error_handling_middleware")
+        mwt_module.build_subagent_runtime_middlewares = lambda **kwargs: []
+        monkeypatch.setitem(sys.modules, "deerflow.agents.middlewares.tool_error_handling_middleware", mwt_module)
+
+        lightweight_config = SimpleNamespace(models=[SimpleNamespace(name="test-model", use="langchain_openai:ChatOpenAI")])
+
+        executor = SubagentExecutor(
+            config=SubagentConfig(
+                name="test-agent",
+                description="Test",
+                system_prompt="test",
+                max_turns=5,
+                timeout_seconds=30,
+            ),
+            tools=[],
+            app_config=lightweight_config,
+            runtime_model="override-model",
+            runtime_base_url="https://override.example/v1",
+            runtime_api_key="sk-override",
+        )
+
+        executor._create_agent()
+
+        assert captured_kwargs["name"] == "test-model"
+        assert "model" in captured_kwargs
+        assert captured_kwargs["model"] == "override-model"
+        assert captured_kwargs["base_url"] == "https://override.example/v1"
+        assert captured_kwargs["api_key"] == "sk-override"
+
+    def test_create_agent_with_lightweight_config_no_use_attr_no_crash(self, classes, monkeypatch):
+        from types import ModuleType, SimpleNamespace
+
+        SubagentExecutor = classes["SubagentExecutor"]
+        SubagentConfig = classes["SubagentConfig"]
+
+        captured_kwargs: dict = {}
+
+        def _fake_create_chat_model(*, name=None, thinking_enabled=False, app_config=None, **kwargs):
+            captured_kwargs.update(kwargs)
+            captured_kwargs["name"] = name
+            return object()
+
+        monkeypatch.setattr("deerflow.subagents.executor.create_chat_model", _fake_create_chat_model)
+        monkeypatch.setattr("deerflow.subagents.executor.get_app_config", lambda: SimpleNamespace(models=[SimpleNamespace(name="test-model")]))
+        monkeypatch.setattr("deerflow.subagents.executor.create_agent", lambda **kwargs: kwargs)
+
+        mwt_module = ModuleType("deerflow.agents.middlewares.tool_error_handling_middleware")
+        mwt_module.build_subagent_runtime_middlewares = lambda **kwargs: []
+        monkeypatch.setitem(sys.modules, "deerflow.agents.middlewares.tool_error_handling_middleware", mwt_module)
+
+        lightweight_config = SimpleNamespace(models=[SimpleNamespace(name="test-model")])
+
+        executor = SubagentExecutor(
+            config=SubagentConfig(
+                name="test-agent",
+                description="Test",
+                system_prompt="test",
+                max_turns=5,
+                timeout_seconds=30,
+            ),
+            tools=[],
+            app_config=lightweight_config,
+            runtime_model="override-model",
+            runtime_base_url="https://override.example/v1",
+            runtime_api_key="sk-override",
+        )
+
+        executor._create_agent()
+
+        assert captured_kwargs["name"] == "test-model"
+        assert "model" not in captured_kwargs
+        assert "base_url" not in captured_kwargs
+        assert "api_key" not in captured_kwargs
+
+
 # -----------------------------------------------------------------------------
 # Cleanup Background Task Tests
 # -----------------------------------------------------------------------------
@@ -1071,7 +1186,6 @@ class TestCleanupBackgroundTask:
     @pytest.fixture
     def executor_module(self, _setup_executor_classes):
         """Import the executor module with real classes."""
-        # Re-import to get the real module with cleanup_background_task
         import importlib
 
         from deerflow.subagents import executor
@@ -1083,7 +1197,6 @@ class TestCleanupBackgroundTask:
         SubagentResult = classes["SubagentResult"]
         SubagentStatus = classes["SubagentStatus"]
 
-        # Add a completed task
         task_id = "test-completed-task"
         result = SubagentResult(
             task_id=task_id,
@@ -1094,7 +1207,6 @@ class TestCleanupBackgroundTask:
         )
         executor_module._background_tasks[task_id] = result
 
-        # Cleanup should remove it
         executor_module.cleanup_background_task(task_id)
 
         assert task_id not in executor_module._background_tasks

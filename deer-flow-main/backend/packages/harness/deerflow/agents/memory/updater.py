@@ -8,7 +8,9 @@ import json
 import logging
 import math
 import re
+import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Awaitable
 from typing import Any
 
@@ -25,6 +27,9 @@ from deerflow.config.memory_config import get_memory_config
 from deerflow.models import create_chat_model
 
 logger = logging.getLogger(__name__)
+
+_MODEL_CACHE_MAX_SIZE = 32
+_MODEL_CACHE_TTL_SEC = 600.0
 
 _SYNC_MEMORY_UPDATER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     max_workers=4,
@@ -324,30 +329,59 @@ class MemoryUpdater:
         self._runtime_base_url = runtime_base_url
         self._runtime_api_key = runtime_api_key
 
-    _model_cache: dict[str, Any] = {}
+    _model_cache: OrderedDict[str, tuple[float, Any]] = OrderedDict()
+
+    @classmethod
+    def clear_model_cache(cls) -> None:
+        cls._model_cache.clear()
+
+    @classmethod
+    def _evict_model_cache(cls) -> None:
+        now = time.monotonic()
+        expired = [k for k, (ts, _) in cls._model_cache.items() if now - ts >= _MODEL_CACHE_TTL_SEC]
+        for k in expired:
+            del cls._model_cache[k]
+        while len(cls._model_cache) > _MODEL_CACHE_MAX_SIZE:
+            cls._model_cache.popitem(last=False)
 
     def _get_model(self):
         """Get the model for memory updates (with caching)."""
         config = get_memory_config()
         effective_model_name = self._model_name or config.model_name
-        model_kwargs: dict = {}
-        if self._runtime_model:
-            model_kwargs["model"] = self._runtime_model
-        if self._runtime_base_url:
-            model_kwargs["base_url"] = self._runtime_base_url
-        if self._runtime_api_key:
-            model_kwargs["api_key"] = self._runtime_api_key
 
-        cache_key = f"{effective_model_name}:{self._runtime_model or ''}:{self._runtime_base_url or ''}"
-        cached = MemoryUpdater._model_cache.get(cache_key)
-        if cached is not None:
-            return cached
+        from deerflow.agents.lead_agent.agent import _build_runtime_overrides
+        from deerflow.config import get_app_config
+
+        resolved_app_config = get_app_config()
+        model_kwargs: dict = {}
+        runtime_overrides = _build_runtime_overrides(
+            app_config=resolved_app_config,
+            model_name=effective_model_name,
+            runtime_model=self._runtime_model,
+            runtime_base_url=self._runtime_base_url,
+            runtime_api_key=self._runtime_api_key,
+            caller_label="memory",
+        )
+        model_kwargs.update(runtime_overrides)
+
+        cache_key = f"{effective_model_name}:{self._runtime_model or ''}:{self._runtime_base_url or ''}:{bool(self._runtime_api_key)}"
+        cached_entry = MemoryUpdater._model_cache.get(cache_key)
+        if cached_entry is not None:
+            cached_at, cached_model = cached_entry
+            if time.monotonic() - cached_at < _MODEL_CACHE_TTL_SEC:
+                MemoryUpdater._model_cache.move_to_end(cache_key)
+                return cached_model
+            del MemoryUpdater._model_cache[cache_key]
+
+        self._evict_model_cache()
 
         if effective_model_name:
             model = create_chat_model(name=effective_model_name, thinking_enabled=False, **model_kwargs)
         else:
             model = create_chat_model(thinking_enabled=False, **model_kwargs)
-        MemoryUpdater._model_cache[cache_key] = model
+        MemoryUpdater._model_cache[cache_key] = (time.monotonic(), model)
+        MemoryUpdater._model_cache.move_to_end(cache_key)
+        self._evict_model_cache()
         return model
 
     def _build_correction_hint(

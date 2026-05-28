@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 def test_format_sse_basic():
@@ -420,7 +423,8 @@ def test_apply_runtime_provider_overrides_injects_expected_fields():
     assert configurable["runtime_model"] == "Deepseek-v3.2"
     assert configurable["runtime_provider"] == "openai"
     assert configurable["runtime_base_url"] == "http://172.22.22.31:39999/v1"
-    assert configurable["runtime_api_key"] == "sk-runtime"
+    assert configurable["runtime_api_key_set"] is True
+    assert "runtime_api_key" not in configurable
 
 
 def test_apply_runtime_provider_overrides_noop_when_values_empty():
@@ -436,7 +440,7 @@ def test_apply_runtime_provider_overrides_noop_when_values_empty():
     )
 
     assert changed is False
-    assert configurable == {"thread_id": "t-1"}
+    assert configurable == {"thread_id": "t-1", "runtime_api_key_set": False}
 
 
 def test_resolve_feature_model_from_routing_returns_runtime_model_and_provider_credentials(monkeypatch):
@@ -524,3 +528,148 @@ def test_fire_and_forget_failure_logger_ignores_cancelled_task():
         _log_fire_and_forget_failure(task, label="thread title sync")
 
     mock_debug.assert_not_called()
+
+
+def test_strip_api_keys_from_configurable_removes_plaintext_keys():
+    from app.gateway.services import _strip_api_keys_from_configurable
+
+    configurable = {
+        "thread_id": "t-1",
+        "runtime_api_key": "sk-secret-123",
+        "title_runtime_api_key": "sk-title-456",
+        "memory_runtime_api_key": "sk-mem-789",
+        "summarization_runtime_api_key": "sk-sum-000",
+        "other_key": "safe-value",
+    }
+
+    _strip_api_keys_from_configurable(configurable)
+
+    assert "runtime_api_key" not in configurable
+    assert "title_runtime_api_key" not in configurable
+    assert "memory_runtime_api_key" not in configurable
+    assert "summarization_runtime_api_key" not in configurable
+    assert configurable["runtime_api_key_set"] is True
+    assert configurable["title_runtime_api_key_set"] is True
+    assert configurable["memory_runtime_api_key_set"] is True
+    assert configurable["summarization_runtime_api_key_set"] is True
+    assert configurable["other_key"] == "safe-value"
+    assert configurable["thread_id"] == "t-1"
+
+
+def test_runtime_api_key_not_in_configurable_after_apply_overrides():
+    from app.gateway.services import _apply_runtime_provider_overrides
+
+    configurable: dict = {"thread_id": "t-1"}
+    _apply_runtime_provider_overrides(
+        configurable,
+        runtime_model="gpt-4o",
+        runtime_provider="openai",
+        runtime_base_url="https://api.example/v1",
+        runtime_api_key="sk-super-secret",
+    )
+
+    assert "runtime_api_key" not in configurable
+    assert configurable.get("runtime_api_key_set") is True
+    assert configurable["runtime_model"] == "gpt-4o"
+    assert configurable["runtime_base_url"] == "https://api.example/v1"
+
+
+def test_contextvar_runtime_api_key_isolation():
+    from app.gateway.services import get_runtime_api_key, reset_runtime_api_key, set_runtime_api_key
+
+    assert get_runtime_api_key() is None
+
+    token = set_runtime_api_key("sk-test-key")
+    assert get_runtime_api_key() == "sk-test-key"
+
+    reset_runtime_api_key(token)
+    assert get_runtime_api_key() is None
+
+
+def test_contextvar_feature_api_keys_isolation():
+    from app.gateway.services import get_runtime_feature_api_key, reset_runtime_feature_api_keys, set_runtime_feature_api_keys
+
+    assert get_runtime_feature_api_key("title") is None
+
+    token = set_runtime_feature_api_keys({"title": "sk-title", "memory": "sk-mem"})
+    assert get_runtime_feature_api_key("title") == "sk-title"
+    assert get_runtime_feature_api_key("memory") == "sk-mem"
+    assert get_runtime_feature_api_key("unknown") is None
+
+    reset_runtime_feature_api_keys(token)
+    assert get_runtime_feature_api_key("title") is None
+
+
+@pytest.mark.asyncio
+async def test_contextvar_set_reset_inside_create_task():
+    from app.gateway.services import (
+        get_runtime_api_key,
+        get_runtime_feature_api_key,
+        reset_runtime_api_key,
+        reset_runtime_feature_api_keys,
+        set_runtime_api_key,
+        set_runtime_feature_api_keys,
+    )
+
+    assert get_runtime_api_key() is None
+
+    results: dict[str, object] = {}
+
+    async def _task_body():
+        api_key_token = set_runtime_api_key("sk-in-task")
+        feature_token = set_runtime_feature_api_keys({"title": "sk-title-in-task"})
+        try:
+            results["api_key"] = get_runtime_api_key()
+            results["title_key"] = get_runtime_feature_api_key("title")
+        finally:
+            reset_runtime_feature_api_keys(feature_token)
+            reset_runtime_api_key(api_key_token)
+        results["api_key_after_reset"] = get_runtime_api_key()
+        results["title_key_after_reset"] = get_runtime_feature_api_key("title")
+
+    task = asyncio.create_task(_task_body())
+    await task
+
+    assert results["api_key"] == "sk-in-task"
+    assert results["title_key"] == "sk-title-in-task"
+    assert results["api_key_after_reset"] is None
+    assert results["title_key_after_reset"] is None
+    assert get_runtime_api_key() is None
+
+
+@pytest.mark.asyncio
+async def test_contextvar_parent_not_affected_by_child_task():
+    from app.gateway.services import (
+        get_runtime_api_key,
+        get_runtime_feature_api_key,
+        reset_runtime_api_key,
+        reset_runtime_feature_api_keys,
+        set_runtime_api_key,
+        set_runtime_feature_api_keys,
+    )
+
+    parent_token = set_runtime_api_key("sk-parent")
+    parent_feature_token = set_runtime_feature_api_keys({"memory": "sk-parent-mem"})
+
+    child_results: dict[str, object] = {}
+
+    async def _child_task():
+        child_token = set_runtime_api_key("sk-child")
+        child_feature_token = set_runtime_feature_api_keys({"title": "sk-child-title"})
+        try:
+            child_results["child_api_key"] = get_runtime_api_key()
+            child_results["child_title_key"] = get_runtime_feature_api_key("title")
+            child_results["child_memory_key"] = get_runtime_feature_api_key("memory")
+        finally:
+            reset_runtime_feature_api_keys(child_feature_token)
+            reset_runtime_api_key(child_token)
+
+    task = asyncio.create_task(_child_task())
+    await task
+
+    assert get_runtime_api_key() == "sk-parent"
+    assert get_runtime_feature_api_key("memory") == "sk-parent-mem"
+
+    reset_runtime_feature_api_keys(parent_feature_token)
+    reset_runtime_api_key(parent_token)
+    assert get_runtime_api_key() is None

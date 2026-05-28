@@ -59,7 +59,7 @@ import { fetch } from "@/core/api/fetcher";
 import { getBackendBaseURL } from "@/core/config";
 import { useI18n } from "@/core/i18n/hooks";
 import { useModels } from "@/core/models/hooks";
-import type { AgentThreadContext } from "@/core/threads";
+import type { LocalSettingsContext } from "@/core/settings";
 import { textOfMessage } from "@/core/threads/utils";
 import { cn } from "@/lib/utils";
 
@@ -86,9 +86,15 @@ import { Tooltip } from "./tooltip";
 import {
   buildFollowupSuggestionsRequestBody,
   type FollowupSuggestionMessage,
+  resolveNextModelSelection,
 } from "./input-box-logic";
 
 type InputMode = "flash" | "thinking" | "pro" | "ultra";
+
+type InputBoxContext = LocalSettingsContext & {
+  mode: InputMode | undefined;
+  reasoning_effort?: "minimal" | "low" | "medium" | "high";
+};
 
 function getResolvedMode(mode: InputMode | undefined): InputMode {
   return mode ?? "flash";
@@ -113,13 +119,7 @@ export function InputBox({
   assistantId?: string | null;
   status?: ChatStatus;
   disabled?: boolean;
-  context: Omit<
-    AgentThreadContext,
-    "thread_id" | "is_plan_mode" | "thinking_enabled" | "subagent_enabled"
-  > & {
-    mode: "flash" | "thinking" | "pro" | "ultra" | undefined;
-    reasoning_effort?: "minimal" | "low" | "medium" | "high";
-  };
+  context: InputBoxContext;
   extraHeader?: React.ReactNode;
   /**
    * Whether to render the input in welcome layout (vertically centered,
@@ -129,15 +129,7 @@ export function InputBox({
   isWelcomeMode?: boolean;
   threadId: string;
   initialValue?: string;
-  onContextChange?: (
-    context: Omit<
-      AgentThreadContext,
-      "thread_id" | "is_plan_mode" | "thinking_enabled" | "subagent_enabled"
-    > & {
-      mode: "flash" | "thinking" | "pro" | "ultra" | undefined;
-      reasoning_effort?: "minimal" | "low" | "medium" | "high";
-    },
-  ) => void;
+  onContextChange?: (context: InputBoxContext) => void;
   onFollowupsVisibilityChange?: (visible: boolean) => void;
   onSubmit?: (message: PromptInputMessage) => void | Promise<void>;
   onStop?: () => void;
@@ -145,7 +137,7 @@ export function InputBox({
   const { t } = useI18n();
   const searchParams = useSearchParams();
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
-  const { models } = useModels();
+  const { models, defaultModelName } = useModels();
   const { thread, isMock } = useThread();
   const { textInput } = usePromptInputController();
   const promptRootRef = useRef<HTMLDivElement | null>(null);
@@ -163,24 +155,32 @@ export function InputBox({
   );
 
   useEffect(() => {
-    if (models.length === 0) {
+    const result = resolveNextModelSelection(
+      context.model_name,
+      models,
+      defaultModelName,
+    );
+    if (result.modelName === null) {
       return;
     }
-    const currentModel = models.find((m) => m.name === context.model_name);
-    const fallbackModel = currentModel ?? models[0]!;
-    const nextModelName = fallbackModel.name;
+    if (!result.changed) {
+      const nextMode = getResolvedMode(context.mode);
+      if (context.mode !== nextMode) {
+        onContextChange?.({
+          ...context,
+          mode: nextMode,
+        });
+      }
+      return;
+    }
     const nextMode = getResolvedMode(context.mode);
-
-    if (context.model_name === nextModelName && context.mode === nextMode) {
-      return;
-    }
 
     onContextChange?.({
       ...context,
-      model_name: nextModelName,
+      model_name: result.modelName!,
       mode: nextMode,
     });
-  }, [context, models, onContextChange]);
+  }, [context, models, defaultModelName, onContextChange]);
 
   const selectedModel = useMemo(() => {
     if (models.length === 0) {

@@ -10,5 +10,7 @@ export async function loadModels(): Promise<ModelsResponse> {
   return {
     models: data.models ?? [],
     token_usage: data.token_usage ?? { enabled: false },
+    default_model_name: data.default_model_name ?? null,
+    default_provider_id: data.default_provider_id ?? null,
   };
 }

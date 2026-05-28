@@ -26,6 +26,65 @@ from deerflow.skills.types import Skill
 logger = logging.getLogger(__name__)
 
 
+def _build_runtime_overrides(
+    *,
+    app_config: AppConfig | object | None,
+    model_name: str | None,
+    runtime_model: str | None,
+    runtime_base_url: str | None,
+    runtime_api_key: str | None,
+    caller_label: str,
+    fallback_base_url: str | None = None,
+) -> dict[str, object]:
+    """Build runtime override kwargs for create_chat_model() with OpenAI-compatible guard.
+
+    Only injects runtime_model/base_url/api_key when the resolved model config
+    is OpenAI-compatible.  Skips overrides for non-OpenAI models and logs safely
+    (no plaintext api_key).
+
+    When app_config is None or model_config cannot be resolved, assumes
+    OpenAI-compatible as a safe fallback (runtime overrides are only provided
+    when the gateway has already validated the provider).
+
+    When *fallback_base_url* is provided and runtime_base_url is absent but
+    runtime_model is present, the fallback is used as base_url.  This supports
+    the lead-agent pattern where the config-sourced base_url should be carried
+    forward when the runtime only overrides the model name.
+    """
+    model_config = None
+    if app_config is not None and model_name is not None:
+        if hasattr(app_config, "get_model_config"):
+            model_config = app_config.get_model_config(model_name)
+        else:
+            for m in getattr(app_config, "models", []):
+                if getattr(m, "name", None) == model_name:
+                    model_config = m
+                    break
+
+    model_use = getattr(model_config, "use", None) if model_config else None
+    is_openai_compatible = isinstance(model_use, str) and "openai" in model_use.lower()
+
+    if model_config is not None and not is_openai_compatible:
+        if any((runtime_model, runtime_base_url, runtime_api_key)):
+            logger.info(
+                "[%s] Skip runtime overrides for non-openai model class '%s'.",
+                caller_label,
+                model_use,
+            )
+        return {}
+
+    overrides: dict[str, object] = {}
+    if runtime_model:
+        overrides["model"] = runtime_model
+    if runtime_base_url:
+        overrides["base_url"] = runtime_base_url
+    elif runtime_model and fallback_base_url:
+        overrides["base_url"] = fallback_base_url
+    if runtime_api_key:
+        overrides["api_key"] = runtime_api_key
+    return overrides
+
+
 def _get_runtime_config(config: RunnableConfig) -> dict:
     """Merge legacy configurable options with LangGraph runtime context."""
     cfg = dict(config.get("configurable", {}) or {})
@@ -40,6 +99,14 @@ def _as_non_empty_str(value: object) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _read_feature_api_key(cfg: dict, feature: str) -> str | None:
+    try:
+        from app.gateway.services import get_runtime_feature_api_key
+        return get_runtime_feature_api_key(feature)
+    except ImportError:
+        return _as_non_empty_str(cfg.get(f"{feature}_runtime_api_key"))
 
 
 def _resolve_model_name(requested_model_name: str | None = None, *, app_config: AppConfig | None = None) -> str:
@@ -87,13 +154,14 @@ def _create_summarization_middleware(
     # Bind "middleware:summarize" tag so RunJournal identifies these LLM calls
     # as middleware rather than lead_agent (SummarizationMiddleware is a
     # LangChain built-in, so we tag the model at creation time).
-    chat_model_kwargs = {}
-    if runtime_model:
-        chat_model_kwargs["model"] = runtime_model
-    if runtime_base_url:
-        chat_model_kwargs["base_url"] = runtime_base_url
-    if runtime_api_key:
-        chat_model_kwargs["api_key"] = runtime_api_key
+    chat_model_kwargs = _build_runtime_overrides(
+        app_config=resolved_app_config,
+        model_name=config.model_name,
+        runtime_model=runtime_model,
+        runtime_base_url=runtime_base_url,
+        runtime_api_key=runtime_api_key,
+        caller_label="summarization",
+    )
 
     selected_model_name = model_name or config.model_name
     if selected_model_name:
@@ -291,62 +359,77 @@ def _build_middlewares(
     resolved_app_config = app_config or get_app_config()
     middlewares = build_lead_runtime_middlewares(app_config=resolved_app_config, lazy_init=True)
 
-    # Always inject current date (and optionally memory) as <system-reminder> into the
-    # first HumanMessage to keep the system prompt fully static for prefix-cache reuse.
     from deerflow.agents.middlewares.dynamic_context_middleware import DynamicContextMiddleware
 
     middlewares.append(DynamicContextMiddleware(agent_name=agent_name, app_config=resolved_app_config))
 
-    # Add summarization middleware if enabled
-    summarization_middleware = _create_summarization_middleware(app_config=resolved_app_config)
+    cfg = _get_runtime_config(config)
+
+    title_runtime_model = _as_non_empty_str(cfg.get("title_runtime_model"))
+    title_runtime_base_url = _as_non_empty_str(cfg.get("title_runtime_base_url"))
+    title_runtime_api_key = _read_feature_api_key(cfg, "title")
+
+    memory_runtime_model = _as_non_empty_str(cfg.get("memory_runtime_model"))
+    memory_runtime_base_url = _as_non_empty_str(cfg.get("memory_runtime_base_url"))
+    memory_runtime_api_key = _read_feature_api_key(cfg, "memory")
+
+    summarization_runtime_model = _as_non_empty_str(cfg.get("summarization_runtime_model"))
+    summarization_runtime_base_url = _as_non_empty_str(cfg.get("summarization_runtime_base_url"))
+    summarization_runtime_api_key = _read_feature_api_key(cfg, "summarization")
+
+    summarization_middleware = _create_summarization_middleware(
+        app_config=resolved_app_config,
+        runtime_model=summarization_runtime_model,
+        runtime_base_url=summarization_runtime_base_url,
+        runtime_api_key=summarization_runtime_api_key,
+    )
     if summarization_middleware is not None:
         middlewares.append(summarization_middleware)
 
-    # Add TodoList middleware if plan mode is enabled
-    cfg = _get_runtime_config(config)
     is_plan_mode = cfg.get("is_plan_mode", False)
     todo_list_middleware = _create_todo_list_middleware(is_plan_mode)
     if todo_list_middleware is not None:
         middlewares.append(todo_list_middleware)
 
-    # Add TokenUsageMiddleware when token_usage tracking is enabled
     if resolved_app_config.token_usage.enabled:
         middlewares.append(TokenUsageMiddleware())
 
-    # Add TitleMiddleware
-    middlewares.append(TitleMiddleware(app_config=resolved_app_config))
+    middlewares.append(TitleMiddleware(
+        app_config=resolved_app_config,
+        runtime_model=title_runtime_model,
+        runtime_base_url=title_runtime_base_url,
+        runtime_api_key=title_runtime_api_key,
+    ))
 
-    # Add MemoryMiddleware (after TitleMiddleware)
-    middlewares.append(MemoryMiddleware(agent_name=agent_name, memory_config=resolved_app_config.memory))
+    middlewares.append(MemoryMiddleware(
+        agent_name=agent_name,
+        memory_config=resolved_app_config.memory,
+        runtime_model=memory_runtime_model,
+        runtime_base_url=memory_runtime_base_url,
+        runtime_api_key=memory_runtime_api_key,
+    ))
 
-    # Add ViewImageMiddleware only if the current model supports vision.
-    # Use the resolved runtime model_name from make_lead_agent to avoid stale config values.
     model_config = resolved_app_config.get_model_config(model_name) if model_name else None
     if model_config is not None and model_config.supports_vision:
         middlewares.append(ViewImageMiddleware())
 
-    # Add DeferredToolFilterMiddleware to hide deferred tool schemas from model binding
     if resolved_app_config.tool_search.enabled:
         from deerflow.agents.middlewares.deferred_tool_filter_middleware import DeferredToolFilterMiddleware
 
         middlewares.append(DeferredToolFilterMiddleware())
 
-    # Add SubagentLimitMiddleware to truncate excess parallel task calls
     subagent_enabled = cfg.get("subagent_enabled", False)
     if subagent_enabled:
         max_concurrent_subagents = cfg.get("max_concurrent_subagents", 3)
         middlewares.append(SubagentLimitMiddleware(max_concurrent=max_concurrent_subagents))
 
-    # LoopDetectionMiddleware — detect and break repetitive tool call loops
     loop_detection_config = resolved_app_config.loop_detection
     if loop_detection_config.enabled:
         middlewares.append(LoopDetectionMiddleware.from_config(loop_detection_config))
 
-    # Inject custom middlewares before ClarificationMiddleware
     if custom_middlewares:
         middlewares.extend(custom_middlewares)
 
-    # ClarificationMiddleware should always be last
     middlewares.append(ClarificationMiddleware())
     return middlewares
 
@@ -394,7 +477,12 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
     runtime_model_name = _as_non_empty_str(cfg.get("runtime_model"))
     runtime_provider = _as_non_empty_str(cfg.get("runtime_provider"))
     runtime_base_url = _as_non_empty_str(cfg.get("runtime_base_url"))
-    runtime_api_key = _as_non_empty_str(cfg.get("runtime_api_key"))
+    runtime_api_key: str | None = None
+    try:
+        from app.gateway.services import get_runtime_api_key
+        runtime_api_key = get_runtime_api_key()
+    except ImportError:
+        runtime_api_key = _as_non_empty_str(cfg.get("runtime_api_key"))
     is_plan_mode = cfg.get("is_plan_mode", False)
     subagent_enabled = cfg.get("subagent_enabled", False)
     max_concurrent_subagents = cfg.get("max_concurrent_subagents", 3)
@@ -418,26 +506,20 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
         logger.warning(f"Thinking mode is enabled but model '{model_name}' does not support it; fallback to non-thinking mode.")
         thinking_enabled = False
 
-    model_runtime_overrides: dict[str, object] = {}
-    model_use = getattr(model_config, "use", None)
-    is_openai_compatible = isinstance(model_use, str) and "openai" in model_use.lower()
-    if is_openai_compatible:
-        if runtime_model_name:
-            model_runtime_overrides["model"] = runtime_model_name
-        if runtime_base_url:
-            model_runtime_overrides["base_url"] = runtime_base_url
-        elif runtime_model_name and not runtime_base_url and hasattr(model_config, "model_dump"):
-            dumped = model_config.model_dump(exclude_none=True)
-            config_base_url = dumped.get("base_url") or dumped.get("api_base")
-            if config_base_url:
-                model_runtime_overrides["base_url"] = config_base_url
-        if runtime_api_key:
-            model_runtime_overrides["api_key"] = runtime_api_key
-    elif any((runtime_model_name, runtime_base_url, runtime_api_key)):
-        logger.info(
-            "Skip runtime provider overrides for non-openai model class '%s'.",
-            model_use,
-        )
+    config_base_url: str | None = None
+    if hasattr(model_config, "model_dump"):
+        dumped = model_config.model_dump(exclude_none=True)
+        config_base_url = dumped.get("base_url") or dumped.get("api_base")
+
+    model_runtime_overrides = _build_runtime_overrides(
+        app_config=resolved_app_config,
+        model_name=model_name,
+        runtime_model=runtime_model_name,
+        runtime_base_url=runtime_base_url,
+        runtime_api_key=runtime_api_key,
+        caller_label="lead_agent",
+        fallback_base_url=config_base_url,
+    )
 
     logger.info(
         (

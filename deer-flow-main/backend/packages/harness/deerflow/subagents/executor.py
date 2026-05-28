@@ -269,6 +269,15 @@ def _filter_tools(
 class SubagentExecutor:
     """Executor for running subagents."""
 
+    @staticmethod
+    def _get_model_config_from_app_config(app_config: Any, model_name: str) -> Any | None:
+        if hasattr(app_config, "get_model_config"):
+            return app_config.get_model_config(model_name)
+        for m in getattr(app_config, "models", []):
+            if getattr(m, "name", None) == model_name:
+                return m
+        return None
+
     def __init__(
         self,
         config: SubagentConfig,
@@ -279,6 +288,10 @@ class SubagentExecutor:
         thread_data: ThreadDataState | None = None,
         thread_id: str | None = None,
         trace_id: str | None = None,
+        runtime_model: str | None = None,
+        runtime_base_url: str | None = None,
+        runtime_api_key: str | None = None,
+        runtime_provider: str | None = None,
     ):
         """Initialize the executor.
 
@@ -293,13 +306,18 @@ class SubagentExecutor:
             thread_data: Thread data from parent agent.
             thread_id: Thread ID for sandbox operations.
             trace_id: Trace ID from parent for distributed tracing.
+            runtime_model: Override provider-side model id inherited from parent.
+            runtime_base_url: Override base URL inherited from parent.
+            runtime_api_key: Override API key inherited from parent.
+            runtime_provider: Override provider identifier inherited from parent.
         """
         self.config = config
         self.app_config = app_config
         self.parent_model = parent_model
-        # Resolve eagerly only when it does not require loading config.yaml; otherwise defer
-        # to _create_agent (which already loads app_config) so unit tests can construct
-        # executors without a config file present.
+        self.runtime_model = runtime_model
+        self.runtime_base_url = runtime_base_url
+        self.runtime_api_key = runtime_api_key
+        self.runtime_provider = runtime_provider
         if config.model != "inherit" or parent_model is not None or app_config is not None:
             self.model_name: str | None = resolve_subagent_model_name(config, parent_model, app_config=app_config)
         else:
@@ -307,7 +325,6 @@ class SubagentExecutor:
         self.sandbox_state = sandbox_state
         self.thread_data = thread_data
         self.thread_id = thread_id
-        # Generate trace_id if not provided (for top-level calls)
         self.trace_id = trace_id or str(uuid.uuid4())[:8]
 
         self._base_tools = _filter_tools(
@@ -324,15 +341,26 @@ class SubagentExecutor:
         app_config = self.app_config or get_app_config()
         if self.model_name is None:
             self.model_name = resolve_subagent_model_name(self.config, self.parent_model, app_config=app_config)
-        model = create_chat_model(name=self.model_name, thinking_enabled=False, app_config=app_config)
+
+        from deerflow.agents.lead_agent.agent import _build_runtime_overrides
+
+        model_runtime_overrides = _build_runtime_overrides(
+            app_config=app_config,
+            model_name=self.model_name,
+            runtime_model=self.runtime_model,
+            runtime_base_url=self.runtime_base_url,
+            runtime_api_key=self.runtime_api_key,
+            caller_label="subagent",
+        )
+
+        model_kwargs: dict[str, Any] = {"thinking_enabled": False, "app_config": app_config, **model_runtime_overrides}
+
+        model = create_chat_model(name=self.model_name, **model_kwargs)
 
         from deerflow.agents.middlewares.tool_error_handling_middleware import build_subagent_runtime_middlewares
 
-        # Reuse shared middleware composition with lead agent.
         middlewares = build_subagent_runtime_middlewares(app_config=app_config, model_name=self.model_name, lazy_init=True)
 
-        # system_prompt is included in initial state messages (see _build_initial_state)
-        # to avoid multiple SystemMessages which some LLM APIs don't support.
         return create_agent(
             model=model,
             tools=tools if tools is not None else self.tools,
@@ -480,7 +508,7 @@ class SubagentExecutor:
 
             # Token collector for subagent LLM calls
             collector_caller = f"subagent:{self.config.name}"
-            collector = SubagentTokenCollector(caller=collector_caller)
+            collector = SubagentTokenCollector(caller=collector_caller, runtime_model=self.runtime_model)
 
             # Build config with thread_id for sandbox access and recursion limit
             run_config: RunnableConfig = {
@@ -495,7 +523,7 @@ class SubagentExecutor:
             if self.app_config is not None:
                 context["app_config"] = self.app_config
 
-            logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} starting async execution with max_turns={self.config.max_turns}")
+            logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} starting async execution with max_turns={self.config.max_turns}, runtime_model={self.runtime_model}, runtime_provider={self.runtime_provider}, runtime_base_url={'set' if self.runtime_base_url else 'missing'}, runtime_api_key={'set' if self.runtime_api_key else 'missing'}")
 
             # Use stream instead of invoke to get real-time updates
             # This allows us to collect AI messages as they are generated

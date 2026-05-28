@@ -24,6 +24,15 @@ function isBrowser(): boolean {
   return typeof window !== "undefined";
 }
 
+export type LocalSettingsContext = {
+  model_name?: string | undefined;
+  mode: "flash" | "thinking" | "pro" | "ultra" | undefined;
+  reasoning_effort?: "minimal" | "low" | "medium" | "high";
+  agent_name?: string;
+  media_draft_retention?: "24h" | "7d" | "never";
+  [key: string]: unknown;
+};
+
 export interface LocalSettings {
   notification: {
     enabled: boolean;
@@ -32,20 +41,7 @@ export interface LocalSettings {
     headerTotal: boolean;
     inlineMode: TokenUsageInlineMode;
   };
-  context: Omit<
-    AgentThreadContext,
-    | "thread_id"
-    | "is_plan_mode"
-    | "thinking_enabled"
-    | "subagent_enabled"
-    | "model_name"
-    | "reasoning_effort"
-  > & {
-    model_name?: string | undefined;
-    mode: "flash" | "thinking" | "pro" | "ultra" | undefined;
-    reasoning_effort?: "minimal" | "low" | "medium" | "high";
-    media_draft_retention?: "24h" | "7d" | "never";
-  };
+  context: LocalSettingsContext;
 }
 
 function mergeLocalSettings(settings?: Partial<LocalSettings>): LocalSettings {

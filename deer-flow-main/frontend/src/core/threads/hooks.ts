@@ -3,6 +3,8 @@ import type { ThreadsClient } from "@langchain/langgraph-sdk/client";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
+
+import { resolveModuleId } from "@/components/workspace/input-box-logic";
 import { toast } from "sonner";
 
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
@@ -662,6 +664,7 @@ export function useThreadStream({
                       ? "low"
                       : undefined),
               thread_id: threadId,
+              module_id: resolveModuleId(context.agent_name),
             },
           },
         );
