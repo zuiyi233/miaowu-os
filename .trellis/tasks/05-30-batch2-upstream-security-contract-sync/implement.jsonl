@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/index.md","reason":"Load shared thinking guides before changing gateway boundary contracts."}
+{"file":".trellis/spec/backend/index.md","reason":"Identify the backend guideline set that applies to gateway runtime and config handling."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Follow executable backend contracts and update them when new gateway boundary rules are learned."}
+{"file":".trellis/tasks/05-30-assess-official-upstream-incremental-sync/research/official-upstream-c810e9f8-to-e8e9edc-assessment.md","reason":"Use the upstream sync assessment as the source-of-truth for batch2 scope and conflict boundaries."}

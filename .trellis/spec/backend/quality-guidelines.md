@@ -455,3 +455,104 @@ return command.replace("/mnt/user-data", r"C:\Users\...\user-data")
 resolved = self._resolve_path(matched_path)
 return quote_for_windows_shell(resolved)
 ```
+
+---
+
+## Scenario: Gateway message normalization and MCP config APIs must preserve client contract while failing closed on secrets
+
+### 1. Scope / Trigger
+
+- Trigger: changing gateway message coercion at the HTTP boundary or changing MCP config read/write APIs
+- Applies to:
+  - `app/gateway/services.py`
+  - `app/gateway/routers/mcp.py`
+  - backend tests that validate request/response contract behavior
+
+### 2. Signatures
+
+- `normalize_input(raw_input: dict[str, Any] | None) -> dict[str, Any]`
+- `GET /api/mcp/config`
+- `PUT /api/mcp/config`
+- `_mask_server_config(server: McpServerConfigResponse) -> McpServerConfigResponse`
+- `_merge_preserving_secrets(incoming: McpServerConfigResponse, existing: McpServerConfigResponse) -> McpServerConfigResponse`
+
+### 3. Contracts
+
+#### 3.1 Message normalization must preserve frontend-supplied metadata
+
+- **Must** delegate dict-to-message coercion to LangChain conversion helpers rather than hand-written role/content-only reconstruction
+- **Must** preserve `additional_kwargs`, `id`, `name`, `tool_call_id`, and non-human roles such as `system`, `ai`, and `tool`
+- **Must** pass existing `BaseMessage` instances through unchanged
+- **Must** return `HTTPException(400)` for malformed dict entries and include the offending `input.messages[{index}]`
+- **Must not** silently coerce unsupported or malformed messages into `HumanMessage`
+
+#### 3.2 MCP config read APIs must not leak secrets
+
+- **Must** mask all env/header values returned by `GET /api/mcp/config`
+- **Must** omit OAuth `client_secret` and `refresh_token` from the GET response body
+- **Must** keep non-secret MCP config fields readable so admin users can edit configuration safely
+- **Must not** expose resolved secret values fetched from env placeholders or persisted raw config
+
+#### 3.3 MCP config write APIs must preserve stored secrets and extra config keys
+
+- **Must** accept masked round-trips where frontend sends `***` for existing env/header secrets and `null` for masked OAuth secrets
+- **Must** preserve raw on-disk top-level keys beyond `mcpServers`, `skills`, and `features`, such as `mcpInterceptors`
+- **Must** preserve local `features` configuration when writing updated MCP servers
+- **Must** treat `""` for OAuth `client_secret` / `refresh_token` as explicit clear-to-null
+- **Must not** accept `***` for a newly introduced env/header key that has no stored source value
+
+### 4. Validation & Error Matrix
+
+| Case | Must happen | Must not happen | Verification |
+| --- | --- | --- | --- |
+| Frontend sends uploaded-file metadata in `additional_kwargs` | Message metadata survives into LangChain messages unchanged | Files/metadata disappear during gateway coercion | `test_normalize_input_preserves_additional_kwargs_and_identity` |
+| Resumed thread includes prior system/AI/tool roles | Role-specific message classes are preserved | Every role collapses into `HumanMessage` | `test_normalize_input_handles_non_human_roles` |
+| Malformed message dict | HTTP 400 with `input.messages[index]` reference | 500 from uncaught converter exception | `test_normalize_input_rejects_malformed_message_with_400` |
+| Admin fetches MCP config | Secret env/header values are masked; OAuth secrets omitted | Plaintext secrets leak in API response | `test_get_mcp_configuration_masks_sensitive_fields` |
+| Frontend round-trips masked MCP config after toggling `enabled` | Existing secrets are preserved from raw config | Stored secrets are overwritten by `***` or lost | `test_update_mcp_configuration_preserves_masked_secrets_and_top_level_keys` |
+| Client sends `***` for a new env/header key | Request fails with 400 | New secret key is accepted without a real value | `test_merge_rejects_masked_value_for_new_env_key`, `test_merge_rejects_masked_value_for_new_header_key` |
+
+### 5. Good / Base / Bad Cases
+
+- Good:
+  - HTTP-boundary message conversion preserves attachment metadata and explicit roles
+  - Admin MCP config APIs are usable without ever echoing plaintext secrets back to the browser
+  - Raw extension config keeps unrelated top-level structures after MCP edits
+- Base:
+  - Existing secret placeholders like `$GITHUB_TOKEN` stay on disk and are reused during masked round-trips
+  - OAuth `null` in update payload means preserve existing masked secret
+- Bad:
+  - Reconstructing messages from only `role` + `content`
+  - Returning resolved env/header secrets in `GET /api/mcp/config`
+  - Rewriting `extensions_config.json` in a way that drops `features` or custom top-level keys
+
+### 6. Tests Required
+
+- `backend/tests/test_gateway_services.py`
+  - metadata preservation
+  - `BaseMessage` passthrough
+  - non-human role preservation
+  - malformed message boundary handling
+- `backend/tests/test_mcp_config_secrets.py`
+  - helper-level masking / merge behavior
+  - router GET masking
+  - router PUT round-trip secret preservation
+  - top-level config key preservation
+- `backend/tests/test_auth_middleware.py`
+  - keep `/api/mcp/config` protected while secret-masking logic changes
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+converted.append(HumanMessage(content=msg.get("content", "")))
+return {"env": {"GITHUB_TOKEN": "ghp_real_secret"}}
+```
+
+#### Correct
+
+```python
+converted.extend(convert_to_messages([msg]))
+masked_env = {key: "***" for key in server.env}
+```

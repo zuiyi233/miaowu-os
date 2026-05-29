@@ -138,7 +138,7 @@ FastAPI application providing REST endpoints for frontend integration:
 | Route | Purpose |
 |-------|---------|
 | `GET /api/models` | List available LLM models |
-| `GET/PUT /api/mcp/config` | Manage MCP server configurations |
+| `GET/PUT /api/mcp/config` | Manage MCP server configurations; GET masks env/header secrets and omits OAuth secret fields, PUT preserves stored secrets across masked admin round-trips and keeps extra top-level config keys |
 | `GET/PUT /api/skills` | List and manage skills |
 | `POST /api/skills/install` | Install skill from `.skill` archive |
 | `GET /api/memory` | Retrieve memory data |
@@ -422,6 +422,14 @@ MCP servers and skill states in a single file:
   }
 }
 ```
+
+Gateway MCP config contract notes:
+
+- `GET /api/mcp/config` is admin-only and returns masked env/header values as `***`.
+- OAuth `client_secret` and `refresh_token` are omitted from GET responses.
+- `PUT /api/mcp/config` preserves previously stored secret values when the frontend round-trips a masked payload.
+- `PUT /api/mcp/config` also preserves unrelated top-level keys such as `mcpInterceptors`, plus local `features`.
+- Sending `***` for a brand-new env/header key is rejected; clients must provide a real value for new secrets.
 
 ### Environment Variables
 

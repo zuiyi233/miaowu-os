@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Validate that the final implementation respects backend quality and runtime boundary contracts."}
+{"file":".trellis/tasks/05-30-assess-official-upstream-incremental-sync/research/official-upstream-c810e9f8-to-e8e9edc-assessment.md","reason":"Check that only the approved batch2 commits were merged and the higher-risk items remain excluded."}

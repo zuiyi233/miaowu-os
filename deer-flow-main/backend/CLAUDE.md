@@ -214,7 +214,7 @@ CORS is same-origin by default when requests enter through nginx on port 2026. S
 | Router | Endpoints |
 |--------|-----------|
 | **Models** (`/api/models`) | `GET /` - list models; `GET /{name}` - model details |
-| **MCP** (`/api/mcp`) | `GET /config` - get config; `PUT /config` - update config (saves to extensions_config.json) |
+| **MCP** (`/api/mcp`) | `GET /config` - get config with masked env/header secrets and omitted OAuth secret fields; `PUT /config` - update config while preserving masked round-trip secrets and extra top-level config keys in `extensions_config.json` |
 | **Skills** (`/api/skills`) | `GET /` - list skills; `GET /{name}` - details; `PUT /{name}` - update enabled; `POST /install` - install from .skill archive (accepts standard optional frontmatter like `version`, `author`, `compatibility`) |
 | **Memory** (`/api/memory`) | `GET /` - memory data; `POST /reload` - force reload; `GET /config` - config; `GET /status` - config + data |
 | **Uploads** (`/api/threads/{id}/uploads`) | `POST /` - upload files (auto-converts PDF/PPT/Excel/Word); `GET /list` - list; `DELETE /{filename}` - delete |
@@ -296,6 +296,10 @@ Proxied through nginx: `/api/langgraph/*` → Gateway LangGraph-compatible runti
 - **Transports**: stdio (command-based), SSE, HTTP
 - **OAuth (HTTP/SSE)**: Supports token endpoint flows (`client_credentials`, `refresh_token`) with automatic token refresh + Authorization header injection
 - **Runtime updates**: Gateway API saves to extensions_config.json; LangGraph detects via mtime
+- **Gateway config contract**:
+  - `GET /api/mcp/config` must never leak plaintext env/header values or OAuth `client_secret` / `refresh_token`
+  - `PUT /api/mcp/config` must preserve stored secrets when frontend round-trips masked values
+  - config rewrites must preserve unrelated top-level keys such as `mcpInterceptors`, in addition to local `features`
 
 ### Skills System (`packages/harness/deerflow/skills/`)
 
@@ -416,6 +420,12 @@ Focused regression coverage for the updater lives in `backend/tests/test_memory_
 - `skills` - Map of skill name → state (enabled)
 
 Both can be modified at runtime via Gateway API endpoints or `DeerFlowClient` methods.
+
+Gateway message-boundary contract:
+
+- `app.gateway.services.normalize_input()` must use LangChain message conversion helpers instead of hand-written `role/content` coercion.
+- The gateway must preserve `additional_kwargs`, `id`, `name`, and non-human roles (`system`, `ai`, `tool`) when converting client payloads into LangChain messages.
+- Malformed message dicts at the HTTP boundary must return `HTTP 400` with the offending `input.messages[{index}]` reference instead of bubbling into a 500.
 
 ### Embedded Client (`packages/harness/deerflow/client.py`)
 

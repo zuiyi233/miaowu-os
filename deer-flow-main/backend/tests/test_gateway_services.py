@@ -78,6 +78,79 @@ def test_normalize_input_with_messages():
     assert result["messages"][0].content == "hi"
 
 
+def test_normalize_input_preserves_additional_kwargs_and_identity():
+    from langchain_core.messages import HumanMessage
+
+    from app.gateway.services import normalize_input
+
+    files = [{"filename": "a.csv", "size": 100, "path": "/mnt/user-data/uploads/a.csv", "status": "uploaded"}]
+    result = normalize_input(
+        {
+            "messages": [
+                {
+                    "type": "human",
+                    "id": "client-msg-1",
+                    "name": "user-input",
+                    "content": [{"type": "text", "text": "clean it"}],
+                    "additional_kwargs": {"files": files, "custom": "keep-me"},
+                }
+            ]
+        }
+    )
+
+    assert len(result["messages"]) == 1
+    msg = result["messages"][0]
+    assert isinstance(msg, HumanMessage)
+    assert msg.id == "client-msg-1"
+    assert msg.name == "user-input"
+    assert msg.content == [{"type": "text", "text": "clean it"}]
+    assert msg.additional_kwargs == {"files": files, "custom": "keep-me"}
+
+
+def test_normalize_input_passes_through_basemessage_instances():
+    from langchain_core.messages import HumanMessage
+
+    from app.gateway.services import normalize_input
+
+    msg = HumanMessage(content="hello", id="m-1", additional_kwargs={"files": [{"filename": "x"}]})
+    result = normalize_input({"messages": [msg]})
+
+    assert result["messages"][0] is msg
+
+
+def test_normalize_input_rejects_malformed_message_with_400():
+    from fastapi import HTTPException
+
+    from app.gateway.services import normalize_input
+
+    with pytest.raises(HTTPException) as excinfo:
+        normalize_input({"messages": [{"role": "human", "content": "ok"}, {"oops": "no role here"}]})
+
+    assert excinfo.value.status_code == 400
+    assert "input.messages[1]" in excinfo.value.detail
+
+
+def test_normalize_input_handles_non_human_roles():
+    from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+
+    from app.gateway.services import normalize_input
+
+    result = normalize_input(
+        {
+            "messages": [
+                {"role": "system", "content": "sys"},
+                {"role": "ai", "content": "hi", "id": "ai-1"},
+                {"role": "tool", "content": "result", "tool_call_id": "call-1"},
+            ]
+        }
+    )
+
+    types = [type(message) for message in result["messages"]]
+    assert types == [SystemMessage, AIMessage, ToolMessage]
+    assert result["messages"][1].id == "ai-1"
+    assert result["messages"][2].tool_call_id == "call-1"
+
+
 def test_normalize_input_passthrough():
     from app.gateway.services import normalize_input
 

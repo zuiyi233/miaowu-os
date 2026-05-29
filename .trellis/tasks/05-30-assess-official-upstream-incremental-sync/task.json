@@ -19,7 +19,8 @@
   "pr_url": null,
   "subtasks": [],
   "children": [
-    "05-30-batch1-upstream-low-risk-sync"
+    "05-30-batch1-upstream-low-risk-sync",
+    "05-30-batch2-upstream-security-contract-sync"
   ],
   "parent": null,
   "relatedFiles": [],

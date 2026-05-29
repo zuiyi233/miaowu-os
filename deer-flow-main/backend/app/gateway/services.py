@@ -16,7 +16,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from fastapi import HTTPException, Request
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import BaseMessage
+from langchain_core.messages.utils import convert_to_messages
 from sqlalchemy import select
 
 from app.gateway.deps import get_run_context, get_run_manager, get_stream_bridge
@@ -35,6 +36,8 @@ from app.gateway.novel_migrated.services.user_preferences_service import (
 )
 from app.gateway.product_entitlements import product_entitlement_service
 from app.gateway.utils import sanitize_log_param
+from deerflow.config.extensions_config import ExtensionsConfig
+from deerflow.persistence.engine import get_session_factory
 from deerflow.runtime import (
     END_SENTINEL,
     HEARTBEAT_SENTINEL,
@@ -47,8 +50,6 @@ from deerflow.runtime import (
     UnsupportedStrategyError,
     run_agent,
 )
-from deerflow.persistence.engine import get_session_factory
-from deerflow.config.extensions_config import ExtensionsConfig
 from deerflow.skills.storage import get_or_new_skill_storage
 
 logger = logging.getLogger(__name__)
@@ -151,30 +152,30 @@ def normalize_stream_modes(raw: list[str] | str | None) -> list[str]:
 
 
 def normalize_input(raw_input: dict[str, Any] | None) -> dict[str, Any]:
-    """Convert LangGraph Platform input format to LangChain state dict."""
+    """Convert LangGraph Platform input format to LangChain state dict.
+
+    Use LangChain's own dict-to-message conversion so message identity,
+    attachments, and richer role metadata survive the gateway boundary.
+    """
     if raw_input is None:
         return {}
     messages = raw_input.get("messages")
     if messages and isinstance(messages, list):
-        converted = []
-        for msg in messages:
-            if isinstance(msg, dict):
-                role = msg.get("role", msg.get("type", "user"))
-                content = msg.get("content", "")
-                if role in ("user", "human"):
-                    converted.append(HumanMessage(content=content))
-                elif role in ("system",):
-                    converted.append(SystemMessage(content=content))
-                elif role in ("ai", "assistant"):
-                    converted.append(AIMessage(content=content))
-                elif role in ("tool",):
-                    tool_call_id = msg.get("tool_call_id", "")
-                    name = msg.get("name", "")
-                    converted.append(ToolMessage(content=content, tool_call_id=tool_call_id, name=name))
-                else:
-                    converted.append(HumanMessage(content=content))
-            else:
+        converted: list[Any] = []
+        for index, msg in enumerate(messages):
+            if isinstance(msg, BaseMessage):
                 converted.append(msg)
+                continue
+            if isinstance(msg, dict):
+                try:
+                    converted.extend(convert_to_messages([msg]))
+                except (ValueError, TypeError, NotImplementedError) as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid message at input.messages[{index}]: {exc}",
+                    ) from exc
+                continue
+            converted.append(msg)
         return {**raw_input, "messages": converted}
     return raw_input
 
