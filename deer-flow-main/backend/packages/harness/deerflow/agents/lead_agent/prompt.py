@@ -448,6 +448,8 @@ You: "Deploying to staging..." [proceed]
 
 {skills_section}
 
+{writing_skill_section}
+
 {deferred_tools_section}
 
 {subagent_section}
@@ -657,6 +659,45 @@ def get_skills_prompt_section(available_skills: set[str] | None = None, *, app_c
     return _get_cached_skills_prompt_section(skill_signature, available_key, container_base_path, skill_evolution_section)
 
 
+_WRITING_SKILL_OVERVIEW = """<writing_skill_system>
+你拥有一个专业的网文写作技能库，包含数百个经过验证的写作方法论。
+这些技能覆盖以下分类：开篇、角色、情节、节奏、爽点、伏笔、文风、世界观、长篇结构、情感、对话、修稿、职业线、综合等。
+
+**何时使用写作技能：**
+- 用户请求涉及小说创作指导、写作技巧、结构优化、人设设计等
+- 当前写作任务需要方法论支撑时（如"设计反派""开篇钩子""章节节奏"）
+- 用户明确要求参考写作方法或模板
+
+**何时不使用写作技能：**
+- 普通闲聊、简单问答、非写作相关的请求
+- 用户已有明确指令且不需要方法论参考
+- 简单的文本润色或格式调整
+
+**使用流程（二段式）：**
+1. 先调用 list_writing_skill_candidates，传入当前意图和上下文
+2. 从返回的候选列表中选择最相关的 1-3 个技能
+3. 调用 invoke_writing_skill 获取选中技能的完整方法论
+4. 按技能步骤执行，不要堆叠过多技能
+
+**选择策略：**
+- 优先少量高相关候选，避免堆叠
+- 一轮内全文展开不超过 3 个技能
+- 当多个技能适用时，选最具体的那一个
+- 如果候选列表为空或不相关，继续使用你自身的写作能力
+
+**降级规则：**
+- 未命中技能时，继续使用你自身的写作能力
+- 技能库不可用时，不影响其他功能
+- 不要为了使用技能而使用技能
+</writing_skill_system>"""
+
+
+def get_writing_skill_overview_section(*, include_novel: bool = True) -> str:
+    if not include_novel:
+        return ""
+    return _WRITING_SKILL_OVERVIEW
+
+
 def get_agent_soul(agent_name: str | None) -> str:
     # Append SOUL.md (agent personality) if present
     soul = load_agent_soul(agent_name)
@@ -773,6 +814,7 @@ def apply_prompt_template(
     agent_name: str | None = None,
     available_skills: set[str] | None = None,
     app_config: AppConfig | None = None,
+    include_novel: bool = True,
 ) -> str:
     # Include subagent section only if enabled (from runtime parameter)
     n = max_concurrent_subagents
@@ -799,6 +841,9 @@ def apply_prompt_template(
     # Get skills section
     skills_section = get_skills_prompt_section(available_skills, app_config=app_config)
 
+    # Get writing skill overview section
+    writing_skill_section = get_writing_skill_overview_section(include_novel=include_novel)
+
     # Get deferred tools section (tool_search)
     deferred_tools_section = get_deferred_tools_prompt_section(app_config=app_config)
 
@@ -816,6 +861,7 @@ def apply_prompt_template(
         soul=get_agent_soul(agent_name),
         self_update_section=_build_self_update_section(agent_name),
         skills_section=skills_section,
+        writing_skill_section=writing_skill_section,
         deferred_tools_section=deferred_tools_section,
         subagent_section=subagent_section,
         subagent_reminder=subagent_reminder,

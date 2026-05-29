@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 from deerflow.tools import builtins as builtins_module
 from deerflow.tools import tools as tools_module
+from deerflow.tools.builtins.writing_skill_tools import invoke_writing_skill
 from deerflow.tools.tools import get_available_tools
 
 
@@ -54,3 +56,36 @@ def test_get_available_tools_excludes_novel_tools_when_disabled(monkeypatch):
 
     assert "create_novel" not in names
     assert "present_files" in names
+
+
+def test_invoke_writing_skill_enforces_per_thread_limit(monkeypatch):
+    class _DummyIndex:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def check_invoke_limit(self, thread_id: str):
+            self.calls += 1
+            if self.calls <= 3:
+                return True, 3 - self.calls
+            return False, 0
+
+        def get_entry(self, slug: str):
+            return SimpleNamespace(slug=slug, name="Test Skill", category="综合")
+
+        def read_skill_content(self, slug: str):
+            return f"content for {slug}"
+
+        def list_slugs(self, limit: int = 20):
+            return ["test-skill"]
+
+    dummy = _DummyIndex()
+    monkeypatch.setattr("deerflow.tools.builtins.writing_skill_tools._get_index", lambda: dummy)
+
+    config = {"thread_id": "thread-1"}
+    for _ in range(3):
+        result = asyncio.run(invoke_writing_skill.coroutine("test-skill", config=config))
+        assert result["success"] is True
+
+    blocked = asyncio.run(invoke_writing_skill.coroutine("test-skill", config=config))
+    assert blocked["success"] is False
+    assert "invoke limit reached" in blocked["error"]

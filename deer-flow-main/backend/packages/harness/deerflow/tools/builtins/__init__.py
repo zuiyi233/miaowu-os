@@ -28,6 +28,11 @@ from .setup_agent_tool import setup_agent
 from .task_tool import task_tool
 from .update_agent_tool import update_agent
 from .view_image_tool import view_image_tool
+from .writing_skill_tools import (
+    invoke_writing_skill,
+    list_writing_skill_candidates,
+    refresh_writing_skill_index,
+)
 
 CORE_BUILTIN_TOOLS = (
     present_file_tool,
@@ -54,6 +59,9 @@ NOVEL_BUILTIN_TOOLS = (
     finalize_project,
     import_book,
     update_character_states,
+    list_writing_skill_candidates,
+    invoke_writing_skill,
+    refresh_writing_skill_index,
 )
 
 __all__ = [
@@ -82,6 +90,9 @@ __all__ = [
     "finalize_project",
     "import_book",
     "update_character_states",
+    "list_writing_skill_candidates",
+    "invoke_writing_skill",
+    "refresh_writing_skill_index",
     "CORE_BUILTIN_TOOLS",
     "NOVEL_BUILTIN_TOOLS",
 ]

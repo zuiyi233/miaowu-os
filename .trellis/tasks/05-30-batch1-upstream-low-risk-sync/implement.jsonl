@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend rules index for runtime, gateway, worker and persistence changes in batch 1."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Async runtime, cache scope, background worker and fire-and-forget contracts apply to runtime persistence fixes."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Gateway/runtime error recovery expectations are relevant when merging run lifecycle and cancellation fixes."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend rules index for low-risk UI fixes in markdown, clipboard and copy interactions."}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"Frontend data flow and query behavior guidance for message/UI related changes."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Type-safety guardrail for frontend changes before running tsc verification."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Batch 1 spans backend persistence, gateway auth and frontend rendering, so cross-layer checks apply."}
+{"file":".trellis/tasks/05-30-assess-official-upstream-incremental-sync/research/official-upstream-c810e9f8-to-e8e9edc-assessment.md","reason":"Parent task research defines why batch 1 is low risk and which topics are excluded."}
+{"file":".trellis/tasks/05-30-batch1-upstream-low-risk-sync/research/batch1-commit-scope.md","reason":"Exact commit inclusion and exclusion list for this implementation batch."}

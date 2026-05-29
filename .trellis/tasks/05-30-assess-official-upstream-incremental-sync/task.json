@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "05-30-batch1-upstream-low-risk-sync"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/index.md","reason":"Review backend batch-1 changes against repository backend guidelines."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Check runtime persistence and background-task changes against async quality contracts."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Validate retry and recovery semantics are preserved after backend merges."}
+{"file":".trellis/spec/frontend/index.md","reason":"Review frontend batch-1 changes against repo frontend guidance."}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"Check message/rendering related changes for hook/data-flow regressions."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Use type-safety guidance when validating tsc and frontend edits."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Cross-layer review needed because batch 1 spans persistence, auth and UI rendering."}
+{"file":".trellis/tasks/05-30-assess-official-upstream-incremental-sync/research/official-upstream-c810e9f8-to-e8e9edc-assessment.md","reason":"Review exclusions and risk boundaries from the parent assessment."}
+{"file":".trellis/tasks/05-30-batch1-upstream-low-risk-sync/research/batch1-commit-scope.md","reason":"Check implementation stayed within the approved commit scope."}

@@ -584,11 +584,12 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
             tools=filter_tools_by_skill_allowed_tools(tools, skills_for_tool_policy),
             middleware=_build_middlewares(config, model_name=model_name, app_config=resolved_app_config),
             system_prompt=apply_prompt_template(
-                subagent_enabled=subagent_enabled,
-                max_concurrent_subagents=max_concurrent_subagents,
-                available_skills=set(["bootstrap"]),
-                app_config=resolved_app_config,
-            ),
+            subagent_enabled=subagent_enabled,
+            max_concurrent_subagents=max_concurrent_subagents,
+            available_skills=set(["bootstrap"]),
+            app_config=resolved_app_config,
+            include_novel=False,
+        ),
             state_schema=ThreadState,
         )
 
@@ -620,6 +621,7 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
             agent_name=agent_name,
             available_skills=available_skills,
             app_config=resolved_app_config,
+            include_novel=include_novel,
         ),
         state_schema=ThreadState,
     )
