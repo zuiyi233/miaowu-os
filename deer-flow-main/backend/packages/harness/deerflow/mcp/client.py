@@ -42,7 +42,11 @@ def build_server_params(server_name: str, config: McpServerConfig) -> dict[str, 
     return params
 
 
-def build_servers_config(extensions_config: ExtensionsConfig) -> dict[str, dict[str, Any]]:
+def build_servers_config(
+    extensions_config: ExtensionsConfig,
+    *,
+    enabled_server_names: set[str] | None = None,
+) -> dict[str, dict[str, Any]]:
     """Build servers configuration for MultiServerMCPClient.
 
     Args:
@@ -52,6 +56,12 @@ def build_servers_config(extensions_config: ExtensionsConfig) -> dict[str, dict[
         Dictionary mapping server names to their parameters.
     """
     enabled_servers = extensions_config.get_enabled_mcp_servers()
+    if enabled_server_names is not None:
+        enabled_servers = {
+            server_name: server_config
+            for server_name, server_config in enabled_servers.items()
+            if server_name in enabled_server_names
+        }
 
     if not enabled_servers:
         logger.info("No enabled MCP servers found")

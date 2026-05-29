@@ -228,8 +228,9 @@ class SkillStorage(ABC):
 
         skills = list(skills_by_name.values())
 
-        # Merge enabled state from extensions config (re-read every call so
-        # changes made by another process are picked up immediately).
+        # System-level skill availability remains in extensions_config.
+        # User-specific enabled state is resolved later from
+        # authenticated Settings.preferences.
         try:
             from deerflow.config.extensions_config import ExtensionsConfig
 
@@ -238,6 +239,8 @@ class SkillStorage(ABC):
                 skill.enabled = extensions_config.is_skill_enabled(skill.name, skill.category)
         except Exception as e:
             logger.warning("Failed to load extensions config: %s", e)
+            for skill in skills:
+                skill.enabled = True
 
         if enabled_only:
             skills = [s for s in skills if s.enabled]

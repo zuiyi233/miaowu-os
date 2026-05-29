@@ -8,8 +8,6 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 import { Switch } from "@/components/ui/switch";
-import { useEnableFeatureFlag, useFeatureFlags } from "@/core/features/hooks";
-import type { FeatureFlagState } from "@/core/features/type";
 import { useI18n } from "@/core/i18n/hooks";
 import { useMCPConfig, useEnableMCPServer } from "@/core/mcp/hooks";
 import type { MCPServerConfig } from "@/core/mcp/types";
@@ -20,22 +18,6 @@ import { SettingsSection } from "./settings-section";
 export function ToolSettingsPage() {
   const { t } = useI18n();
   const { config, isLoading, error } = useMCPConfig();
-  const {
-    config: featureConfig,
-    isLoading: isFeaturesLoading,
-    error: featureError,
-  } = useFeatureFlags();
-  const resolvedFeatureFlags =
-    featureConfig?.features &&
-    typeof featureConfig.features === "object"
-      ? featureConfig.features
-      : null;
-  const features =
-    resolvedFeatureFlags && Object.keys(resolvedFeatureFlags).length > 0
-      ? resolvedFeatureFlags
-      : {
-          intent_recognition: { enabled: true },
-        };
 
   return (
     <SettingsSection
@@ -50,17 +32,6 @@ export function ToolSettingsPage() {
         ) : (
           config && <MCPServerList servers={config.mcp_servers} />
         )}
-
-        <div className="mt-2">
-          <div className="mb-2 text-sm font-medium">Feature Flags</div>
-          {isFeaturesLoading ? (
-            <div className="text-muted-foreground text-sm">{t.common.loading}</div>
-          ) : featureError ? (
-            <div>Error: {featureError.message}</div>
-          ) : (
-            <FeatureFlagList features={features} />
-          )}
-        </div>
       </div>
     </SettingsSection>
   );
@@ -84,43 +55,22 @@ function MCPServerList({
             </ItemTitle>
             <ItemDescription className="line-clamp-4">
               {config.description}
+              {!config.system_enabled && (
+                <span className="text-muted-foreground mt-1 block text-xs">
+                  已被管理员在公共 MCP 注册表中停用
+                </span>
+              )}
             </ItemDescription>
           </ItemContent>
           <ItemActions>
             <Switch
               checked={config.enabled}
-              disabled={env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"}
+              disabled={
+                env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
+                !config.system_enabled
+              }
               onCheckedChange={(checked) =>
                 enableMCPServer({ serverName: name, enabled: checked })
-              }
-            />
-          </ItemActions>
-        </Item>
-      ))}
-    </div>
-  );
-}
-
-function FeatureFlagList({
-  features,
-}: {
-  features: Record<string, FeatureFlagState>;
-}) {
-  const { mutate: enableFeatureFlag } = useEnableFeatureFlag();
-  return (
-    <div className="flex w-full flex-col gap-4">
-      {Object.entries(features).map(([name, config]) => (
-        <Item className="w-full" variant="outline" key={name}>
-          <ItemContent>
-            <ItemTitle>{name}</ItemTitle>
-            <ItemDescription>Enable or disable this runtime feature.</ItemDescription>
-          </ItemContent>
-          <ItemActions>
-            <Switch
-              checked={config.enabled}
-              disabled={env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"}
-              onCheckedChange={(checked) =>
-                enableFeatureFlag({ featureName: name, enabled: checked })
               }
             />
           </ItemActions>

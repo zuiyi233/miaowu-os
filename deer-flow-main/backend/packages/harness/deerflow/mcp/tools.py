@@ -54,7 +54,10 @@ def _make_sync_tool_wrapper(coro: Callable[..., Any], tool_name: str) -> Callabl
     return sync_wrapper
 
 
-async def get_mcp_tools() -> list[BaseTool]:
+async def get_mcp_tools(
+    *,
+    enabled_server_names: set[str] | None = None,
+) -> list[BaseTool]:
     """Get all tools from enabled MCP servers.
 
     Returns:
@@ -71,7 +74,10 @@ async def get_mcp_tools() -> list[BaseTool]:
     # made through the Gateway API (which runs in a separate process) are immediately
     # reflected when initializing MCP tools.
     extensions_config = ExtensionsConfig.from_file()
-    servers_config = build_servers_config(extensions_config)
+    servers_config = build_servers_config(
+        extensions_config,
+        enabled_server_names=enabled_server_names,
+    )
 
     if not servers_config:
         logger.info("No enabled MCP servers configured")
@@ -82,7 +88,10 @@ async def get_mcp_tools() -> list[BaseTool]:
         logger.info(f"Initializing MCP client with {len(servers_config)} server(s)")
 
         # Inject initial OAuth headers for server connections (tool discovery/session init)
-        initial_oauth_headers = await get_initial_oauth_headers(extensions_config)
+        initial_oauth_headers = await get_initial_oauth_headers(
+            extensions_config,
+            enabled_server_names=enabled_server_names,
+        )
         for server_name, auth_header in initial_oauth_headers.items():
             if server_name not in servers_config:
                 continue
@@ -92,7 +101,10 @@ async def get_mcp_tools() -> list[BaseTool]:
                 servers_config[server_name]["headers"] = existing_headers
 
         tool_interceptors = []
-        oauth_interceptor = build_oauth_tool_interceptor(extensions_config)
+        oauth_interceptor = build_oauth_tool_interceptor(
+            extensions_config,
+            enabled_server_names=enabled_server_names,
+        )
         if oauth_interceptor is not None:
             tool_interceptors.append(oauth_interceptor)
 

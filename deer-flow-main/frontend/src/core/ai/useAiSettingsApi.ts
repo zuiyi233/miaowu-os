@@ -128,8 +128,7 @@ export class ApiHttpError extends Error {
 export async function fetchUserAiSettings(
   signal?: AbortSignal
 ): Promise<UserAiSettings> {
-  const response = await fetch(`${getApiBase()}/api/user/ai-settings`, {
-    credentials: "include",
+  const response = await fetchWithAuth(`${getApiBase()}/api/user/ai-settings`, {
     signal,
   });
   if (!response.ok) {
@@ -158,8 +157,7 @@ export async function putUserAiSettings(
 export async function fetchNewApiSyncGroups(
   signal?: AbortSignal
 ): Promise<NewApiSyncGroupsResponse> {
-  const response = await fetch(`${getApiBase()}/api/user/newapi-sync/groups`, {
-    credentials: "include",
+  const response = await fetchWithAuth(`${getApiBase()}/api/user/newapi-sync/groups`, {
     signal,
   });
   if (!response.ok) {

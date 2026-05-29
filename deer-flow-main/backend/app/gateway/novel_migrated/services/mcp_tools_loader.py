@@ -13,8 +13,14 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from app.gateway.novel_migrated.core.logger import get_logger
-from deerflow.config.extensions_config import get_extensions_config
+from app.gateway.novel_migrated.models.settings import Settings
+from app.gateway.novel_migrated.services.user_preferences_service import (
+    get_user_enabled_mcp_server_names,
+    load_preferences_blob,
+)
+from deerflow.config.extensions_config import ExtensionsConfig, get_extensions_config
 from deerflow.mcp.tools import get_mcp_tools
+from sqlalchemy import select
 
 logger = get_logger(__name__)
 
@@ -50,11 +56,22 @@ class MCPToolsLoader:
         logger.info("✅ MCPToolsLoader 初始化完成（deerflow bridge）")
 
     async def has_enabled_plugins(self, user_id: str, db_session: Any) -> bool:
-        """兼容旧接口：按全局 extensions_config 判断是否有启用 MCP。"""
-        del user_id, db_session
+        """兼容旧接口：按当前用户视角判断是否有启用 MCP。"""
         try:
-            cfg = get_extensions_config()
-            return bool(cfg.get_enabled_mcp_servers())
+            cfg = ExtensionsConfig.from_file()
+            if db_session is None or not user_id:
+                return bool(cfg.get_enabled_mcp_servers())
+            result = await db_session.execute(select(Settings).where(Settings.user_id == user_id))
+            settings = result.scalar_one_or_none()
+            if settings is None:
+                return bool(cfg.get_enabled_mcp_servers())
+            preferences = load_preferences_blob(settings)
+            return bool(
+                get_user_enabled_mcp_server_names(
+                    preferences=preferences,
+                    extensions_config=cfg,
+                )
+            )
         except Exception as exc:
             logger.warning("检查 MCP 配置失败: %s", exc)
             return False
@@ -67,7 +84,6 @@ class MCPToolsLoader:
         force_refresh: bool = False,
     ) -> list[Any]:
         """返回可直接给 LangChain bind_tools 的工具对象。"""
-        del db_session
         cache_key = user_id or "__global__"
         now = datetime.now()
 
@@ -78,7 +94,22 @@ class MCPToolsLoader:
                 return entry.langchain_tools
             self._cache.pop(cache_key, None)
 
-        tools = await self._load_langchain_tools()
+        enabled_server_names: set[str] | None = None
+        if user_id and db_session is not None:
+            try:
+                cfg = ExtensionsConfig.from_file()
+                result = await db_session.execute(select(Settings).where(Settings.user_id == user_id))
+                settings = result.scalar_one_or_none()
+                if settings is not None:
+                    preferences = load_preferences_blob(settings)
+                    enabled_server_names = get_user_enabled_mcp_server_names(
+                        preferences=preferences,
+                        extensions_config=cfg,
+                    )
+            except Exception as exc:
+                logger.warning("读取用户 MCP 启用状态失败，降级为全局启用集: %s", exc)
+
+        tools = await self._load_langchain_tools(enabled_server_names=enabled_server_names)
         openai_tools = [self._format_tool_for_openai(t) for t in tools]
 
         self._cache[cache_key] = UserToolsCache(
@@ -90,7 +121,7 @@ class MCPToolsLoader:
 
     async def get_user_tools(
         self,
-        user_id: str,
+        user_id: str | None,
         db_session: Any,
         use_cache: bool = True,
         force_refresh: bool = False,
@@ -98,7 +129,7 @@ class MCPToolsLoader:
         """兼容旧接口：返回 OpenAI function-calling 格式工具描述。"""
         cache_key = user_id or "__global__"
         await self.get_user_langchain_tools(
-            user_id=cache_key,
+            user_id=user_id,
             db_session=db_session,
             use_cache=use_cache,
             force_refresh=force_refresh,
@@ -108,9 +139,9 @@ class MCPToolsLoader:
             return None
         return entry.openai_tools or None
 
-    async def _load_langchain_tools(self) -> list[Any]:
+    async def _load_langchain_tools(self, *, enabled_server_names: set[str] | None = None) -> list[Any]:
         try:
-            tools = await get_mcp_tools()
+            tools = await get_mcp_tools(enabled_server_names=enabled_server_names)
             logger.info("🔧 MCP 工具加载完成，共 %s 个", len(tools))
             return list(tools)
         except Exception as exc:

@@ -45,6 +45,8 @@ def load_skills(skills_path: Path | None = None, use_config: bool = True, enable
                 skill.enabled = extensions_config.is_skill_enabled(skill.name, skill.category)
         except Exception as e:
             logger.warning("Failed to load extensions config: %s", e)
+            for skill in skills:
+                skill.enabled = True
 
         if enabled_only:
             skills = [skill for skill in skills if skill.enabled]

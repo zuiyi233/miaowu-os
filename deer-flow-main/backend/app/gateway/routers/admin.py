@@ -26,8 +26,23 @@ async def get_main_db() -> AsyncSession:
         yield session
 
 
+def _extract_request_user(request: Request) -> User | None:
+    request_user = getattr(request.state, "user", None)
+    if request_user is not None:
+        return request_user
+
+    auth = getattr(request.state, "auth", None)
+    auth_user = getattr(auth, "user", None)
+    if auth_user is not None:
+        return auth_user
+
+    return None
+
+
 async def require_admin_user(request: Request) -> User:
-    user = await get_current_user_from_request(request)
+    user = _extract_request_user(request)
+    if user is None:
+        user = await get_current_user_from_request(request)
     if user.system_role != "admin":
         raise HTTPException(status_code=403, detail="Admin role required")
     return user

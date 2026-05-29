@@ -292,6 +292,7 @@ class SubagentExecutor:
         runtime_base_url: str | None = None,
         runtime_api_key: str | None = None,
         runtime_provider: str | None = None,
+        available_skill_names: list[str] | None = None,
     ):
         """Initialize the executor.
 
@@ -318,6 +319,15 @@ class SubagentExecutor:
         self.runtime_base_url = runtime_base_url
         self.runtime_api_key = runtime_api_key
         self.runtime_provider = runtime_provider
+        self.available_skill_names = (
+            {
+                str(skill_name).strip()
+                for skill_name in available_skill_names
+                if isinstance(skill_name, str) and str(skill_name).strip()
+            }
+            if available_skill_names is not None
+            else None
+        )
         if config.model != "inherit" or parent_model is not None or app_config is not None:
             self.model_name: str | None = resolve_subagent_model_name(config, parent_model, app_config=app_config)
         else:
@@ -381,15 +391,18 @@ class SubagentExecutor:
             storage_kwargs = {"app_config": self.app_config} if self.app_config is not None else {}
             storage = await asyncio.to_thread(get_or_new_skill_storage, **storage_kwargs)
             # Use asyncio.to_thread to avoid blocking the event loop (LangGraph ASGI requirement)
-            all_skills = await asyncio.to_thread(storage.load_skills, enabled_only=True)
-            logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} loaded {len(all_skills)} enabled skills from disk")
+            all_skills = await asyncio.to_thread(storage.load_skills, enabled_only=False)
+            logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} loaded {len(all_skills)} public skills from disk")
         except Exception:
             logger.exception(f"[trace={self.trace_id}] Failed to load skills for subagent {self.config.name}")
             raise
 
         if not all_skills:
-            logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} no enabled skills found")
+            logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} no public skills found")
             return []
+
+        if self.available_skill_names is not None:
+            all_skills = [skill for skill in all_skills if skill.name in self.available_skill_names]
 
         # Filter by config.skills whitelist
         if self.config.skills is not None:
@@ -520,6 +533,10 @@ class SubagentExecutor:
             if self.thread_id:
                 run_config["configurable"] = {"thread_id": self.thread_id}
                 context["thread_id"] = self.thread_id
+            if self.available_skill_names is not None:
+                configurable = run_config.setdefault("configurable", {})
+                configurable["available_skills"] = sorted(self.available_skill_names)
+                context["available_skills"] = sorted(self.available_skill_names)
             if self.app_config is not None:
                 context["app_config"] = self.app_config
 

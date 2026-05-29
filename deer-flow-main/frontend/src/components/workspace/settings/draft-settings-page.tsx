@@ -1,6 +1,7 @@
 "use client";
 
 import { ClockIcon } from "lucide-react";
+import { useEffect, useRef } from "react";
 
 import {
   Select,
@@ -9,13 +10,37 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useLocalSettings } from "@/core/settings";
+import { getLocalSettings } from "@/core/settings/local";
+import {
+  useUpdateUserUiSettings,
+  useUserUiSettings,
+} from "@/core/user-settings/hooks";
 
 import { SettingsSection } from "./settings-section";
 
 export function DraftSettingsPage() {
-  const [settings, setSettings] = useLocalSettings();
-  const retention = settings.context.media_draft_retention ?? "7d";
+  const { settings, isLoading } = useUserUiSettings();
+  const { mutate: updateUiSettings } = useUpdateUserUiSettings();
+  const migratedRef = useRef(false);
+  const retention = settings?.media_draft_retention ?? "7d";
+
+  useEffect(() => {
+    if (migratedRef.current || !settings) {
+      return;
+    }
+    migratedRef.current = true;
+    const localRetention = getLocalSettings().context.media_draft_retention;
+    if (
+      localRetention &&
+      localRetention !== settings.media_draft_retention &&
+      ["24h", "7d", "never"].includes(localRetention)
+    ) {
+      updateUiSettings({
+        media_draft_retention: localRetention,
+        local_retention_candidate: localRetention,
+      });
+    }
+  }, [settings, updateUiSettings]);
 
   return (
     <SettingsSection
@@ -37,13 +62,11 @@ export function DraftSettingsPage() {
             <Select
               value={retention}
               onValueChange={(value) =>
-                setSettings("context", {
-                  media_draft_retention: value as
-                    | "24h"
-                    | "7d"
-                    | "never",
+                updateUiSettings({
+                  media_draft_retention: value as "24h" | "7d" | "never",
                 })
               }
+              disabled={isLoading}
             >
               <SelectTrigger>
                 <SelectValue placeholder="选择保留时间" />
@@ -60,4 +83,3 @@ export function DraftSettingsPage() {
     </SettingsSection>
   );
 }
-

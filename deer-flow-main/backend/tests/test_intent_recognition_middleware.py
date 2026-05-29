@@ -395,6 +395,86 @@ def test_load_enabled_novel_skills_manage_session_not_limited_by_create_whitelis
     assert "novel-control-station" in result_names
 
 
+def test_load_enabled_novel_skills_respects_system_disabled_skills_for_user_settings(monkeypatch, tmp_path):
+    middleware = IntentRecognitionMiddleware()
+
+    skill_a_file = tmp_path / "skill-a.md"
+    skill_a_file.write_text("novel plot planning", encoding="utf-8")
+    skill_b_file = tmp_path / "skill-b.md"
+    skill_b_file.write_text("novel character arcs", encoding="utf-8")
+
+    class _FakeSkill:
+        def __init__(self, name: str, description: str, skill_file, category: str = "public"):
+            self.name = name
+            self.description = description
+            self.skill_file = skill_file
+            self.category = category
+
+    fake_skills = [
+        _FakeSkill("plot-skill", "剧情规划", skill_a_file),
+        _FakeSkill("character-skill", "角色关系", skill_b_file),
+    ]
+
+    class _FakeExtensionsConfig:
+        def is_skill_enabled(self, skill_name: str, skill_category: str) -> bool:
+            assert skill_category == "public"
+            return skill_name != "plot-skill"
+
+        def is_feature_enabled_for_user(self, feature_name: str, *, user_id: str | None, default: bool = True) -> bool:
+            assert feature_name == "intent_skill_governance"
+            assert user_id == "system-disabled-user"
+            return True
+
+    class _ScalarResult:
+        def __init__(self, value):
+            self._value = value
+
+        def scalar_one_or_none(self):
+            return self._value
+
+    class _FakeDBSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, _stmt):
+            return _ScalarResult(
+                SimpleNamespace(
+                    preferences='{"user_skill_settings":{"version":1,"enabled_skills":{"plot-skill":true,"character-skill":true}}}'
+                )
+            )
+
+    monkeypatch.setattr(
+        "app.gateway.middleware.intent_recognition_middleware.load_skills",
+        lambda enabled_only=False: fake_skills,
+    )
+    monkeypatch.setattr(
+        "app.gateway.middleware.intent_recognition_middleware.ExtensionsConfig.from_file",
+        lambda: _FakeExtensionsConfig(),
+    )
+    monkeypatch.setattr(
+        "app.gateway.middleware.intent_recognition_middleware.AsyncSessionLocal",
+        lambda: _FakeDBSession(),
+    )
+
+    session = _NovelCreationSession(
+        session_key="system-disabled-session",
+        user_id="system-disabled-user",
+        started_at=datetime.now(),
+        updated_at=datetime.now(),
+        mode="create",
+    )
+    result = middleware._load_enabled_novel_skills(
+        force_refresh=True,
+        session=session,
+        user_id=session.user_id,
+    )
+
+    assert [item["name"] for item in result] == ["character-skill"]
+
+
 def test_has_active_creation_session_is_scoped_by_user_and_session():
     middleware = IntentRecognitionMiddleware()
     user_id = "gate-user-a"

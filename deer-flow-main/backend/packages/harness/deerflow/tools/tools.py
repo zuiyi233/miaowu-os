@@ -57,6 +57,7 @@ def get_available_tools(
     include_novel: bool = True,
     *,
     app_config: AppConfig | None = None,
+    enabled_mcp_servers: list[str] | set[str] | None = None,
 ) -> list[BaseTool]:
     """Get all available tools from config.
 
@@ -133,11 +134,39 @@ def get_available_tools(
     if include_mcp:
         try:
             from deerflow.config.extensions_config import ExtensionsConfig
-            from deerflow.mcp.cache import get_cached_mcp_tools
+            from deerflow.mcp.tools import get_mcp_tools
 
             extensions_config = ExtensionsConfig.from_file()
             if extensions_config.get_enabled_mcp_servers():
-                mcp_tools = get_cached_mcp_tools()
+                enabled_server_names = None
+                if enabled_mcp_servers is not None:
+                    enabled_server_names = {
+                        str(server_name).strip()
+                        for server_name in enabled_mcp_servers
+                        if isinstance(server_name, str) and str(server_name).strip()
+                    }
+                if enabled_server_names is not None:
+                    try:
+                        import asyncio
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                import concurrent.futures
+
+                                with concurrent.futures.ThreadPoolExecutor() as executor:
+                                    future = executor.submit(asyncio.run, get_mcp_tools(enabled_server_names=enabled_server_names))
+                                    mcp_tools = future.result()
+                            else:
+                                mcp_tools = loop.run_until_complete(get_mcp_tools(enabled_server_names=enabled_server_names))
+                        except RuntimeError:
+                            mcp_tools = asyncio.run(get_mcp_tools(enabled_server_names=enabled_server_names))
+                    except Exception as e:
+                        logger.error(f"Failed to load user-filtered MCP tools: {e}")
+                        mcp_tools = []
+                else:
+                    from deerflow.mcp.cache import get_cached_mcp_tools
+
+                    mcp_tools = get_cached_mcp_tools()
                 if mcp_tools:
                     logger.info(f"Using {len(mcp_tools)} cached MCP tool(s)")
 

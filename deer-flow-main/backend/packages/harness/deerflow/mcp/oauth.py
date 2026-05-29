@@ -31,9 +31,16 @@ class OAuthTokenManager:
         self._locks: dict[str, asyncio.Lock] = {name: asyncio.Lock() for name in oauth_by_server}
 
     @classmethod
-    def from_extensions_config(cls, extensions_config: ExtensionsConfig) -> OAuthTokenManager:
+    def from_extensions_config(
+        cls,
+        extensions_config: ExtensionsConfig,
+        *,
+        enabled_server_names: set[str] | None = None,
+    ) -> OAuthTokenManager:
         oauth_by_server: dict[str, McpOAuthConfig] = {}
         for server_name, server_config in extensions_config.get_enabled_mcp_servers().items():
+            if enabled_server_names is not None and server_name not in enabled_server_names:
+                continue
             if server_config.oauth and server_config.oauth.enabled:
                 oauth_by_server[server_name] = server_config.oauth
         return cls(oauth_by_server)
@@ -119,9 +126,16 @@ class OAuthTokenManager:
         return _OAuthToken(access_token=access_token, token_type=token_type, expires_at=expires_at)
 
 
-def build_oauth_tool_interceptor(extensions_config: ExtensionsConfig) -> Any | None:
+def build_oauth_tool_interceptor(
+    extensions_config: ExtensionsConfig,
+    *,
+    enabled_server_names: set[str] | None = None,
+) -> Any | None:
     """Build a tool interceptor that injects OAuth Authorization headers."""
-    token_manager = OAuthTokenManager.from_extensions_config(extensions_config)
+    token_manager = OAuthTokenManager.from_extensions_config(
+        extensions_config,
+        enabled_server_names=enabled_server_names,
+    )
     if not token_manager.has_oauth_servers():
         return None
 
@@ -137,9 +151,16 @@ def build_oauth_tool_interceptor(extensions_config: ExtensionsConfig) -> Any | N
     return oauth_interceptor
 
 
-async def get_initial_oauth_headers(extensions_config: ExtensionsConfig) -> dict[str, str]:
+async def get_initial_oauth_headers(
+    extensions_config: ExtensionsConfig,
+    *,
+    enabled_server_names: set[str] | None = None,
+) -> dict[str, str]:
     """Get initial OAuth Authorization headers for MCP server connections."""
-    token_manager = OAuthTokenManager.from_extensions_config(extensions_config)
+    token_manager = OAuthTokenManager.from_extensions_config(
+        extensions_config,
+        enabled_server_names=enabled_server_names,
+    )
     if not token_manager.has_oauth_servers():
         return {}
 

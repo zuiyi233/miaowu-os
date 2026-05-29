@@ -1,20 +1,33 @@
-import json
 import logging
+import json
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.gateway.deps import get_config
+from app.gateway.novel_migrated.core.database import get_db
+from app.gateway.novel_migrated.core.user_context import get_request_user_id
+from app.gateway.novel_migrated.services.user_preferences_service import (
+    get_user_preferences_service,
+    normalize_user_skill_settings,
+)
+from app.gateway.routers.admin import require_admin_user
 from app.gateway.path_utils import resolve_thread_virtual_path
 from deerflow.agents.lead_agent.prompt import refresh_skills_system_prompt_cache_async
 from deerflow.config.app_config import AppConfig
-from deerflow.config.extensions_config import ExtensionsConfig, SkillStateConfig, get_extensions_config, reload_extensions_config
+from deerflow.config.extensions_config import (
+    ExtensionsConfig,
+    SkillStateConfig,
+    get_extensions_config,
+    reload_extensions_config,
+)
 from deerflow.skills import Skill
 from deerflow.skills.installer import SkillAlreadyExistsError
 from deerflow.skills.security_scanner import scan_skill_content
 from deerflow.skills.storage import get_or_new_skill_storage
 from deerflow.skills.types import SKILL_MD_FILE, SkillCategory
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +42,7 @@ class SkillResponse(BaseModel):
     license: str | None = Field(None, description="License information")
     category: SkillCategory = Field(..., description="Category of the skill (public or custom)")
     enabled: bool = Field(default=True, description="Whether this skill is enabled")
+    system_enabled: bool = Field(default=True, description="Whether this skill is enabled at the system catalog level")
 
 
 class SkillsListResponse(BaseModel):
@@ -41,6 +55,10 @@ class SkillUpdateRequest(BaseModel):
     """Request model for updating a skill."""
 
     enabled: bool = Field(..., description="Whether to enable or disable the skill")
+
+
+class SkillCatalogUpdateRequest(BaseModel):
+    enabled: bool = Field(..., description="Whether this public skill is system-enabled")
 
 
 class SkillInstallRequest(BaseModel):
@@ -82,7 +100,38 @@ def _skill_to_response(skill: Skill) -> SkillResponse:
         license=skill.license,
         category=skill.category,
         enabled=skill.enabled,
+        system_enabled=skill.enabled,
     )
+
+
+def _extensions_config_path() -> Path:
+    config_path = ExtensionsConfig.resolve_config_path()
+    if config_path is not None:
+        return config_path
+    fallback = Path.cwd().parent / "extensions_config.json"
+    logger.info("No existing extensions config found. Creating new config at: %s", fallback)
+    return fallback
+
+
+def _persist_extensions_config(extensions_config: ExtensionsConfig) -> ExtensionsConfig:
+    payload = {
+        "mcpServers": {
+            name: server.model_dump()
+            for name, server in extensions_config.mcp_servers.items()
+        },
+        "skills": {
+            name: {"enabled": skill.enabled}
+            for name, skill in extensions_config.skills.items()
+        },
+        "features": {
+            name: flag.model_dump()
+            for name, flag in extensions_config.features.items()
+        },
+    }
+    config_path = _extensions_config_path()
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    return reload_extensions_config()
 
 
 @router.get(
@@ -91,10 +140,35 @@ def _skill_to_response(skill: Skill) -> SkillResponse:
     summary="List All Skills",
     description="Retrieve a list of all available skills from both public and custom directories.",
 )
-async def list_skills(config: AppConfig = Depends(get_config)) -> SkillsListResponse:
+async def list_skills(
+    request: Request,
+    config: AppConfig = Depends(get_config),
+    db: AsyncSession = Depends(get_db),
+) -> SkillsListResponse:
     try:
         skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
-        return SkillsListResponse(skills=[_skill_to_response(skill) for skill in skills])
+        user_id = get_request_user_id(request)
+        service = get_user_preferences_service()
+        settings, preferences = await service.load_preferences(user_id=user_id, db=db)
+        del settings
+        skill_settings = normalize_user_skill_settings(preferences, available_skills=skills)
+        if preferences.pop("_normalization_changed", False):
+            settings, _ = await service.load_preferences(user_id=user_id, db=db)
+            await service.save_preferences(settings=settings, preferences=preferences, db=db)
+
+        response_skills: list[SkillResponse] = []
+        for skill in skills:
+            response_skills.append(
+                SkillResponse(
+                    name=skill.name,
+                    description=skill.description,
+                    license=skill.license,
+                    category=skill.category,
+                    enabled=skill_settings["enabled_skills"].get(skill.name, True) and bool(skill.enabled),
+                    system_enabled=bool(skill.enabled),
+                )
+            )
+        return SkillsListResponse(skills=response_skills)
     except Exception as e:
         logger.error(f"Failed to load skills: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to load skills: {str(e)}")
@@ -106,7 +180,11 @@ async def list_skills(config: AppConfig = Depends(get_config)) -> SkillsListResp
     summary="Install Skill",
     description="Install a skill from a .skill file (ZIP archive) located in the thread's user-data directory.",
 )
-async def install_skill(request: SkillInstallRequest, config: AppConfig = Depends(get_config)) -> SkillInstallResponse:
+async def install_skill(
+    request: SkillInstallRequest,
+    _: object = Depends(require_admin_user),
+    config: AppConfig = Depends(get_config),
+) -> SkillInstallResponse:
     try:
         skill_file_path = resolve_thread_virtual_path(request.thread_id, request.path)
         result = await get_or_new_skill_storage(app_config=config).ainstall_skill_from_archive(skill_file_path)
@@ -126,7 +204,10 @@ async def install_skill(request: SkillInstallRequest, config: AppConfig = Depend
 
 
 @router.get("/skills/custom", response_model=SkillsListResponse, summary="List Custom Skills")
-async def list_custom_skills(config: AppConfig = Depends(get_config)) -> SkillsListResponse:
+async def list_custom_skills(
+    _: object = Depends(require_admin_user),
+    config: AppConfig = Depends(get_config),
+) -> SkillsListResponse:
     try:
         skills = [skill for skill in get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False) if skill.category == SkillCategory.CUSTOM]
         return SkillsListResponse(skills=[_skill_to_response(skill) for skill in skills])
@@ -136,7 +217,11 @@ async def list_custom_skills(config: AppConfig = Depends(get_config)) -> SkillsL
 
 
 @router.get("/skills/custom/{skill_name}", response_model=CustomSkillContentResponse, summary="Get Custom Skill Content")
-async def get_custom_skill(skill_name: str, config: AppConfig = Depends(get_config)) -> CustomSkillContentResponse:
+async def get_custom_skill(
+    skill_name: str,
+    _: object = Depends(require_admin_user),
+    config: AppConfig = Depends(get_config),
+) -> CustomSkillContentResponse:
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
@@ -152,7 +237,12 @@ async def get_custom_skill(skill_name: str, config: AppConfig = Depends(get_conf
 
 
 @router.put("/skills/custom/{skill_name}", response_model=CustomSkillContentResponse, summary="Edit Custom Skill")
-async def update_custom_skill(skill_name: str, request: CustomSkillUpdateRequest, config: AppConfig = Depends(get_config)) -> CustomSkillContentResponse:
+async def update_custom_skill(
+    skill_name: str,
+    request: CustomSkillUpdateRequest,
+    _: object = Depends(require_admin_user),
+    config: AppConfig = Depends(get_config),
+) -> CustomSkillContentResponse:
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         storage = get_or_new_skill_storage(app_config=config)
@@ -176,7 +266,7 @@ async def update_custom_skill(skill_name: str, request: CustomSkillUpdateRequest
             },
         )
         await refresh_skills_system_prompt_cache_async()
-        return await get_custom_skill(skill_name, config)
+        return await get_custom_skill(skill_name=skill_name, _=_, config=config)
     except HTTPException:
         raise
     except FileNotFoundError as e:
@@ -189,7 +279,11 @@ async def update_custom_skill(skill_name: str, request: CustomSkillUpdateRequest
 
 
 @router.delete("/skills/custom/{skill_name}", summary="Delete Custom Skill")
-async def delete_custom_skill(skill_name: str, config: AppConfig = Depends(get_config)) -> dict[str, bool]:
+async def delete_custom_skill(
+    skill_name: str,
+    _: object = Depends(require_admin_user),
+    config: AppConfig = Depends(get_config),
+) -> dict[str, bool]:
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         storage = get_or_new_skill_storage(app_config=config)
@@ -217,7 +311,11 @@ async def delete_custom_skill(skill_name: str, config: AppConfig = Depends(get_c
 
 
 @router.get("/skills/custom/{skill_name}/history", response_model=CustomSkillHistoryResponse, summary="Get Custom Skill History")
-async def get_custom_skill_history(skill_name: str, config: AppConfig = Depends(get_config)) -> CustomSkillHistoryResponse:
+async def get_custom_skill_history(
+    skill_name: str,
+    _: object = Depends(require_admin_user),
+    config: AppConfig = Depends(get_config),
+) -> CustomSkillHistoryResponse:
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         storage = get_or_new_skill_storage(app_config=config)
@@ -232,7 +330,12 @@ async def get_custom_skill_history(skill_name: str, config: AppConfig = Depends(
 
 
 @router.post("/skills/custom/{skill_name}/rollback", response_model=CustomSkillContentResponse, summary="Rollback Custom Skill")
-async def rollback_custom_skill(skill_name: str, request: SkillRollbackRequest, config: AppConfig = Depends(get_config)) -> CustomSkillContentResponse:
+async def rollback_custom_skill(
+    skill_name: str,
+    request: SkillRollbackRequest,
+    _: object = Depends(require_admin_user),
+    config: AppConfig = Depends(get_config),
+) -> CustomSkillContentResponse:
     try:
         storage = get_or_new_skill_storage(app_config=config)
         if not storage.custom_skill_exists(skill_name) and not storage.get_skill_history_file(skill_name).exists():
@@ -264,7 +367,7 @@ async def rollback_custom_skill(skill_name: str, request: SkillRollbackRequest, 
         storage.write_custom_skill(skill_name, SKILL_MD_FILE, target_content)
         storage.append_history(skill_name, history_entry)
         await refresh_skills_system_prompt_cache_async()
-        return await get_custom_skill(skill_name, config)
+        return await get_custom_skill(skill_name=skill_name, _=_, config=config)
     except HTTPException:
         raise
     except IndexError:
@@ -284,7 +387,12 @@ async def rollback_custom_skill(skill_name: str, request: SkillRollbackRequest, 
     summary="Get Skill Details",
     description="Retrieve detailed information about a specific skill by its name.",
 )
-async def get_skill(skill_name: str, config: AppConfig = Depends(get_config)) -> SkillResponse:
+async def get_skill(
+    skill_name: str,
+    request: Request,
+    config: AppConfig = Depends(get_config),
+    db: AsyncSession = Depends(get_db),
+) -> SkillResponse:
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
@@ -292,8 +400,18 @@ async def get_skill(skill_name: str, config: AppConfig = Depends(get_config)) ->
 
         if skill is None:
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
-
-        return _skill_to_response(skill)
+        user_id = get_request_user_id(request)
+        service = get_user_preferences_service()
+        settings, preferences = await service.load_preferences(user_id=user_id, db=db)
+        del settings
+        skill_settings = normalize_user_skill_settings(preferences, available_skills=skills)
+        if preferences.pop("_normalization_changed", False):
+            settings, _ = await service.load_preferences(user_id=user_id, db=db)
+            await service.save_preferences(settings=settings, preferences=preferences, db=db)
+        response = _skill_to_response(skill)
+        response.enabled = skill_settings["enabled_skills"].get(skill.name, True) and bool(skill.enabled)
+        response.system_enabled = bool(skill.enabled)
+        return response
     except HTTPException:
         raise
     except Exception as e:
@@ -307,7 +425,13 @@ async def get_skill(skill_name: str, config: AppConfig = Depends(get_config)) ->
     summary="Update Skill",
     description="Update a skill's enabled status by modifying the extensions_config.json file.",
 )
-async def update_skill(skill_name: str, request: SkillUpdateRequest, config: AppConfig = Depends(get_config)) -> SkillResponse:
+async def update_skill(
+    skill_name: str,
+    request: SkillUpdateRequest,
+    http_request: Request,
+    config: AppConfig = Depends(get_config),
+    db: AsyncSession = Depends(get_db),
+) -> SkillResponse:
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
@@ -315,39 +439,65 @@ async def update_skill(skill_name: str, request: SkillUpdateRequest, config: App
 
         if skill is None:
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
-
-        config_path = ExtensionsConfig.resolve_config_path()
-        if config_path is None:
-            config_path = Path.cwd().parent / "extensions_config.json"
-            logger.info(f"No existing extensions config found. Creating new config at: {config_path}")
-
-        extensions_config = get_extensions_config()
-        extensions_config.skills[skill_name] = SkillStateConfig(enabled=request.enabled)
-
-        config_data = {
-            "mcpServers": {name: server.model_dump() for name, server in extensions_config.mcp_servers.items()},
-            "skills": {name: {"enabled": skill_config.enabled} for name, skill_config in extensions_config.skills.items()},
-            "features": {name: {"enabled": flag.enabled} for name, flag in extensions_config.features.items()},
-        }
-
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(config_data, f, indent=2)
-
-        logger.info(f"Skills configuration updated and saved to: {config_path}")
-        reload_extensions_config()
-        await refresh_skills_system_prompt_cache_async()
-
-        skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
-        updated_skill = next((s for s in skills if s.name == skill_name), None)
-
-        if updated_skill is None:
-            raise HTTPException(status_code=500, detail=f"Failed to reload skill '{skill_name}' after update")
-
-        logger.info(f"Skill '{skill_name}' enabled status updated to {request.enabled}")
-        return _skill_to_response(updated_skill)
+        user_id = get_request_user_id(http_request)
+        service = get_user_preferences_service()
+        settings, preferences = await service.load_preferences(user_id=user_id, db=db)
+        skill_settings = normalize_user_skill_settings(preferences, available_skills=skills)
+        skill_settings["enabled_skills"][skill_name] = request.enabled
+        preferences["user_skill_settings"] = skill_settings
+        await service.save_preferences(settings=settings, preferences=preferences, db=db)
+        response = _skill_to_response(skill)
+        response.enabled = request.enabled and bool(skill.enabled)
+        response.system_enabled = bool(skill.enabled)
+        logger.info("User skill enabled state updated user_id=%s skill=%s enabled=%s", user_id, skill_name, request.enabled)
+        return response
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to update skill {skill_name}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to update skill: {str(e)}")
+
+
+@router.put(
+    "/skills/{skill_name}/catalog",
+    response_model=SkillResponse,
+    summary="Update Public Skill Catalog State",
+    description="Admin-only system-level enable/disable for the public skill catalog.",
+)
+async def update_skill_catalog_state(
+    skill_name: str,
+    request: SkillCatalogUpdateRequest,
+    _: object = Depends(require_admin_user),
+    config: AppConfig = Depends(get_config),
+) -> SkillResponse:
+    try:
+        skill_name = skill_name.replace("\r\n", "").replace("\n", "")
+        skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
+        skill = next((s for s in skills if s.name == skill_name), None)
+        if skill is None:
+            raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+
+        extensions_config = get_extensions_config()
+        extensions_config.skills[skill_name] = SkillStateConfig(enabled=request.enabled)
+        reloaded = _persist_extensions_config(extensions_config)
+        refreshed_skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
+        updated_skill = next((s for s in refreshed_skills if s.name == skill_name), None)
+        if updated_skill is None:
+            raise HTTPException(status_code=500, detail=f"Skill '{skill_name}' disappeared after update")
+
+        response = _skill_to_response(updated_skill)
+        response.enabled = bool(updated_skill.enabled)
+        response.system_enabled = bool(updated_skill.enabled)
+        logger.info(
+            "Admin updated public skill catalog state skill=%s enabled=%s total_config_entries=%s",
+            skill_name,
+            request.enabled,
+            len(reloaded.skills),
+        )
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to update skill catalog state %s: %s", skill_name, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to update skill catalog state: {str(e)}")

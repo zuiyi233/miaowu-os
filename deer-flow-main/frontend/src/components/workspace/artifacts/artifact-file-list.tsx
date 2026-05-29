@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { useAuth } from "@/core/auth/AuthProvider";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
 import { installSkill } from "@/core/skills/api";
@@ -32,6 +33,7 @@ export function ArtifactFileList({
   threadId: string;
 }) {
   const { t } = useI18n();
+  const { user } = useAuth();
   const { select: selectArtifact, setOpen } = useArtifacts();
   const [installingFile, setInstallingFile] = useState<string | null>(null);
 
@@ -90,7 +92,7 @@ export function ArtifactFileList({
               {getFileExtensionDisplayName(file)} file
             </CardDescription>
             <CardAction className="row-span-1 self-center">
-              {file.endsWith(".skill") && (
+              {file.endsWith(".skill") && user?.system_role === "admin" && (
                 <Button
                   variant="ghost"
                   disabled={installingFile === file}

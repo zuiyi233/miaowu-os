@@ -41,6 +41,10 @@ from app.gateway.novel_migrated.services.skill_governance_service import (
     DegradedFallbackMode,
     resolve_skill_governance,
 )
+from app.gateway.novel_migrated.services.user_preferences_service import (
+    load_preferences_blob,
+    normalize_user_skill_settings,
+)
 from app.gateway.observability.context import extract_trace_fields_from_context, update_trace_context
 from app.gateway.observability.metrics import (
     record_authorization_toggle,
@@ -1579,7 +1583,7 @@ class IntentRecognitionMiddleware:
         if session.active_project_id:
             project_line = f"当前项目：{session.active_project_title or session.active_project_id}"
 
-        skill_hint = self._build_manage_skill_hint(session=session)
+        skill_hint = await self._build_manage_skill_hint(session=session)
 
         content = (
             f"{header}\n"
@@ -2862,8 +2866,8 @@ class IntentRecognitionMiddleware:
         role_type = IntentRecognitionMiddleware._extract_assignment(text, labels=("角色类型", "role_type"), max_len=40)
         return role_type
 
-    def _build_manage_skill_hint(self, *, session: _NovelCreationSession | None = None) -> str:
-        skills = self._load_enabled_novel_skills(
+    async def _build_manage_skill_hint(self, *, session: _NovelCreationSession | None = None) -> str:
+        skills = await self._load_enabled_novel_skills(
             force_refresh=False,
             session=session,
             user_id=session.user_id if session is not None else None,
@@ -2915,7 +2919,7 @@ class IntentRecognitionMiddleware:
         if cached and not force_refresh:
             return cached
 
-        skill_entries = self._load_enabled_novel_skills(
+        skill_entries = await self._load_enabled_novel_skills(
             force_refresh=force_refresh,
             session=session,
             user_id=session.user_id,
@@ -2978,7 +2982,7 @@ class IntentRecognitionMiddleware:
             logger.warning("skill guidance generation failed: %s", exc)
             return ""
 
-    def _load_enabled_novel_skills(
+    async def _load_enabled_novel_skills(
         self,
         *,
         force_refresh: bool = False,
@@ -2995,17 +2999,48 @@ class IntentRecognitionMiddleware:
         try:
             skills = load_skills(enabled_only=False)
             workspace_states: dict[str, bool] = {}
+            system_skill_states: dict[str, bool] = {}
             governance_feature_enabled = False
             degraded_fallback_mode = self._resolve_skill_governance_fallback_mode()
 
             try:
                 extensions_config = ExtensionsConfig.from_file()
+                system_skill_states = {
+                    skill.name.strip(): extensions_config.is_skill_enabled(skill.name, skill.category)
+                    for skill in skills
+                    if skill.name and skill.name.strip()
+                }
                 governance_feature_enabled = self._is_skill_governance_enabled(
                     user_id=user_id,
                     extensions_config=extensions_config,
                 )
-                workspace_states = {skill.name.strip(): extensions_config.is_skill_enabled(skill.name, skill.category) for skill in skills if skill.name and skill.name.strip()}
-                enabled_skills = [skill for skill in skills if extensions_config.is_skill_enabled(skill.name, skill.category)]
+                if user_id:
+                    try:
+                        from app.gateway.novel_migrated.core.database import AsyncSessionLocal
+                        from app.gateway.novel_migrated.models.settings import Settings
+                        from sqlalchemy import select
+
+                        async with AsyncSessionLocal() as db:
+                            result = await db.execute(select(Settings).where(Settings.user_id == user_id))
+                            settings = result.scalar_one_or_none()
+                            if settings is not None:
+                                preferences = load_preferences_blob(settings)
+                                normalized = normalize_user_skill_settings(preferences, available_skills=skills)
+                                workspace_states = {
+                                    skill_name: bool(enabled) and system_skill_states.get(skill_name, True)
+                                    for skill_name, enabled in normalized["enabled_skills"].items()
+                                }
+                            else:
+                                workspace_states = {}
+                    except Exception as user_skill_exc:
+                        logger.warning("failed to load user skill settings for intent middleware: %s", user_skill_exc)
+                        workspace_states = {}
+                else:
+                    workspace_states = {}
+
+                if not workspace_states:
+                    workspace_states = dict(system_skill_states)
+                enabled_skills = [skill for skill in skills if workspace_states.get(skill.name.strip(), True)]
             except Exception as config_exc:
                 logger.warning("failed to load extensions config for skill toggles: %s", config_exc)
                 enabled_skills = skills
@@ -3046,7 +3081,11 @@ class IntentRecognitionMiddleware:
                         session=session,
                     )
                     governance_result = resolve_skill_governance(
-                        system_default_skills=[entry["name"] for entry in all_entries],
+                        system_default_skills=[
+                            entry["name"]
+                            for entry in all_entries
+                            if system_skill_states.get(entry["name"], True)
+                        ],
                         workspace_skill_states=workspace_states,
                         session_candidate_skills=session_candidates,
                         feature_enabled=True,
@@ -3056,7 +3095,11 @@ class IntentRecognitionMiddleware:
                     selected_names = governance_result.final_enabled_skills
                 else:
                     governance_result = resolve_skill_governance(
-                        system_default_skills=[entry["name"] for entry in all_entries],
+                        system_default_skills=[
+                            entry["name"]
+                            for entry in all_entries
+                            if system_skill_states.get(entry["name"], True)
+                        ],
                         workspace_skill_states=workspace_states,
                         session_candidate_skills=None,
                         feature_enabled=False,

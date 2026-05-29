@@ -49,15 +49,18 @@ def _get_work_dir(thread_id: str | None) -> str:
     return str(work_dir)
 
 
-def _build_mcp_servers() -> dict[str, dict[str, Any]]:
+def _build_mcp_servers(*, enabled_server_names: set[str] | None = None) -> dict[str, dict[str, Any]]:
     """Build ACP ``mcpServers`` config from DeerFlow's enabled MCP servers."""
     from deerflow.config.extensions_config import ExtensionsConfig
     from deerflow.mcp.client import build_servers_config
 
-    return build_servers_config(ExtensionsConfig.from_file())
+    return build_servers_config(
+        ExtensionsConfig.from_file(),
+        enabled_server_names=enabled_server_names,
+    )
 
 
-def _build_acp_mcp_servers() -> list[dict[str, Any]]:
+def _build_acp_mcp_servers(*, enabled_server_names: set[str] | None = None) -> list[dict[str, Any]]:
     """Build ACP ``mcpServers`` payload for ``new_session``.
 
     The ACP client expects a list of server objects, while DeerFlow's MCP helper
@@ -68,6 +71,12 @@ def _build_acp_mcp_servers() -> list[dict[str, Any]]:
 
     extensions_config = ExtensionsConfig.from_file()
     enabled_servers = extensions_config.get_enabled_mcp_servers()
+    if enabled_server_names is not None:
+        enabled_servers = {
+            name: server
+            for name, server in enabled_servers.items()
+            if name in enabled_server_names
+        }
 
     mcp_servers: list[dict[str, Any]] = []
     for name, server_config in enabled_servers.items():
@@ -169,7 +178,17 @@ def build_invoke_acp_agent_tool(agents: dict) -> BaseTool:
             return f"Error: Unknown agent '{agent}'. Available: {available}"
 
         agent_config = _agents[agent]
-        thread_id: str | None = ((config or {}).get("configurable") or {}).get("thread_id")
+        configurable = ((config or {}).get("configurable") or {})
+        runtime_context = (config or {}).get("context") or {}
+        thread_id: str | None = configurable.get("thread_id")
+        raw_enabled_mcp_servers = configurable.get("enabled_mcp_servers") or runtime_context.get("enabled_mcp_servers")
+        enabled_mcp_servers: set[str] | None = None
+        if isinstance(raw_enabled_mcp_servers, list):
+            enabled_mcp_servers = {
+                str(server_name).strip()
+                for server_name in raw_enabled_mcp_servers
+                if isinstance(server_name, str) and str(server_name).strip()
+            }
 
         try:
             from acp import PROTOCOL_VERSION, Client, text_block
@@ -210,7 +229,7 @@ def build_invoke_acp_agent_tool(agents: dict) -> BaseTool:
         args = agent_config.args or []
         physical_cwd = _get_work_dir(thread_id)
         try:
-            mcp_servers = _build_acp_mcp_servers()
+            mcp_servers = _build_acp_mcp_servers(enabled_server_names=enabled_mcp_servers)
         except ValueError as exc:
             logger.warning(
                 "Invalid MCP server configuration for ACP agent '%s'; continuing without MCP servers: %s",

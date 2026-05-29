@@ -27,7 +27,7 @@ _enabled_skills_refresh_event = threading.Event()
 
 
 def _load_enabled_skills_sync() -> list[Skill]:
-    return list(get_or_new_skill_storage().load_skills(enabled_only=True))
+    return list(get_or_new_skill_storage().load_skills(enabled_only=False))
 
 
 def _start_enabled_skills_refresh_thread() -> None:
@@ -147,7 +147,7 @@ def get_enabled_skills_for_config(app_config: AppConfig | None = None) -> list[S
             if cached_config is app_config:
                 return list(cached_skills)
 
-    skills = list(get_or_new_skill_storage(app_config=app_config).load_skills(enabled_only=True))
+    skills = list(get_or_new_skill_storage(app_config=app_config).load_skills(enabled_only=False))
     with _enabled_skills_lock:
         _enabled_skills_by_config_cache[cache_key] = (app_config, skills)
     return list(skills)

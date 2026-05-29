@@ -489,9 +489,17 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
     is_bootstrap = cfg.get("is_bootstrap", False)
     include_novel = cfg.get("include_novel", True)
     agent_name = validate_agent_name(cfg.get("agent_name"))
+    runtime_available_skills = cfg.get("available_skills")
+    runtime_enabled_mcp_servers = cfg.get("enabled_mcp_servers")
 
     agent_config = load_agent_config(agent_name) if not is_bootstrap else None
     available_skills = _available_skill_names(agent_config, is_bootstrap)
+    if available_skills is None and isinstance(runtime_available_skills, list):
+        available_skills = {
+            str(skill_name).strip()
+            for skill_name in runtime_available_skills
+            if isinstance(skill_name, str) and skill_name.strip()
+        }
     # Custom agent model from agent config (if any), or None to let _resolve_model_name pick the default
     agent_model_name = agent_config.model if agent_config and agent_config.model else None
 
@@ -569,6 +577,7 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
             subagent_enabled=subagent_enabled,
             include_novel=include_novel,
             app_config=resolved_app_config,
+            enabled_mcp_servers=runtime_enabled_mcp_servers,
         ) + [setup_agent]
         return create_agent(
             model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, app_config=resolved_app_config, **model_runtime_overrides),
@@ -593,6 +602,7 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
         subagent_enabled=subagent_enabled,
         include_novel=include_novel,
         app_config=resolved_app_config,
+        enabled_mcp_servers=runtime_enabled_mcp_servers,
     )
     return create_agent(
         model=create_chat_model(
@@ -608,7 +618,7 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
             subagent_enabled=subagent_enabled,
             max_concurrent_subagents=max_concurrent_subagents,
             agent_name=agent_name,
-            available_skills=set(agent_config.skills) if agent_config and agent_config.skills is not None else None,
+            available_skills=available_skills,
             app_config=resolved_app_config,
         ),
         state_schema=ThreadState,

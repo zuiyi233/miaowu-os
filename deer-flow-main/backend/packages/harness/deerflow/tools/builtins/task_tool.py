@@ -254,6 +254,8 @@ async def task_tool(
     runtime_base_url = None
     runtime_api_key = None
     runtime_provider = None
+    enabled_mcp_servers = None
+    available_skill_names = None
     if runtime is not None:
         configurable = runtime.config.get("configurable", {})
         context_dict = runtime.context if isinstance(runtime.context, dict) else {}
@@ -265,10 +267,18 @@ async def task_tool(
             runtime_api_key = get_runtime_api_key()
         except ImportError:
             runtime_api_key = configurable.get("runtime_api_key") or context_dict.get("runtime_api_key")
+        raw_enabled_mcp_servers = configurable.get("enabled_mcp_servers") or context_dict.get("enabled_mcp_servers")
+        if isinstance(raw_enabled_mcp_servers, list):
+            enabled_mcp_servers = raw_enabled_mcp_servers
+        raw_available_skills = configurable.get("available_skills") or context_dict.get("available_skills")
+        if isinstance(raw_available_skills, list):
+            available_skill_names = raw_available_skills
 
     parent_available_skills = metadata.get("available_skills")
     if parent_available_skills is not None:
         overrides["skills"] = _merge_skill_allowlists(list(parent_available_skills), config.skills)
+        if available_skill_names is None:
+            available_skill_names = list(parent_available_skills)
 
     if overrides:
         config = replace(config, **overrides)
@@ -292,6 +302,8 @@ async def task_tool(
     }
     if resolved_app_config is not None:
         available_tools_kwargs["app_config"] = resolved_app_config
+    if enabled_mcp_servers is not None:
+        available_tools_kwargs["enabled_mcp_servers"] = enabled_mcp_servers
     tools = get_available_tools(**available_tools_kwargs)
 
     # Create executor
@@ -307,6 +319,7 @@ async def task_tool(
         "runtime_base_url": runtime_base_url,
         "runtime_api_key": runtime_api_key,
         "runtime_provider": runtime_provider,
+        "available_skill_names": available_skill_names,
     }
     if resolved_app_config is not None:
         executor_kwargs["app_config"] = resolved_app_config

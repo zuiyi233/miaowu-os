@@ -3,9 +3,10 @@ import logging
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.gateway.routers.admin import require_admin_user
 from deerflow.config.extensions_config import ExtensionsConfig, get_extensions_config, reload_extensions_config
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,9 @@ class McpConfigUpdateRequest(BaseModel):
     summary="Get MCP Configuration",
     description="Retrieve the current Model Context Protocol (MCP) server configurations.",
 )
-async def get_mcp_configuration() -> McpConfigResponse:
+async def get_mcp_configuration(
+    _: object = Depends(require_admin_user),
+) -> McpConfigResponse:
     """Get the current MCP configuration.
 
     Returns:
@@ -101,7 +104,10 @@ async def get_mcp_configuration() -> McpConfigResponse:
     summary="Update MCP Configuration",
     description="Update Model Context Protocol (MCP) server configurations and save to file.",
 )
-async def update_mcp_configuration(request: McpConfigUpdateRequest) -> McpConfigResponse:
+async def update_mcp_configuration(
+    request: McpConfigUpdateRequest,
+    _: object = Depends(require_admin_user),
+) -> McpConfigResponse:
     """Update the MCP configuration.
 
     This will:

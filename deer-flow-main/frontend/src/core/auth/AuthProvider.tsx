@@ -11,6 +11,7 @@ import React, {
 } from "react";
 
 import { queryClient } from "@/components/query-client-provider";
+import { configureAiProviderStoreForUser } from "@/core/ai";
 import { resolveApiUrl } from "@/core/api/fetcher";
 import {
   configureNovelStoreForUser,
@@ -41,6 +42,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 function resetUserScopedClientState(nextUserId: string | null): void {
   queryClient.clear();
+  configureAiProviderStoreForUser(nextUserId);
   configureNovelStoreForUser(nextUserId);
   configureSettingsStoreForUser(nextUserId);
   if (nextUserId === null) {

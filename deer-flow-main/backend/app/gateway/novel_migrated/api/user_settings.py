@@ -12,7 +12,7 @@ import hashlib
 import ipaddress
 import logging
 import re
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -25,6 +25,7 @@ from app.gateway.auth.newapi_oauth import (
     get_newapi_group_catalog_for_user,
     sync_newapi_groups_for_user,
 )
+from app.gateway.deps import get_config
 from app.gateway.novel_migrated.core.database import get_db
 from app.gateway.novel_migrated.core.user_context import get_request_user_id
 from app.gateway.novel_migrated.services.ai_settings_service import (
@@ -33,6 +34,17 @@ from app.gateway.novel_migrated.services.ai_settings_service import (
     get_ai_settings_service,
     get_managed_newapi_groups,
 )
+from app.gateway.novel_migrated.services.user_preferences_service import (
+    DEFAULT_MEDIA_DRAFT_RETENTION,
+    get_user_preferences_service,
+    normalize_user_skill_settings,
+    normalize_user_tool_settings,
+    normalize_user_ui_settings,
+)
+from deerflow.config.app_config import AppConfig
+from deerflow.config.extensions_config import ExtensionsConfig
+from deerflow.skills.storage import get_or_new_skill_storage
+from deerflow.skills.types import SkillCategory
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +122,108 @@ class AiSettingsUpdateRequest(BaseModel):
     system_prompt: str | None = None
 
 
+class UserUiSettingsResponse(BaseModel):
+    version: int
+    media_draft_retention: Literal["24h", "7d", "never"] = DEFAULT_MEDIA_DRAFT_RETENTION
+
+
+class UserUiSettingsUpdateRequest(BaseModel):
+    media_draft_retention: Literal["24h", "7d", "never"]
+    local_retention_candidate: str | None = None
+
+
+class UserSkillStateResponse(BaseModel):
+    name: str
+    description: str
+    license: str | None = None
+    category: SkillCategory
+    enabled: bool
+    system_enabled: bool = True
+    is_editable: bool = False
+
+
+class UserSkillSettingsResponse(BaseModel):
+    version: int
+    skills: list[UserSkillStateResponse] = Field(default_factory=list)
+    is_admin: bool = False
+
+
+class UserSkillSettingsUpdateRequest(BaseModel):
+    enabled_skills: dict[str, bool] | None = None
+
+
+class UserToolStateResponse(BaseModel):
+    name: str
+    enabled: bool
+    system_enabled: bool
+    description: str = ""
+    type: str = "stdio"
+    url: str | None = None
+    command: str | None = None
+
+
+class UserToolSettingsResponse(BaseModel):
+    version: int
+    mcp_servers: dict[str, UserToolStateResponse] = Field(default_factory=dict)
+    is_admin: bool = False
+
+
+class UserToolSettingsUpdateRequest(BaseModel):
+    enabled_mcp_servers: dict[str, bool] | None = None
+
+
+def _load_public_skills(config: AppConfig | None = None):
+    storage_kwargs: dict[str, Any] = {}
+    if config is not None:
+        storage_kwargs["app_config"] = config
+    return list(get_or_new_skill_storage(**storage_kwargs).load_skills(enabled_only=False))
+
+
+def _serialize_user_skill_settings(
+    *,
+    skills,
+    enabled_skills: dict[str, bool],
+    is_admin: bool,
+) -> UserSkillSettingsResponse:
+    return UserSkillSettingsResponse(
+        version=1,
+        is_admin=is_admin,
+        skills=[
+            UserSkillStateResponse(
+                name=skill.name,
+                description=skill.description,
+                license=skill.license,
+                category=skill.category,
+                enabled=enabled_skills.get(skill.name, True) and bool(getattr(skill, "enabled", True)),
+                system_enabled=bool(getattr(skill, "enabled", True)),
+                is_editable=is_admin and skill.category == SkillCategory.CUSTOM,
+            )
+            for skill in skills
+        ],
+    )
+
+
+def _serialize_user_tool_settings(
+    *,
+    extensions_config: ExtensionsConfig,
+    enabled_mcp_servers: dict[str, bool],
+    is_admin: bool,
+) -> UserToolSettingsResponse:
+    servers = {
+        name: UserToolStateResponse(
+            name=name,
+            enabled=enabled_mcp_servers.get(name, True) and bool(server.enabled),
+            system_enabled=bool(server.enabled),
+            description=server.description or "",
+            type=server.type or "stdio",
+            url=server.url,
+            command=server.command,
+        )
+        for name, server in sorted(extensions_config.mcp_servers.items())
+    }
+    return UserToolSettingsResponse(version=1, mcp_servers=servers, is_admin=is_admin)
+
+
 @router.get("/ai-settings", response_model=AiSettingsResponse)
 async def get_ai_settings(
     request: Request,
@@ -157,6 +271,147 @@ async def update_ai_settings(
         [group for group in managed_groups if group],
     )
     return updated
+
+
+@router.get("/ui-settings", response_model=UserUiSettingsResponse)
+async def get_ui_settings(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = get_request_user_id(request)
+    service = get_user_preferences_service()
+    settings, preferences = await service.load_preferences(user_id=user_id, db=db)
+    del settings
+    ui_settings = normalize_user_ui_settings(preferences)
+    if preferences.pop("_normalization_changed", False):
+        settings, _ = await service.load_preferences(user_id=user_id, db=db)
+        await service.save_preferences(settings=settings, preferences=preferences, db=db)
+    return UserUiSettingsResponse(**ui_settings)
+
+
+@router.put("/ui-settings", response_model=UserUiSettingsResponse)
+async def update_ui_settings(
+    payload: UserUiSettingsUpdateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = get_request_user_id(request)
+    service = get_user_preferences_service()
+    settings, preferences = await service.load_preferences(user_id=user_id, db=db)
+    ui_settings = normalize_user_ui_settings(
+        preferences,
+        local_retention_candidate=payload.local_retention_candidate,
+    )
+    ui_settings["media_draft_retention"] = payload.media_draft_retention
+    preferences["user_ui_settings"] = ui_settings
+    await service.save_preferences(settings=settings, preferences=preferences, db=db)
+    return UserUiSettingsResponse(**ui_settings)
+
+
+@router.get("/skill-settings", response_model=UserSkillSettingsResponse)
+async def get_skill_settings(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    config: AppConfig = Depends(get_config),
+):
+    user_id = get_request_user_id(request)
+    user = getattr(request.state, "user", None) or getattr(getattr(request.state, "auth", None), "user", None)
+    public_skills = _load_public_skills(config)
+    service = get_user_preferences_service()
+    settings, preferences = await service.load_preferences(user_id=user_id, db=db)
+    del settings
+    skill_settings = normalize_user_skill_settings(preferences, available_skills=public_skills)
+    if preferences.pop("_normalization_changed", False):
+        settings, _ = await service.load_preferences(user_id=user_id, db=db)
+        await service.save_preferences(settings=settings, preferences=preferences, db=db)
+    return _serialize_user_skill_settings(
+        skills=public_skills,
+        enabled_skills=skill_settings["enabled_skills"],
+        is_admin=bool(getattr(user, "system_role", None) == "admin"),
+    )
+
+
+@router.put("/skill-settings", response_model=UserSkillSettingsResponse)
+async def update_skill_settings(
+    payload: UserSkillSettingsUpdateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    config: AppConfig = Depends(get_config),
+):
+    user_id = get_request_user_id(request)
+    user = getattr(request.state, "user", None) or getattr(getattr(request.state, "auth", None), "user", None)
+    public_skills = _load_public_skills(config)
+    service = get_user_preferences_service()
+    settings, preferences = await service.load_preferences(user_id=user_id, db=db)
+    skill_settings = normalize_user_skill_settings(preferences, available_skills=public_skills)
+    requested = payload.enabled_skills or {}
+    allowed_names = {skill.name for skill in public_skills}
+    next_enabled = dict(skill_settings["enabled_skills"])
+    for name, enabled in requested.items():
+        normalized_name = str(name or "").strip()
+        if not normalized_name or normalized_name not in allowed_names:
+            continue
+        next_enabled[normalized_name] = bool(enabled)
+    skill_settings["enabled_skills"] = next_enabled
+    preferences["user_skill_settings"] = skill_settings
+    await service.save_preferences(settings=settings, preferences=preferences, db=db)
+    return _serialize_user_skill_settings(
+        skills=public_skills,
+        enabled_skills=skill_settings["enabled_skills"],
+        is_admin=bool(getattr(user, "system_role", None) == "admin"),
+    )
+
+
+@router.get("/tool-settings", response_model=UserToolSettingsResponse)
+async def get_tool_settings(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = get_request_user_id(request)
+    user = getattr(request.state, "user", None) or getattr(getattr(request.state, "auth", None), "user", None)
+    extensions_config = ExtensionsConfig.from_file()
+    service = get_user_preferences_service()
+    settings, preferences = await service.load_preferences(user_id=user_id, db=db)
+    del settings
+    tool_settings = normalize_user_tool_settings(preferences, extensions_config=extensions_config)
+    if preferences.pop("_normalization_changed", False):
+        settings, _ = await service.load_preferences(user_id=user_id, db=db)
+        await service.save_preferences(settings=settings, preferences=preferences, db=db)
+    return _serialize_user_tool_settings(
+        extensions_config=extensions_config,
+        enabled_mcp_servers=tool_settings["enabled_mcp_servers"],
+        is_admin=bool(getattr(user, "system_role", None) == "admin"),
+    )
+
+
+@router.put("/tool-settings", response_model=UserToolSettingsResponse)
+async def update_tool_settings(
+    payload: UserToolSettingsUpdateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = get_request_user_id(request)
+    user = getattr(request.state, "user", None) or getattr(getattr(request.state, "auth", None), "user", None)
+    extensions_config = ExtensionsConfig.from_file()
+    service = get_user_preferences_service()
+    settings, preferences = await service.load_preferences(user_id=user_id, db=db)
+    tool_settings = normalize_user_tool_settings(preferences, extensions_config=extensions_config)
+    requested = payload.enabled_mcp_servers or {}
+    allowed_names = set(extensions_config.mcp_servers.keys())
+    next_enabled = dict(tool_settings["enabled_mcp_servers"])
+    for name, enabled in requested.items():
+        normalized_name = str(name or "").strip()
+        if not normalized_name or normalized_name not in allowed_names:
+            continue
+        next_enabled[normalized_name] = bool(enabled)
+    tool_settings["enabled_mcp_servers"] = next_enabled
+    preferences["user_tool_settings"] = tool_settings
+    await service.save_preferences(settings=settings, preferences=preferences, db=db)
+    return _serialize_user_tool_settings(
+        extensions_config=extensions_config,
+        enabled_mcp_servers=tool_settings["enabled_mcp_servers"],
+        is_admin=bool(getattr(user, "system_role", None) == "admin"),
+    )
 
 
 class FetchProviderModelsRequest(BaseModel):

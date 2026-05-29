@@ -8,6 +8,7 @@
  */
 
 export {
+  configureAiProviderStoreForUser,
   useAiProviderStore,
   type AiProviderConfig,
   type AiProviderType,

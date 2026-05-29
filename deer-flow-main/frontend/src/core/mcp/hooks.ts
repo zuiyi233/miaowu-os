@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { loadMCPConfig, updateMCPConfig } from "./api";
+import { loadUserToolSettings, updateUserToolSettings } from "./api";
 
 export function useMCPConfig() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["mcpConfig"],
-    queryFn: () => loadMCPConfig(),
+    queryFn: () => loadUserToolSettings(),
   });
   return { config: data, isLoading, error };
 }
@@ -27,14 +27,8 @@ export function useEnableMCPServer() {
       if (!config.mcp_servers[serverName]) {
         throw new Error(`MCP server ${serverName} not found`);
       }
-      await updateMCPConfig({
-        mcp_servers: {
-          ...config.mcp_servers,
-          [serverName]: {
-            ...config.mcp_servers[serverName],
-            enabled,
-          },
-        },
+      await updateUserToolSettings({
+        [serverName]: enabled,
       });
     },
     onSuccess: () => {

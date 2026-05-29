@@ -3,18 +3,20 @@ import { getBackendBaseURL } from "@/core/config";
 
 import type { MCPConfig } from "./types";
 
-export async function loadMCPConfig() {
-  const response = await fetch(`${getBackendBaseURL()}/api/mcp/config`);
+export async function loadUserToolSettings() {
+  const response = await fetch(`${getBackendBaseURL()}/api/user/tool-settings`);
   return response.json() as Promise<MCPConfig>;
 }
 
-export async function updateMCPConfig(config: MCPConfig) {
-  const response = await fetch(`${getBackendBaseURL()}/api/mcp/config`, {
+export async function updateUserToolSettings(enabledMcpServers: Record<string, boolean>) {
+  const response = await fetch(`${getBackendBaseURL()}/api/user/tool-settings`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(config),
+    body: JSON.stringify({
+      enabled_mcp_servers: enabledMcpServers,
+    }),
   });
-  return response.json();
+  return response.json() as Promise<MCPConfig>;
 }

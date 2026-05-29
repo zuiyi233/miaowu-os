@@ -25,6 +25,14 @@ from app.gateway.novel_migrated.core.database import AsyncSessionLocal
 from app.gateway.novel_migrated.core.user_context import get_request_user_id
 from app.gateway.novel_migrated.models.settings import Settings
 from app.gateway.novel_migrated.services.ai_settings_service import resolve_user_ai_runtime_config
+from app.gateway.novel_migrated.services.user_preferences_service import (
+    get_user_enabled_mcp_server_names,
+    get_user_enabled_skill_names,
+    load_preferences_blob,
+    normalize_user_skill_settings,
+    normalize_user_tool_settings,
+    normalize_user_ui_settings,
+)
 from app.gateway.product_entitlements import product_entitlement_service
 from app.gateway.utils import sanitize_log_param
 from deerflow.runtime import (
@@ -40,6 +48,8 @@ from deerflow.runtime import (
     run_agent,
 )
 from deerflow.persistence.engine import get_session_factory
+from deerflow.config.extensions_config import ExtensionsConfig
+from deerflow.skills.storage import get_or_new_skill_storage
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +198,49 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
         "module_id",
     }
 )
+
+
+def _inject_user_settings_context(
+    config: dict[str, Any],
+    *,
+    preferences: dict[str, Any],
+    available_skills: list[Any],
+    extensions_config: Any,
+) -> None:
+    runtime_context = config.setdefault("context", {})
+    configurable = config.setdefault("configurable", {})
+    if not isinstance(runtime_context, dict) or not isinstance(configurable, dict):
+        return
+
+    ui_settings = normalize_user_ui_settings(preferences)
+    skill_settings = normalize_user_skill_settings(
+        preferences,
+        available_skills=available_skills,
+    )
+    tool_settings = normalize_user_tool_settings(preferences, extensions_config=extensions_config)
+
+    enabled_skill_names = sorted(
+        get_user_enabled_skill_names(
+            preferences=preferences,
+            available_skills=available_skills,
+        )
+    )
+    enabled_mcp_server_names = sorted(
+        get_user_enabled_mcp_server_names(
+            preferences=preferences,
+            extensions_config=extensions_config,
+        )
+    )
+
+    configurable["media_draft_retention"] = ui_settings["media_draft_retention"]
+    configurable["available_skills"] = enabled_skill_names
+    configurable["enabled_mcp_servers"] = enabled_mcp_server_names
+    runtime_context["media_draft_retention"] = ui_settings["media_draft_retention"]
+    runtime_context["available_skills"] = enabled_skill_names
+    runtime_context["enabled_mcp_servers"] = enabled_mcp_server_names
+    runtime_context["user_skill_settings"] = skill_settings
+    runtime_context["user_tool_settings"] = tool_settings
+    runtime_context["user_ui_settings"] = ui_settings
 
 
 def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, Any] | None) -> None:
@@ -665,6 +718,19 @@ async def start_run(
         requested_model_name=requested_model_name,
         module_id=module_id,
     )
+    if user_settings is not None:
+        preferences = load_preferences_blob(user_settings)
+        try:
+            extensions_config = ExtensionsConfig.from_file()
+            public_skills = get_or_new_skill_storage().load_skills(enabled_only=False)
+            _inject_user_settings_context(
+                config,
+                preferences=preferences,
+                available_skills=public_skills,
+                extensions_config=extensions_config,
+            )
+        except Exception:
+            logger.warning("Failed to inject user settings runtime context", exc_info=True)
     if runtime_overrides:
         logger.info(
             "Runtime provider overrides for thread: model=%s provider=%s base_url=%s api_key=%s",

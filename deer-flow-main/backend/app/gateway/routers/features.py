@@ -3,10 +3,11 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.gateway.observability.metrics import get_gateway_metrics_snapshot
+from app.gateway.routers.admin import require_admin_user
 from deerflow.config.extensions_config import (
     ExtensionsConfig,
     FeatureFlagConfig,
@@ -105,7 +106,9 @@ def _persist_and_reload(extensions_config: ExtensionsConfig) -> ExtensionsConfig
     summary="Get Feature Flags",
     description="Retrieve the current feature flags from extensions configuration.",
 )
-async def get_features() -> FeatureFlagsResponse:
+async def get_features(
+    _: object = Depends(require_admin_user),
+) -> FeatureFlagsResponse:
     config = get_extensions_config()
     return FeatureFlagsResponse(
         features={name: _to_flag_state(flag) for name, flag in config.features.items()}
@@ -118,7 +121,11 @@ async def get_features() -> FeatureFlagsResponse:
     summary="Evaluate Feature Flag For User",
     description="Evaluate whether a feature is enabled for a specific user under canary rules.",
 )
-async def evaluate_feature(feature_name: str, user_id: str = Query(..., min_length=1)) -> FeatureEvaluationResponse:
+async def evaluate_feature(
+    feature_name: str,
+    user_id: str = Query(..., min_length=1),
+    _: object = Depends(require_admin_user),
+) -> FeatureEvaluationResponse:
     config = get_extensions_config()
     if hasattr(config, "is_feature_enabled_for_user"):
         enabled = config.is_feature_enabled_for_user(feature_name, user_id=user_id, default=True)
@@ -133,7 +140,11 @@ async def evaluate_feature(feature_name: str, user_id: str = Query(..., min_leng
     summary="Update Feature Flag",
     description="Update feature flag strategy and persist to extensions_config.json.",
 )
-async def update_feature(feature_name: str, request: FeatureFlagUpdateRequest) -> FeatureFlagState:
+async def update_feature(
+    feature_name: str,
+    request: FeatureFlagUpdateRequest,
+    _: object = Depends(require_admin_user),
+) -> FeatureFlagState:
     try:
         extensions_config = get_extensions_config()
         existing = extensions_config.features.get(feature_name)
@@ -165,7 +176,10 @@ async def update_feature(feature_name: str, request: FeatureFlagUpdateRequest) -
     summary="Rollback Feature Flag",
     description="Fast rollback: disable feature and set rollout percentage to 0.",
 )
-async def rollback_feature(feature_name: str) -> FeatureFlagState:
+async def rollback_feature(
+    feature_name: str,
+    _: object = Depends(require_admin_user),
+) -> FeatureFlagState:
     try:
         extensions_config = get_extensions_config()
         existing = extensions_config.features.get(feature_name) or FeatureFlagConfig(enabled=False, rollout_percentage=0)
@@ -193,5 +207,7 @@ async def rollback_feature(feature_name: str) -> FeatureFlagState:
     summary="Get Novel Pipeline Metrics",
     description="Return in-process observability metrics for novel pipeline gateway traffic.",
 )
-async def get_novel_pipeline_metrics() -> NovelPipelineMetricsResponse:
+async def get_novel_pipeline_metrics(
+    _: object = Depends(require_admin_user),
+) -> NovelPipelineMetricsResponse:
     return NovelPipelineMetricsResponse(metrics=get_gateway_metrics_snapshot())

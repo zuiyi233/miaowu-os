@@ -1,10 +1,8 @@
 "use client";
 
 import { SparklesIcon } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
-import { Button } from "@/components/ui/button";
 import {
   Empty,
   EmptyContent,
@@ -21,7 +19,7 @@ import {
   ItemDescription,
 } from "@/components/ui/item";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useAuth } from "@/core/auth/AuthProvider";
 import { useI18n } from "@/core/i18n/hooks";
 import { useEnableSkill, useSkills } from "@/core/skills/hooks";
 import type { Skill } from "@/core/skills/type";
@@ -31,6 +29,7 @@ import { SettingsSection } from "./settings-section";
 
 export function SkillSettingsPage({ onClose }: { onClose?: () => void } = {}) {
   const { t } = useI18n();
+  const { user } = useAuth();
   const { skills, isLoading, error } = useSkills();
   return (
     <SettingsSection
@@ -42,7 +41,11 @@ export function SkillSettingsPage({ onClose }: { onClose?: () => void } = {}) {
       ) : error ? (
         <div>Error: {error.message}</div>
       ) : (
-        <SkillSettingsList skills={skills} onClose={onClose} />
+        <SkillSettingsList
+          skills={skills}
+          isAdmin={user?.system_role === "admin"}
+          onClose={onClose}
+        />
       )}
     </SettingsSection>
   );
@@ -50,59 +53,50 @@ export function SkillSettingsPage({ onClose }: { onClose?: () => void } = {}) {
 
 function SkillSettingsList({
   skills,
+  isAdmin,
   onClose,
 }: {
   skills: Skill[];
+  isAdmin: boolean;
   onClose?: () => void;
 }) {
   const { t } = useI18n();
-  const router = useRouter();
-  const [filter, setFilter] = useState<string>("public");
   const { mutate: enableSkill } = useEnableSkill();
-  const filteredSkills = useMemo(
-    () => skills.filter((skill) => skill.category === filter),
-    [skills, filter],
-  );
-  const handleCreateSkill = () => {
-    onClose?.();
-    router.push("/workspace/chats/new?mode=skill");
-  };
+  const filteredSkills = useMemo(() => skills, [skills]);
+  void onClose;
   return (
     <div className="flex w-full flex-col gap-4">
-      <header className="flex justify-between">
-        <div className="flex gap-2">
-          <Tabs defaultValue="public" onValueChange={setFilter}>
-            <TabsList variant="line">
-              <TabsTrigger value="public">{t.common.public}</TabsTrigger>
-              <TabsTrigger value="custom">{t.common.custom}</TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
-        <div>
-          <Button size="sm" onClick={handleCreateSkill}>
-            <SparklesIcon className="size-4" />
-            {t.settings.skills.createSkill}
-          </Button>
-        </div>
-      </header>
-      {filteredSkills.length === 0 && (
-        <EmptySkill onCreateSkill={handleCreateSkill} />
-      )}
+      {filteredSkills.length === 0 && <EmptySkill />}
       {filteredSkills.length > 0 &&
         filteredSkills.map((skill) => (
           <Item className="w-full" variant="outline" key={skill.name}>
             <ItemContent>
               <ItemTitle>
-                <div className="flex items-center gap-2">{skill.name}</div>
+                <div className="flex items-center gap-2">
+                  {skill.name}
+                  {skill.category !== "public" && (
+                    <span className="text-muted-foreground text-xs uppercase">
+                      {skill.category}
+                    </span>
+                  )}
+                </div>
               </ItemTitle>
               <ItemDescription className="line-clamp-4">
                 {skill.description}
+                {skill.system_enabled === false && (
+                  <span className="text-muted-foreground mt-1 block text-xs">
+                    已被管理员在公共技能库中停用
+                  </span>
+                )}
               </ItemDescription>
             </ItemContent>
             <ItemActions>
               <Switch
                 checked={skill.enabled}
-                disabled={env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"}
+                disabled={
+                  env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
+                  skill.system_enabled === false
+                }
                 onCheckedChange={(checked) =>
                   enableSkill({ skillName: skill.name, enabled: checked })
                 }
@@ -114,7 +108,7 @@ function SkillSettingsList({
   );
 }
 
-function EmptySkill({ onCreateSkill }: { onCreateSkill: () => void }) {
+function EmptySkill() {
   const { t } = useI18n();
   return (
     <Empty>
@@ -127,9 +121,7 @@ function EmptySkill({ onCreateSkill }: { onCreateSkill: () => void }) {
           {t.settings.skills.emptyDescription}
         </EmptyDescription>
       </EmptyHeader>
-      <EmptyContent>
-        <Button onClick={onCreateSkill}>{t.settings.skills.emptyButton}</Button>
-      </EmptyContent>
+      <EmptyContent />
     </Empty>
   );
 }

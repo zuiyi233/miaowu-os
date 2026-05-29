@@ -1,0 +1,8 @@
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking-guide index for cross-layer and reuse checks in a backend+frontend settings refactor deployment."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Task spans backend APIs, frontend settings pages, and runtime loading behavior; cross-layer verification is required."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend guideline index for API, runtime filtering, and async service behavior touched by this deployment candidate."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Need consistent failure reporting and verification for runtime settings endpoints and deploy-time checks."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Backend runtime/cache/async contracts matter for user-scoped settings and MCP/skill loading behavior."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend guideline index for settings pages and state synchronization behavior included in this deployment candidate."}
+{"file":".trellis/tasks/05-29-deploy-31-multiuser-settings-verify/research/31-stack-baseline.md","reason":"31 deploy baseline and command path for this task."}
+{"file":".trellis/tasks/05-29-deploy-31-multiuser-settings-verify/research/multiuser-settings-verification-matrix.md","reason":"Runtime acceptance matrix for multi-user settings verification on 31."}

@@ -360,6 +360,13 @@ function removeLocalProviderPersistence(): void {
 }
 
 let _hydrationPromise: Promise<void> | null = null;
+let _storeGeneration = 0;
+
+function resetAiProviderStoreState(): void {
+  _storeGeneration += 1;
+  _hydrationPromise = null;
+  useAiProviderStore.setState(useAiProviderStore.getInitialState(), true);
+}
 
 export const useAiProviderStore = create<AiSettingsState>()((set, get) => ({
   hydrated: false,
@@ -391,9 +398,13 @@ export const useAiProviderStore = create<AiSettingsState>()((set, get) => ({
   },
 
   refreshFromServer: async () => {
+    const generation = _storeGeneration;
     set({ hydrating: true, hydrationError: null });
     try {
       const server = await fetchUserAiSettings();
+      if (generation !== _storeGeneration) {
+        return;
+      }
       const effective = mapServerSettingsToGlobal(server);
       set({
         hydrated: true,
@@ -404,6 +415,9 @@ export const useAiProviderStore = create<AiSettingsState>()((set, get) => ({
         isDirty: false,
       });
     } catch (err) {
+      if (generation !== _storeGeneration) {
+        return;
+      }
       const message = err instanceof Error ? err.message : "Failed to load AI settings";
       set({
         hydrated: false,
@@ -553,3 +567,7 @@ export const useAiProviderStore = create<AiSettingsState>()((set, get) => ({
     set({ draft: { ...DEFAULT_SETTINGS }, isDirty: true });
   },
 }));
+
+export function configureAiProviderStoreForUser(_userId: string | null | undefined): void {
+  resetAiProviderStoreState();
+}
