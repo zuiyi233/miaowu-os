@@ -23,10 +23,10 @@ const agentRuntimeFeatures = [
     title: "超级智能体框架",
     description:
       "基于 LangGraph 构建的超级智能体 harness，支持子智能体编排、长期记忆、沙箱执行，让 AI 真正完成复杂任务。",
-    color: "from-amber-500/20 to-orange-500/20",
-    borderColor: "border-amber-500/15",
-    iconColor: "text-amber-400",
-    glowColor: "rgba(245,158,11,0.15)",
+    color: "from-emerald-600/20 to-teal-500/20",
+    borderColor: "border-emerald-600/15",
+    iconColor: "text-emerald-400",
+    glowColor: "rgba(45,106,79,0.15)",
   },
   {
     icon: GitBranch,
@@ -86,9 +86,9 @@ const novelFeatures = [
     title: "智能润色与改写",
     description:
       "AI 实时分析章节内容，提供润色建议、风格调整、局部重生成。保持创作连贯性的同时提升文笔。",
-    color: "from-amber-500/20 to-yellow-500/20",
-    borderColor: "border-amber-500/15",
-    iconColor: "text-amber-400",
+    color: "from-emerald-600/20 to-teal-500/20",
+    borderColor: "border-emerald-600/15",
+    iconColor: "text-emerald-400",
     glowColor: "rgba(245,158,11,0.15)",
   },
   {
@@ -160,7 +160,7 @@ function FeatureCard({
             <Icon className={`size-5 ${feature.iconColor}`} />
           </div>
         </div>
-        <h3 className="mb-2 text-lg font-semibold text-white/90 transition-colors group-hover:text-amber-300">
+        <h3 className="mb-2 text-lg font-semibold text-white/90 transition-colors group-hover:text-emerald-300">
           {feature.title}
         </h3>
         <p className="text-sm leading-relaxed text-white/50">
@@ -243,7 +243,7 @@ function SectionDivider() {
       <div
         className="mx-auto mt-[-1px] h-1 w-16 rounded-full"
         style={{
-          background: "linear-gradient(90deg, transparent, rgba(245,158,11,0.3), transparent)",
+          background: "linear-gradient(90deg, transparent, rgba(45,106,79,0.3), transparent)",
         }}
       />
     </div>

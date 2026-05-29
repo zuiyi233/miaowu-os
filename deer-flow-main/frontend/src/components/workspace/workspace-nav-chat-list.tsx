@@ -34,6 +34,7 @@ export function WorkspaceNavChatList() {
           <SidebarMenuButton
             isActive={pathname.startsWith("/workspace/novel") && !pathname.includes("/inspiration") && !pathname.includes("/book-import")}
             asChild
+            tooltip="小说工作室"
           >
             <Link className="text-muted-foreground" href="/workspace/novel">
               <BookOpenIcon />
@@ -45,6 +46,7 @@ export function WorkspaceNavChatList() {
           <SidebarMenuButton
             isActive={pathname.startsWith("/workspace/novel") && pathname.includes("/author-control")}
             asChild
+            tooltip="作者控制台"
           >
             <Link className="text-muted-foreground" href="/workspace/novel">
               <ClipboardCheckIcon />
@@ -56,6 +58,7 @@ export function WorkspaceNavChatList() {
           <SidebarMenuButton
             isActive={pathname === "/workspace/novel/inspiration"}
             asChild
+            tooltip="灵感模式"
           >
             <Link className="text-muted-foreground" href="/workspace/novel/inspiration">
               <Sparkles />
@@ -67,6 +70,7 @@ export function WorkspaceNavChatList() {
           <SidebarMenuButton
             isActive={pathname === "/workspace/novel/book-import"}
             asChild
+            tooltip="拆书导入"
           >
             <Link className="text-muted-foreground" href="/workspace/novel/book-import">
               <Upload />
@@ -78,6 +82,7 @@ export function WorkspaceNavChatList() {
           <SidebarMenuButton
             isActive={pathname.startsWith("/workspace/images")}
             asChild
+            tooltip="图片生成"
           >
             <Link className="text-muted-foreground" href="/workspace/images">
               <ImageIcon />
@@ -89,6 +94,7 @@ export function WorkspaceNavChatList() {
           <SidebarMenuButton
             isActive={pathname.startsWith("/workspace/tts-studio")}
             asChild
+            tooltip="音频工作站"
           >
             <Link className="text-muted-foreground" href="/workspace/tts-studio">
               <Music2Icon />
@@ -102,7 +108,7 @@ export function WorkspaceNavChatList() {
       </div>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton isActive={pathname === "/workspace/chats"} asChild>
+          <SidebarMenuButton isActive={pathname === "/workspace/chats"} asChild tooltip={t.sidebar.chats}>
             <Link className="text-muted-foreground" href="/workspace/chats">
               <MessagesSquare />
               <span>{t.sidebar.chats}</span>
@@ -113,6 +119,7 @@ export function WorkspaceNavChatList() {
           <SidebarMenuButton
             isActive={pathname.startsWith("/workspace/agents")}
             asChild
+            tooltip={t.sidebar.agents}
           >
             <Link className="text-muted-foreground" href="/workspace/agents">
               <BotIcon />

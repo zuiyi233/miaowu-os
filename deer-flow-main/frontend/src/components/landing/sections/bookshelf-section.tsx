@@ -14,11 +14,11 @@ const bookshelfNovels = [
     title: "我目前在读",
     description: "继续阅读你正在追的小说",
     icon: BookOpen,
-    color: "from-amber-500 to-orange-500",
-    bgColor: "bg-amber-500/[0.08]",
-    borderColor: "border-amber-500/15",
-    hoverBorder: "hover:border-amber-400/30",
-    shadowColor: "shadow-amber-500/10",
+    color: "from-emerald-600 to-teal-500",
+    bgColor: "bg-emerald-600/[0.08]",
+    borderColor: "border-emerald-600/15",
+    hoverBorder: "hover:border-emerald-400/30",
+    shadowColor: "shadow-emerald-600/10",
     href: "/workspace/novel",
   },
   {
@@ -69,7 +69,7 @@ export function BookshelfSection({ className }: { className?: string }) {
                     <Icon className="size-8 text-white" />
                   </div>
                   <div className="text-center">
-                    <h3 className="text-lg font-bold text-white/90 transition-colors group-hover:text-amber-300">
+                    <h3 className="text-lg font-bold text-white/90 transition-colors group-hover:text-emerald-300">
                       {item.title}
                     </h3>
                     <p className="mt-1 text-sm text-white/50">
@@ -79,7 +79,7 @@ export function BookshelfSection({ className }: { className?: string }) {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="mt-2 text-white/40 transition-colors group-hover:text-amber-400"
+                    className="mt-2 text-white/40 transition-colors group-hover:text-emerald-400"
                   >
                     进入
                     <ArrowRight className="ml-1 size-4 transition-transform group-hover:translate-x-1" />

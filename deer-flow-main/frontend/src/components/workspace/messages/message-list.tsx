@@ -273,7 +273,7 @@ export function MessageList({
               <div
                 key={group.id}
                 className={cn(
-                  "w-full",
+                  "w-full animate-msg-in",
                   group.type === "assistant" && "group/assistant-turn",
                 )}
               >

@@ -101,18 +101,18 @@ export function ConfirmationCard({
   const isExecutionModeActive = executionGate?.execution_mode === true;
 
   return (
-    <div className="rounded-lg border-2 border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30 p-3 text-sm">
+    <div className="rounded-lg border-2 border-emerald-300 bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-950/30 p-3 text-sm">
       <div className="flex items-center gap-2 mb-2">
-        <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
-        <span className="font-semibold text-amber-800 dark:text-amber-300">
+        <AlertTriangle className="h-4 w-4 text-emerald-700 dark:text-emerald-400 shrink-0" />
+        <span className="font-semibold text-emerald-900 dark:text-emerald-300">
           操作确认
         </span>
-        <Badge variant="outline" className="text-xs border-amber-400 text-amber-700 dark:border-amber-600 dark:text-amber-400">
+        <Badge variant="outline" className="text-xs border-emerald-400 text-emerald-800 dark:border-emerald-600 dark:text-emerald-400">
           {actionLabel}
         </Badge>
       </div>
 
-      <p className="text-amber-700 dark:text-amber-300 mb-2">
+      <p className="text-emerald-800 dark:text-emerald-300 mb-2">
         即将执行：<strong>{actionLabel}</strong>
       </p>
 
@@ -128,7 +128,7 @@ export function ConfirmationCard({
       )}
 
       {!hasSchemaEntries && !hasArgsSummary && (
-        <p className="text-amber-600 dark:text-amber-400 text-xs mb-3">
+        <p className="text-emerald-700 dark:text-emerald-400 text-xs mb-3">
           请确认是否执行此操作。
         </p>
       )}

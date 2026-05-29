@@ -247,7 +247,7 @@ export function PromptWorkshop({ projectId }: PromptWorkshopProps) {
         <h2 className="text-lg font-semibold flex items-center gap-2"><Sparkles className="w-5 h-5" /> {t.novel.workshopTitle}</h2>
         <div className="flex items-center gap-2">
           {health.status === 'degraded' && (
-            <Badge variant="outline" className="text-amber-600 border-amber-300 text-[10px]">
+            <Badge variant="outline" className="text-emerald-700 border-emerald-300 text-[10px]">
               {t.novel.workshopDegraded}
             </Badge>
           )}

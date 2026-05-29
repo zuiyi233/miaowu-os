@@ -21,12 +21,12 @@ import {
 } from "@/lib/anime";
 
 const workspaceViews = [
-  { icon: PenTool, title: "编辑器", description: "富文本编辑器支持 AI 续写、润色、局部重生成", color: "text-amber-400" },
+  { icon: PenTool, title: "编辑器", description: "富文本编辑器支持 AI 续写、润色、局部重生成", color: "text-emerald-400" },
   { icon: BookOpen, title: "阅读模式", description: "沉浸式阅读体验，支持目录导航和书签", color: "text-rose-400" },
   { icon: Layers, title: "大纲管理", description: "可视化大纲结构，拖拽调整章节顺序", color: "text-cyan-400" },
   { icon: Clock, title: "时间线", description: "梳理故事时间线，管理多线叙事", color: "text-violet-400" },
   { icon: GitBranch, title: "关系图谱", description: "交互式角色关系图谱，一目了然", color: "text-emerald-400" },
-  { icon: Trophy, title: "职业体系", description: "设计角色职业、技能、成长路线", color: "text-amber-300" },
+  { icon: Trophy, title: "职业体系", description: "设计角色职业、技能、成长路线", color: "text-emerald-300" },
   { icon: Flag, title: "伏笔管理", description: "追踪故事伏笔，确保前后呼应", color: "text-indigo-400" },
   { icon: FileText, title: "设定管理", description: "世界观、组织势力、魔法体系设定", color: "text-teal-400" },
 ];
@@ -76,7 +76,7 @@ function ViewCard({ view }: { view: (typeof workspaceViews)[0] }) {
         }
       }}
     >
-      <div className="view-icon mb-3 flex size-12 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/10">
+      <div className="view-icon mb-3 flex size-12 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-600/10 to-teal-500/10">
         <Icon className={`size-6 ${view.color}/80`} />
       </div>
       <h3 className="mb-1 text-sm font-semibold text-white/80">
@@ -139,7 +139,7 @@ export function NovelShowcaseSection() {
         <div className="mt-10 flex justify-center" data-animate style={{ opacity: 0 }}>
           <Link
             href="/workspace/novel"
-            className="group inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-6 py-3 text-sm text-white/70 backdrop-blur-sm transition-colors duration-300 hover:border-amber-500/30 hover:bg-white/[0.06] hover:text-amber-300"
+            className="group inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-6 py-3 text-sm text-white/70 backdrop-blur-sm transition-colors duration-300 hover:border-emerald-600/30 hover:bg-white/[0.06] hover:text-emerald-300"
             onMouseEnter={(e) => {
               animate(e.currentTarget, {
                 scale: [1, 1.05],

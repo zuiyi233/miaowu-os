@@ -103,7 +103,7 @@ export function NewApiSyncDialog({
 
           {warnings.length > 0 && (
             <Alert>
-              <AlertTriangle className="h-4 w-4 text-amber-600" />
+              <AlertTriangle className="h-4 w-4 text-emerald-700" />
               <AlertTitle>需要注意</AlertTitle>
               <AlertDescription className="space-y-1">
                 {warnings.map((warning) => (

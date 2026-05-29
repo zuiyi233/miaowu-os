@@ -76,7 +76,7 @@ function TechCard({ tech }: { tech: (typeof techItems)[0] }) {
       }}
     >
       <div className="tech-icon flex size-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-white/5 to-white/[0.02]">
-        <Icon className="size-4 text-white/50 transition-colors duration-300 group-hover:text-amber-400" />
+        <Icon className="size-4 text-white/50 transition-colors duration-300 group-hover:text-emerald-400" />
       </div>
       <div className="min-w-0">
         <h4 className="text-sm font-medium text-white/70">

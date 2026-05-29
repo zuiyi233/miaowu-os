@@ -472,7 +472,7 @@ export function AiChatView({ novelId }: { novelId: string }) {
             </span>
           )}
           {activeSession.missing_field && (
-            <span className="text-amber-600">
+            <span className="text-emerald-700">
               · 待填：{activeSession.missing_field}
             </span>
           )}

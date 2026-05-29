@@ -57,7 +57,7 @@ export function Welcome({
   const isUltra = useMemo(() => mode === "ultra", [mode]);
   const colors = useMemo(() => {
     if (isUltra) {
-      return ["#efefbb", "#e9c665", "#e3a812"];
+      return ["#D8F3DC", "#40916C", "#2D6A4F"];
     }
     return ["var(--color-foreground)"];
   }, [isUltra]);
@@ -72,7 +72,7 @@ export function Welcome({
       )}
     >
       {searchParams.get("mode") !== "skill" && (
-        <div className="mb-1 flex items-center gap-2 rounded-full border border-amber-500/20 bg-amber-500/5 px-3 py-1 text-xs font-medium text-amber-300">
+        <div className="mb-1 flex items-center gap-2 rounded-full border border-emerald-600/20 bg-emerald-600/5 px-3 py-1 text-xs font-medium text-emerald-300">
           <PenLineIcon className="size-3.5" />
           Miaowu Author Workspace
         </div>
@@ -111,20 +111,20 @@ export function Welcome({
         </div>
       )}
       {searchParams.get("mode") !== "skill" && (
-        <div className="pointer-events-auto mt-2 grid w-full max-w-3xl grid-cols-2 gap-2 text-left md:grid-cols-4">
+        <div className="pointer-events-auto mt-4 grid w-full max-w-3xl grid-cols-2 gap-3 text-left md:grid-cols-4">
           {authorActions.map((action) => {
             const Icon = action.icon;
             return (
               <Link
                 key={action.label}
                 href={action.href}
-                className="group rounded-lg border border-border/60 bg-background/60 px-3 py-2 shadow-sm backdrop-blur transition hover:border-amber-500/35 hover:bg-amber-500/5"
+                className="group min-h-[80px] rounded-xl border border-border/60 bg-background/60 px-4 py-3 shadow-sm backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-emerald-600/35 hover:bg-emerald-600/5 hover:shadow-md active:translate-y-0"
               >
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Icon className="size-4 text-amber-400" />
+                <div className="flex items-center gap-2.5 text-sm font-medium">
+                  <Icon className="size-5 text-emerald-400 transition-transform duration-200 group-hover:scale-110" />
                   <span className="truncate">{action.label}</span>
                 </div>
-                <p className="mt-1 truncate text-xs text-muted-foreground">
+                <p className="mt-1.5 truncate text-xs text-muted-foreground">
                   {action.description}
                 </p>
               </Link>

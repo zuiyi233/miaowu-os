@@ -47,7 +47,7 @@ export function WorkspaceHeader({ className }: { className?: string }) {
                   alt="Miaowu OS"
                   className="size-7 rounded-md object-cover"
                 />
-                <span className="bg-linear-to-r from-amber-300 to-orange-300 bg-clip-text text-transparent">
+                <span className="bg-linear-to-r from-emerald-300 to-teal-300 bg-clip-text text-transparent">
                   Miaowu OS
                 </span>
               </Link>
@@ -58,7 +58,7 @@ export function WorkspaceHeader({ className }: { className?: string }) {
                   alt="Miaowu OS"
                   className="size-7 rounded-md object-cover"
                 />
-                <span className="bg-linear-to-r from-amber-300 to-orange-300 bg-clip-text text-transparent">
+                <span className="bg-linear-to-r from-emerald-300 to-teal-300 bg-clip-text text-transparent">
                   Miaowu OS
                 </span>
               </div>

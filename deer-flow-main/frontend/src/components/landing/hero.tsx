@@ -15,7 +15,7 @@ function HeroDecorations() {
       <div
         className="pointer-events-none absolute top-1/4 left-[10%] size-64 rounded-full opacity-20"
         style={{
-          background: "radial-gradient(circle, rgba(245,158,11,0.3) 0%, transparent 70%)",
+          background: "radial-gradient(circle, rgba(45,106,79,0.3) 0%, transparent 70%)",
           filter: "blur(60px)",
         }}
       />
@@ -55,8 +55,8 @@ function FloatingOrbs() {
     <div ref={orbsRef} className="pointer-events-none absolute inset-0 overflow-hidden">
       <div
         data-orb
-        className="absolute top-[20%] left-[5%] size-2 rounded-full bg-amber-400/40"
-        style={{ boxShadow: "0 0 12px rgba(245,158,11,0.3)" }}
+        className="absolute top-[20%] left-[5%] size-2 rounded-full bg-emerald-400/40"
+        style={{ boxShadow: "0 0 12px rgba(45,106,79,0.3)" }}
       />
       <div
         data-orb
@@ -70,8 +70,8 @@ function FloatingOrbs() {
       />
       <div
         data-orb
-        className="absolute bottom-[30%] left-[20%] size-1.5 rounded-full bg-amber-300/25"
-        style={{ boxShadow: "0 0 10px rgba(245,158,11,0.2)" }}
+        className="absolute bottom-[30%] left-[20%] size-1.5 rounded-full bg-emerald-300/25"
+        style={{ boxShadow: "0 0 10px rgba(45,106,79,0.2)" }}
       />
       <div
         data-orb
@@ -114,7 +114,7 @@ export function Hero({ className }: { className?: string }) {
       <div className="container-md relative z-10 mx-auto flex h-screen flex-col items-center justify-center px-4">
         <div
           data-hero-badge
-          className="mb-6 flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-4 py-1.5 text-sm text-amber-300 backdrop-blur-sm"
+          className="mb-6 flex items-center gap-2 rounded-full border border-emerald-600/30 bg-emerald-600/10 px-4 py-1.5 text-sm text-emerald-300 backdrop-blur-sm"
           style={{ opacity: 0 }}
         >
           <Sparkles className="size-4" />
@@ -149,15 +149,15 @@ export function Hero({ className }: { className?: string }) {
           data-hero-btn
         >
           <Link href="/workspace/novel" data-magnetic>
-            <Button className="size-lg bg-amber-500 hover:bg-amber-600 group relative overflow-hidden" size="lg">
-              <span className="pointer-events-none absolute inset-0 bg-gradient-to-r from-amber-400/0 via-white/20 to-amber-400/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
+            <Button className="size-lg bg-emerald-600 hover:bg-emerald-700 group relative overflow-hidden" size="lg">
+              <span className="pointer-events-none absolute inset-0 bg-gradient-to-r from-emerald-400/0 via-white/20 to-emerald-400/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
               <BookOpen className="size-4" />
               <span className="text-md">开始阅读</span>
               <ChevronRightIcon className="size-4" />
             </Button>
           </Link>
           <Link href="/workspace/novel" data-magnetic>
-            <Button variant="outline" className="size-lg border-white/20 bg-white/5 backdrop-blur-sm hover:bg-white/10 hover:border-amber-500/30 group" size="lg">
+            <Button variant="outline" className="size-lg border-white/20 bg-white/5 backdrop-blur-sm hover:bg-white/10 hover:border-emerald-600/30 group" size="lg">
               <PenTool className="size-4" />
               <span className="text-md">AI 创作</span>
             </Button>
@@ -171,7 +171,7 @@ export function Hero({ className }: { className?: string }) {
           </div>
           <div className="h-3 w-px bg-white/10" />
           <div className="flex items-center gap-2">
-            <span className="size-1.5 rounded-full bg-amber-400/60 animate-pulse" />
+            <span className="size-1.5 rounded-full bg-emerald-400/60 animate-pulse" />
             <span>本地部署</span>
           </div>
           <div className="h-3 w-px bg-white/10" />

@@ -26,7 +26,7 @@ export async function WorkspaceContent({
     <QueryClientProvider>
       <SidebarProvider className="h-screen" defaultOpen={initialSidebarOpen}>
         <WorkspaceSidebar />
-        <SidebarInset className="min-w-0">{children}</SidebarInset>
+        <SidebarInset className="min-w-0 animate-page-in">{children}</SidebarInset>
       </SidebarProvider>
       <CommandPalette />
       <Toaster position="top-center" />

@@ -161,7 +161,7 @@ export function GlobeSection() {
           data-animate style={{ opacity: 0 }}
         >
           <button
-            className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-black px-6 py-3 text-sm text-white transition-colors duration-300 hover:border-amber-500/40 hover:text-amber-300"
+            className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-black px-6 py-3 text-sm text-white transition-colors duration-300 hover:border-emerald-600/40 hover:text-emerald-300"
             onMouseEnter={(e) => {
               animate(e.currentTarget, {
                 scale: [1, 1.05],

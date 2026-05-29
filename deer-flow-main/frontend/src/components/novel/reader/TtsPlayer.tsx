@@ -530,7 +530,7 @@ export function TtsPlayer({ text, chapterId, projectId, title, theme, compact = 
                           {t.novel.ttsPlanSummary(narrationPlanStats.speakerCount, narrationPlanStats.segmentCount)}
                         </p>
                         {narrationPlanStats.lowConfidenceWarnings.length > 0 && (
-                          <p className="text-[11px] text-amber-600">
+                          <p className="text-[11px] text-emerald-700">
                             {t.novel.ttsLowConfidenceWarnings(narrationPlanStats.lowConfidenceWarnings.length)}
                           </p>
                         )}

@@ -103,14 +103,14 @@ export function LatestSection({ className }: { className?: string }) {
         <div className="grid gap-2.5">
           {latestUpdates.map((novel) => (
             <Link key={`${novel.id}-${novel.chapter}`} href={`/workspace/novel/${novel.id}`}>
-              <Card className="group border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm transition-all duration-300 hover:border-amber-500/20 hover:bg-white/[0.05] hover:shadow-lg hover:shadow-amber-500/5">
+              <Card className="group border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm transition-all duration-300 hover:border-emerald-600/20 hover:bg-white/[0.05] hover:shadow-lg hover:shadow-emerald-600/5">
                 <CardContent className="flex items-center gap-4 p-4">
-                  <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500/15 to-orange-500/15 shadow-inner">
-                    <BookOpen className="size-5 text-amber-400" />
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-600/15 to-teal-500/15 shadow-inner">
+                    <BookOpen className="size-5 text-emerald-400" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <h4 className="truncate font-semibold text-white/90 transition-colors group-hover:text-amber-300">
+                      <h4 className="truncate font-semibold text-white/90 transition-colors group-hover:text-emerald-300">
                         {novel.title}
                       </h4>
                       {novel.isNew && (
@@ -131,7 +131,7 @@ export function LatestSection({ className }: { className?: string }) {
                     <Clock className="size-3" />
                     <span className="hidden sm:inline">{novel.updateTime}</span>
                   </div>
-                  <ChevronRight className="size-4 shrink-0 text-white/30 transition-all duration-300 group-hover:text-amber-400 group-hover:translate-x-1" />
+                  <ChevronRight className="size-4 shrink-0 text-white/30 transition-all duration-300 group-hover:text-emerald-400 group-hover:translate-x-1" />
                 </CardContent>
               </Card>
             </Link>

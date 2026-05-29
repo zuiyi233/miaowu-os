@@ -26,7 +26,7 @@ export const MarketingBanner: React.FC<MarketingBannerProps> = ({
 }) => {
   const gradients = {
     default: 'from-primary/10 via-primary/5 to-transparent',
-    premium: 'from-amber-500/10 via-amber-500/5 to-transparent',
+    premium: 'from-emerald-600/10 via-emerald-600/5 to-transparent',
     new: 'from-blue-500/10 via-blue-500/5 to-transparent',
   };
 

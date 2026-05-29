@@ -106,7 +106,7 @@ export function GlobalRoutingPanel({
         应用到所有功能
       </Button>
       {globalPending && (
-        <p className="text-xs text-amber-600 text-center">
+        <p className="text-xs text-emerald-700 text-center">
           设置已修改但尚未应用，请点击上方按钮将配置推送到各功能模块
         </p>
       )}

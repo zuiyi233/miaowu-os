@@ -25,13 +25,13 @@ const categories = [
   { id: "romance", name: "言情", icon: Heart, color: "from-pink-500 to-rose-500", glow: "shadow-pink-500/20" },
   { id: "scifi", name: "科幻", icon: Rocket, color: "from-cyan-500 to-blue-500", glow: "shadow-cyan-500/20" },
   { id: "mystery", name: "悬疑", icon: Ghost, color: "from-slate-500 to-gray-500", glow: "shadow-slate-500/20" },
-  { id: "history", name: "历史", icon: Crown, color: "from-amber-500 to-yellow-500", glow: "shadow-amber-500/20" },
+  { id: "history", name: "历史", icon: Crown, color: "from-emerald-600 to-teal-500", glow: "shadow-emerald-600/20" },
   { id: "urban", name: "都市", icon: Building2, color: "from-emerald-500 to-teal-500", glow: "shadow-emerald-500/20" },
   { id: "fantasy", name: "奇幻", icon: Wand2, color: "from-violet-500 to-purple-500", glow: "shadow-violet-500/20" },
   { id: "comedy", name: "搞笑", icon: Laugh, color: "from-orange-500 to-red-500", glow: "shadow-orange-500/20" },
   { id: "horror", name: "恐怖", icon: Skull, color: "from-red-600 to-red-800", glow: "shadow-red-600/20" },
   { id: "workplace", name: "职场", icon: Briefcase, color: "from-blue-500 to-indigo-500", glow: "shadow-blue-500/20" },
-  { id: "all", name: "全部", icon: BookOpen, color: "from-amber-400 to-orange-400", glow: "shadow-amber-400/20" },
+  { id: "all", name: "全部", icon: BookOpen, color: "from-emerald-400 to-teal-400", glow: "shadow-emerald-400/20" },
   { id: "more", name: "更多", icon: MoreHorizontal, color: "from-zinc-500 to-zinc-600", glow: "shadow-zinc-500/20" },
 ];
 
@@ -51,7 +51,7 @@ export function CategoriesSection({ className }: { className?: string }) {
               href={`/workspace/novel?category=${category.id}`}
               className={cn(
                 "group flex flex-col items-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.03] p-4 backdrop-blur-sm transition-all duration-300",
-                "hover:border-amber-500/30 hover:bg-amber-500/[0.08] hover:shadow-lg hover:shadow-amber-500/10 hover:-translate-y-1"
+                "hover:border-emerald-600/30 hover:bg-emerald-600/[0.08] hover:shadow-lg hover:shadow-emerald-600/10 hover:-translate-y-1"
               )}
             >
               <div
@@ -63,7 +63,7 @@ export function CategoriesSection({ className }: { className?: string }) {
               >
                 <Icon className="size-6 text-white" />
               </div>
-              <span className="text-sm font-medium text-white/80 transition-colors group-hover:text-amber-300">
+              <span className="text-sm font-medium text-white/80 transition-colors group-hover:text-emerald-300">
                 {category.name}
               </span>
             </Link>

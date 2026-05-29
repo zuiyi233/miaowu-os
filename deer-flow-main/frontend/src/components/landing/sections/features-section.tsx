@@ -30,11 +30,11 @@ const features = [
     label: "海量书库",
     title: "丰富的小说资源",
     description: "涵盖玄幻、言情、科幻、悬疑等多种类型，满足不同口味",
-    color: "from-amber-500/20 to-orange-500/20",
-    borderColor: "border-amber-500/15",
-    iconColor: "text-amber-400",
-    hoverBorder: "hover:border-amber-400/30",
-    shadowColor: "shadow-amber-500/10",
+    color: "from-emerald-600/20 to-teal-500/20",
+    borderColor: "border-emerald-600/15",
+    iconColor: "text-emerald-400",
+    hoverBorder: "hover:border-emerald-400/30",
+    shadowColor: "shadow-emerald-600/10",
   },
   {
     icon: Sparkles,
@@ -90,7 +90,7 @@ export function FeaturesSection({ className }: { className?: string }) {
       subtitle="MiaoWu Novel 为你提供全方位的阅读与创作体验"
     >
       {/* Subtle ambient glow */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-amber-500/[0.02] to-transparent" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-emerald-600/[0.02] to-transparent" />
 
       <div className="container-md relative mt-8 grid grid-cols-1 gap-4 px-4 sm:grid-cols-2 lg:grid-cols-3 md:px-20">
         {features.map((feature) => {
@@ -126,7 +126,7 @@ export function FeaturesSection({ className }: { className?: string }) {
                     {feature.label}
                   </span>
                 </div>
-                <h3 className="mb-2 text-lg font-semibold text-white/90 transition-colors group-hover:text-amber-300">
+                <h3 className="mb-2 text-lg font-semibold text-white/90 transition-colors group-hover:text-emerald-300">
                   {feature.title}
                 </h3>
                 <p className="text-sm leading-relaxed text-white/50">

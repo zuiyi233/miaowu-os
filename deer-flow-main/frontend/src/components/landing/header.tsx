@@ -29,7 +29,7 @@ export async function Header({ className, homeURL, locale }: HeaderProps) {
               alt="Miaowu OS"
               className="size-8 rounded-lg object-cover"
             />
-            <span className="bg-linear-to-r from-amber-300 via-orange-300 to-amber-400 bg-clip-text text-transparent">
+            <span className="bg-linear-to-r from-emerald-300 via-teal-300 to-emerald-400 bg-clip-text text-transparent">
               Miaowu OS
             </span>
           </h1>
@@ -53,7 +53,7 @@ export async function Header({ className, homeURL, locale }: HeaderProps) {
         <div
           className="pointer-events-none absolute inset-0 z-0 h-full w-full rounded-full opacity-30 blur-2xl"
           style={{
-            background: "linear-gradient(90deg, #f59e0b 0%, #ec4899 100%)",
+            background: "linear-gradient(90deg, #2D6A4F 0%, #40916C 100%)",
             filter: "blur(16px)",
           }}
         />

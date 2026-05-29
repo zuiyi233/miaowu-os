@@ -53,7 +53,7 @@ function chapterStatus(chapter: Chapter | undefined) {
 function severityClass(severity: string) {
   if (severity === 'critical') return 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300';
   if (severity === 'high') return 'border-orange-500/40 bg-orange-500/10 text-orange-700 dark:text-orange-300';
-  if (severity === 'medium') return 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+  if (severity === 'medium') return 'border-emerald-600/40 bg-emerald-600/10 text-emerald-800 dark:text-emerald-300';
   return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
 }
 

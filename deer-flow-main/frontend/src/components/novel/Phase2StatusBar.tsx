@@ -39,8 +39,8 @@ const statusMeta: Record<Phase2StatusSnapshot["status"], StatusMeta> = {
   },
   warning: {
     label: "有风险",
-    icon: <AlertCircle className="h-4 w-4 text-amber-600" />,
-    badgeClass: "bg-amber-100 text-amber-700",
+    icon: <AlertCircle className="h-4 w-4 text-emerald-700" />,
+    badgeClass: "bg-emerald-100 text-emerald-800",
   },
   blocked: {
     label: "已阻断",
@@ -176,22 +176,22 @@ export function Phase2StatusBar({
         ) : null}
 
         {warningList.length > 0 ? (
-          <div className="space-y-1 rounded-md border border-amber-300/70 bg-amber-50/80 p-2">
-            <div className="text-xs font-medium text-amber-700">风险提示</div>
+          <div className="space-y-1 rounded-md border border-emerald-300/70 bg-emerald-50/80 p-2">
+            <div className="text-xs font-medium text-emerald-800">风险提示</div>
             {warningList.map((warning, index) => (
-              <div key={`${warning.code ?? "warning"}-${index}`} className="text-xs text-amber-800">
+              <div key={`${warning.code ?? "warning"}-${index}`} className="text-xs text-emerald-900">
                 <span className="font-medium">{warning.code ? `${warning.code}: ` : ""}</span>
                 <span>{warning.message}</span>
                 {warning.location ? (
-                  <span className="text-amber-700/80">（{warning.location}）</span>
+                  <span className="text-emerald-800/80">（{warning.location}）</span>
                 ) : null}
                 {warning.hint ? (
-                  <div className="text-amber-700/80">建议：{warning.hint}</div>
+                  <div className="text-emerald-800/80">建议：{warning.hint}</div>
                 ) : null}
               </div>
             ))}
             {compact && warningItems.length > warningList.length ? (
-              <div className="text-xs text-amber-700/80">
+              <div className="text-xs text-emerald-800/80">
                 另有 {warningItems.length - warningList.length} 项风险未展开
               </div>
             ) : null}

@@ -98,7 +98,7 @@ export function FeatureModuleList({
                     使用全局设置
                   </Badge>
                 ) : (
-                  <Badge variant="default" className="text-[10px] shrink-0 bg-amber-600">
+                  <Badge variant="default" className="text-[10px] shrink-0 bg-emerald-700">
                     已自定义
                   </Badge>
                 )}

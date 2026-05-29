@@ -520,13 +520,13 @@ export function InputBox({
                       <GraduationCapIcon className="size-3" />
                     )}
                     {context.mode === "ultra" && (
-                      <RocketIcon className="size-3 text-[#dabb5e]" />
+                      <RocketIcon className="size-3 text-[#40916C]" />
                     )}
                   </div>
                   <div
                     className={cn(
                       "text-xs font-normal",
-                      context.mode === "ultra" ? "golden-text" : "",
+                      context.mode === "ultra" ? "jade-text" : "",
                     )}
                   >
                     {(context.mode === "flash" && t.inputBox.flashMode) ||
@@ -648,7 +648,7 @@ export function InputBox({
                           />
                           <div
                             className={cn(
-                              context.mode === "ultra" && "golden-text",
+                              context.mode === "ultra" && "jade-text",
                             )}
                           >
                             {t.inputBox.ultraMode}
@@ -827,7 +827,6 @@ export function InputBox({
             <PromptInputSubmit
               className="rounded-full"
               disabled={disabled}
-              variant="outline"
               status={status}
             />
           </PromptInputTools>

@@ -222,8 +222,8 @@ export function AiProviderSettingsPage() {
         </Alert>
 
         {providerMgr.editingId && (
-          <Alert className="mb-3 border-amber-200 bg-amber-50/80 dark:border-amber-900/50 dark:bg-amber-950/20">
-            <AlertTriangle className="h-4 w-4 text-amber-600" />
+          <Alert className="mb-3 border-emerald-200 bg-emerald-50/80 dark:border-emerald-900/50 dark:bg-emerald-950/20">
+            <AlertTriangle className="h-4 w-4 text-emerald-700" />
             <AlertTitle>你有未保存的服务商编辑</AlertTitle>
             <AlertDescription>
               当前输入仅在本地草稿中，需点击对应卡片内的「保存」后才会写入后端并用于运行时请求。

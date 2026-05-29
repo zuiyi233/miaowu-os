@@ -62,9 +62,9 @@ const hotNovels = [
     rating: 8.9,
     chapters: 189,
     tags: ["穿越", "历史", "才子"],
-    color: "from-amber-600/30 to-orange-600/30",
-    borderColor: "border-amber-500/20",
-    hoverBorder: "hover:border-amber-400/40",
+    color: "from-emerald-700/30 to-teal-600/30",
+    borderColor: "border-emerald-600/20",
+    hoverBorder: "hover:border-emerald-400/40",
   },
   {
     id: "5",
@@ -137,7 +137,7 @@ export function HotSection({ className }: { className?: string }) {
                       </Badge>
                     )}
                   </div>
-                  <h3 className="mb-1 text-xl font-bold text-white transition-colors group-hover/card:text-amber-300">
+                  <h3 className="mb-1 text-xl font-bold text-white transition-colors group-hover/card:text-emerald-300">
                     {novel.title}
                   </h3>
                   <p className="mb-2 text-sm text-white/50">{novel.author}</p>
@@ -161,7 +161,7 @@ export function HotSection({ className }: { className?: string }) {
                     {novel.views}万
                   </span>
                   <span className="flex items-center gap-1">
-                    <Star className="size-3.5 text-amber-400" />
+                    <Star className="size-3.5 text-emerald-400" />
                     {novel.rating}
                   </span>
                   <span className="flex items-center gap-1">
