@@ -16,8 +16,8 @@ import {
 import {
   extractContentFromMessage,
   extractPresentFilesFromMessage,
-  extractReasoningContentFromMessage,
   extractTextFromMessage,
+  getAssistantTurnCopyData,
   getAssistantTurnUsageMessages,
   getMessageGroups,
   hasContent,
@@ -184,26 +184,24 @@ export function MessageList({
     [messages, t],
   );
 
-  const renderAssistantCopyButton = useCallback((messages: Message[]) => {
-    const clipboardData = [...messages]
-      .reverse()
-      .filter((message) => message.type === "ai")
-      .map((message) => {
-        const content = extractContentFromMessage(message);
-        return content ?? extractReasoningContentFromMessage(message) ?? "";
-      })
-      .find((content) => content.length > 0);
+  const renderAssistantCopyButton = useCallback(
+    (messages: Message[], isStreaming: boolean) => {
+      const clipboardData = getAssistantTurnCopyData(messages, {
+        isStreaming,
+      });
 
-    if (!clipboardData) {
-      return null;
-    }
+      if (!clipboardData) {
+        return null;
+      }
 
-    return (
-      <div className="mt-2 flex justify-start opacity-0 transition-opacity delay-200 duration-300 group-hover/assistant-turn:opacity-100">
-        <CopyButton clipboardData={clipboardData} />
-      </div>
-    );
-  }, []);
+      return (
+        <div className="mt-2 flex justify-start opacity-0 transition-opacity delay-200 duration-300 group-hover/assistant-turn:opacity-100">
+          <CopyButton clipboardData={clipboardData} />
+        </div>
+      );
+    },
+    [],
+  );
 
   const renderTokenUsage = useCallback(
     ({
@@ -293,7 +291,10 @@ export function MessageList({
                   turnUsageMessages,
                 })}
                 {group.type === "assistant" &&
-                  renderAssistantCopyButton(group.messages)}
+                  renderAssistantCopyButton(
+                    group.messages,
+                    thread.isLoading,
+                  )}
               </div>
             );
           } else if (group.type === "assistant:clarification") {

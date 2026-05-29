@@ -403,6 +403,49 @@ class TestExtractResponseText:
         }
         assert _extract_response_text(result) == "Here is the report."
 
+    def test_hidden_human_control_message_does_not_cut_off_current_turn(self):
+        from app.channels.manager import _extract_response_text
+
+        result = {
+            "messages": [
+                {"type": "human", "content": "original question"},
+                {
+                    "type": "human",
+                    "content": "<system-reminder>hidden</system-reminder>",
+                    "additional_kwargs": {"hide_from_ui": True},
+                },
+                {"type": "ai", "content": "current answer"},
+            ]
+        }
+
+        assert _extract_response_text(result) == "current answer"
+
+    def test_hidden_human_control_message_does_not_hide_current_artifacts(self):
+        from app.channels.manager import _extract_artifacts
+
+        result = {
+            "messages": [
+                {"type": "human", "content": "make a file"},
+                {
+                    "type": "human",
+                    "content": "<system-reminder>hidden</system-reminder>",
+                    "additional_kwargs": {"hide_from_ui": True},
+                },
+                {
+                    "type": "ai",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "name": "present_files",
+                            "args": {"filepaths": ["/mnt/user-data/outputs/report.md"]},
+                        }
+                    ],
+                },
+            ]
+        }
+
+        assert _extract_artifacts(result) == ["/mnt/user-data/outputs/report.md"]
+
 
 # ---------------------------------------------------------------------------
 # ChannelManager tests

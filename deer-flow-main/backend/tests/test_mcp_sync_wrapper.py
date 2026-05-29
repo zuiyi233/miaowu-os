@@ -1,11 +1,14 @@
 import asyncio
+import contextvars
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from deerflow.mcp.tools import _make_sync_tool_wrapper, get_mcp_tools
+from deerflow.tools.sync import make_sync_tool_wrapper
 
 
 class MockArgs(BaseModel):
@@ -67,6 +70,63 @@ def test_mcp_tool_sync_wrapper_in_running_loop():
     # We run the async function that calls the sync func
     result = asyncio.run(run_in_loop())
     assert result == "async_result: 100"
+
+
+def test_sync_wrapper_preserves_contextvars_in_running_loop():
+    """The shared sync wrapper should preserve the parent async context."""
+
+    current_value: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+        "current_value",
+        default=None,
+    )
+
+    async def mock_coro() -> str | None:
+        return current_value.get()
+
+    sync_func = make_sync_tool_wrapper(mock_coro, "test_tool")
+
+    async def run_in_loop():
+        token = current_value.set("from-parent-context")
+        try:
+            return sync_func()
+        finally:
+            current_value.reset(token)
+
+    assert asyncio.run(run_in_loop()) == "from-parent-context"
+
+
+def test_sync_wrapper_preserves_runnable_config_injection():
+    """Wrapped async tools must still receive LangChain RunnableConfig."""
+
+    captured: dict[str, object] = {}
+
+    async def mock_coro(x: int, config: RunnableConfig = None):
+        captured["thread_id"] = ((config or {}).get("configurable") or {}).get("thread_id")
+        return f"result: {x}"
+
+    mock_tool = StructuredTool(
+        name="test_tool",
+        description="test description",
+        args_schema=MockArgs,
+        func=make_sync_tool_wrapper(mock_coro, "test_tool"),
+        coroutine=mock_coro,
+    )
+
+    result = mock_tool.invoke({"x": 42}, config={"configurable": {"thread_id": "thread-123"}})
+
+    assert result == "result: 42"
+    assert captured["thread_id"] == "thread-123"
+
+
+def test_sync_wrapper_preserves_regular_config_argument():
+    """A plain user-facing config arg must not be mistaken for RunnableConfig."""
+
+    async def mock_coro(config: str):
+        return config
+
+    sync_func = make_sync_tool_wrapper(mock_coro, "test_tool")
+
+    assert sync_func(config="user-config") == "user-config"
 
 
 def test_mcp_tool_sync_wrapper_exception_logging():

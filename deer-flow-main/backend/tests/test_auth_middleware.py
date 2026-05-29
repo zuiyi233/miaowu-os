@@ -194,6 +194,22 @@ def test_protected_post_with_internal_auth_header_passes():
     assert res.status_code == 200
 
 
+def test_internal_auth_token_uses_env_value(monkeypatch):
+    import importlib
+
+    import app.gateway.internal_auth as internal_auth
+
+    monkeypatch.setenv("DEER_FLOW_INTERNAL_AUTH_TOKEN", "shared-token-for-test")
+    reloaded = importlib.reload(internal_auth)
+
+    try:
+        headers = reloaded.create_internal_auth_headers()
+        assert headers["X-DeerFlow-Internal-Token"] == "shared-token-for-test"
+        assert reloaded.is_valid_internal_auth_token("shared-token-for-test") is True
+    finally:
+        importlib.reload(reloaded)
+
+
 # ── Method matrix: PUT/DELETE/PATCH also protected ────────────────────────
 
 

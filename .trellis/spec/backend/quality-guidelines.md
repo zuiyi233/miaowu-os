@@ -140,6 +140,149 @@ future.add_done_callback(_consume_result)
 
 ---
 
+## Scenario: Run persistence must be atomic, progress-aware, and restart-recoverable
+
+### 1. Scope / Trigger
+
+- Trigger: changing run lifecycle persistence, run token/progress aggregation, or gateway startup recovery for persisted runs
+- Applies to:
+  - `deerflow/runtime/journal.py`
+  - `deerflow/runtime/runs/manager.py`
+  - `deerflow/runtime/runs/store/base.py`
+  - `deerflow/runtime/runs/store/memory.py`
+  - `deerflow/persistence/run/sql.py`
+  - `app/gateway/deps.py`
+  - `app/gateway/routers/thread_runs.py`
+
+### 2. Signatures
+
+- `RunJournal(..., progress_reporter: Callable[[dict], Awaitable[None]] | None = None, progress_flush_interval: float = 5.0)`
+- `RunJournal.record_external_llm_usage_records(records: list[dict[str, int | str]]) -> None`
+- `RunJournal.get_completion_data() -> dict`
+- `RunManager.create(...) -> RunRecord`
+- `RunManager.create_or_reject(...) -> RunRecord`
+- `RunManager.update_run_progress(run_id: str, **kwargs) -> None`
+- `RunManager.update_run_completion(run_id: str, **kwargs) -> None`
+- `RunManager.reconcile_orphaned_inflight_runs(*, error: str, before: str | None = None) -> list[RunRecord]`
+- `RunStore.update_status(...) -> bool | None`
+- `RunStore.update_run_completion(...) -> bool | None`
+- `RunStore.update_run_progress(...) -> None`
+- `RunStore.list_inflight(*, before: str | None = None) -> list[dict[str, Any]]`
+- `RunStore.aggregate_tokens_by_thread(thread_id: str, *, include_active: bool = False) -> dict[str, Any]`
+- `RunRepository.put(...) -> None`
+
+### 3. Contracts
+
+#### 3.1 New runs must not become visible before durable persistence
+
+- **Must** keep `RunManager.create()` and `RunManager.create_or_reject()` atomic with respect to visibility
+- **Must** insert the in-memory `RunRecord` under lock, persist it, and roll back `_runs` if the initial store write fails or is cancelled
+- **Must not** return or expose a newly created run to concurrent readers until the initial persistence step succeeds
+- **Must** persist the new run before interrupting older inflight runs in `create_or_reject(..., multitask_strategy="interrupt"|"rollback")`
+
+#### 3.2 Progress snapshots must reflect active run state without double counting
+
+- **Must** keep token/message counters in `RunJournal` deduplicated by source identity so repeated callback delivery does not inflate totals
+- **Must** bucket token totals by caller class: `lead_agent`, `subagent`, `middleware`
+- **Must** throttle progress writes via `progress_flush_interval` and use `progress_reporter` for best-effort active-run snapshots
+- **Must** update `last_ai_message` only from lead-agent user-facing assistant output; subagent and middleware model calls must not overwrite it
+- **Must** expose running totals through `RunResponse` and `GET /api/threads/{thread_id}/token-usage?include_active=true`
+
+#### 3.3 Completion/status persistence must survive missing-row and transient-SQLite cases
+
+- **Must** treat short SQLite lock/busy failures as retryable for run status/finalization writes
+- **Must** make `RunRepository.put()` idempotent so a retried write does not turn a previously committed row into a primary-key failure
+- **Must** let `update_status()` / `update_run_completion()` return `False` when the store can prove no row was updated
+- **Must** recreate a missing row from the latest in-memory snapshot before retrying completion/status persistence
+
+#### 3.4 Restart recovery must fail orphaned active runs closed
+
+- **Must** treat persisted `pending` / `running` rows found at SQLite-backed gateway startup as orphan candidates when no live in-memory run owns them
+- **Must** mark recovered orphaned runs as `error` with an explicit operator-readable message
+- **Must** mark thread status to `error` only when the latest run in that thread was one of the recovered orphaned runs
+- **Must not** recover or rewrite a run that is still live in `_runs`
+
+### 4. Validation & Error Matrix
+
+| Case | Must happen | Must not happen | Verification |
+| --- | --- | --- | --- |
+| Initial store write fails during `create()` | Exception propagates and `_runs` rollback removes the new run | Half-created run remains listable | `test_create_rolls_back_in_memory_record_on_store_failure` |
+| Initial store write is cancelled during `create()` | Cancellation propagates and `_runs` rollback removes the new run | Cancelled create leaves visible run | `test_create_rolls_back_in_memory_record_on_store_cancellation` |
+| `create_or_reject(..., interrupt)` new-run persist fails | Old run stays running; no interrupt side effect | Existing inflight run is cancelled before new run is durable | `test_create_or_reject_does_not_interrupt_old_run_when_new_run_store_write_fails` |
+| Active run emits repeated progress callbacks | Counters stay deduplicated and progress snapshots stay throttled | Double-counted token totals or unbounded progress writes | `test_throttled_progress_flush_emits_trailing_snapshot` |
+| Completion update hits missing row | Row is recreated from in-memory snapshot, then completion fields are retried | Final token/status data is silently dropped | `RunManager.update_run_completion()` regression coverage |
+| SQLite-backed startup finds orphaned inflight row | Row becomes `error`; latest affected thread becomes `error` | UI shows indefinitely running zombie run | startup recovery tests around `reconcile_orphaned_inflight_runs` |
+
+### 5. Good / Base / Bad Cases
+
+#### Good
+
+- A concurrent `list_by_thread()` blocks until a newly created run is durably persisted
+- Active run totals in `RunResponse` and `token-usage?include_active=true` match the current `RunJournal` snapshot
+- A restarted SQLite gateway converts stale active rows into explicit failure state instead of hanging forever
+
+#### Base
+
+- Memory-only stores may return `False` / `True` directly for row-updated semantics without implementing SQL rowcount internals
+- Progress writes are best-effort and may be skipped on shutdown after the final durable completion write succeeds
+
+#### Bad
+
+- Persisting status/finalization with fire-and-forget writes that can silently fail
+- Interrupting the old run before the replacement run has a durable store row
+- Using active progress snapshots to overwrite durable final status after completion
+- Treating stale persisted `running` rows after restart as harmless UI noise
+
+### 6. Tests Required
+
+- `backend/tests/test_run_journal.py`
+  - progress reporter snapshot
+  - throttled trailing snapshot
+  - flush behavior for delayed progress task
+- `backend/tests/test_thread_token_usage.py`
+  - `include_active=true` passes through to store aggregation
+- `backend/tests/test_run_manager.py`
+  - create rollback on store failure/cancellation
+  - create visibility blocked until persist completes
+  - create-or-reject does not interrupt old run when new-run persist fails
+- `backend/tests/test_run_repository.py`
+  - idempotent `put()`
+  - `update_status()` / `update_run_completion()` return `False` for missing row
+  - `list_inflight()` cutoff behavior
+- Assertion points:
+  - no half-visible run after failed initial persistence
+  - no duplicate token accumulation from repeated callbacks
+  - active-token API can include running runs without rewriting final totals
+  - orphan recovery only touches truly orphaned latest runs
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+record = RunRecord(...)
+self._runs[record.run_id] = record
+await self._store.put(record.run_id, ...)
+interrupt_existing_runs()
+```
+
+#### Correct
+
+```python
+self._runs[record.run_id] = record
+try:
+    await self._persist_new_run_to_store(record)
+except Exception:
+    self._runs.pop(record.run_id, None)
+    raise
+
+interrupt_existing_runs_after_new_run_is_durable()
+```
+
+**Related**: `error-handling.md` covers loop-closed retry recovery; this section covers durable run-row lifecycle and active progress reporting semantics.
+
+---
+
 ## Scenario: Gateway image generation module contract
 
 ### 1. Scope / Trigger

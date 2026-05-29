@@ -2,6 +2,8 @@ import type { Message } from "@langchain/langgraph-sdk";
 import { expect, test } from "vitest";
 
 import {
+  extractReasoningContentFromMessage,
+  getAssistantTurnCopyData,
   getAssistantTurnUsageMessages,
   getMessageGroups,
 } from "@/core/messages/utils";
@@ -96,4 +98,41 @@ test("hides internal todo reminder messages from message groups", () => {
   expect(
     groups.flatMap((group) => group.messages).map((message) => message.id),
   ).toEqual(["human-1", "ai-1"]);
+});
+
+test("treats an unclosed think tag as streaming reasoning", () => {
+  const message = {
+    id: "ai-1",
+    type: "ai",
+    content: "Visible intro<think>hidden reasoning in progress",
+  } as Message;
+
+  expect(extractReasoningContentFromMessage(message)).toBe(
+    "hidden reasoning in progress",
+  );
+});
+
+test("does not treat inline code think tag as reasoning opener", () => {
+  const message = {
+    id: "ai-1",
+    type: "ai",
+    content: "Use `<think>` literally in markdown.",
+  } as Message;
+
+  expect(extractReasoningContentFromMessage(message)).toBeNull();
+});
+
+test("hides assistant turn copy data while streaming", () => {
+  const messages = [
+    {
+      id: "ai-1",
+      type: "ai",
+      content: "Partial response",
+    },
+  ] as Message[];
+
+  expect(getAssistantTurnCopyData(messages, { isStreaming: true })).toBeNull();
+  expect(getAssistantTurnCopyData(messages, { isStreaming: false })).toBe(
+    "Partial response",
+  );
 });

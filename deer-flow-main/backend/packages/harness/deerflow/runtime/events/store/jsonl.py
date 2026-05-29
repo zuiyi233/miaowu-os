@@ -13,6 +13,7 @@ thread since messages from multiple runs need unified seq ordering.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -32,6 +33,10 @@ class JsonlRunEventStore(RunEventStore):
     def __init__(self, base_dir: str | Path | None = None):
         self._base_dir = Path(base_dir) if base_dir else Path(".deer-flow")
         self._seq_counters: dict[str, int] = {}  # thread_id -> current max seq
+        self._write_locks: dict[str, asyncio.Lock] = {}
+
+    def _get_write_lock(self, thread_id: str) -> asyncio.Lock:
+        return self._write_locks.setdefault(thread_id, asyncio.Lock())
 
     @staticmethod
     def _validate_id(value: str, label: str) -> str:
@@ -53,10 +58,8 @@ class JsonlRunEventStore(RunEventStore):
         self._seq_counters[thread_id] = self._seq_counters.get(thread_id, 0) + 1
         return self._seq_counters[thread_id]
 
-    def _ensure_seq_loaded(self, thread_id: str) -> None:
-        """Load max seq from existing files if not yet cached."""
-        if thread_id in self._seq_counters:
-            return
+    def _compute_max_seq(self, thread_id: str) -> int:
+        """Scan all run files for a thread and return the current max seq."""
         max_seq = 0
         thread_dir = self._thread_dir(thread_id)
         if thread_dir.exists():
@@ -67,7 +70,13 @@ class JsonlRunEventStore(RunEventStore):
                         max_seq = max(max_seq, record.get("seq", 0))
                     except json.JSONDecodeError:
                         logger.debug("Skipping malformed JSONL line in %s", f)
-                        continue
+        return max_seq
+
+    async def _ensure_seq_loaded(self, thread_id: str) -> None:
+        """Load max seq from existing files if not yet cached."""
+        if thread_id in self._seq_counters:
+            return
+        max_seq = await asyncio.to_thread(self._compute_max_seq, thread_id)
         self._seq_counters[thread_id] = max_seq
 
     def _write_record(self, record: dict) -> None:
@@ -111,21 +120,33 @@ class JsonlRunEventStore(RunEventStore):
         events.sort(key=lambda e: e.get("seq", 0))
         return events
 
+    def _delete_thread_files(self, thread_id: str) -> None:
+        thread_dir = self._thread_dir(thread_id)
+        if thread_dir.exists():
+            for f in thread_dir.glob("*.jsonl"):
+                f.unlink()
+
+    def _delete_run_file(self, thread_id: str, run_id: str) -> None:
+        path = self._run_file(thread_id, run_id)
+        if path.exists():
+            path.unlink()
+
     async def put(self, *, thread_id, run_id, event_type, category, content="", metadata=None, created_at=None):
-        self._ensure_seq_loaded(thread_id)
-        seq = self._next_seq(thread_id)
-        record = {
-            "thread_id": thread_id,
-            "run_id": run_id,
-            "event_type": event_type,
-            "category": category,
-            "content": content,
-            "metadata": metadata or {},
-            "seq": seq,
-            "created_at": created_at or datetime.now(UTC).isoformat(),
-        }
-        self._write_record(record)
-        return record
+        async with self._get_write_lock(thread_id):
+            await self._ensure_seq_loaded(thread_id)
+            seq = self._next_seq(thread_id)
+            record = {
+                "thread_id": thread_id,
+                "run_id": run_id,
+                "event_type": event_type,
+                "category": category,
+                "content": content,
+                "metadata": metadata or {},
+                "seq": seq,
+                "created_at": created_at or datetime.now(UTC).isoformat(),
+            }
+            await asyncio.to_thread(self._write_record, record)
+            return record
 
     async def put_batch(self, events):
         if not events:
@@ -137,7 +158,7 @@ class JsonlRunEventStore(RunEventStore):
         return results
 
     async def list_messages(self, thread_id, *, limit=50, before_seq=None, after_seq=None):
-        all_events = self._read_thread_events(thread_id)
+        all_events = await asyncio.to_thread(self._read_thread_events, thread_id)
         messages = [e for e in all_events if e.get("category") == "message"]
 
         if before_seq is not None:
@@ -150,13 +171,13 @@ class JsonlRunEventStore(RunEventStore):
             return messages[-limit:]
 
     async def list_events(self, thread_id, run_id, *, event_types=None, limit=500):
-        events = self._read_run_events(thread_id, run_id)
+        events = await asyncio.to_thread(self._read_run_events, thread_id, run_id)
         if event_types is not None:
             events = [e for e in events if e.get("event_type") in event_types]
         return events[:limit]
 
     async def list_messages_by_run(self, thread_id, run_id, *, limit=50, before_seq=None, after_seq=None):
-        events = self._read_run_events(thread_id, run_id)
+        events = await asyncio.to_thread(self._read_run_events, thread_id, run_id)
         filtered = [e for e in events if e.get("category") == "message"]
         if before_seq is not None:
             filtered = [e for e in filtered if e.get("seq", 0) < before_seq]
@@ -168,23 +189,21 @@ class JsonlRunEventStore(RunEventStore):
             return filtered[-limit:] if len(filtered) > limit else filtered
 
     async def count_messages(self, thread_id):
-        all_events = self._read_thread_events(thread_id)
+        all_events = await asyncio.to_thread(self._read_thread_events, thread_id)
         return sum(1 for e in all_events if e.get("category") == "message")
 
     async def delete_by_thread(self, thread_id):
-        all_events = self._read_thread_events(thread_id)
-        count = len(all_events)
-        thread_dir = self._thread_dir(thread_id)
-        if thread_dir.exists():
-            for f in thread_dir.glob("*.jsonl"):
-                f.unlink()
-        self._seq_counters.pop(thread_id, None)
-        return count
+        async with self._get_write_lock(thread_id):
+            all_events = await asyncio.to_thread(self._read_thread_events, thread_id)
+            count = len(all_events)
+            await asyncio.to_thread(self._delete_thread_files, thread_id)
+            self._seq_counters.pop(thread_id, None)
+            self._write_locks.pop(thread_id, None)
+            return count
 
     async def delete_by_run(self, thread_id, run_id):
-        events = self._read_run_events(thread_id, run_id)
-        count = len(events)
-        path = self._run_file(thread_id, run_id)
-        if path.exists():
-            path.unlink()
-        return count
+        async with self._get_write_lock(thread_id):
+            events = await asyncio.to_thread(self._read_run_events, thread_id, run_id)
+            count = len(events)
+            await asyncio.to_thread(self._delete_run_file, thread_id, run_id)
+            return count

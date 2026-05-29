@@ -60,6 +60,7 @@ services:
       - DEER_FLOW_EXTENSIONS_CONFIG_PATH=/app/backend/extensions_config.json
       - DEER_FLOW_CHANNELS_LANGGRAPH_URL=http://gateway:8551/api
       - DEER_FLOW_CHANNELS_GATEWAY_URL=http://gateway:8551
+      - DEER_FLOW_INTERNAL_AUTH_TOKEN=${DEER_FLOW_INTERNAL_AUTH_TOKEN:-}
       - DEER_FLOW_SANDBOX_HOST=host.docker.internal
       - MIAOWU_FFMPEG_BIN=${MIAOWU_FFMPEG_BIN:-/usr/bin/ffmpeg}
     env_file:

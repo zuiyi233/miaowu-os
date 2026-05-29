@@ -170,6 +170,26 @@ export function getAssistantTurnUsageMessages(groups: MessageGroup[]) {
   return usageMessagesByGroupIndex;
 }
 
+export function getAssistantTurnCopyData(
+  messages: Message[],
+  { isStreaming = false }: { isStreaming?: boolean } = {},
+) {
+  if (isStreaming) {
+    return null;
+  }
+
+  return (
+    [...messages]
+      .reverse()
+      .filter((message) => message.type === "ai")
+      .map((message) => {
+        const content = extractContentFromMessage(message);
+        return content ?? extractReasoningContentFromMessage(message) ?? "";
+      })
+      .find((content) => content.length > 0) ?? null
+  );
+}
+
 export function extractTextFromMessage(message: Message) {
   if (typeof message.content === "string") {
     return (
@@ -186,22 +206,30 @@ export function extractTextFromMessage(message: Message) {
   return "";
 }
 
+const THINK_OPEN_TAG = "<think>";
 const THINK_TAG_RE = /<think>\s*([\s\S]*?)\s*<\/think>/g;
 
 function splitInlineReasoning(content: string) {
   const reasoningParts: string[] = [];
-  const cleaned = content
-    .replace(THINK_TAG_RE, (_, reasoning: string) => {
+  let cleaned = content.replace(THINK_TAG_RE, (_, reasoning: string) => {
       const normalized = reasoning.trim();
       if (normalized) {
         reasoningParts.push(normalized);
       }
       return "";
-    })
-    .trim();
+    });
+
+  const openTagIndex = cleaned.indexOf(THINK_OPEN_TAG);
+  if (openTagIndex !== -1 && cleaned[openTagIndex - 1] !== "`") {
+    const tail = cleaned.slice(openTagIndex + THINK_OPEN_TAG.length).trim();
+    if (tail) {
+      reasoningParts.push(tail);
+    }
+    cleaned = cleaned.slice(0, openTagIndex);
+  }
 
   return {
-    content: cleaned,
+    content: cleaned.trim(),
     reasoning: reasoningParts.length > 0 ? reasoningParts.join("\n\n") : null,
   };
 }
