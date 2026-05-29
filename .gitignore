@@ -949,6 +949,8 @@ nul
 # Standalone desktop shell repo
 tauri-app-template-main/
 
+技能/ai_creator-main/
+
 # ==============================================================================
 # LOCAL REVIEW / TEST ARTIFACTS (L-19 / L-20 / L-21)
 # ==============================================================================

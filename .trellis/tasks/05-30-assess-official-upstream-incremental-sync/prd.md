@@ -2,18 +2,45 @@
 
 ## Goal
 
-TBD.
+在不直接执行同步的前提下，核对官方 `bytedance/deer-flow` 当前最新主分支相对本地已收口基线的新增变更，输出一份面向 `miaowu-os` 多账号二开的增量同步候选清单、风险分层与建议批次。
+
+## Confirmed Facts
+
+- 当前工作仓库：`N:\miaowu-os-merge-upstream-main`
+- 当前工作分支：`merge/upstream-main`
+- 工作区存在 30 个未提交改动，因此本轮不适合直接执行同步操作。
+- 当前 git remote `upstream` 指向的是 `https://github.com/zuiyi233/miaowu-os.git`，不是官方 `bytedance/deer-flow`。
+- 本地已有上游同步固化文档：
+  - `docs/upstream-sync-guide.md`
+  - `docs/DEERFLOW_UPSTREAM_SYNC_RUNBOOK.md`
+- 固化文档记录的上次官方上游完整收口基线为 `c810e9f8`，并说明当时已把 `e9deb6c2..c810e9f8` 的 23 个官方 commit 收口到 `deer-flow-main/` 子树。
+- 本地二开关键约束：
+  - 目录结构与官方不同：官方代码在仓库根目录，本地代码位于 `deer-flow-main/` 子目录。
+  - 本地有多账号/用户隔离改造，不能按官方单仓库单账号语义直接覆盖。
+  - local-dev 契约固定为后端 `127.0.0.1:8551`、前端 `4560`，不能被上游通用 `8001` 文案回退。
 
 ## Requirements
 
-- TBD
+- 核对官方 `bytedance/deer-flow` 当前 `main` 最新提交及相对 `c810e9f8` 的新增提交范围。
+- 汇总新增提交的主题、触达目录和高频文件类型。
+- 结合本地多账号二开边界，对上游变更做三类分层：
+  - 可优先增量同步
+  - 可同步但需专题冲突裁决
+  - 暂不建议同步
+- 说明每一类的原因，特别是与多账号、用户隔离、小说链路、网关设置、运行时状态有关的风险点。
+- 给出建议的同步批次顺序，而不是直接执行 merge/cherry-pick。
+- 明确本轮结论的验证边界和不确定性来源。
 
 ## Acceptance Criteria
 
-- [ ] TBD
+- [ ] 已确认官方 `main` 最新 commit 与本地已收口基线 `c810e9f8` 的差距范围。
+- [ ] 已整理新增提交或文件变更的主题分组。
+- [ ] 已输出适合先增量同步的候选清单，并标注原因与风险等级。
+- [ ] 已指出不建议优先同步的高风险区域，尤其是多账号/用户隔离相关区域。
+- [ ] 已给出建议的后续同步顺序和执行前置条件。
 
-## Notes
+## Out of Scope
 
-- Keep `prd.md` focused on requirements, constraints, and acceptance criteria.
-- Lightweight tasks can remain PRD-only.
-- For complex tasks, add `design.md` for technical design and `implement.md` for execution planning before `task.py start`.
+- 本轮不执行实际代码同步、冲突解决或测试。
+- 本轮不清理当前 30 个未提交改动。
+- 本轮不改写现有同步 runbook，仅在必要时引用其既有结论。

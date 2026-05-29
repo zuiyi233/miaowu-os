@@ -237,3 +237,55 @@ Relevant files:
 - I did not run 31 runtime smoke commands or browser verification in this pass, so the matrix is a planning/acceptance artifact, not a runtime result.
 - `frontend/src/components/workspace/settings/ai-provider-settings-page.tsx` shows the settings page writes to `/api/user/ai-settings`, but the exact UI affordance for `feature_routing_settings` is routed through the store and helper modules rather than being obvious from the page shell alone.
 - No existing dual-account fixture was found in this workspace; A/B verification will need two authenticated sessions on 31 or an equivalent backend test harness.
+
+## 2026-05-30 Runtime Result Addendum
+
+### Deployment path actually used
+- The original plan in `implement.md` assumed “upload source -> build on 31”.
+- Runtime truth changed during execution:
+  - a half-finished remote `docker buildx build` was found still running on 31 from the interrupted previous attempt.
+  - it was explicitly stopped.
+  - the release then switched to “build images locally -> `docker save` -> upload tar -> `docker load` on 31 -> update compose”.
+
+### 31 stack state after release
+- Stack directory remained: `/opt/stacks/miaowu-os-test-20260522`
+- Updated images:
+  - `miaowu-os-gateway:test-20260529-235043-multiuser-settings`
+  - `miaowu-os-frontend:test-20260529-235043-multiuser-settings`
+- Loopback checks passed after startup settled:
+  - `GET http://127.0.0.1:18551/health` -> `200`
+  - `GET http://127.0.0.1:14560/api/v1/auth/setup-status` -> `200`
+  - `GET http://127.0.0.1:14560/` -> `200`
+
+### API-level A/B verification completed
+- Two temporary regular users were created on 31 through `POST /api/v1/auth/register`.
+- Each user received its own `access_token` cookie and `csrf_token`; subsequent `PUT` requests used `X-CSRF-Token`.
+- Verified with real A/B requests plus DB persistence check:
+  - `user_ui_settings` isolation:
+    - user A changed `media_draft_retention` from `7d` to `24h`
+    - user B remained `7d`
+  - `ai_provider_settings.client_settings` isolation:
+    - user A changed `max_retries` from `2` to `5`
+    - user B remained `2`
+- The 31 Postgres `settings.preferences` rows confirmed the values were persisted separately per `user_id`.
+
+### Why skill/tool toggle isolation could not be fully exercised on 31
+- `GET /api/user/skill-settings` returned `skills: []`
+- `GET /api/user/tool-settings` returned `mcp_servers: {}`
+- Runtime inspection showed this was because the system-level public catalogs were empty on the 31 test stack:
+  - `/opt/stacks/miaowu-os-test-20260522/extensions_config.docker.json` has `mcpServers: {}` and `skills: {}`
+  - in-container inspection showed `skills_count = 0` and no MCP server names
+- Therefore the missing A/B toggle proof for skills/tools is a fixture/catalog gap on 31, not evidence that per-user isolation is broken.
+
+### Updated acceptance interpretation
+- Fully proven on 31:
+  - authenticated user-scoped reads/writes work
+  - `UI settings` are isolated per user
+  - `AI settings` are isolated per user
+  - runtime health after release is good
+- Blocked by empty public catalogs on 31:
+  - same-public-skill A/B enable/disable proof
+  - same-public-MCP-server A/B enable/disable proof
+- To complete those two proofs, 31 needs at least:
+  - one public skill present in the mounted skills directory
+  - one public MCP server entry in `extensions_config.docker.json`
