@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"Validate that the final hook behavior remains aligned with frontend hook-layer conventions."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check that batch3 records any new executable thread/message merge contract."}
+{"file":".trellis/tasks/05-30-assess-official-upstream-incremental-sync/research/official-upstream-c810e9f8-to-e8e9edc-assessment.md","reason":"Verify that batch3 only covers the approved hooks.ts experience fixes and nothing higher risk."}

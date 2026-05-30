@@ -1,0 +1,5 @@
+{"file":".trellis/spec/guides/index.md","reason":"Load shared thinking guides before merging high-conflict frontend thread behavior."}
+{"file":".trellis/spec/frontend/index.md","reason":"Identify the frontend guideline set that applies to hooks, state merge logic, and thread cache behavior."}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"Follow project expectations for hook-layer state normalization and fetch/cache behavior."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Preserve frontend quality constraints and capture any new thread/message contract learned in this batch."}
+{"file":".trellis/tasks/05-30-assess-official-upstream-incremental-sync/research/official-upstream-c810e9f8-to-e8e9edc-assessment.md","reason":"Use the upstream sync assessment as the source-of-truth for batch3 scope and conflict boundaries."}

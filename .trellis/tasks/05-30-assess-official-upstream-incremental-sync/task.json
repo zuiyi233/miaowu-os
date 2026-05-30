@@ -20,7 +20,8 @@
   "subtasks": [],
   "children": [
     "05-30-batch1-upstream-low-risk-sync",
-    "05-30-batch2-upstream-security-contract-sync"
+    "05-30-batch2-upstream-security-contract-sync",
+    "05-30-batch3-thread-hooks-sync"
   ],
   "parent": null,
   "relatedFiles": [],
