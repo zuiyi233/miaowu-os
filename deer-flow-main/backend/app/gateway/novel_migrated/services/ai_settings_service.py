@@ -707,6 +707,27 @@ def _load_preferences(settings: Settings) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _read_optional_preference_string(preferences: dict[str, Any], key: str) -> str | None:
+    value = preferences.get(key)
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    return None
+
+
+def _read_optional_preference_bool(preferences: dict[str, Any], key: str, default: bool) -> bool:
+    value = preferences.get(key)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
 def _save_preferences(settings: Settings, preferences: dict[str, Any]) -> None:
     settings.preferences = json.dumps(preferences, ensure_ascii=False)
 
@@ -1508,6 +1529,11 @@ class AISettingsService:
             "default_provider_id": effective_default_provider_id,
             "client_settings": ai_provider_settings["client_settings"],
             "feature_routing_settings": ai_provider_settings.get("feature_routing_settings"),
+            "embedding_model": _read_optional_preference_string(preferences, "embedding_model"),
+            "rerank_model": _read_optional_preference_string(preferences, "rerank_model"),
+            "rerank_enabled": _read_optional_preference_bool(preferences, "rerank_enabled", True),
+            "writing_skill_embedding_model": _read_optional_preference_string(preferences, "writing_skill_embedding_model"),
+            "writing_skill_rerank_model": _read_optional_preference_string(preferences, "writing_skill_rerank_model"),
             # legacy fields (mirror source-of-truth for runtime)
             "api_provider": runtime["api_provider"],
             "api_base_url": runtime["api_base_url"],
@@ -1667,6 +1693,26 @@ class AISettingsService:
 
         if "feature_routing_settings" in payload:
             current["feature_routing_settings"] = _ensure_feature_routing_settings(payload.get("feature_routing_settings"))
+
+        for key in (
+            "embedding_model",
+            "rerank_model",
+            "writing_skill_embedding_model",
+            "writing_skill_rerank_model",
+        ):
+            if key in payload:
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    preferences[key] = value.strip()
+                else:
+                    preferences.pop(key, None)
+
+        if "rerank_enabled" in payload:
+            value = payload.get("rerank_enabled")
+            if isinstance(value, bool):
+                preferences["rerank_enabled"] = value
+            else:
+                preferences.pop("rerank_enabled", None)
 
         if "default_provider_id" in payload:
             default_provider_id = payload.get("default_provider_id")

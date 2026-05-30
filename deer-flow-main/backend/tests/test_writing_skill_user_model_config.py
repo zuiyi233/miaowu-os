@@ -33,6 +33,26 @@ async def _seed_settings(user_id: str) -> None:
         await session.commit()
 
 
+async def _seed_settings_without_writing_skill_overrides(user_id: str) -> None:
+    await init_db_schema()
+    async with AsyncSessionLocal() as session:
+        session.add(
+            Settings(
+                user_id=user_id,
+                api_key="sk-test-writing-skill",
+                api_base_url="https://example.com/v1",
+                llm_model="gpt-4o-mini",
+                preferences=json.dumps(
+                    {
+                        "embedding_model": "user-private-memory-embedding",
+                        "rerank_model": "user-private-memory-rerank",
+                    }
+                ),
+            )
+        )
+        await session.commit()
+
+
 @pytest.mark.asyncio
 async def test_writing_skill_index_reads_user_embedding_and_rerank_models(novel_main_sqlite_engine, monkeypatch):
     await _seed_settings("writer-1")
@@ -49,6 +69,17 @@ async def test_writing_skill_index_reads_user_embedding_and_rerank_models(novel_
     assert rerank_config.base_url == "https://example.com/v1"
     assert rerank_config.model == "bge-reranker-v2-m3"
     assert rerank_config.api_key == "sk-test-writing-skill"
+
+
+@pytest.mark.asyncio
+async def test_writing_skill_index_does_not_inherit_private_memory_models_without_explicit_overrides(
+    novel_main_sqlite_engine,
+):
+    await _seed_settings_without_writing_skill_overrides("writer-2")
+    user_config = await load_writing_skill_user_config("writer-2")
+
+    assert user_config.embedding is None
+    assert user_config.rerank is None
 
 
 def test_list_writing_skill_candidates_passes_user_id_to_index(monkeypatch):
@@ -79,3 +110,28 @@ def test_list_writing_skill_candidates_passes_user_id_to_index(monkeypatch):
     assert result["success"] is True
     assert "warm_user_config" not in captured
     assert isinstance(captured["search_kwargs"]["user_config"], WritingSkillUserConfig)
+
+
+def test_writing_skill_vector_collection_name_is_shared_per_embedding_model():
+    from deerflow.skills.writing_skill_index import _UserModelConfig, _VectorSearchBackend
+
+    backend = _VectorSearchBackend(data_dir=__import__("pathlib").Path("N:/miaowu-os-merge-upstream-main/deer-flow-main/backend/data"))
+    default_name = backend._collection_name(None)
+    bge_name = backend._collection_name(
+        _UserModelConfig(
+            api_key="sk-test",
+            base_url="https://example.com/v1",
+            model="bge-m3",
+        )
+    )
+    bge_name_2 = backend._collection_name(
+        _UserModelConfig(
+            api_key="sk-another-user",
+            base_url="https://another.example.com/v1",
+            model="bge-m3",
+        )
+    )
+
+    assert default_name.startswith("writing_skills_index__")
+    assert bge_name == bge_name_2
+    assert bge_name.endswith("bge_m3")

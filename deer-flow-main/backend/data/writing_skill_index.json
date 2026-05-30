@@ -1,9 +1,9 @@
 {
   "version": 1,
-  "built_at": "2026-05-29T18:06:21.485140+00:00",
+  "built_at": "2026-05-29T20:12:16.734329+00:00",
   "total_skills": 391,
   "skipped": 0,
-  "content_hash": "sha256:85745807752063e1",
+  "content_hash": "sha256:74740377030e8cb6",
   "categories": {
     "节奏": {
       "count": 35
@@ -80,7 +80,7 @@
         "场景"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:93c48163b099f11c",
       "content_path": "writing-skills/action-linking.md",
       "quality_score": 6.5
@@ -121,7 +121,7 @@
         "雷时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:efbc756a56e91587",
       "content_path": "writing-skills/adapt-tropes-to-modern-romance.md",
       "quality_score": 7.0
@@ -160,7 +160,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:b33362def8605dd9",
       "content_path": "writing-skills/admin-protagonist-opening.md",
       "quality_score": 7.0
@@ -199,7 +199,7 @@
         "使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:5c77694177cf4dbe",
       "content_path": "writing-skills/aloof-character-design.md",
       "quality_score": 7.0
@@ -239,7 +239,7 @@
         "狗血"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:1485d237f375008e",
       "content_path": "writing-skills/amnesia-trope-design.md",
       "quality_score": 7.5
@@ -279,7 +279,7 @@
         "爽点"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ef365582bdc68245",
       "content_path": "writing-skills/anticipation-design.md",
       "quality_score": 7.0
@@ -319,7 +319,7 @@
         "大纲"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:c4361224530828c0",
       "content_path": "writing-skills/arc-tone-outline.md",
       "quality_score": 7.0
@@ -358,7 +358,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:c1684265f71f3047",
       "content_path": "writing-skills/argument-escalation.md",
       "quality_score": 6.5
@@ -397,7 +397,7 @@
         "心理"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:95effac1d43ca314",
       "content_path": "writing-skills/attachment-style-reactions.md",
       "quality_score": 6.5
@@ -437,7 +437,7 @@
         "题材"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:eea5637137771608",
       "content_path": "writing-skills/audience-targeting.md",
       "quality_score": 7.5
@@ -476,7 +476,7 @@
         "把想表达"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:fcf92bb105da9890",
       "content_path": "writing-skills/avoid-preachy.md",
       "quality_score": 6.0
@@ -516,7 +516,7 @@
         "拉不开时"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:23489663f0b05eff",
       "content_path": "writing-skills/background-pressure-design.md",
       "quality_score": 7.0
@@ -556,7 +556,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:9b93766000989262",
       "content_path": "writing-skills/backing-usage.md",
       "quality_score": 7.0
@@ -595,7 +595,7 @@
         "回忆"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:5bdb8f323ee48c23",
       "content_path": "writing-skills/backstory-insertion.md",
       "quality_score": 7.0
@@ -635,7 +635,7 @@
         "狗血"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:5469366f583d7ce6",
       "content_path": "writing-skills/bao-dian-design.md",
       "quality_score": 7.5
@@ -673,7 +673,7 @@
         "印象"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:628a4985fd78f100",
       "content_path": "writing-skills/beauty-description.md",
       "quality_score": 6.0
@@ -712,7 +712,7 @@
         "走错路的"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:242746a53d769230",
       "content_path": "writing-skills/big-boss-design.md",
       "quality_score": 7.0
@@ -751,7 +751,7 @@
         "按篇幅和"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:54b4cb81b860e7a3",
       "content_path": "writing-skills/big-climax-layout.md",
       "quality_score": 6.5
@@ -790,7 +790,7 @@
         "细节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a26ae0a9d574e492",
       "content_path": "writing-skills/big-scene-detailing.md",
       "quality_score": 6.5
@@ -830,7 +830,7 @@
         "定拆成"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:080fde0458119928",
       "content_path": "writing-skills/big-setting-planning.md",
       "quality_score": 7.0
@@ -869,7 +869,7 @@
         "世界观"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:429bcc45cc50ad64",
       "content_path": "writing-skills/big-world-small-focus.md",
       "quality_score": 6.5
@@ -909,7 +909,7 @@
         "文案"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:fb94d989cdac73ad",
       "content_path": "writing-skills/blurb-hook-to-chapters.md",
       "quality_score": 7.0
@@ -948,7 +948,7 @@
         "后劲时使"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:7f15e7a4b5cca54e",
       "content_path": "writing-skills/blurb-info-density.md",
       "quality_score": 6.5
@@ -988,7 +988,7 @@
         "问把一个"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e4656600c14f9ab8",
       "content_path": "writing-skills/brainstorm-three-questions.md",
       "quality_score": 7.5
@@ -1027,7 +1027,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:3b1c5063b81be4c2",
       "content_path": "writing-skills/burst-scene-pacing.md",
       "quality_score": 6.0
@@ -1068,7 +1068,7 @@
         "升级"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a26ec6feae3615a0",
       "content_path": "writing-skills/career-conflict-choice.md",
       "quality_score": 7.0
@@ -1107,7 +1107,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:993cf99fd823ac83",
       "content_path": "writing-skills/career-line-breakdown.md",
       "quality_score": 6.5
@@ -1147,7 +1147,7 @@
         "把事业线"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a349471a1b82b12b",
       "content_path": "writing-skills/career-line-design.md",
       "quality_score": 7.0
@@ -1186,7 +1186,7 @@
         "发生了"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a849265b5a841e20",
       "content_path": "writing-skills/causal-chain-design.md",
       "quality_score": 6.5
@@ -1225,7 +1225,7 @@
         "时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:61589fb472db1aee",
       "content_path": "writing-skills/central-event-intensification.md",
       "quality_score": 5.5
@@ -1265,7 +1265,7 @@
         "读者心理"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:458850acbbcbd1aa",
       "content_path": "writing-skills/channel-protagonist-positioning.md",
       "quality_score": 7.5
@@ -1306,7 +1306,7 @@
         "使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:44c814fde81d25fb",
       "content_path": "writing-skills/chapter-break-hook.md",
       "quality_score": 7.5
@@ -1347,7 +1347,7 @@
         "核心时使"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ded3b4a32b754afa",
       "content_path": "writing-skills/chapter-core-design.md",
       "quality_score": 7.0
@@ -1387,7 +1387,7 @@
         "先判断这"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:df73923ce5ab188e",
       "content_path": "writing-skills/chapter-filler-check.md",
       "quality_score": 7.0
@@ -1427,7 +1427,7 @@
         "结构"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:cc2a5bd3666be332",
       "content_path": "writing-skills/chapter-outline-four-items.md",
       "quality_score": 6.0
@@ -1466,7 +1466,7 @@
         "按章节篇"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:7d9ea46febe82d87",
       "content_path": "writing-skills/chapter-pacing.md",
       "quality_score": 6.5
@@ -1506,7 +1506,7 @@
         "或感情戏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:52550f5d3790c61c",
       "content_path": "writing-skills/chapter-pressure-release.md",
       "quality_score": 7.5
@@ -1545,7 +1545,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:c68b06b49fc04fe4",
       "content_path": "writing-skills/chapter-skeleton-breakdown.md",
       "quality_score": 6.5
@@ -1585,7 +1585,7 @@
         "人设"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:7b73092bada664f2",
       "content_path": "writing-skills/character-behavior-logic.md",
       "quality_score": 7.5
@@ -1624,7 +1624,7 @@
         "大纲"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:10840432519f00ca",
       "content_path": "writing-skills/character-biography.md",
       "quality_score": 6.0
@@ -1663,7 +1663,7 @@
         "人设"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:27529d436c2b4f33",
       "content_path": "writing-skills/character-boundary.md",
       "quality_score": 7.0
@@ -1702,7 +1702,7 @@
         "人设"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:89fb66c398573ba3",
       "content_path": "writing-skills/character-change-design.md",
       "quality_score": 6.5
@@ -1742,7 +1742,7 @@
         "人设"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:51c1a15f24586cee",
       "content_path": "writing-skills/character-charm-design.md",
       "quality_score": 7.5
@@ -1782,7 +1782,7 @@
         "先让人物"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:25b4e4ba2b3219ff",
       "content_path": "writing-skills/character-conflict-design.md",
       "quality_score": 7.0
@@ -1821,7 +1821,7 @@
         "人设"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ad518e4ce69f2e38",
       "content_path": "writing-skills/character-consistency-design.md",
       "quality_score": 7.0
@@ -1859,7 +1859,7 @@
         "或存稿期"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:458769d2ddec5b54",
       "content_path": "writing-skills/character-day-rehearsal.md",
       "quality_score": 7.0
@@ -1898,7 +1898,7 @@
         "先做一张"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a6d704e0c168c202",
       "content_path": "writing-skills/character-distinctiveness.md",
       "quality_score": 7.0
@@ -1937,7 +1937,7 @@
         "互动总像"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:9d2363751a975cff",
       "content_path": "writing-skills/character-driven-interaction.md",
       "quality_score": 6.5
@@ -1977,7 +1977,7 @@
         "角色"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:1c74a3ff7ccfc742",
       "content_path": "writing-skills/character-driven-outline.md",
       "quality_score": 7.5
@@ -2017,7 +2017,7 @@
         "角色"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:259b3239fbf457e1",
       "content_path": "writing-skills/character-driven-plot.md",
       "quality_score": 7.0
@@ -2057,7 +2057,7 @@
         "不会劝退"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:4d9e0157f9e185f1",
       "content_path": "writing-skills/character-flaw-design.md",
       "quality_score": 7.5
@@ -2097,7 +2097,7 @@
         "使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:abb449b4ff0c0194",
       "content_path": "writing-skills/character-grounding.md",
       "quality_score": 7.5
@@ -2137,7 +2137,7 @@
         "人设"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:aace6cd638aa2a06",
       "content_path": "writing-skills/character-label-method.md",
       "quality_score": 7.5
@@ -2176,7 +2176,7 @@
         "时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:612010c8293ed970",
       "content_path": "writing-skills/character-reaction-design.md",
       "quality_score": 6.5
@@ -2216,7 +2216,7 @@
         "配角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ab27537533a2744d",
       "content_path": "writing-skills/character-setting-card.md",
       "quality_score": 6.0
@@ -2255,7 +2255,7 @@
         "不讨喜或"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e8dc61a5a4262e5a",
       "content_path": "writing-skills/character-trait-amplification.md",
       "quality_score": 6.5
@@ -2294,7 +2294,7 @@
         "感情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:348f852cf0051a90",
       "content_path": "writing-skills/character-wants.md",
       "quality_score": 7.0
@@ -2333,7 +2333,7 @@
         "时间线"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:c7136aecf8c64bb6",
       "content_path": "writing-skills/childhood-friends-timeline.md",
       "quality_score": 6.5
@@ -2373,7 +2373,7 @@
         "描写"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:4c26fd05d93aa0bf",
       "content_path": "writing-skills/cinematic-scene-writing.md",
       "quality_score": 7.5
@@ -2412,7 +2412,7 @@
         "套路"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:d4255ec93ac2d514",
       "content_path": "writing-skills/classic-story-template.md",
       "quality_score": 7.0
@@ -2451,7 +2451,7 @@
         "心理"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:48c25061a06f42f7",
       "content_path": "writing-skills/cold-hearted-character.md",
       "quality_score": 6.5
@@ -2491,7 +2491,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e7f6607214310b7b",
       "content_path": "writing-skills/comedic-info-delivery.md",
       "quality_score": 7.0
@@ -2531,7 +2531,7 @@
         "冲突"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e5508ccb0937d892",
       "content_path": "writing-skills/comedy-premise-design.md",
       "quality_score": 7.0
@@ -2571,7 +2571,7 @@
         "爽点"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:20b0e4821b95ac75",
       "content_path": "writing-skills/competent-protagonist.md",
       "quality_score": 7.5
@@ -2610,7 +2610,7 @@
         "主角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:d9d363a4d9379c5d",
       "content_path": "writing-skills/complex-protagonist-check.md",
       "quality_score": 7.0
@@ -2650,7 +2650,7 @@
         "力时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:92f89ec8ce5bdc3a",
       "content_path": "writing-skills/conflict-pacing.md",
       "quality_score": 7.5
@@ -2689,7 +2689,7 @@
         "塑造"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:369b87f56f55104f",
       "content_path": "writing-skills/contrast-character-design.md",
       "quality_score": 7.0
@@ -2728,7 +2728,7 @@
         "为如此"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f081cdf5ab32e31b",
       "content_path": "writing-skills/contrast-character.md",
       "quality_score": 6.0
@@ -2768,7 +2768,7 @@
         "角色"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:61ec9276e2aa48d3",
       "content_path": "writing-skills/contrast-charm-design.md",
       "quality_score": 7.0
@@ -2807,7 +2807,7 @@
         "大纲"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e14e95e493d1ce32",
       "content_path": "writing-skills/core-hook-design.md",
       "quality_score": 7.0
@@ -2847,7 +2847,7 @@
         "东西把核"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:4fb1f169f15360bd",
       "content_path": "writing-skills/core-hook-self-check.md",
       "quality_score": 7.0
@@ -2886,7 +2886,7 @@
         "时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:d33cbef3cb6015c0",
       "content_path": "writing-skills/core-plot-extraction.md",
       "quality_score": 7.0
@@ -2926,7 +2926,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a6025d8a196d80ba",
       "content_path": "writing-skills/countdown-crisis.md",
       "quality_score": 7.0
@@ -2965,7 +2965,7 @@
         "角色"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:504a9752f0b3d9ba",
       "content_path": "writing-skills/cp-chemistry-design.md",
       "quality_score": 6.5
@@ -3004,7 +3004,7 @@
         "先把两个"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ca5a5b9036bc705d",
       "content_path": "writing-skills/cp-contrast-design.md",
       "quality_score": 6.5
@@ -3043,7 +3043,7 @@
         "互动"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:227e14bd9a174428",
       "content_path": "writing-skills/cp-dynamic-pattern.md",
       "quality_score": 6.5
@@ -3082,7 +3082,7 @@
         "人设"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:b13f4d5ae450aeb6",
       "content_path": "writing-skills/cp-pairing-design.md",
       "quality_score": 7.0
@@ -3121,7 +3121,7 @@
         "感情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f745301994be6f14",
       "content_path": "writing-skills/cp-power-shift.md",
       "quality_score": 6.5
@@ -3160,7 +3160,7 @@
         "互动"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:3b77cb6832c8add0",
       "content_path": "writing-skills/cp-through-career-line.md",
       "quality_score": 6.5
@@ -3199,7 +3199,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:bf15843f201461b4",
       "content_path": "writing-skills/cp-value-scoring.md",
       "quality_score": 6.0
@@ -3239,7 +3239,7 @@
         "剧情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:de9dac40f1f2c11d",
       "content_path": "writing-skills/crossover-world-fusion.md",
       "quality_score": 7.0
@@ -3278,7 +3278,7 @@
         "把暗恋写"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:5bd351a57d8b0e77",
       "content_path": "writing-skills/crush-writing.md",
       "quality_score": 6.5
@@ -3317,7 +3317,7 @@
         "日常"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:4e92e1a99a23659e",
       "content_path": "writing-skills/daily-romance-beats.md",
       "quality_score": 6.5
@@ -3356,7 +3356,7 @@
         "互动"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:24b0dbc52e8f183f",
       "content_path": "writing-skills/daily-romance-friction.md",
       "quality_score": 6.5
@@ -3396,7 +3396,7 @@
         "日常"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:b040731bf309641c",
       "content_path": "writing-skills/daily-scene-conflict.md",
       "quality_score": 7.0
@@ -3436,7 +3436,7 @@
         "使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e6f1441201633144",
       "content_path": "writing-skills/delayed-payoff-pacing.md",
       "quality_score": 7.5
@@ -3476,7 +3476,7 @@
         "升级"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a6f11f51c6a15584",
       "content_path": "writing-skills/delayed-villain-reveal.md",
       "quality_score": 7.0
@@ -3515,7 +3515,7 @@
         "热闹"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:699dcd1998b19634",
       "content_path": "writing-skills/detail-atmosphere.md",
       "quality_score": 7.0
@@ -3554,7 +3554,7 @@
         "使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:7d655cb27fc48974",
       "content_path": "writing-skills/detail-timing.md",
       "quality_score": 6.5
@@ -3593,7 +3593,7 @@
         "灵感"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:5f96b85ea8fd8003",
       "content_path": "writing-skills/detail-to-story.md",
       "quality_score": 6.5
@@ -3632,7 +3632,7 @@
         "一段的作"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:af85061c81f8990a",
       "content_path": "writing-skills/detail-vs-summary.md",
       "quality_score": 6.0
@@ -3673,7 +3673,7 @@
         "章纲"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a842c58d99a05ecd",
       "content_path": "writing-skills/detailed-chapter-outline.md",
       "quality_score": 7.5
@@ -3712,7 +3712,7 @@
         "生硬时使"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:01dcab508ec6b142",
       "content_path": "writing-skills/detailed-outline-bridging.md",
       "quality_score": 6.0
@@ -3752,7 +3752,7 @@
         "线索"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:7c2e0e9819458772",
       "content_path": "writing-skills/detailed-plot-outline.md",
       "quality_score": 7.0
@@ -3792,7 +3792,7 @@
         "发单时使"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ff2091e1741512d5",
       "content_path": "writing-skills/dialogue-rhythm-polish.md",
       "quality_score": 7.0
@@ -3830,7 +3830,7 @@
         "当接话卡"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ce1c1eab370aafe4",
       "content_path": "writing-skills/dialogue-split-reply.md",
       "quality_score": 7.0
@@ -3869,7 +3869,7 @@
         "先分清角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:22d9103a6ac68995",
       "content_path": "writing-skills/dialogue-subtext.md",
       "quality_score": 6.5
@@ -3908,7 +3908,7 @@
         "会怎么猜"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:4b7ba042c4e44b67",
       "content_path": "writing-skills/dou-bao-fu.md",
       "quality_score": 6.5
@@ -3947,7 +3947,7 @@
         "冲突"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e34523c6e34b47ef",
       "content_path": "writing-skills/downward-spiral-arc.md",
       "quality_score": 6.5
@@ -3987,7 +3987,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a58f8c6612658f1e",
       "content_path": "writing-skills/draft-to-outline.md",
       "quality_score": 7.5
@@ -4027,7 +4027,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:9d2935340da2268e",
       "content_path": "writing-skills/du-dian-bian-meng-dian.md",
       "quality_score": 7.5
@@ -4067,7 +4067,7 @@
         "感情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:7b64c2373ba083a4",
       "content_path": "writing-skills/du-dian-check.md",
       "quality_score": 7.0
@@ -4106,7 +4106,7 @@
         "先定两条"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:8e29139d74a5207d",
       "content_path": "writing-skills/dual-line-convergence.md",
       "quality_score": 6.5
@@ -4146,7 +4146,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:6713b493205b604e",
       "content_path": "writing-skills/dual-line-outline.md",
       "quality_score": 7.5
@@ -4186,7 +4186,7 @@
         "感情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:bf4eb92a77026fe7",
       "content_path": "writing-skills/dual-protagonist-partner-design.md",
       "quality_score": 7.5
@@ -4226,7 +4226,7 @@
         "剧情不走"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:b37c2eb97d6211c3",
       "content_path": "writing-skills/effective-interaction-design.md",
       "quality_score": 7.0
@@ -4265,7 +4265,7 @@
         "真的有反"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:8cd4c46dec62dd08",
       "content_path": "writing-skills/emotion-material-bank.md",
       "quality_score": 6.5
@@ -4304,7 +4304,7 @@
         "人物"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:cf4ee17e9b96965c",
       "content_path": "writing-skills/emotion-priming.md",
       "quality_score": 6.5
@@ -4343,7 +4343,7 @@
         "先想清楚"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:2fae82177749fbfd",
       "content_path": "writing-skills/emotion-restraint.md",
       "quality_score": 6.5
@@ -4382,7 +4382,7 @@
         "文风"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:5c72f8d741851400",
       "content_path": "writing-skills/emotion-through-action.md",
       "quality_score": 6.0
@@ -4422,7 +4422,7 @@
         "写悬疑而"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:39b0a3f3cd6e2f7a",
       "content_path": "writing-skills/emotional-outline.md",
       "quality_score": 7.0
@@ -4461,7 +4461,7 @@
         "中间剧情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:52426c0af4fd7906",
       "content_path": "writing-skills/ending-first-outline.md",
       "quality_score": 7.0
@@ -4500,7 +4500,7 @@
         "景板或群"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:986f8c034aa01290",
       "content_path": "writing-skills/entrance-characterization.md",
       "quality_score": 7.0
@@ -4538,7 +4538,7 @@
         "改成会失"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:1aefa27b0112159d",
       "content_path": "writing-skills/event-escalation.md",
       "quality_score": 6.5
@@ -4577,7 +4577,7 @@
         "冲突"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:65b6469ed9fffa6f",
       "content_path": "writing-skills/extreme-scenario-character-test.md",
       "quality_score": 6.5
@@ -4617,7 +4617,7 @@
         "打脸"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:1c6edb817d12a43f",
       "content_path": "writing-skills/face-slap-and-surprise-upgrade.md",
       "quality_score": 7.5
@@ -4658,7 +4658,7 @@
         "反派"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:aa52fb193607fdb6",
       "content_path": "writing-skills/face-slap-payoff.md",
       "quality_score": 7.0
@@ -4698,7 +4698,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ae4343d1d3cd2885",
       "content_path": "writing-skills/face-slap-pov-control.md",
       "quality_score": 7.5
@@ -4738,7 +4738,7 @@
         "各写各的"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:cf7c45949ea3d880",
       "content_path": "writing-skills/faction-conflict-mainline.md",
       "quality_score": 7.5
@@ -4777,7 +4777,7 @@
         "关系"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:05304d0430f066e8",
       "content_path": "writing-skills/falling-in-love-setup.md",
       "quality_score": 7.0
@@ -4817,7 +4817,7 @@
         "剧情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:8c74c98a98b005a8",
       "content_path": "writing-skills/fanfic-character-consistency.md",
       "quality_score": 7.0
@@ -4858,7 +4858,7 @@
         "原著"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:0ae23c15895fbb04",
       "content_path": "writing-skills/fanfic-entry-point.md",
       "quality_score": 7.5
@@ -4898,7 +4898,7 @@
         "围绕原著"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f7d019e119593903",
       "content_path": "writing-skills/fanfic-side-character-rise.md",
       "quality_score": 7.0
@@ -4937,7 +4937,7 @@
         "情时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:309b6134383038dc",
       "content_path": "writing-skills/female-oriented-protagonist-positioning.md",
       "quality_score": 6.5
@@ -4976,7 +4976,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:116ec32f04f9cda5",
       "content_path": "writing-skills/fight-scene-writing.md",
       "quality_score": 7.0
@@ -5015,7 +5015,7 @@
         "件发生在"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:caf3daeddd8ba59a",
       "content_path": "writing-skills/first-person-offstage-reveal.md",
       "quality_score": 7.0
@@ -5055,7 +5055,7 @@
         "代入感弱"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:1084ff3f674989ad",
       "content_path": "writing-skills/first-three-chapters-pov.md",
       "quality_score": 7.5
@@ -5095,7 +5095,7 @@
         "先把前三"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:db1e4429a67f9104",
       "content_path": "writing-skills/first-three-chapters.md",
       "quality_score": 7.0
@@ -5135,7 +5135,7 @@
         "戏的过去"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:4a59306acaefd233",
       "content_path": "writing-skills/flashback-writing.md",
       "quality_score": 7.5
@@ -5175,7 +5175,7 @@
         "对话"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:3009d09bc233b1b6",
       "content_path": "writing-skills/flat-narrative-diagnosis.md",
       "quality_score": 7.0
@@ -5214,7 +5214,7 @@
         "使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f496eb83bdfd663d",
       "content_path": "writing-skills/flawed-character-redemption.md",
       "quality_score": 7.0
@@ -5253,7 +5253,7 @@
         "围绕一个"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:d79568d1acf0c1ac",
       "content_path": "writing-skills/flawed-protagonist-opening.md",
       "quality_score": 6.5
@@ -5292,7 +5292,7 @@
         "不被允许"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f5f8a56e225eb0ce",
       "content_path": "writing-skills/forbidden-love-design.md",
       "quality_score": 6.5
@@ -5331,7 +5331,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:587d0e7254dbf123",
       "content_path": "writing-skills/forced-cp-arc.md",
       "quality_score": 6.5
@@ -5370,7 +5370,7 @@
         "伏笔"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:8d1890fd30a58c2a",
       "content_path": "writing-skills/foreshadow-tracking.md",
       "quality_score": 6.5
@@ -5411,7 +5411,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e4c62b476a5b1442",
       "content_path": "writing-skills/foreshadowing-design.md",
       "quality_score": 7.0
@@ -5451,7 +5451,7 @@
         "大纲"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ffd9a24009690a46",
       "content_path": "writing-skills/fragment-payoff-discovery.md",
       "quality_score": 7.5
@@ -5490,7 +5490,7 @@
         "虐点"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:6e12dc39245e823d",
       "content_path": "writing-skills/functional-angst-design.md",
       "quality_score": 6.5
@@ -5530,7 +5530,7 @@
         "成长"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f4fbb9b6030dd863",
       "content_path": "writing-skills/gain-first-outline.md",
       "quality_score": 7.0
@@ -5569,7 +5569,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:342084168e6d217a",
       "content_path": "writing-skills/game-style-outline.md",
       "quality_score": 6.5
@@ -5609,7 +5609,7 @@
         "改梗"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:d0b7273adad4c0d3",
       "content_path": "writing-skills/gender-flip-rework.md",
       "quality_score": 7.5
@@ -5648,7 +5648,7 @@
         "开坑"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:5bfc8619db577362",
       "content_path": "writing-skills/genre-transition-plan.md",
       "quality_score": 6.5
@@ -5688,7 +5688,7 @@
         "太晚时使"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:07620ed5a1fa19d6",
       "content_path": "writing-skills/golden-finger-design.md",
       "quality_score": 7.0
@@ -5727,7 +5727,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:925723b6969536fa",
       "content_path": "writing-skills/golden-finger-limits.md",
       "quality_score": 7.0
@@ -5768,7 +5768,7 @@
         "前三章"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:4d183ba9ce683db3",
       "content_path": "writing-skills/golden-three-chapter-design.md",
       "quality_score": 7.0
@@ -5808,7 +5808,7 @@
         "角色"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:3391ccaa8518785c",
       "content_path": "writing-skills/gray-protagonist.md",
       "quality_score": 7.5
@@ -5847,7 +5847,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:4d64b9f6086f9b97",
       "content_path": "writing-skills/hanging-thread-pacing.md",
       "quality_score": 6.5
@@ -5886,7 +5886,7 @@
         "爽或感情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:81174e82c3e08853",
       "content_path": "writing-skills/hateable-villain-design.md",
       "quality_score": 7.0
@@ -5925,7 +5925,7 @@
         "想呈现的"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:7672f585bcfc3447",
       "content_path": "writing-skills/heroic-man-portrayal.md",
       "quality_score": 6.5
@@ -5964,7 +5964,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:7d00073d292df460",
       "content_path": "writing-skills/hidden-line-setup.md",
       "quality_score": 6.5
@@ -6003,7 +6003,7 @@
         "先确定这"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:19425d002d1709e5",
       "content_path": "writing-skills/historical-authenticity-check.md",
       "quality_score": 6.5
@@ -6042,7 +6042,7 @@
         "题材"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e3c564be0a7ca532",
       "content_path": "writing-skills/hot-topic-selection.md",
       "quality_score": 7.0
@@ -6082,7 +6082,7 @@
         "手等情绪"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f218cd985d11843a",
       "content_path": "writing-skills/humanize-side-characters.md",
       "quality_score": 7.5
@@ -6121,7 +6121,7 @@
         "这个怎么"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:37f9c92d795262a5",
       "content_path": "writing-skills/idea-to-outline.md",
       "quality_score": 6.5
@@ -6161,7 +6161,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:2a4acfd291378b95",
       "content_path": "writing-skills/imagination-serves-plot.md",
       "quality_score": 7.0
@@ -6200,7 +6200,7 @@
         "情绪"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:0b026dd303af1cc1",
       "content_path": "writing-skills/immersion-boost.md",
       "quality_score": 7.0
@@ -6239,7 +6239,7 @@
         "感时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:6e6f0d819c5d0219",
       "content_path": "writing-skills/impact-scene-writing.md",
       "quality_score": 6.5
@@ -6279,7 +6279,7 @@
         "这个本可"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:820081f50f1960bf",
       "content_path": "writing-skills/infinite-flow-instance-progression.md",
       "quality_score": 7.0
@@ -6319,7 +6319,7 @@
         "趣却写不"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:4a0a53f8297d5266",
       "content_path": "writing-skills/infinite-flow-opening-hook.md",
       "quality_score": 7.0
@@ -6359,7 +6359,7 @@
         "无限流"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:8b9c124776e4bf82",
       "content_path": "writing-skills/infinite-flow-protagonist.md",
       "quality_score": 7.0
@@ -6400,7 +6400,7 @@
         "爽点"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:c7cec1ed190d7eff",
       "content_path": "writing-skills/info-gap-expectation.md",
       "quality_score": 7.5
@@ -6439,7 +6439,7 @@
         "信息"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:3ef831fc12f600e2",
       "content_path": "writing-skills/info-release-pacing.md",
       "quality_score": 6.5
@@ -6478,7 +6478,7 @@
         "被心理描"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:c1dd235ba5f3ae10",
       "content_path": "writing-skills/inner-monologue-pacing.md",
       "quality_score": 6.5
@@ -6518,7 +6518,7 @@
         "场景"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:5b5cd6870d870e39",
       "content_path": "writing-skills/interaction-trope-design.md",
       "quality_score": 7.0
@@ -6556,7 +6556,7 @@
         "在意变得"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ea031d9f805a1ad6",
       "content_path": "writing-skills/jealousy-sugar.md",
       "quality_score": 7.0
@@ -6596,7 +6596,7 @@
         "转场"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:4e215b5d4e155a1a",
       "content_path": "writing-skills/jump-cut-pacing.md",
       "quality_score": 7.0
@@ -6636,7 +6636,7 @@
         "取舍"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:3f233ccd832a71ac",
       "content_path": "writing-skills/key-point-description.md",
       "quality_score": 7.0
@@ -6674,7 +6674,7 @@
         "使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:c4f0620df5d8508e",
       "content_path": "writing-skills/key-point-repetition.md",
       "quality_score": 6.5
@@ -6713,7 +6713,7 @@
         "场景"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:977ac9b8ab9abbdc",
       "content_path": "writing-skills/key-scene-first.md",
       "quality_score": 6.5
@@ -6753,7 +6753,7 @@
         "铺垫"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ca83c213f46aa24a",
       "content_path": "writing-skills/key-scene-preheat.md",
       "quality_score": 7.0
@@ -6793,7 +6793,7 @@
         "感情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f3c899a61c51c6cd",
       "content_path": "writing-skills/kindness-character-design.md",
       "quality_score": 7.0
@@ -6832,7 +6832,7 @@
         "描写"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:fd473e9f566a6dff",
       "content_path": "writing-skills/language-barrier-writing.md",
       "quality_score": 6.5
@@ -6872,7 +6872,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:b44e7c46bdbd1945",
       "content_path": "writing-skills/lean-pacing.md",
       "quality_score": 7.5
@@ -6911,7 +6911,7 @@
         "主角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:5c50824010ac86f9",
       "content_path": "writing-skills/likable-protagonist.md",
       "quality_score": 7.0
@@ -6950,7 +6950,7 @@
         "修句子"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:3c3767dc306e0ed8",
       "content_path": "writing-skills/liushuizhang-diagnosis.md",
       "quality_score": 6.5
@@ -6990,7 +6990,7 @@
         "主题"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:6c78d2364fd5e475",
       "content_path": "writing-skills/lofty-protagonist.md",
       "quality_score": 7.5
@@ -7029,7 +7029,7 @@
         "场景"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:90b024173bf6f199",
       "content_path": "writing-skills/long-take-scene-writing.md",
       "quality_score": 6.5
@@ -7069,7 +7069,7 @@
         "角色"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:90ad663d126da04d",
       "content_path": "writing-skills/main-cast-layout.md",
       "quality_score": 7.0
@@ -7108,7 +7108,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:8cad4bf4bafaa3af",
       "content_path": "writing-skills/main-cp-design.md",
       "quality_score": 6.5
@@ -7148,7 +7148,7 @@
         "主线"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:62478a88e7d27b86",
       "content_path": "writing-skills/mainline-plot-trimming.md",
       "quality_score": 7.0
@@ -7188,7 +7188,7 @@
         "读者反馈"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:76d22bf0e8333931",
       "content_path": "writing-skills/mainline-sideline-focus.md",
       "quality_score": 7.5
@@ -7226,7 +7226,7 @@
         "角色"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:44b3ca9cc3c63ba0",
       "content_path": "writing-skills/male-lead-change.md",
       "quality_score": 7.0
@@ -7267,7 +7267,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:cfbe89cd5450b1d3",
       "content_path": "writing-skills/manuscript-breakdown-review.md",
       "quality_score": 7.5
@@ -7306,7 +7306,7 @@
         "自然长出"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:47ed8acc9df8f96b",
       "content_path": "writing-skills/map-driven-plot.md",
       "quality_score": 7.0
@@ -7345,7 +7345,7 @@
         "角色"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:9afeb9bc014b167e",
       "content_path": "writing-skills/meaningful-action-beats.md",
       "quality_score": 6.5
@@ -7384,7 +7384,7 @@
         "大纲"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:18f99f2c50b93d8b",
       "content_path": "writing-skills/melodrama-romance-outline.md",
       "quality_score": 6.5
@@ -7422,7 +7422,7 @@
         "正文里的"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:8aa1ee555605570f",
       "content_path": "writing-skills/meme-control.md",
       "quality_score": 6.0
@@ -7462,7 +7462,7 @@
         "材时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:07e79dbb89e8d5bf",
       "content_path": "writing-skills/meng-point-design.md",
       "quality_score": 7.0
@@ -7502,7 +7502,7 @@
         "中后期"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:362d37184eccdac7",
       "content_path": "writing-skills/mid-story-pacing.md",
       "quality_score": 7.5
@@ -7541,7 +7541,7 @@
         "角色"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:36703426a96b874a",
       "content_path": "writing-skills/minor-supporting-cast-setup.md",
       "quality_score": 7.0
@@ -7580,7 +7580,7 @@
         "喜剧"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f16ab1ff974a3f4e",
       "content_path": "writing-skills/misunderstanding-comedy.md",
       "quality_score": 6.5
@@ -7619,7 +7619,7 @@
         "现代文"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ae31768d577406f0",
       "content_path": "writing-skills/modern-outfit-description.md",
       "quality_score": 6.0
@@ -7659,7 +7659,7 @@
         "配角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:c0a0676da218db21",
       "content_path": "writing-skills/multi-character-dialogue.md",
       "quality_score": 7.0
@@ -7699,7 +7699,7 @@
         "知道怎么"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:7ef5c9f55600bace",
       "content_path": "writing-skills/multi-line-outline.md",
       "quality_score": 7.0
@@ -7738,7 +7738,7 @@
         "对象竞争"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f55fd0a0984e80cb",
       "content_path": "writing-skills/multi-love-interest-threading.md",
       "quality_score": 6.5
@@ -7778,7 +7778,7 @@
         "时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:bc5d038d337342d3",
       "content_path": "writing-skills/multi-pov-switching.md",
       "quality_score": 7.0
@@ -7817,7 +7817,7 @@
         "角色"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:6437140156dbd578",
       "content_path": "writing-skills/mutual-help-romance.md",
       "quality_score": 6.5
@@ -7857,7 +7857,7 @@
         "叙事"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:09ba958764ddc3a4",
       "content_path": "writing-skills/narrative-breakdown-training.md",
       "quality_score": 7.5
@@ -7896,7 +7896,7 @@
         "感情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e34cd87b0e02562a",
       "content_path": "writing-skills/narrative-ellipsis.md",
       "quality_score": 6.5
@@ -7935,7 +7935,7 @@
         "逻辑"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:1efac93902f90ada",
       "content_path": "writing-skills/narrative-logic-fix.md",
       "quality_score": 6.5
@@ -7974,7 +7974,7 @@
         "开篇"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:15cd2ee5f7b0af04",
       "content_path": "writing-skills/narrative-order-choice.md",
       "quality_score": 6.5
@@ -8014,7 +8014,7 @@
         "排雷"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:0aca004c20a3e4bc",
       "content_path": "writing-skills/negative-review-triage.md",
       "quality_score": 7.5
@@ -8054,7 +8054,7 @@
         "疯感时使"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:893080dc3fbf4969",
       "content_path": "writing-skills/negative-trait-charm.md",
       "quality_score": 7.5
@@ -8094,7 +8094,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:0026e841b3f82127",
       "content_path": "writing-skills/non-cringey-romance-conflict.md",
       "quality_score": 7.5
@@ -8134,7 +8134,7 @@
         "大纲"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:6ddc159a0fbd11b9",
       "content_path": "writing-skills/novel-launch-prep.md",
       "quality_score": 7.0
@@ -8173,7 +8173,7 @@
         "开时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:d64d5a6a38b78cf9",
       "content_path": "writing-skills/one-line-mainline-outline.md",
       "quality_score": 7.0
@@ -8213,7 +8213,7 @@
         "大纲"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:88db43c22aaab9a6",
       "content_path": "writing-skills/one-page-outline.md",
       "quality_score": 6.5
@@ -8254,7 +8254,7 @@
         "钩子"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:97555d5da6c9f268",
       "content_path": "writing-skills/opening-information-control.md",
       "quality_score": 7.0
@@ -8293,7 +8293,7 @@
         "结构"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ed6f817a138e2e68",
       "content_path": "writing-skills/opening-sell-point-pacing.md",
       "quality_score": 7.0
@@ -8332,7 +8332,7 @@
         "先抛追问"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:98bf22e0f2c75c44",
       "content_path": "writing-skills/opening-suspense.md",
       "quality_score": 6.5
@@ -8371,7 +8371,7 @@
         "结构"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:c61b13799b71ee26",
       "content_path": "writing-skills/opposing-viewpoint-design.md",
       "quality_score": 6.5
@@ -8411,7 +8411,7 @@
         "题材"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:8f210b53a32445e6",
       "content_path": "writing-skills/originality-angle.md",
       "quality_score": 7.0
@@ -8450,7 +8450,7 @@
         "视角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e9491683c2004dcb",
       "content_path": "writing-skills/outer-inner-contrast.md",
       "quality_score": 6.5
@@ -8489,7 +8489,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:764618b00e3dd8ea",
       "content_path": "writing-skills/outline-beat-mapping.md",
       "quality_score": 6.5
@@ -8528,7 +8528,7 @@
         "结构"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:02b0ea2a6b9f05f4",
       "content_path": "writing-skills/outline-character-template.md",
       "quality_score": 5.5
@@ -8568,7 +8568,7 @@
         "伏时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:2159d87fa94eb11c",
       "content_path": "writing-skills/outline-pacing-curve.md",
       "quality_score": 7.0
@@ -8607,7 +8607,7 @@
         "给过强角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:150e99e6a95683f4",
       "content_path": "writing-skills/overpowered-limiter.md",
       "quality_score": 6.5
@@ -8645,7 +8645,7 @@
         "计甜戏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:2514ab08007acef5",
       "content_path": "writing-skills/pampered-scene-design.md",
       "quality_score": 7.0
@@ -8684,7 +8684,7 @@
         "过的内容"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:0b77cb891093c99b",
       "content_path": "writing-skills/paragraph-stretching.md",
       "quality_score": 6.5
@@ -8724,7 +8724,7 @@
         "题材"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:90a9ef47b17ee828",
       "content_path": "writing-skills/payoff-first-outline.md",
       "quality_score": 7.5
@@ -8764,7 +8764,7 @@
         "结构"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f60e515a36c1dbb0",
       "content_path": "writing-skills/payoff-setup.md",
       "quality_score": 7.5
@@ -8803,7 +8803,7 @@
         "角色"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a951277b9f781a99",
       "content_path": "writing-skills/plot-backward-character.md",
       "quality_score": 7.0
@@ -8842,7 +8842,7 @@
         "场景"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:7309342ff7441b01",
       "content_path": "writing-skills/plot-based-characterization.md",
       "quality_score": 6.5
@@ -8882,7 +8882,7 @@
         "对话"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:07f502bfef8b6ffc",
       "content_path": "writing-skills/plot-beyond-dialogue.md",
       "quality_score": 7.0
@@ -8921,7 +8921,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:cbb3f479ea205e19",
       "content_path": "writing-skills/plot-card-layout.md",
       "quality_score": 6.5
@@ -8960,7 +8960,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:9c789fd12fb9d79d",
       "content_path": "writing-skills/plot-concentration.md",
       "quality_score": 6.5
@@ -9000,7 +9000,7 @@
         "冲突"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:9479bf319fb12a6a",
       "content_path": "writing-skills/plot-conflict-design.md",
       "quality_score": 7.5
@@ -9039,7 +9039,7 @@
         "不知道该"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:af00a60e23826c05",
       "content_path": "writing-skills/plot-emphasis-allocation.md",
       "quality_score": 6.5
@@ -9078,7 +9078,7 @@
         "伏笔"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ee411ace427298cf",
       "content_path": "writing-skills/plot-expansion.md",
       "quality_score": 7.0
@@ -9118,7 +9118,7 @@
         "剧情流"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a41fd27d6dfc22ed",
       "content_path": "writing-skills/plot-flow-outline.md",
       "quality_score": 7.5
@@ -9158,7 +9158,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:303dc4eba9f36e64",
       "content_path": "writing-skills/plot-flow-spine.md",
       "quality_score": 7.0
@@ -9198,7 +9198,7 @@
         "章节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:bc6e15a5390cb56d",
       "content_path": "writing-skills/plot-layout.md",
       "quality_score": 7.0
@@ -9239,7 +9239,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:15a62b08b4dd183b",
       "content_path": "writing-skills/plot-payoff-design.md",
       "quality_score": 7.0
@@ -9278,7 +9278,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:033f7b0be5855b54",
       "content_path": "writing-skills/plot-pressure-escalation.md",
       "quality_score": 7.0
@@ -9318,7 +9318,7 @@
         "最后更有"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:5bfb879bf9cc853c",
       "content_path": "writing-skills/plot-push-pull.md",
       "quality_score": 7.0
@@ -9358,7 +9358,7 @@
         "细纲"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f0caac8aab47e4e2",
       "content_path": "writing-skills/plot-rise-fall-design.md",
       "quality_score": 7.5
@@ -9398,7 +9398,7 @@
         "期下线"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:98994e24cb22295a",
       "content_path": "writing-skills/plot-romance-integration.md",
       "quality_score": 7.0
@@ -9437,7 +9437,7 @@
         "大纲"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:73bda62b538124cc",
       "content_path": "writing-skills/plot-splitting-expansion.md",
       "quality_score": 6.5
@@ -9477,7 +9477,7 @@
         "局却被关"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:846c2b94870e24fa",
       "content_path": "writing-skills/plot-vs-romance-focus.md",
       "quality_score": 7.5
@@ -9516,7 +9516,7 @@
         "描写"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:5847e388b6621c50",
       "content_path": "writing-skills/positive-character-framing.md",
       "quality_score": 6.5
@@ -9555,7 +9555,7 @@
         "视角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e17a76f12a05d26f",
       "content_path": "writing-skills/pov-switching-control.md",
       "quality_score": 7.0
@@ -9594,7 +9594,7 @@
         "视角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:d482d6773a6d19d1",
       "content_path": "writing-skills/pov-switching.md",
       "quality_score": 7.0
@@ -9634,7 +9634,7 @@
         "卖点"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:57ac950264000ccd",
       "content_path": "writing-skills/premise-competitiveness.md",
       "quality_score": 7.0
@@ -9675,7 +9675,7 @@
         "做越散时"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f967f919fd716771",
       "content_path": "writing-skills/premise-completion.md",
       "quality_score": 7.5
@@ -9715,7 +9715,7 @@
         "中长篇时"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:60204db3198049ec",
       "content_path": "writing-skills/premise-conflict-test.md",
       "quality_score": 7.0
@@ -9754,7 +9754,7 @@
         "先把模糊"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:9857ddd194e7ab25",
       "content_path": "writing-skills/premise-question-chain.md",
       "quality_score": 7.0
@@ -9794,7 +9794,7 @@
         "感情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:dbccaac00063973c",
       "content_path": "writing-skills/premise-to-outline.md",
       "quality_score": 7.5
@@ -9833,7 +9833,7 @@
         "结构"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:1f183285a21c2627",
       "content_path": "writing-skills/primary-secondary-conflict-outline.md",
       "quality_score": 6.5
@@ -9873,7 +9873,7 @@
         "主角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:c28b1b4f9e9ef927",
       "content_path": "writing-skills/proactive-highlight-reveal.md",
       "quality_score": 7.5
@@ -9912,7 +9912,7 @@
         "资料"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:dec39a4327c31b95",
       "content_path": "writing-skills/profession-research.md",
       "quality_score": 6.5
@@ -9952,7 +9952,7 @@
         "爽点"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:60262e65051d633a",
       "content_path": "writing-skills/progression-payoff.md",
       "quality_score": 7.5
@@ -9991,7 +9991,7 @@
         "先让文字"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:83f9620ce2026e49",
       "content_path": "writing-skills/prose-polish.md",
       "quality_score": 6.5
@@ -10030,7 +10030,7 @@
         "先让读者"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:b2147d83ce5377c2",
       "content_path": "writing-skills/protagonist-early-appearance.md",
       "quality_score": 6.5
@@ -10070,7 +10070,7 @@
         "主线"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:8416d5a13fc4ba3a",
       "content_path": "writing-skills/protagonist-goal-design.md",
       "quality_score": 7.5
@@ -10109,7 +10109,7 @@
         "把主角写"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f3b1641b7e7496f7",
       "content_path": "writing-skills/protagonist-mystery.md",
       "quality_score": 7.0
@@ -10148,7 +10148,7 @@
         "读者心理"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:1e94f5b07634cad6",
       "content_path": "writing-skills/protagonist-no-self-sabotage.md",
       "quality_score": 6.5
@@ -10187,7 +10187,7 @@
         "叙事"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:8d86746d2a8a3e97",
       "content_path": "writing-skills/protagonist-pov.md",
       "quality_score": 6.5
@@ -10227,7 +10227,7 @@
         "时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:70bac38e270037a0",
       "content_path": "writing-skills/protagonist-profile-template.md",
       "quality_score": 7.0
@@ -10267,7 +10267,7 @@
         "主角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:b0510401460345f0",
       "content_path": "writing-skills/protagonist-starting-point.md",
       "quality_score": 7.5
@@ -10306,7 +10306,7 @@
         "使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a1a3fb26c1f4fecd",
       "content_path": "writing-skills/psychology-through-conflict.md",
       "quality_score": 6.5
@@ -10345,7 +10345,7 @@
         "结构"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:bc54c66d0af437b8",
       "content_path": "writing-skills/qichengzhuanhe-outline.md",
       "quality_score": 7.0
@@ -10385,7 +10385,7 @@
         "先确定要"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a5da5499038a3753",
       "content_path": "writing-skills/quick-transmigration-scum-slap.md",
       "quality_score": 7.0
@@ -10425,7 +10425,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:6a273c4985c29efc",
       "content_path": "writing-skills/reader-mindset-writing.md",
       "quality_score": 7.0
@@ -10464,7 +10464,7 @@
         "读者顺不"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:46625d3c818ac5a7",
       "content_path": "writing-skills/reading-barrier-check.md",
       "quality_score": 6.5
@@ -10503,7 +10503,7 @@
         "参考"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:486787fb4c45d4f8",
       "content_path": "writing-skills/real-person-reference.md",
       "quality_score": 6.5
@@ -10542,7 +10542,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:32a29ccab93a2f1e",
       "content_path": "writing-skills/reality-to-plot.md",
       "quality_score": 6.5
@@ -10582,7 +10582,7 @@
         "感情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:7fcaa191d80d1fcb",
       "content_path": "writing-skills/redemption-romance-line.md",
       "quality_score": 7.5
@@ -10622,7 +10622,7 @@
         "使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:fdbffd59b07064e6",
       "content_path": "writing-skills/reference-problem-solving.md",
       "quality_score": 7.5
@@ -10661,7 +10661,7 @@
         "互动"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:fea9d0c9314f9319",
       "content_path": "writing-skills/repeat-encounter-setting.md",
       "quality_score": 6.5
@@ -10700,7 +10700,7 @@
         "群像"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:d90e787ed11ea5db",
       "content_path": "writing-skills/repeated-plot-design.md",
       "quality_score": 6.0
@@ -10740,7 +10740,7 @@
         "爽点"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:af94ef9701db8383",
       "content_path": "writing-skills/retention-review.md",
       "quality_score": 7.0
@@ -10780,7 +10780,7 @@
         "主角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:902993cadd9882cc",
       "content_path": "writing-skills/revenge-scale-control.md",
       "quality_score": 7.5
@@ -10819,7 +10819,7 @@
         "厉害"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:00fd37da87f3a5c5",
       "content_path": "writing-skills/reverse-outline-breakdown.md",
       "quality_score": 7.0
@@ -10858,7 +10858,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f5474ca90f08ea9e",
       "content_path": "writing-skills/revision-logic-sort.md",
       "quality_score": 6.5
@@ -10897,7 +10897,7 @@
         "人物在自"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ee381b4647205143",
       "content_path": "writing-skills/rise-and-fall-arc.md",
       "quality_score": 6.5
@@ -10936,7 +10936,7 @@
         "越写越平"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:1844239921054444",
       "content_path": "writing-skills/rising-curve-design.md",
       "quality_score": 5.5
@@ -10977,7 +10977,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ccb5afd20f7f0f3c",
       "content_path": "writing-skills/romance-beat-outline.md",
       "quality_score": 7.5
@@ -11016,7 +11016,7 @@
         "感时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:fa7f0b7e09c53477",
       "content_path": "writing-skills/romance-blurb-templates.md",
       "quality_score": 7.0
@@ -11056,7 +11056,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:2777c57906e08bfd",
       "content_path": "writing-skills/romance-breakdown.md",
       "quality_score": 7.5
@@ -11097,7 +11097,7 @@
         "写大纲时"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:2ed652ade216a9dc",
       "content_path": "writing-skills/romance-career-outline.md",
       "quality_score": 7.5
@@ -11137,7 +11137,7 @@
         "得太硬时"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:b9ab46b56e0323d9",
       "content_path": "writing-skills/romance-conflict-design.md",
       "quality_score": 7.5
@@ -11176,7 +11176,7 @@
         "怎么继续"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a8f27fd173e11478",
       "content_path": "writing-skills/romance-conflict-escalation.md",
       "quality_score": 7.0
@@ -11216,7 +11216,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ce889b0720012379",
       "content_path": "writing-skills/romance-flirt-design.md",
       "quality_score": 7.5
@@ -11256,7 +11256,7 @@
         "写得太顺"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:34a2d971282754a7",
       "content_path": "writing-skills/romance-gourd-structure.md",
       "quality_score": 7.5
@@ -11295,7 +11295,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a86997ddbee39352",
       "content_path": "writing-skills/romance-interaction-design.md",
       "quality_score": 7.0
@@ -11335,7 +11335,7 @@
         "讨喜"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:8899f070d98f0478",
       "content_path": "writing-skills/romance-lead-positioning.md",
       "quality_score": 7.5
@@ -11375,7 +11375,7 @@
         "同步时使"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:59c7c5f5ca2b3b6b",
       "content_path": "writing-skills/romance-line-pacing.md",
       "quality_score": 7.0
@@ -11414,7 +11414,7 @@
         "方面受罪"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:09d505a474160ce1",
       "content_path": "writing-skills/romance-opening-no-frustration.md",
       "quality_score": 7.0
@@ -11454,7 +11454,7 @@
         "感情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:310ab20da35d3880",
       "content_path": "writing-skills/romance-opening.md",
       "quality_score": 7.0
@@ -11493,7 +11493,7 @@
         "推拉"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:3a0cd4ca241f4b7f",
       "content_path": "writing-skills/romance-push-pull.md",
       "quality_score": 7.0
@@ -11533,7 +11533,7 @@
         "写感情戏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:95d2cd9e7b0fd0df",
       "content_path": "writing-skills/romance-scene-imagery.md",
       "quality_score": 7.0
@@ -11572,7 +11572,7 @@
         "订时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:bba7a921b20b3fc3",
       "content_path": "writing-skills/romance-side-character-control.md",
       "quality_score": 7.0
@@ -11612,7 +11612,7 @@
         "留白"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:035aef85149f6ab4",
       "content_path": "writing-skills/romance-subtext.md",
       "quality_score": 7.0
@@ -11652,7 +11652,7 @@
         "使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:219beb44030daa3d",
       "content_path": "writing-skills/romance-turning-point-design.md",
       "quality_score": 7.0
@@ -11691,7 +11691,7 @@
         "把重点放"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:6baa08be2e26fea0",
       "content_path": "writing-skills/romantic-tension-beats.md",
       "quality_score": 7.0
@@ -11730,7 +11730,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:589fbd9480130195",
       "content_path": "writing-skills/rough-outline-writing.md",
       "quality_score": 6.5
@@ -11770,7 +11770,7 @@
         "视角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:dc38e297771b405b",
       "content_path": "writing-skills/s-curve-pacing.md",
       "quality_score": 7.0
@@ -11809,7 +11809,7 @@
         "牺牲意味"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:49c4ef0c4509936b",
       "content_path": "writing-skills/sacrifice-choice-design.md",
       "quality_score": 6.5
@@ -11848,7 +11848,7 @@
         "场景"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:aab7a461c76f8e50",
       "content_path": "writing-skills/scene-clarity.md",
       "quality_score": 6.5
@@ -11889,7 +11889,7 @@
         "场景"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a232fcbff1692174",
       "content_path": "writing-skills/scene-detailing.md",
       "quality_score": 7.0
@@ -11929,7 +11929,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:233ea507ae0372ac",
       "content_path": "writing-skills/scene-emotion-writing.md",
       "quality_score": 7.0
@@ -11968,7 +11968,7 @@
         "把一个只"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:965dbb169aa77d68",
       "content_path": "writing-skills/scene-expansion.md",
       "quality_score": 6.5
@@ -12008,7 +12008,7 @@
         "样信息被"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:0da9a9c328ad6343",
       "content_path": "writing-skills/scene-multi-use.md",
       "quality_score": 7.5
@@ -12047,7 +12047,7 @@
         "戏写一句"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:5ba1bbe864b05718",
       "content_path": "writing-skills/scene-pruning.md",
       "quality_score": 6.5
@@ -12086,7 +12086,7 @@
         "带过时使"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:3f9d305610766e73",
       "content_path": "writing-skills/scene-speed-control.md",
       "quality_score": 6.5
@@ -12125,7 +12125,7 @@
         "场景"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:d3da34f914e85d2a",
       "content_path": "writing-skills/scene-transition-writing.md",
       "quality_score": 7.0
@@ -12164,7 +12164,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f1545dc34f12a077",
       "content_path": "writing-skills/scene-trope-branching.md",
       "quality_score": 6.5
@@ -12205,7 +12205,7 @@
         "场景"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:15c359903f4c04e2",
       "content_path": "writing-skills/scenery-plot-integration.md",
       "quality_score": 6.5
@@ -12244,7 +12244,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:39a5cf2cdf0699f6",
       "content_path": "writing-skills/second-chance-romance-order.md",
       "quality_score": 7.0
@@ -12283,7 +12283,7 @@
         "重新审视"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:06800d42ed0982c0",
       "content_path": "writing-skills/self-discovery-arc.md",
       "quality_score": 6.5
@@ -12323,7 +12323,7 @@
         "卖点"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:4bfa9084275952e7",
       "content_path": "writing-skills/selling-point-entry.md",
       "quality_score": 7.5
@@ -12362,7 +12362,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:71968d8d39535d3e",
       "content_path": "writing-skills/separation-reunion-romance.md",
       "quality_score": 6.5
@@ -12400,7 +12400,7 @@
         "主角原本"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:f48e477aaa3f953c",
       "content_path": "writing-skills/setting-alignment.md",
       "quality_score": 6.5
@@ -12439,7 +12439,7 @@
         "先承认一"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:4106b67fce3d1334",
       "content_path": "writing-skills/setting-conflict-repair.md",
       "quality_score": 6.5
@@ -12478,7 +12478,7 @@
         "题材"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:d6c8e948ecaaf4c8",
       "content_path": "writing-skills/setting-feasibility-check.md",
       "quality_score": 6.5
@@ -12517,7 +12517,7 @@
         "考据挑出"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:7e03093e3849be54",
       "content_path": "writing-skills/setting-reference-research.md",
       "quality_score": 6.5
@@ -12556,7 +12556,7 @@
         "设定"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:66a1ed6c33c2c014",
       "content_path": "writing-skills/setting-reveal.md",
       "quality_score": 7.0
@@ -12595,7 +12595,7 @@
         "使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:71a4b660f3aa5efc",
       "content_path": "writing-skills/setting-rollout.md",
       "quality_score": 7.0
@@ -12634,7 +12634,7 @@
         "喜剧"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:b77f8eedc4498dec",
       "content_path": "writing-skills/shadiao-writing.md",
       "quality_score": 7.0
@@ -12673,7 +12673,7 @@
         "先定"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e8d40033dad7bdef",
       "content_path": "writing-skills/shared-danger-romance.md",
       "quality_score": 6.5
@@ -12713,7 +12713,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:7352d49a9185e982",
       "content_path": "writing-skills/shoumodian-diagnosis.md",
       "quality_score": 7.5
@@ -12752,7 +12752,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:839ad2c4f0d8a565",
       "content_path": "writing-skills/show-tell-balance.md",
       "quality_score": 6.5
@@ -12793,7 +12793,7 @@
         "冲突"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:d26b58dab461c15a",
       "content_path": "writing-skills/shuang-point-design.md",
       "quality_score": 7.5
@@ -12833,7 +12833,7 @@
         "主线"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:2ccf992000988f82",
       "content_path": "writing-skills/shuang-point-mainline.md",
       "quality_score": 7.0
@@ -12873,7 +12873,7 @@
         "大纲"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:9d38af10cf373fd1",
       "content_path": "writing-skills/shuang-point-outline-revision.md",
       "quality_score": 7.5
@@ -12913,7 +12913,7 @@
         "感情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:947b7210f760b61a",
       "content_path": "writing-skills/shuangwen-romance-line.md",
       "quality_score": 7.0
@@ -12953,7 +12953,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:b46b9fad42a0ae03",
       "content_path": "writing-skills/shuangwen-twist-design.md",
       "quality_score": 7.5
@@ -12992,7 +12992,7 @@
         "修罗场不"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:8a5484b1d039d8c0",
       "content_path": "writing-skills/shura-conflict-design.md",
       "quality_score": 7.0
@@ -13032,7 +13032,7 @@
         "配角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:86e66533d9158f49",
       "content_path": "writing-skills/side-character-attitude-reversal.md",
       "quality_score": 7.0
@@ -13071,7 +13071,7 @@
         "喜剧"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:09446c74aeda2823",
       "content_path": "writing-skills/sitcom-writing.md",
       "quality_score": 6.5
@@ -13111,7 +13111,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:b437901ed95200cc",
       "content_path": "writing-skills/small-case-ensemble.md",
       "quality_score": 7.0
@@ -13150,7 +13150,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:a8483ee4af00fa58",
       "content_path": "writing-skills/smart-conflict-design.md",
       "quality_score": 6.5
@@ -13189,7 +13189,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:26e4173f8d32fdc1",
       "content_path": "writing-skills/spring-pacing.md",
       "quality_score": 6.5
@@ -13228,7 +13228,7 @@
         "卖点"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:441932012fd15704",
       "content_path": "writing-skills/stale-trope-blurb.md",
       "quality_score": 7.0
@@ -13267,7 +13267,7 @@
         "大纲"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:b702955bbf10e5e5",
       "content_path": "writing-skills/start-small-story-scope.md",
       "quality_score": 6.5
@@ -13306,7 +13306,7 @@
         "开篇"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:5f9ef2c2c33fe26d",
       "content_path": "writing-skills/story-entry-pov.md",
       "quality_score": 6.5
@@ -13345,7 +13345,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:bb86dbde44099ab8",
       "content_path": "writing-skills/story-first-techniques.md",
       "quality_score": 6.5
@@ -13384,7 +13384,7 @@
         "时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:c010fc747aac979d",
       "content_path": "writing-skills/story-fit-character.md",
       "quality_score": 7.0
@@ -13423,7 +13423,7 @@
         "围绕一条"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e54e9ab407d18512",
       "content_path": "writing-skills/story-logic-line.md",
       "quality_score": 7.0
@@ -13464,7 +13464,7 @@
         "主角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:1d564563902eb843",
       "content_path": "writing-skills/story-positioning.md",
       "quality_score": 7.5
@@ -13503,7 +13503,7 @@
         "逻辑"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:af06f7dadc00b4af",
       "content_path": "writing-skills/story-realism.md",
       "quality_score": 7.0
@@ -13542,7 +13542,7 @@
         "感情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e1b2f54ebf72cc44",
       "content_path": "writing-skills/su-character-design.md",
       "quality_score": 7.0
@@ -13582,7 +13582,7 @@
         "先把这段"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:573ec8919e386e25",
       "content_path": "writing-skills/su-qiang-payoff.md",
       "quality_score": 7.5
@@ -13623,7 +13623,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:85473789f7a8fb43",
       "content_path": "writing-skills/suan-shuang-inspiration.md",
       "quality_score": 7.5
@@ -13662,7 +13662,7 @@
         "关系"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:408a6ccd272095e6",
       "content_path": "writing-skills/submission-dynamic.md",
       "quality_score": 6.5
@@ -13702,7 +13702,7 @@
         "副线"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:9b7e787931a831dd",
       "content_path": "writing-skills/subplot-drives-mainline.md",
       "quality_score": 7.0
@@ -13742,7 +13742,7 @@
         "喧宾夺主"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:c90ca3cffbbefbba",
       "content_path": "writing-skills/supporting-cast-no-scene-steal.md",
       "quality_score": 7.0
@@ -13781,7 +13781,7 @@
         "把配角当"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:885fbbc6cb343d01",
       "content_path": "writing-skills/supporting-cast-push.md",
       "quality_score": 6.5
@@ -13822,7 +13822,7 @@
         "配角"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ad0a28a403de4ce5",
       "content_path": "writing-skills/supporting-character-design.md",
       "quality_score": 7.0
@@ -13862,7 +13862,7 @@
         "结构"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:6697a0a42e5ba8d9",
       "content_path": "writing-skills/suspense-hook-design.md",
       "quality_score": 7.0
@@ -13901,7 +13901,7 @@
         "的事把读"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:db5fd9754e75fe53",
       "content_path": "writing-skills/suspense-longform-pacing.md",
       "quality_score": 6.5
@@ -13940,7 +13940,7 @@
         "把甜宠写"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:268b9a9bb0329a07",
       "content_path": "writing-skills/sweet-not-cringe.md",
       "quality_score": 7.0
@@ -13979,7 +13979,7 @@
         "文最值钱"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:be0b9b4d13f70e85",
       "content_path": "writing-skills/sweet-romance-blurb.md",
       "quality_score": 6.5
@@ -14018,7 +14018,7 @@
         "和危机该"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:eedafeb78f2d15ba",
       "content_path": "writing-skills/sweet-romance-external-conflict.md",
       "quality_score": 6.5
@@ -14057,7 +14057,7 @@
         "时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:b32df9831640f1e1",
       "content_path": "writing-skills/sweet-romance-interaction.md",
       "quality_score": 6.5
@@ -14097,7 +14097,7 @@
         "感情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:2a6e77b8a469ab37",
       "content_path": "writing-skills/sweet-romance-mainline.md",
       "quality_score": 7.5
@@ -14137,7 +14137,7 @@
         "爽点"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:0dfbcb2cd25f8ff2",
       "content_path": "writing-skills/sweet-shuang-combo.md",
       "quality_score": 7.5
@@ -14177,7 +14177,7 @@
         "悬念"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:c98093039532050e",
       "content_path": "writing-skills/sweet-then-knife.md",
       "quality_score": 7.0
@@ -14216,7 +14216,7 @@
         "三级展开"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:c21ee3103bbe2f3b",
       "content_path": "writing-skills/synopsis-outline-writing.md",
       "quality_score": 7.0
@@ -14255,7 +14255,7 @@
         "走时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:2ac7aaea1f4e70f6",
       "content_path": "writing-skills/task-node-outline.md",
       "quality_score": 6.5
@@ -14295,7 +14295,7 @@
         "情节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:683e369afe9a573f",
       "content_path": "writing-skills/tear-point-design.md",
       "quality_score": 7.0
@@ -14334,7 +14334,7 @@
         "感情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e177ce860e10ac9f",
       "content_path": "writing-skills/ten-chapter-romance-outline.md",
       "quality_score": 6.5
@@ -14373,7 +14373,7 @@
         "观点"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:923e8f7b9438aa37",
       "content_path": "writing-skills/theme-character-design.md",
       "quality_score": 6.5
@@ -14413,7 +14413,7 @@
         "水时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:abcb237bb99a7824",
       "content_path": "writing-skills/theme-spine.md",
       "quality_score": 7.0
@@ -14453,7 +14453,7 @@
         "爽点"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e515a96f084a9921",
       "content_path": "writing-skills/three-chapter-mini-climax.md",
       "quality_score": 7.5
@@ -14493,7 +14493,7 @@
         "章纲"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:6e63ee3943eed60f",
       "content_path": "writing-skills/three-line-chapter-outline.md",
       "quality_score": 7.0
@@ -14533,7 +14533,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:9c1f54ce30430299",
       "content_path": "writing-skills/three-wave-climax.md",
       "quality_score": 7.5
@@ -14572,7 +14572,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:22dd2bde34683888",
       "content_path": "writing-skills/tone-consistency.md",
       "quality_score": 6.5
@@ -14611,7 +14611,7 @@
         "结构"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:30175e2ecc2855ce",
       "content_path": "writing-skills/tone-shift-buffer.md",
       "quality_score": 7.0
@@ -14651,7 +14651,7 @@
         "规划"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:077711a685081ac8",
       "content_path": "writing-skills/topic-direction-choice.md",
       "quality_score": 7.0
@@ -14691,7 +14691,7 @@
         "设定"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:10014846405e63e1",
       "content_path": "writing-skills/trope-attraction-dissection.md",
       "quality_score": 7.5
@@ -14731,7 +14731,7 @@
         "核心梗"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e86f0174a8cb0a90",
       "content_path": "writing-skills/trope-potential-check.md",
       "quality_score": 7.0
@@ -14771,7 +14771,7 @@
         "使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:ebf0d314ccc3c615",
       "content_path": "writing-skills/trope-refresh.md",
       "quality_score": 7.0
@@ -14810,7 +14810,7 @@
         "时使用"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:9d7d50be14cc3bf5",
       "content_path": "writing-skills/trope-setup-refresh.md",
       "quality_score": 6.5
@@ -14849,7 +14849,7 @@
         "傲娇不是"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:2dfda11f32e65922",
       "content_path": "writing-skills/tsundere-design.md",
       "quality_score": 7.0
@@ -14889,7 +14889,7 @@
         "细纲"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:72eb3812d5beedb4",
       "content_path": "writing-skills/turning-point-setup.md",
       "quality_score": 7.5
@@ -14928,7 +14928,7 @@
         "先把每次"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:8889a77fa4876596",
       "content_path": "writing-skills/twist-clarity.md",
       "quality_score": 6.5
@@ -14968,7 +14968,7 @@
         "节奏"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:1e74d267fec04c5a",
       "content_path": "writing-skills/unexpected-plot-turn.md",
       "quality_score": 7.5
@@ -15007,7 +15007,7 @@
         "排案情"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:32e8d9a833c2da27",
       "content_path": "writing-skills/unit-emotion-design.md",
       "quality_score": 6.5
@@ -15048,7 +15048,7 @@
         "场景"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:631a4160fbdc6d3f",
       "content_path": "writing-skills/useless-scene-cut.md",
       "quality_score": 7.5
@@ -15087,7 +15087,7 @@
         "反派"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:0ac78109f89c0673",
       "content_path": "writing-skills/villain-escalation.md",
       "quality_score": 6.5
@@ -15126,7 +15126,7 @@
         "细节"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:bceb7dffaab1c479",
       "content_path": "writing-skills/villain-human-touch.md",
       "quality_score": 6.5
@@ -15165,7 +15165,7 @@
         "冲突"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:5bd06d648c8558ad",
       "content_path": "writing-skills/villain-tier-design.md",
       "quality_score": 6.5
@@ -15205,7 +15205,7 @@
         "不值得收"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:14b50ae6e85eb52e",
       "content_path": "writing-skills/villain-turns-fan.md",
       "quality_score": 7.0
@@ -15244,7 +15244,7 @@
         "免费期最"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:b8ddca47b6c4f052",
       "content_path": "writing-skills/vip-hook-chapter.md",
       "quality_score": 6.5
@@ -15284,7 +15284,7 @@
         "卖点"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:3a1bc24664fba569",
       "content_path": "writing-skills/webnovel-blurb-writing.md",
       "quality_score": 7.0
@@ -15323,7 +15323,7 @@
         "先让文名"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:e108d688bb0cbab8",
       "content_path": "writing-skills/webnovel-title-naming.md",
       "quality_score": 6.5
@@ -15363,7 +15363,7 @@
         "场景"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:7b69ad0aff24024c",
       "content_path": "writing-skills/wedding-opening.md",
       "quality_score": 7.5
@@ -15402,7 +15402,7 @@
         "升级"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:03aeefadd5b03892",
       "content_path": "writing-skills/wordcount-pacing.md",
       "quality_score": 7.0
@@ -15442,7 +15442,7 @@
         "创世界时"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:9088a9b138495c6b",
       "content_path": "writing-skills/world-setting-sheet.md",
       "quality_score": 7.5
@@ -15482,7 +15482,7 @@
         "细纲"
       ],
       "routing_hints": "",
-      "source": "ai_creator_builtin",
+      "source": "writing_skill_builtin",
       "version_hash": "sha256:93601619c35a66c6",
       "content_path": "writing-skills/writer-block-diagnosis.md",
       "quality_score": 7.5

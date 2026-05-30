@@ -16,14 +16,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.cache_policy import TimedOrderedCache
-from app.gateway.product_entitlements import product_entitlement_service
 from app.gateway.novel_migrated.core.crypto import safe_decrypt
 from app.gateway.novel_migrated.core.database import AsyncSessionLocal
 from app.gateway.novel_migrated.core.logger import get_logger
 from app.gateway.novel_migrated.models.document_index import DocumentIndex
 from app.gateway.novel_migrated.models.settings import Settings
 from app.gateway.novel_migrated.services.memory_fallback_store import ensure_fallback_capacity
+from app.gateway.novel_migrated.services.reranker_service import RerankerService
 from app.gateway.novel_migrated.services.workspace_document_service import workspace_document_service
+from app.gateway.product_entitlements import product_entitlement_service
 
 try:
     import chromadb  # type: ignore
@@ -133,6 +134,7 @@ class MemoryService:
         )
         self._fallback_total_count = 0  # 跟踪总条目数（用于容量控制）
         self._state_lock = threading.RLock()
+        self._reranker_service = RerankerService.get_instance()
 
         # 初始化复用的 HTTP 客户端
         if MemoryService._http_client is None:
@@ -1095,7 +1097,7 @@ class MemoryService:
 
                     results = collection.query(
                         query_embeddings=[query_embedding],
-                        n_results=limit,
+                        n_results=min(max(limit * 2, limit), 50),
                         where=where_clause,
                     )
 
@@ -1118,7 +1120,12 @@ class MemoryService:
                                 "similarity": similarity,
                             }
                         )
-                    return output
+                    return await self._rerank_search_results(
+                        user_id=user_id,
+                        query=query,
+                        output=output,
+                        limit=limit,
+                    )
             except Exception as exc:
                 logger.warning("⚠️ 向量检索失败，回退到非向量检索: %s", exc)
 
@@ -1151,7 +1158,45 @@ class MemoryService:
                     "similarity": score,
                 }
             )
-        return output
+        return await self._rerank_search_results(
+            user_id=user_id,
+            query=query,
+            output=output,
+            limit=limit,
+        )
+
+    async def _rerank_search_results(
+        self,
+        *,
+        user_id: str,
+        query: str,
+        output: list[dict[str, Any]],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        if len(output) < 2:
+            return output[:limit]
+
+        try:
+            documents = [str(item.get("content") or "") for item in output]
+            results = await self._reranker_service.async_rerank(
+                query=query,
+                documents=documents,
+                user_id=user_id,
+                top_n=limit,
+            )
+            if not results:
+                return output[:limit]
+
+            reranked: list[dict[str, Any]] = []
+            for result in results:
+                if 0 <= result.index < len(output):
+                    item = dict(output[result.index])
+                    item["similarity"] = result.relevance_score
+                    reranked.append(item)
+            return reranked[:limit] if reranked else output[:limit]
+        except Exception as exc:
+            logger.warning("⚠️ 记忆 Rerank 失败，保持原排序: %s", exc)
+            return output[:limit]
 
     async def get_recent_memories(
         self,

@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+import { browserStorageQuotaService } from "@/core/storage/browser-quota";
+
 import type { AiFeatureRoutingState } from "./feature-routing";
 import {
   fetchUserAiSettings,
@@ -9,7 +11,6 @@ import {
   type UserAiSettings,
   type UserAiSettingsUpdate,
 } from "./useAiSettingsApi";
-import { browserStorageQuotaService } from "@/core/storage/browser-quota";
 
 export type AiProviderType = "openai" | "anthropic" | "google" | "custom";
 export type AiManagedBy = "newapi" | string;
@@ -50,6 +51,11 @@ export interface AiGlobalSettings {
   requestTimeout: number;
   maxRetries: number;
   featureRoutingSettings: AiFeatureRoutingState | null;
+  embeddingModel: string;
+  rerankModel: string;
+  rerankEnabled: boolean;
+  writingSkillEmbeddingModel: string;
+  writingSkillRerankModel: string;
 }
 
 export interface AiSettingsState {
@@ -99,6 +105,11 @@ const DEFAULT_SETTINGS: AiGlobalSettings = {
   requestTimeout: 660000,
   maxRetries: 2,
   featureRoutingSettings: null,
+  embeddingModel: "",
+  rerankModel: "",
+  rerankEnabled: true,
+  writingSkillEmbeddingModel: "",
+  writingSkillRerankModel: "",
 };
 
 function coerceProviderType(provider: string): AiProviderType {
@@ -140,6 +151,11 @@ function mapServerSettingsToGlobal(settings: UserAiSettings): AiGlobalSettings {
     requestTimeout: Number(settings.client_settings?.request_timeout ?? DEFAULT_SETTINGS.requestTimeout),
     maxRetries: Number(settings.client_settings?.max_retries ?? DEFAULT_SETTINGS.maxRetries),
     featureRoutingSettings: settings.feature_routing_settings ?? null,
+    embeddingModel: settings.embedding_model ?? "",
+    rerankModel: settings.rerank_model ?? "",
+    rerankEnabled: settings.rerank_enabled ?? true,
+    writingSkillEmbeddingModel: settings.writing_skill_embedding_model ?? "",
+    writingSkillRerankModel: settings.writing_skill_rerank_model ?? "",
   };
 }
 
@@ -152,6 +168,11 @@ function normalizeDraftSettings(draft: AiGlobalSettings): AiGlobalSettings {
     globalSystemPrompt: draft.globalSystemPrompt ?? "",
     providers: Array.isArray(draft.providers) ? draft.providers : [],
     featureRoutingSettings: draft.featureRoutingSettings ?? null,
+    embeddingModel: draft.embeddingModel ?? "",
+    rerankModel: draft.rerankModel ?? "",
+    rerankEnabled: Boolean(draft.rerankEnabled),
+    writingSkillEmbeddingModel: draft.writingSkillEmbeddingModel ?? "",
+    writingSkillRerankModel: draft.writingSkillRerankModel ?? "",
   };
 }
 
@@ -261,6 +282,26 @@ function parseImportedDraftSettings(value: unknown): AiGlobalSettings | null {
         ? source.maxRetries
         : DEFAULT_SETTINGS.maxRetries,
     featureRoutingSettings: (source.featureRoutingSettings as AiFeatureRoutingState | null | undefined) ?? null,
+    embeddingModel:
+      typeof source.embeddingModel === "string"
+        ? source.embeddingModel
+        : DEFAULT_SETTINGS.embeddingModel,
+    rerankModel:
+      typeof source.rerankModel === "string"
+        ? source.rerankModel
+        : DEFAULT_SETTINGS.rerankModel,
+    rerankEnabled:
+      typeof source.rerankEnabled === "boolean"
+        ? source.rerankEnabled
+        : DEFAULT_SETTINGS.rerankEnabled,
+    writingSkillEmbeddingModel:
+      typeof source.writingSkillEmbeddingModel === "string"
+        ? source.writingSkillEmbeddingModel
+        : DEFAULT_SETTINGS.writingSkillEmbeddingModel,
+    writingSkillRerankModel:
+      typeof source.writingSkillRerankModel === "string"
+        ? source.writingSkillRerankModel
+        : DEFAULT_SETTINGS.writingSkillRerankModel,
   });
 }
 
@@ -297,6 +338,11 @@ function buildPutPayloadFromDraft(draft: AiGlobalSettings): UserAiSettingsUpdate
       request_timeout: draft.requestTimeout,
       max_retries: draft.maxRetries,
     },
+    embedding_model: draft.embeddingModel || null,
+    rerank_model: draft.rerankModel || null,
+    rerank_enabled: draft.rerankEnabled,
+    writing_skill_embedding_model: draft.writingSkillEmbeddingModel || null,
+    writing_skill_rerank_model: draft.writingSkillRerankModel || null,
     system_prompt: draft.globalSystemPrompt,
     feature_routing_settings: draft.featureRoutingSettings,
   };

@@ -28,6 +28,7 @@ from sqlalchemy import select
 from app.gateway.novel_migrated.core.crypto import safe_decrypt
 from app.gateway.novel_migrated.core.database import AsyncSessionLocal
 from app.gateway.novel_migrated.models.settings import Settings
+from app.gateway.novel_migrated.services.reranker_service import RerankConfig, RerankerService
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,6 @@ _VECTOR_COLLECTION_NAME = "writing_skills_index"
 _VECTOR_MIN_SIMILARITY = 0.30
 _MAX_INVOKE_PER_TURN = 3
 _INVOKE_TTL_SECONDS = 600.0
-_RERANK_TIMEOUT_SECONDS = 30.0
 
 
 def _resolve_data_dir() -> Path:
@@ -98,31 +98,29 @@ async def load_writing_skill_user_config(user_id: str | None) -> WritingSkillUse
     preferences = _load_settings_preferences(settings)
     base_url = _normalize_openai_base_url(settings.api_base_url)
 
+    # Writing-skill retrieval defaults to the server-side shared public index
+    # configuration. User preferences here are treated as explicit advanced
+    # overrides only, and must not inherit the user's private memory settings.
     embedding_model = _read_preference_string(
         preferences,
-        ("writing_skill_embedding_model", "embedding_model", "embeddings_model", "embeddingModel"),
+        ("writing_skill_embedding_model", "writingSkillEmbeddingModel"),
     )
-    if not embedding_model:
-        llm_model = (settings.llm_model or "").strip()
-        if llm_model and "embedding" in llm_model.lower():
-            embedding_model = llm_model
-
     rerank_model = _read_preference_string(
         preferences,
-        ("writing_skill_rerank_model", "rerank_model", "reranker_model", "rerankModel"),
+        ("writing_skill_rerank_model", "writingSkillRerankModel"),
     )
 
     return WritingSkillUserConfig(
         embedding=_UserModelConfig(
             api_key=api_key,
             base_url=base_url,
-            model=embedding_model or os.getenv("WRITING_SKILL_EMBEDDING_MODEL", "text-embedding-3-small"),
-        ),
+            model=embedding_model,
+        ) if embedding_model else None,
         rerank=_UserModelConfig(
             api_key=api_key,
             base_url=base_url,
-            model=rerank_model or os.getenv("WRITING_SKILL_RERANK_MODEL", ""),
-        ) if (rerank_model or os.getenv("WRITING_SKILL_RERANK_MODEL", "")) else None,
+            model=rerank_model,
+        ) if rerank_model else None,
     )
 
 
@@ -213,7 +211,7 @@ class _VectorSearchBackend:
     def __init__(self, data_dir: Path) -> None:
         self._data_dir = data_dir
         self._client: Any = None
-        self._collection: Any = None
+        self._collections: dict[str, Any] = {}
         self._embedding_model: Any = None
         self._initialized = False
         self._init_attempted = False
@@ -225,6 +223,19 @@ class _VectorSearchBackend:
         )
         self._cloud_config: dict[str, str] | None = None
         self._embedding_cache: dict[str, list[float]] = {}
+
+    @staticmethod
+    def _collection_suffix(cloud_config: _UserModelConfig | None) -> str:
+        if cloud_config and cloud_config.model:
+            raw = cloud_config.model.strip().lower()
+        else:
+            raw = os.getenv("WRITING_SKILL_EMBEDDING_MODEL", "text-embedding-3-small").strip().lower()
+        safe = re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+        return safe or "default"
+
+    def _collection_name(self, cloud_config: _UserModelConfig | None) -> str:
+        return f"{_VECTOR_COLLECTION_NAME}__{self._collection_suffix(cloud_config)}"
+
     def _try_init(self) -> bool:
         if self._init_attempted:
             return self._initialized
@@ -246,15 +257,6 @@ class _VectorSearchBackend:
             logger.warning("Writing skill ChromaDB init failed: %s", exc)
             return False
 
-        try:
-            self._collection = self._client.get_or_create_collection(
-                name=_VECTOR_COLLECTION_NAME,
-                metadata={"hnsw:space": "cosine"},
-            )
-        except Exception as exc:
-            logger.warning("Writing skill ChromaDB collection init failed: %s", exc)
-            return False
-
         if self._allow_local:
             try:
                 from sentence_transformers import SentenceTransformer
@@ -266,6 +268,24 @@ class _VectorSearchBackend:
 
         self._initialized = True
         return True
+
+    def _get_or_create_collection(self, cloud_config: _UserModelConfig | None) -> Any | None:
+        if not self._try_init() or self._client is None:
+            return None
+        name = self._collection_name(cloud_config)
+        cached = self._collections.get(name)
+        if cached is not None:
+            return cached
+        try:
+            collection = self._client.get_or_create_collection(
+                name=name,
+                metadata={"hnsw:space": "cosine"},
+            )
+        except Exception as exc:
+            logger.warning("Writing skill ChromaDB collection init failed: %s", exc)
+            return None
+        self._collections[name] = collection
+        return collection
 
     def _load_cloud_config(self) -> _UserModelConfig | None:
         if self._cloud_config is not None:
@@ -375,11 +395,12 @@ class _VectorSearchBackend:
         return [x / norm for x in vec]
 
     def ensure_indexed(self, entries: dict[str, WritingSkillEntry], cloud_config: _UserModelConfig | None = None) -> None:
-        if not self._try_init() or self._collection is None:
+        collection = self._get_or_create_collection(cloud_config)
+        if collection is None:
             return
 
         try:
-            existing_ids = set(self._collection.get(include=[])["ids"])
+            existing_ids = set(collection.get(include=[])["ids"])
         except Exception:
             existing_ids = set()
 
@@ -400,7 +421,7 @@ class _VectorSearchBackend:
             embeddings = self._embed_sync(texts, cloud_config=cloud_config)
             if embeddings and len(embeddings) == len(batch_slugs):
                 try:
-                    self._collection.add(
+                    collection.add(
                         ids=batch_slugs,
                         embeddings=embeddings,
                         documents=texts,
@@ -410,7 +431,8 @@ class _VectorSearchBackend:
                     logger.warning("Writing skill vector index batch add failed: %s", exc)
 
     def search(self, query: str, max_results: int = 8, category: str | None = None, cloud_config: _UserModelConfig | None = None) -> list[tuple[str, float]]:
-        if not self._try_init() or self._collection is None:
+        collection = self._get_or_create_collection(cloud_config)
+        if collection is None:
             return []
 
         query_embedding = self._embed_sync([query], cloud_config=cloud_config)
@@ -422,7 +444,7 @@ class _VectorSearchBackend:
             where_clause = {"category": category}
 
         try:
-            results = self._collection.query(
+            results = collection.query(
                 query_embeddings=[query_embedding[0]],
                 n_results=max_results * 2,
                 where=where_clause,
@@ -444,86 +466,6 @@ class _VectorSearchBackend:
         return output[:max_results]
 
 
-class _RerankBackend:
-    """Optional cloud reranker for final candidate ordering."""
-
-    def __init__(self) -> None:
-        self._config: dict[str, str] | None = None
-        if self._config is not None:
-            return _UserModelConfig(
-                api_key=self._config["api_key"],
-                base_url=self._config["base_url"],
-                model=self._config["model"],
-            )
-
-        api_key = os.getenv("WRITING_SKILL_RERANK_API_KEY", "").strip()
-        base_url = os.getenv("WRITING_SKILL_RERANK_BASE_URL", "").strip()
-        model = os.getenv("WRITING_SKILL_RERANK_MODEL", "").strip()
-        if not api_key or not base_url or not model:
-            return None
-
-        self._config = {
-            "api_key": api_key,
-            "base_url": base_url.rstrip("/"),
-            "model": model,
-        }
-        return _UserModelConfig(
-            api_key=self._config["api_key"],
-            base_url=self._config["base_url"],
-            model=self._config["model"],
-        )
-
-    def rerank(self, query: str, entries: list[WritingSkillEntry], cloud_config: _UserModelConfig | None = None) -> dict[str, float]:
-        config = cloud_config or self._load_config()
-        if config is None or not entries:
-            return {}
-
-        try:
-            import httpx
-        except ImportError:
-            return {}
-
-        documents = [
-            f"{entry.name}\n{entry.description}\n{entry.routing_hints}\n{' '.join(entry.tags)}"
-            for entry in entries
-        ]
-        payload = {
-            "model": config.model,
-            "query": query,
-            "documents": documents,
-        }
-        headers = {
-            "Authorization": f"Bearer {config.api_key}",
-            "Content-Type": "application/json",
-        }
-
-        try:
-            with httpx.Client(timeout=_RERANK_TIMEOUT_SECONDS) as client:
-                resp = client.post(f"{config.base_url}/rerank", headers=headers, json=payload)
-            if resp.status_code >= 400:
-                logger.warning("Writing skill rerank request failed: status=%s body=%s", resp.status_code, resp.text[:300])
-                return {}
-            data = resp.json()
-            results = data.get("results")
-            if not isinstance(results, list):
-                return {}
-            scores: dict[str, float] = {}
-            for item in results:
-                if not isinstance(item, dict):
-                    continue
-                try:
-                    idx = int(item.get("index"))
-                    score = float(item.get("relevance_score", 0.0))
-                except (TypeError, ValueError):
-                    continue
-                if 0 <= idx < len(entries):
-                    scores[entries[idx].slug] = score
-            return scores
-        except Exception as exc:
-            logger.warning("Writing skill rerank failed: %s", exc)
-            return {}
-
-
 class WritingSkillIndex:
     _instance: WritingSkillIndex | None = None
 
@@ -536,7 +478,7 @@ class WritingSkillIndex:
         self._loaded_at: float = 0.0
         self._index_mtime: float = 0.0
         self._vector_backend: _VectorSearchBackend | None = None
-        self._rerank_backend = _RerankBackend()
+        self._reranker_service = RerankerService.get_instance()
         self._invoke_limiter = _InvokeRateLimiter()
 
     @classmethod
@@ -649,7 +591,7 @@ class WritingSkillIndex:
             tags=tuple(raw_entry.get("tags", [])),
             keywords=tuple(raw_entry.get("keywords", [])),
             routing_hints=raw_entry.get("routing_hints", ""),
-            source=raw_entry.get("source", "ai_creator_builtin"),
+            source=raw_entry.get("source", "writing_skill_builtin"),
             version_hash=raw_entry.get("version_hash", ""),
             content_path=raw_entry.get("content_path", ""),
             quality_score=float(raw_entry.get("quality_score", 0.0)),
@@ -793,17 +735,30 @@ class WritingSkillIndex:
 
         ranked = sorted(hits.values(), key=lambda h: h.combined_score, reverse=True)
         top_entries = [hit.entry for hit in ranked[:max_candidates]]
-        rerank_scores = self._rerank_backend.rerank(
-            query_text,
-            top_entries,
-            cloud_config=user_config.rerank if user_config else None,
-        )
-        if rerank_scores:
-            top_entries = sorted(
-                top_entries,
-                key=lambda entry: rerank_scores.get(entry.slug, -1.0),
-                reverse=True,
+        rerank_config = None
+        if user_config and user_config.rerank:
+            rerank_config = RerankConfig(
+                api_key=user_config.rerank.api_key,
+                base_url=user_config.rerank.base_url,
+                model=user_config.rerank.model,
             )
+        documents = [
+            f"{entry.name}\n{entry.description}\n{entry.routing_hints}\n{' '.join(entry.tags)}"
+            for entry in top_entries
+        ]
+        rerank_results = self._reranker_service.rerank_sync(
+            query_text,
+            documents,
+            top_n=max_candidates,
+            config=rerank_config,
+        )
+        if rerank_results:
+            reranked_entries: list[WritingSkillEntry] = []
+            for result in rerank_results:
+                if 0 <= result.index < len(top_entries):
+                    reranked_entries.append(top_entries[result.index])
+            if reranked_entries:
+                top_entries = reranked_entries
 
         return top_entries
 

@@ -96,6 +96,11 @@ class AiSettingsResponse(BaseModel):
     default_provider_id: str | None = None
     client_settings: ClientSettings = Field(default_factory=ClientSettings)
     feature_routing_settings: dict[str, object] | None = None
+    embedding_model: str | None = None
+    rerank_model: str | None = None
+    rerank_enabled: bool = True
+    writing_skill_embedding_model: str | None = None
+    writing_skill_rerank_model: str | None = None
 
     api_provider: str = Field(deprecated=True, description="遗留字段，请使用 providers + default_provider_id")
     api_base_url: str = Field(deprecated=True, description="遗留字段，请使用 providers[id].base_url")
@@ -111,6 +116,11 @@ class AiSettingsUpdateRequest(BaseModel):
     default_provider_id: str | None = None
     client_settings: ClientSettings | None = None
     feature_routing_settings: dict[str, object] | None = None
+    embedding_model: str | None = None
+    rerank_model: str | None = None
+    rerank_enabled: bool | None = None
+    writing_skill_embedding_model: str | None = None
+    writing_skill_rerank_model: str | None = None
 
     # legacy fields (supported)
     api_provider: str | None = None

@@ -1,4 +1,4 @@
-"""Offline script: build writing_skill_index.json from ai_creator builtin-skills.
+"""Offline script: build writing_skill_index.json from extracted writing skills.
 
 Usage:
     python -m scripts.build_writing_skill_index [--source DIR] [--output DIR]
@@ -225,7 +225,7 @@ def parse_skill_file(md_path: Path) -> dict | None:
         "tags": tags,
         "keywords": keywords,
         "routing_hints": routing_hints,
-        "source": "ai_creator_builtin",
+        "source": "writing_skill_builtin",
         "version_hash": version_hash,
         "content_path": f"writing-skills/{slug}.md",
         "quality_score": round(quality_score, 1),
@@ -308,17 +308,17 @@ def build_index(source_dir: Path, output_dir: Path) -> dict:
 def main() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Build writing skill index from ai_creator builtin-skills")
+    parser = argparse.ArgumentParser(description="Build writing skill index from extracted writing skill markdown files")
     parser.add_argument(
         "--source",
         type=Path,
-        default=Path(__file__).resolve().parent.parent / "技能" / "ai_creator-main" / "apps" / "server" / "builtin-skills",
+        default=Path(__file__).resolve().parent.parent / "data" / "writing-skills",
         help="Source directory containing .md skill files",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).resolve().parent.parent / "backend" / "data",
+        default=Path(__file__).resolve().parent.parent / "data",
         help="Output directory for index and skill files",
     )
     args = parser.parse_args()

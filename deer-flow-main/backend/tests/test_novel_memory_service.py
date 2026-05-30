@@ -118,44 +118,63 @@ async def test_add_memory_persists_semantic_embedding_in_fallback(
 
 
 @pytest.mark.anyio
-async def test_search_memories_filters_by_min_similarity(
+async def test_search_memories_reranks_after_similarity_filter(
     isolated_memory_service: MemoryService,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_embed_texts(user_id: str, texts: list[str]):
-        _ = (user_id, texts)
-        return [[1.0, 0.0]]
+    class _FakeRerankResult:
+        def __init__(self, index: int, relevance_score: float) -> None:
+            self.index = index
+            self.relevance_score = relevance_score
 
-    monkeypatch.setattr(isolated_memory_service, '_embed_texts', fake_embed_texts)
+    async def fake_async_rerank(*, query: str, documents: list[str], user_id: str | None = None, top_n: int | None = None):
+        assert query == "觉醒"
+        assert user_id == "u1"
+        assert top_n == 10
+        assert documents == ["主角在废墟觉醒", "主角再次觉醒"]
+        return [
+            _FakeRerankResult(index=1, relevance_score=0.97),
+            _FakeRerankResult(index=0, relevance_score=0.88),
+        ]
 
-    isolated_memory_service._fallback_store[('u1', 'p1')] = [
-        {
-            'id': 'keep',
-            'content': '主角在废墟觉醒',
-            'metadata': {'memory_type': 'plot_point', 'importance': 0.9},
-            'embedding': [1.0, 0.0],
-            'created_at': '2026-01-01T00:00:00',
-        },
-        {
-            'id': 'drop',
-            'content': '配角在酒馆闲聊',
-            'metadata': {'memory_type': 'plot_point', 'importance': 0.2},
-            'embedding': [0.0, 1.0],
-            'created_at': '2026-01-01T00:00:01',
-        },
-    ]
+    monkeypatch.setattr(isolated_memory_service._reranker_service, "async_rerank", fake_async_rerank)
 
-    results = await isolated_memory_service.search_memories(
+    results = await isolated_memory_service._rerank_search_results(
         user_id='u1',
-        project_id='p1',
         query='觉醒',
-        memory_types=['plot_point'],
+        output=[
+            {'id': 'first', 'content': '主角在废墟觉醒', 'metadata': {}, 'similarity': 0.95},
+            {'id': 'second', 'content': '主角再次觉醒', 'metadata': {}, 'similarity': 0.91},
+        ],
         limit=10,
-        min_similarity=0.4,
     )
 
-    assert [item['id'] for item in results] == ['keep']
-    assert results[0]['similarity'] >= 0.4
+    assert [item['id'] for item in results] == ['second', 'first']
+    assert results[0]['similarity'] == 0.97
+
+
+@pytest.mark.anyio
+async def test_rerank_search_results_keeps_original_order_when_rerank_unavailable(
+    isolated_memory_service: MemoryService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_async_rerank(*, query: str, documents: list[str], user_id: str | None = None, top_n: int | None = None):
+        _ = (query, documents, user_id, top_n)
+        return []
+
+    monkeypatch.setattr(isolated_memory_service._reranker_service, "async_rerank", fake_async_rerank)
+
+    results = await isolated_memory_service._rerank_search_results(
+        user_id='u1',
+        query='觉醒',
+        output=[
+            {'id': 'first', 'content': '主角在废墟觉醒', 'metadata': {}, 'similarity': 0.95},
+            {'id': 'second', 'content': '主角再次觉醒', 'metadata': {}, 'similarity': 0.91},
+        ],
+        limit=10,
+    )
+
+    assert [item['id'] for item in results] == ['first', 'second']
 
 
 def test_fallback_store_evicts_oldest_and_logs(

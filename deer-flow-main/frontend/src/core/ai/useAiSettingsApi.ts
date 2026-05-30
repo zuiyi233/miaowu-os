@@ -39,6 +39,11 @@ export interface UserAiSettings {
   default_provider_id: string | null;
   client_settings: UserAiClientSettings;
   feature_routing_settings?: AiFeatureRoutingState | null;
+  embedding_model?: string | null;
+  rerank_model?: string | null;
+  rerank_enabled?: boolean;
+  writing_skill_embedding_model?: string | null;
+  writing_skill_rerank_model?: string | null;
 
   // legacy-compatible fields (still returned for compatibility)
   api_provider: string;
@@ -70,6 +75,11 @@ export interface UserAiSettingsUpdate {
   default_provider_id?: string | null;
   client_settings?: Partial<UserAiClientSettings>;
   feature_routing_settings?: AiFeatureRoutingState | null;
+  embedding_model?: string | null;
+  rerank_model?: string | null;
+  rerank_enabled?: boolean | null;
+  writing_skill_embedding_model?: string | null;
+  writing_skill_rerank_model?: string | null;
 
   // legacy fields
   api_provider?: string | null;

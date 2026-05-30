@@ -147,6 +147,7 @@ export const ProviderSettings: React.FC = () => {
     updateProvider,
     deleteProvider,
     setActiveProvider,
+    updateGlobalSettings,
   } = useAiProviderStore();
 
   const {
@@ -395,6 +396,86 @@ export const ProviderSettings: React.FC = () => {
               )}
             </div>
           ))}
+        </div>
+
+        <div className="rounded-lg border p-4 space-y-4">
+          <div>
+            <h3 className="text-sm font-medium">小说模型能力</h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              写作技能属于服务端公共知识库，默认优先使用服务端共享模型。下面的写作技能字段仅在你需要覆盖默认公共模型时才填写。
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="writing-skill-embedding-model">写作技能向量嵌入模型（高级覆盖）</Label>
+            <Input
+              id="writing-skill-embedding-model"
+              value={draft.writingSkillEmbeddingModel}
+              onChange={(e) =>
+                updateGlobalSettings({ writingSkillEmbeddingModel: e.target.value })
+              }
+              placeholder="留空时使用服务端公共模型"
+            />
+            <p className="text-xs text-muted-foreground">
+              仅覆盖写作技能公共索引的默认嵌入模型，不影响你的私有记忆/小说记忆模型。
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="writing-skill-rerank-model">写作技能重排序模型（高级覆盖）</Label>
+            <Input
+              id="writing-skill-rerank-model"
+              value={draft.writingSkillRerankModel}
+              onChange={(e) =>
+                updateGlobalSettings({ writingSkillRerankModel: e.target.value })
+              }
+              placeholder="留空时使用服务端公共模型"
+            />
+            <p className="text-xs text-muted-foreground">
+              仅覆盖写作技能公共索引的默认重排序模型，不作为主对话模型。
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="private-embedding-model">用户私有数据向量嵌入模型</Label>
+            <Input
+              id="private-embedding-model"
+              value={draft.embeddingModel}
+              onChange={(e) => updateGlobalSettings({ embeddingModel: e.target.value })}
+              placeholder="例如：bge-m3"
+            />
+            <p className="text-xs text-muted-foreground">
+              用于你的记忆、小说记忆等私有数据向量化，属于用户自己的模型配置。
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="general-rerank-model">用户私有数据重排序模型</Label>
+            <Input
+              id="general-rerank-model"
+              value={draft.rerankModel}
+              onChange={(e) => updateGlobalSettings({ rerankModel: e.target.value })}
+              placeholder="例如：bge-reranker-v2-m3"
+            />
+            <p className="text-xs text-muted-foreground">
+              用于你的记忆、小说记忆等私有数据检索重排序，属于用户自己的模型配置。
+            </p>
+          </div>
+
+          <label className="flex items-center justify-between rounded-md border px-3 py-2">
+            <div>
+              <p className="text-sm font-medium">启用用户私有数据重排序</p>
+              <p className="text-xs text-muted-foreground">
+                关闭后将跳过你自己的记忆/小说记忆等私有数据重排序，保留原始召回排序。
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              checked={draft.rerankEnabled}
+              onChange={(e) => updateGlobalSettings({ rerankEnabled: e.target.checked })}
+              className="h-4 w-4"
+            />
+          </label>
         </div>
 
         <Button
